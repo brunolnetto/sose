@@ -47,6 +47,30 @@ class ResourceSnapshot:
     queued: int
 
 
+@dataclass(frozen=True, slots=True)
+class StoreItem:
+    item_id: str
+    store_name: str
+    value: object
+    priority: int = 100
+
+
+@dataclass(frozen=True, slots=True)
+class StoreRequest:
+    request_id: str
+    store_name: str
+    requested_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class StoreSnapshot:
+    name: str
+    capacity: int | None
+    size: int
+    queued_puts: int
+    queued_gets: int
+
+
 @runtime_checkable
 class TemporalBackend(Protocol):
     @property
@@ -93,6 +117,36 @@ class ResourceBackend(Protocol):
     def release_resource(self, lease: ResourceLease | str) -> None: ...
 
     def resource_snapshot(self, name: str) -> ResourceSnapshot: ...
+
+
+@runtime_checkable
+class StoreBackend(Protocol):
+    def create_store(self, name: str, *, capacity: int | None = None) -> None: ...
+
+    def create_priority_store(self, name: str, *, capacity: int | None = None) -> None: ...
+
+    def create_filter_store(self, name: str, *, capacity: int | None = None) -> None: ...
+
+    def put_store(
+        self,
+        name: str,
+        *,
+        item_id: str,
+        value: object,
+        priority: int = 100,
+        on_stored: Callable[[StoreItem], None] | None = None,
+    ) -> StoreItem: ...
+
+    def get_store(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        on_received: Callable[[StoreItem], None],
+        filter: Callable[[StoreItem], bool] | None = None,
+    ) -> StoreRequest: ...
+
+    def store_snapshot(self, name: str) -> StoreSnapshot: ...
 
 
 @runtime_checkable
