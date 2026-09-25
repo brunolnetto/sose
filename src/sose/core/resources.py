@@ -12,6 +12,7 @@ class DurableResourceManager:
 
     def __init__(self, persistence: Persistence) -> None:
         self._persistence = persistence
+        self._backend_leases: dict[str, object] = {}
 
     def rebuild_backend(self, backend) -> int:
         for definition in self._persistence.resource_definitions():
@@ -23,7 +24,9 @@ class DurableResourceManager:
                 reservation.resource_name,
                 request_id=reservation.request_id,
                 priority=0,
-                on_acquired=lambda _lease: None,
+                on_acquired=lambda lease, reservation_id=reservation.reservation_id: (
+                    self._backend_leases.__setitem__(reservation_id, lease)
+                ),
             )
             restored += 1
 
@@ -32,9 +35,9 @@ class DurableResourceManager:
                 demand.resource_name,
                 request_id=demand.request_id,
                 priority=demand.priority,
-                on_acquired=lambda lease, request_id=demand.request_id: self.commit_grant(
+                on_acquired=lambda lease, request_id=demand.request_id: self._record_grant(
                     request_id=request_id,
-                    acquired_at=lease.acquired_at,
+                    lease=lease,
                 ),
             )
             restored += 1
@@ -80,9 +83,9 @@ class DurableResourceManager:
             uow.save_resource_demand(demand)
 
         def granted(lease) -> None:
-            reservation = self.commit_grant(
+            reservation = self._record_grant(
                 request_id=request_id,
-                acquired_at=lease.acquired_at,
+                lease=lease,
             )
             if on_acquired is not None:
                 on_acquired(reservation)
@@ -133,7 +136,15 @@ class DurableResourceManager:
             uow.save_resource_reservation(reservation)
         return reservation
 
-    def release(self, reservation_id: str) -> bool:
+    def _record_grant(self, *, request_id: str, lease) -> ResourceReservation:
+        reservation = self.commit_grant(
+            request_id=request_id,
+            acquired_at=lease.acquired_at,
+        )
+        self._backend_leases[reservation.reservation_id] = lease
+        return reservation
+
+    def release(self, backend, reservation_id: str) -> bool:
         reservation = next(
             (
                 reservation
@@ -144,9 +155,17 @@ class DurableResourceManager:
         )
         if reservation is None:
             return False
+
         with self._persistence.transaction() as uow:
             persisted = uow.get_resource_reservation(reservation_id)
             if persisted != reservation:
                 return False
             uow.delete_resource_reservation(reservation_id)
+
+        lease = self._backend_leases.pop(reservation_id, None)
+        if lease is None:
+            raise RuntimeError(
+                f"backend lease is not reconstructed for reservation: {reservation_id}"
+            )
+        backend.release_resource(lease)
         return True
