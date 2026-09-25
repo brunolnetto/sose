@@ -66,21 +66,18 @@ class Engine:
             raise ValueError("scheduled work does not match command")
         if work.due_at != command.due_at:
             raise ValueError("scheduled work due time does not match command")
-        if work.due_at < self.context.clock.now:
-            raise ValueError("scheduled work cannot execute before current logical time")
-
         previous_time = self.context.clock.now
         previous_tick = self.context.clock.tick
-        self.context.clock.now = work.due_at
         try:
             with self.persistence.transaction() as uow:
                 persisted_work = uow.get_scheduled_work(work.work_id)
                 persisted_command = uow.get_command(command.command_id)
                 if persisted_work != work or persisted_command != command:
-                    self.context.clock.now = previous_time
-                    self.context.clock.tick = previous_tick
                     return False
+                if work.due_at < self.context.clock.now:
+                    raise ValueError("scheduled work cannot execute before current logical time")
 
+                self.context.clock.now = work.due_at
                 entity = uow.get_entity(command.entity_type, command.entity_id)
                 if entity is None:
                     raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
@@ -217,7 +214,21 @@ class Engine:
         for command in self.context.scheduler.due(self.context.clock.now):
             self.dispatch(command)
 
+        next_time = self.context.clock.now + self.context.clock.step
+        next_tick = self.context.clock.tick + 1
+        position = self.persistence.simulation_position()
+        execution_sequence = 0 if position is None else position.execution_sequence
+        committed_sequence = 0 if position is None else position.committed_sequence
+
         with self.persistence.transaction() as uow:
             uow.set_committed_tick(self.context.clock.tick)
+            uow.set_simulation_position(
+                SimulationPosition(
+                    logical_time=next_time,
+                    execution_sequence=execution_sequence,
+                    committed_sequence=committed_sequence,
+                    logical_tick=next_tick,
+                )
+            )
 
         self.context.clock.advance()
