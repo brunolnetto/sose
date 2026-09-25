@@ -18,6 +18,7 @@ from .model import (
     ScenarioSignal,
     ScenarioSignalKind,
     TransitionWeightEffect,
+    ScenarioRuntimeState,
     iter_leaf_effects,
 )
 
@@ -71,6 +72,22 @@ class ScenarioEngine:
     @property
     def decisions(self) -> tuple[ScenarioDecision, ...]:
         return tuple(self._decisions[key] for key in sorted(self._decisions))
+
+    def snapshot_state(self) -> ScenarioRuntimeState:
+        return ScenarioRuntimeState(
+            decisions=self.decisions,
+            activations=self._ordered_activations(),
+        )
+
+    def restore_state(self, state: ScenarioRuntimeState | None) -> None:
+        self._decisions = {}
+        self._activations = {}
+        if state is None:
+            return
+        self._decisions = {decision.attempt_id: decision for decision in state.decisions}
+        self._activations = {
+            activation.activation_id: activation for activation in state.activations
+        }
 
     def on_tick(self) -> tuple[ScenarioDecision, ...]:
         return self.evaluate(
