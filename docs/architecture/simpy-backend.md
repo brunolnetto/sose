@@ -406,26 +406,30 @@ ephemeral and reconstructible.
 
 ---
 
-## Preemptive resources (v0.7)
+## Containers (v0.7)
 
-Preemption is an optional backend capability exposed through
-`PreemptiveResourceBackend`, not an expansion of the base `ResourceBackend`.
+SOSE exposes quantitative capacity through a backend-neutral Container contract.
+
+A container has:
+
+- finite capacity;
+- current level;
+- blocking put operations;
+- blocking get operations.
+
+The public surface uses `ContainerRequest` and `ContainerSnapshot`.
 
 ```text
-PreemptiveResourceBackend
-├── create_preemptive_resource
-├── request_preemptive_resource
-├── release_preemptive_resource
-└── preemptive_resource_snapshot
+put(amount)
+    waits while level + amount > capacity
+
+get(amount)
+    waits while level < amount
 ```
 
-A displaced holder receives a backend-neutral `ResourcePreemption` describing
-the displaced lease/request, resource, logical preemption time, and the request
-that caused preemption when known.
+Completion callbacks receive the original backend-neutral request metadata. Native
+`simpy.ContainerPut` and `simpy.ContainerGet` events remain private adapter state.
 
-The SimPy adapter internally creates a process per preemptive request because
-SimPy delivers preemption as a process interrupt. Those processes, interrupts,
-native requests, and generator continuations remain private ephemeral state.
-
-Lower numeric priority remains more important. Setting `preempt=False` keeps
-priority queueing but prevents that request from interrupting an active holder.
+Snapshots expose level, capacity, and the number of pending put/get operations.
+As with resources and stores, native Container state is execution mechanics and
+must not be treated as durable SOSE truth.

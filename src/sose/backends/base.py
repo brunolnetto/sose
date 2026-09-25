@@ -149,23 +149,34 @@ class ResourceBackend(Protocol):
 
 
 @runtime_checkable
-class PreemptiveResourceBackend(Protocol):
-    def create_preemptive_resource(self, name: str, *, capacity: int = 1) -> None: ...
+class ContainerBackend(Protocol):
+    def create_container(
+        self,
+        name: str,
+        *,
+        capacity: float,
+        initial: float = 0.0,
+    ) -> None: ...
 
-    def request_preemptive_resource(
+    def put_container(
         self,
         name: str,
         *,
         request_id: str,
-        on_acquired: Callable[[ResourceLease], None],
-        on_preempted: Callable[[ResourcePreemption], None],
-        priority: int = 100,
-        preempt: bool = True,
-    ) -> ResourceRequest: ...
+        amount: float,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest: ...
 
-    def release_preemptive_resource(self, lease: ResourceLease | str) -> None: ...
+    def get_container(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        amount: float,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest: ...
 
-    def preemptive_resource_snapshot(self, name: str) -> ResourceSnapshot: ...
+    def container_snapshot(self, name: str) -> ContainerSnapshot: ...
 
 
 @runtime_checkable

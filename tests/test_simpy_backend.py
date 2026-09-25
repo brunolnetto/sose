@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("simpy")
 
-from sose.backends import ResourceLease, ResourcePreemption, ResourceSnapshot, ScheduledCall
+from sose.backends import ContainerRequest, ContainerSnapshot, ResourceLease, ResourceSnapshot, ScheduledCall
 from sose.backends.simpy import SimPyBackend
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
@@ -274,98 +274,112 @@ def test_aware_datetime_conversion_respects_dst_offset_changes():
     assert runtime.now == target
 
 
-def test_preemptive_resource_interrupts_lower_priority_holder():
+def test_container_exposes_initial_level_and_capacity():
     runtime = backend()
-    runtime.create_preemptive_resource("crew", capacity=1)
-    acquired: list[ResourceLease] = []
-    preempted: list[ResourcePreemption] = []
+    runtime.create_container("fuel", capacity=100.0, initial=25.0)
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="planned",
-        priority=100,
-        on_acquired=acquired.append,
-        on_preempted=preempted.append,
-    )
-    while len(acquired) < 1:
-        assert runtime.step() is True
+    snapshot = runtime.container_snapshot("fuel")
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="emergency",
-        priority=1,
-        on_acquired=acquired.append,
-        on_preempted=preempted.append,
-    )
-    while len(acquired) < 2 or len(preempted) < 1:
-        assert runtime.step() is True
-
-    assert [lease.request_id for lease in acquired] == ["planned", "emergency"]
-    assert preempted[0].request_id == "planned"
-    assert preempted[0].preempted_by == "emergency"
-    assert preempted[0].resource_name == "crew"
-    assert preempted[0].preempted_at == ORIGIN
+    assert isinstance(snapshot, ContainerSnapshot)
+    assert snapshot.capacity == 100.0
+    assert snapshot.level == 25.0
+    assert snapshot.queued_puts == 0
+    assert snapshot.queued_gets == 0
 
 
-def test_preemptive_resource_can_disable_preemption_for_waiter():
+def test_container_put_and_get_update_level():
     runtime = backend()
-    runtime.create_preemptive_resource("crew", capacity=1)
-    acquired: list[ResourceLease] = []
-    preempted: list[ResourcePreemption] = []
+    runtime.create_container("fuel", capacity=100.0, initial=25.0)
+    completed: list[ContainerRequest] = []
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="holder",
-        priority=100,
-        on_acquired=acquired.append,
-        on_preempted=preempted.append,
+    runtime.put_container(
+        "fuel",
+        request_id="delivery",
+        amount=15.0,
+        on_completed=completed.append,
     )
-    while len(acquired) < 1:
-        assert runtime.step() is True
-
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="urgent-but-nonpreemptive",
-        priority=1,
-        preempt=False,
-        on_acquired=acquired.append,
-        on_preempted=preempted.append,
+    runtime.get_container(
+        "fuel",
+        request_id="consume",
+        amount=10.0,
+        on_completed=completed.append,
     )
-    while runtime.preemptive_resource_snapshot("crew").queued < 1:
-        assert runtime.step() is True
+    runtime.run_until(ORIGIN)
 
-    assert runtime.preemptive_resource_snapshot("crew").in_use == 1
-    assert runtime.preemptive_resource_snapshot("crew").queued == 1
-    assert preempted == []
+    assert [request.request_id for request in completed] == ["delivery", "consume"]
+    assert runtime.container_snapshot("fuel").level == 30.0
 
 
-def test_releasing_preemptive_lease_grants_next_waiter():
+def test_container_get_waits_until_enough_level_is_available():
     runtime = backend()
-    runtime.create_preemptive_resource("crew", capacity=1)
-    acquired: list[ResourceLease] = []
+    runtime.create_container("fuel", capacity=100.0, initial=5.0)
+    completed: list[ContainerRequest] = []
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="holder",
-        on_acquired=acquired.append,
-        on_preempted=lambda _: None,
+    runtime.get_container(
+        "fuel",
+        request_id="consume",
+        amount=10.0,
+        on_completed=completed.append,
     )
-    while len(acquired) < 1:
-        assert runtime.step() is True
+    runtime.run_until(ORIGIN)
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="waiter",
-        priority=100,
-        preempt=False,
-        on_acquired=acquired.append,
-        on_preempted=lambda _: None,
+    assert completed == []
+    assert runtime.container_snapshot("fuel").queued_gets == 1
+
+    runtime.put_container(
+        "fuel",
+        request_id="delivery",
+        amount=10.0,
+        on_completed=completed.append,
     )
-    while runtime.preemptive_resource_snapshot("crew").queued < 1:
-        assert runtime.step() is True
+    runtime.run_until(ORIGIN)
 
-    runtime.release_preemptive_resource(acquired[0])
-    while len(acquired) < 2:
-        assert runtime.step() is True
+    assert [request.request_id for request in completed] == ["delivery", "consume"]
+    assert runtime.container_snapshot("fuel").level == 5.0
 
-    assert acquired[1].request_id == "waiter"
+
+def test_container_put_waits_until_capacity_is_available():
+    runtime = backend()
+    runtime.create_container("buffer", capacity=10.0, initial=9.0)
+    completed: list[ContainerRequest] = []
+
+    runtime.put_container(
+        "buffer",
+        request_id="fill",
+        amount=5.0,
+        on_completed=completed.append,
+    )
+    runtime.run_until(ORIGIN)
+
+    assert completed == []
+    assert runtime.container_snapshot("buffer").queued_puts == 1
+
+    runtime.get_container(
+        "buffer",
+        request_id="drain",
+        amount=5.0,
+        on_completed=completed.append,
+    )
+    runtime.run_until(ORIGIN)
+
+    assert [request.request_id for request in completed] == ["drain", "fill"]
+    assert runtime.container_snapshot("buffer").level == 9.0
+
+
+def test_container_rejects_invalid_levels_amounts_and_duplicate_requests():
+    runtime = backend()
+
+    with pytest.raises(ValueError, match="capacity"):
+        runtime.create_container("invalid", capacity=0)
+
+    with pytest.raises(ValueError, match="initial"):
+        runtime.create_container("invalid", capacity=10, initial=11)
+
+    runtime.create_container("fuel", capacity=10, initial=5)
+
+    with pytest.raises(ValueError, match="amount"):
+        runtime.get_container("fuel", request_id="zero", amount=0, on_completed=lambda _: None)
+
+    runtime.get_container("fuel", request_id="consume", amount=1, on_completed=lambda _: None)
+    with pytest.raises(ValueError, match="already exists"):
+        runtime.put_container("fuel", request_id="consume", amount=1, on_completed=lambda _: None)
