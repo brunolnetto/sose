@@ -89,8 +89,14 @@ class MemoryUnitOfWork:
     def save_resource_demand(self, demand: ResourceDemand) -> None:
         if demand.resource_name not in self._working.resource_definitions:
             raise KeyError(f"unknown resource definition: {demand.resource_name}")
-        if demand.request_id in self._working.resource_reservations:
+        if any(
+            reservation.request_id == demand.request_id
+            for reservation in self._working.resource_reservations.values()
+        ):
             raise ValueError(f"resource request already reserved: {demand.request_id}")
+        existing = self._working.resource_demands.get(demand.request_id)
+        if existing is not None and existing != demand:
+            raise ValueError(f"resource demand already exists: {demand.request_id}")
         self._working.resource_demands[demand.request_id] = deepcopy(demand)
 
     def delete_resource_demand(self, request_id: str) -> None:
@@ -103,6 +109,12 @@ class MemoryUnitOfWork:
     def save_resource_reservation(self, reservation: ResourceReservation) -> None:
         if reservation.resource_name not in self._working.resource_definitions:
             raise KeyError(f"unknown resource definition: {reservation.resource_name}")
+        if any(
+            current.request_id == reservation.request_id
+            and current.reservation_id != reservation.reservation_id
+            for current in self._working.resource_reservations.values()
+        ):
+            raise ValueError(f"resource request already reserved: {reservation.request_id}")
         self._working.resource_reservations[reservation.reservation_id] = deepcopy(reservation)
 
     def delete_resource_reservation(self, reservation_id: str) -> None:
