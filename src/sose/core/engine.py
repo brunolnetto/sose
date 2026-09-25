@@ -129,6 +129,10 @@ class Engine:
 
         position = self.persistence.simulation_position()
         if position is not None:
+            if backend.now != position.logical_time:
+                raise RuntimeError(
+                    "backend logical time does not match persisted recovery boundary"
+                )
             self.context.clock.now = position.logical_time
             self.context.clock.tick = position.logical_tick
         self.context.scenarios.restore_state(self.persistence.scenario_state())
