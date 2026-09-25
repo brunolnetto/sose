@@ -1,5 +1,7 @@
 # SOSE — Synthetic Operational System Engine
 
+[![CI](https://github.com/brunolnetto/sose/actions/workflows/ci.yml/badge.svg)](https://github.com/brunolnetto/sose/actions/workflows/ci.yml)
+
 SOSE simulates operational systems rather than generating independent rows.
 
 Its core model is:
