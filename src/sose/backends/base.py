@@ -59,6 +59,30 @@ class ResourceSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
+class StoreItem:
+    item_id: str
+    store_name: str
+    value: object
+    priority: int = 100
+
+
+@dataclass(frozen=True, slots=True)
+class StoreRequest:
+    request_id: str
+    store_name: str
+    requested_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class StoreSnapshot:
+    name: str
+    capacity: int | None
+    size: int
+    queued_puts: int
+    queued_gets: int
+
+
+@dataclass(frozen=True, slots=True)
 class ContainerRequest:
     request_id: str
     container_name: str
@@ -153,6 +177,67 @@ class ContainerBackend(Protocol):
     ) -> ContainerRequest: ...
 
     def container_snapshot(self, name: str) -> ContainerSnapshot: ...
+
+
+@runtime_checkable
+class ContainerBackend(Protocol):
+    def create_container(
+        self,
+        name: str,
+        *,
+        capacity: float,
+        initial: float = 0.0,
+    ) -> None: ...
+
+    def put_container(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        amount: float,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest: ...
+
+    def get_container(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        amount: float,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest: ...
+
+    def container_snapshot(self, name: str) -> ContainerSnapshot: ...
+
+
+@runtime_checkable
+class StoreBackend(Protocol):
+    def create_store(self, name: str, *, capacity: int | None = None) -> None: ...
+
+    def create_priority_store(self, name: str, *, capacity: int | None = None) -> None: ...
+
+    def create_filter_store(self, name: str, *, capacity: int | None = None) -> None: ...
+
+    def put_store(
+        self,
+        name: str,
+        *,
+        item_id: str,
+        value: object,
+        priority: int = 100,
+        on_stored: Callable[[StoreItem], None] | None = None,
+    ) -> StoreItem: ...
+
+    def get_store(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        on_received: Callable[[StoreItem], None],
+        filter: Callable[[StoreItem], bool] | None = None,
+    ) -> StoreRequest: ...
+
+    def store_snapshot(self, name: str) -> StoreSnapshot: ...
 
 
 @runtime_checkable

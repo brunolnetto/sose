@@ -42,3 +42,24 @@ dev = [
     "codebase-stats>=0.0.3",
     "simpy>=4.1.1,<5",
 ]
+
+
+[tool.coverage.run]
+branch = true
+source = ["sose"]
+
+[tool.coverage.report]
+fail_under = 80
+show_missing = true
+skip_covered = false
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
+]
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.coverage.html]
+directory = "htmlcov"
