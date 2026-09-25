@@ -66,15 +66,21 @@ class Engine:
             raise ValueError("scheduled work does not match command")
         if work.due_at != command.due_at:
             raise ValueError("scheduled work due time does not match command")
-        if all(pending.work_id != work.work_id for pending in self.persistence.scheduled_work()):
-            return False
         if work.due_at < self.context.clock.now:
             raise ValueError("scheduled work cannot execute before current logical time")
 
         previous_time = self.context.clock.now
+        previous_tick = self.context.clock.tick
         self.context.clock.now = work.due_at
         try:
             with self.persistence.transaction() as uow:
+                persisted_work = uow.get_scheduled_work(work.work_id)
+                persisted_command = uow.get_command(command.command_id)
+                if persisted_work != work or persisted_command != command:
+                    self.context.clock.now = previous_time
+                    self.context.clock.tick = previous_tick
+                    return False
+
                 entity = uow.get_entity(command.entity_type, command.entity_id)
                 if entity is None:
                     raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
@@ -99,10 +105,12 @@ class Engine:
                         logical_time=self.context.clock.now,
                         execution_sequence=next_sequence,
                         committed_sequence=next_sequence,
+                        logical_tick=self.context.clock.tick,
                     )
                 )
         except Exception:
             self.context.clock.now = previous_time
+            self.context.clock.tick = previous_tick
             raise
 
         for event in emitted:
@@ -111,7 +119,12 @@ class Engine:
 
 
     def rebuild_backend(self, backend) -> int:
-        """Reconstruct pending durable work into a fresh ephemeral backend."""
+        """Restore the durable recovery position and rebuild pending backend work."""
+
+        position = self.persistence.simulation_position()
+        if position is not None:
+            self.context.clock.now = position.logical_time
+            self.context.clock.tick = position.logical_tick
 
         return RuntimeRebuilder(self.persistence).rebuild(
             backend,
