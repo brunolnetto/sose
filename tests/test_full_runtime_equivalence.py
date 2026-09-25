@@ -6,7 +6,6 @@ from datetime import datetime, timedelta, timezone
 from sose.backends.base import ResourceLease
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
-from sose.core.durable import DurableScheduler
 from sose.core.engine import Engine
 from sose.core.randomness import RandomSource
 from sose.core.runtime import ResourceDefinition
@@ -118,7 +117,7 @@ def build(store, *, now, tick=0):
 
 
 def seed(store):
-    context, _ = build(store, now=ORIGIN)
+    context, engine = build(store, now=ORIGIN)
     work_order = context.entities.create(
         WorkOrder,
         key=("full-runtime-equivalence", 1),
@@ -128,21 +127,19 @@ def seed(store):
         uow.save_entity(work_order)
         uow.save_resource_definition(ResourceDefinition("bay", 1))
 
-    scheduler = DurableScheduler(store)
     for offset, name in (
         (1, "release"),
         (2, "start"),
         (3, "complete"),
         (4, "close"),
     ):
-        scheduler.schedule(
-            context.commands.create(
-                name,
-                target=work_order,
-                due_at=ORIGIN + timedelta(hours=offset),
-                key=("full-runtime-equivalence", work_order.id, name),
-            )
+        command = context.commands.create(
+            name,
+            target=work_order,
+            due_at=ORIGIN + timedelta(hours=offset),
+            key=("full-runtime-equivalence", work_order.id, name),
         )
+        context.schedules.at(command.due_at, command=command)
     return work_order.id
 
 
