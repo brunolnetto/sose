@@ -301,3 +301,33 @@ def test_advance_tick_executes_between_tick_durable_work_at_due_time():
     assert position is not None
     assert position.logical_time == now + timedelta(hours=1)
     assert position.logical_tick == 1
+
+
+def test_advance_tick_executes_multiple_between_tick_items_in_time_order():
+    now, context, persistence, engine, work_order = build_runtime()
+    release = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now + timedelta(minutes=15),
+        key=("between-tick-order", work_order.id, "release"),
+    )
+    start = context.commands.create(
+        "start",
+        target=work_order,
+        due_at=now + timedelta(minutes=30),
+        key=("between-tick-order", work_order.id, "start"),
+    )
+    context.schedules.at(release.due_at, command=release)
+    context.schedules.at(start.due_at, command=start)
+
+    engine.advance_tick()
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "in_progress"
+    assert [event.occurred_at for event in persistence.events()] == [
+        now + timedelta(minutes=15),
+        now + timedelta(minutes=30),
+    ]
+    assert context.clock.now == now + timedelta(hours=1)
+    assert context.clock.tick == 1
