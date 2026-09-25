@@ -1,4 +1,7 @@
 from .base import (
+    ContainerBackend,
+    ContainerRequest,
+    ContainerSnapshot,
     ResourceBackend,
     ResourceLease,
     ResourceRequest,
@@ -9,6 +12,9 @@ from .base import (
 )
 
 __all__ = [
+    "ContainerBackend",
+    "ContainerRequest",
+    "ContainerSnapshot",
     "ResourceBackend",
     "ResourceLease",
     "ResourceRequest",
