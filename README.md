@@ -18,7 +18,7 @@ SOSE is intended for domains with persistent entities, explicit lifecycle rules,
 causal relationships, exceptions and time: MRO, logistics, e-commerce, banking,
 manufacturing, healthcare, telecom, insurance, construction and supply chain.
 
-## v0.5 architecture
+## v0.6 architecture
 
 ```text
 StateChart
@@ -37,9 +37,9 @@ SOSE runtime
     = deterministic execution of all of the above
 ```
 
-The key v0.5 change is introducing a **simulation-backend boundary**. SOSE continues to own domain semantics, determinism, causality and persistence contracts, while SimPy becomes the first optional backend for in-memory discrete-event timing and resource contention.
+v0.6 makes the simulation-backend boundary durable. SOSE owns semantic truth, determinism, causality, scheduling intent, resource ownership, recovery position and persistence; SimPy remains an optional ephemeral execution backend that can be reconstructed after restart.
 
-## v0.5 capabilities
+## v0.6 capabilities
 
 - deterministic logical clock;
 - scoped deterministic randomness;
@@ -72,7 +72,14 @@ The key v0.5 change is introducing a **simulation-backend boundary**. SOSE conti
 - inclusive `run_until()` boundary semantics;
 - deterministic same-time priority ordering;
 - backend-neutral resource requests, leases and snapshots;
-- priority-based resource contention without exposing SimPy objects.
+- priority-based resource contention without exposing SimPy objects;
+- durable scheduled work and persisted commands;
+- durable logical recovery position and tick;
+- durable scenario decisions and activations;
+- durable resource definitions, demands and reservations;
+- crash-safe resource release intents;
+- backend reconstruction from semantic state;
+- multi-restart equivalence across scheduling, scenarios and resources.
 
 ## Behavioral boundary
 
@@ -120,8 +127,8 @@ ctx.transitions
 ctx.scenarios
 ctx.statecharts
 
-# v0.5 execution backends are constructed explicitly
-# and are not yet owned by SimulationContext.
+# execution backends remain explicit and ephemeral;
+# Engine.rebuild_backend(...) reconstructs them from durable state.
 ```
 
 ### Entity creation
@@ -308,7 +315,7 @@ backend.create_resource("technicians", capacity=3)
 
 Domain code does not receive `simpy.Environment`, `simpy.Event`, generators, or native resource-request objects.
 
-v0.5 intentionally keeps this backend ephemeral. The existing SOSE scheduler remains valid until v0.6 defines durable scheduled-work and resource-reservation reconstruction.
+The backend remains intentionally ephemeral in v0.6. Scheduled work, scenario runtime state, resource ownership and the logical recovery position are persisted by SOSE and are sufficient to reconstruct a fresh backend after restart.
 
 ## Kernel invariants
 
@@ -328,7 +335,7 @@ v0.5 intentionally keeps this backend ephemeral. The existing SOSE scheduler rem
 
 ## Development direction
 
-v0.5 establishes the simulation-backend boundary and provides SimPy as the first execution backend. The next milestone is durable discrete-event execution: persisted scheduled work and resource reservations must be sufficient to rebuild a fresh backend after restart without serializing SimPy environments or Python generator stacks.
+v0.6 closes the durable discrete-event runtime milestone. Durable semantic state is authoritative; backend state is ephemeral and reconstructible. The next milestones should build richer operational modeling and persistence capabilities on top of this recovery contract rather than persisting backend-native execution objects.
 
 See:
 
@@ -336,3 +343,4 @@ See:
 - [`docs/probabilistic-transition-graph.md`](docs/probabilistic-transition-graph.md)
 - [`docs/architecture/scenario-engine.md`](docs/architecture/scenario-engine.md)
 - [`docs/architecture/simpy-backend.md`](docs/architecture/simpy-backend.md)
+- [`docs/architecture/durable-runtime.md`](docs/architecture/durable-runtime.md)
