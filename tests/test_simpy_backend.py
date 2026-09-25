@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("simpy")
 
-from sose.backends import ResourceLease, ResourceSnapshot, ScheduledCall
+from sose.backends import ResourceLease, ResourcePreemption, ResourceSnapshot, ScheduledCall
 from sose.backends.simpy import SimPyBackend
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
@@ -272,3 +272,93 @@ def test_aware_datetime_conversion_respects_dst_offset_changes():
 
     assert observed == [target]
     assert runtime.now == target
+
+
+def test_preemptive_resource_interrupts_lower_priority_holder():
+    runtime = backend()
+    runtime.create_preemptive_resource("crew", capacity=1)
+    acquired: list[ResourceLease] = []
+    preempted: list[ResourcePreemption] = []
+
+    runtime.request_preemptive_resource(
+        "crew",
+        request_id="planned",
+        priority=100,
+        on_acquired=acquired.append,
+        on_preempted=preempted.append,
+    )
+    runtime.step()
+
+    runtime.request_preemptive_resource(
+        "crew",
+        request_id="emergency",
+        priority=1,
+        on_acquired=acquired.append,
+        on_preempted=preempted.append,
+    )
+    while len(acquired) < 2 or len(preempted) < 1:
+        assert runtime.step() is True
+
+    assert [lease.request_id for lease in acquired] == ["planned", "emergency"]
+    assert preempted[0].request_id == "planned"
+    assert preempted[0].preempted_by == "emergency"
+    assert preempted[0].resource_name == "crew"
+    assert preempted[0].preempted_at == ORIGIN
+
+
+def test_preemptive_resource_can_disable_preemption_for_waiter():
+    runtime = backend()
+    runtime.create_preemptive_resource("crew", capacity=1)
+    acquired: list[ResourceLease] = []
+    preempted: list[ResourcePreemption] = []
+
+    runtime.request_preemptive_resource(
+        "crew",
+        request_id="holder",
+        priority=100,
+        on_acquired=acquired.append,
+        on_preempted=preempted.append,
+    )
+    runtime.step()
+
+    runtime.request_preemptive_resource(
+        "crew",
+        request_id="urgent-but-nonpreemptive",
+        priority=1,
+        preempt=False,
+        on_acquired=acquired.append,
+        on_preempted=preempted.append,
+    )
+
+    assert runtime.preemptive_resource_snapshot("crew").in_use == 1
+    assert runtime.preemptive_resource_snapshot("crew").queued == 1
+    assert preempted == []
+
+
+def test_releasing_preemptive_lease_grants_next_waiter():
+    runtime = backend()
+    runtime.create_preemptive_resource("crew", capacity=1)
+    acquired: list[ResourceLease] = []
+
+    runtime.request_preemptive_resource(
+        "crew",
+        request_id="holder",
+        on_acquired=acquired.append,
+        on_preempted=lambda _: None,
+    )
+    runtime.step()
+    runtime.request_preemptive_resource(
+        "crew",
+        request_id="waiter",
+        priority=100,
+        preempt=False,
+        on_acquired=acquired.append,
+        on_preempted=lambda _: None,
+    )
+
+    runtime.release_preemptive_resource(acquired[0])
+
+    while len(acquired) < 2:
+        assert runtime.step() is True
+
+    assert acquired[1].request_id == "waiter"
