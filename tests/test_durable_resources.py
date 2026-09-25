@@ -185,3 +185,92 @@ def test_new_request_sequence_advances_past_existing_reservations():
 
     assert demand.sequence == 13
     assert store.resource_demands() == (demand,)
+
+
+class CapacityBackend:
+    def __init__(self):
+        self.capacity = {}
+        self.active = {}
+        self.queues = {}
+        self._sequence = 0
+
+    def create_resource(self, name, *, capacity=1):
+        self.capacity[name] = capacity
+        self.active[name] = {}
+        self.queues[name] = []
+
+    def request_resource(self, name, *, request_id, on_acquired, priority=100):
+        self._sequence += 1
+        entry = (priority, self._sequence, request_id, on_acquired)
+        if len(self.active[name]) < self.capacity[name]:
+            self._grant(name, entry)
+        else:
+            self.queues[name].append(entry)
+            self.queues[name].sort(key=lambda item: (item[0], item[1]))
+        return None
+
+    def release_resource(self, lease):
+        lease_id = lease.lease_id if isinstance(lease, ResourceLease) else lease
+        for name, active in self.active.items():
+            match = next(
+                (request_id for request_id, current in active.items() if current.lease_id == lease_id),
+                None,
+            )
+            if match is not None:
+                active.pop(match)
+                if self.queues[name]:
+                    self._grant(name, self.queues[name].pop(0))
+                return
+        raise KeyError(lease_id)
+
+    def _grant(self, name, entry):
+        _, _, request_id, callback = entry
+        lease = ResourceLease(
+            lease_id=f"lease-{name}-{request_id}",
+            request_id=request_id,
+            resource_name=name,
+            acquired_at=NOW,
+        )
+        self.active[name][request_id] = lease
+        callback(lease)
+
+
+def test_restart_preserves_capacity_and_next_waiter_on_release():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_reservation(
+            ResourceReservation("res-holder", "holder", "bay", NOW, sequence=1)
+        )
+        uow.save_resource_demand(ResourceDemand("normal", "bay", 100, NOW, 2))
+        uow.save_resource_demand(ResourceDemand("urgent", "bay", 1, NOW, 3))
+
+    backend = CapacityBackend()
+    manager = DurableResourceManager(store)
+
+    manager.rebuild_backend(backend)
+
+    assert list(backend.active["bay"]) == ["holder"]
+    assert [entry[2] for entry in backend.queues["bay"]] == ["urgent", "normal"]
+
+    assert manager.release(backend, "res-holder") is True
+
+    assert list(backend.active["bay"]) == ["urgent"]
+    assert [d.request_id for d in store.resource_demands()] == ["normal"]
+    assert [r.request_id for r in store.resource_reservations()] == ["urgent"]
+
+
+def test_resource_release_is_idempotent_after_durable_consumption():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_reservation(
+            ResourceReservation("res-holder", "holder", "bay", NOW, sequence=1)
+        )
+
+    backend = CapacityBackend()
+    manager = DurableResourceManager(store)
+    manager.rebuild_backend(backend)
+
+    assert manager.release(backend, "res-holder") is True
+    assert manager.release(backend, "res-holder") is False
