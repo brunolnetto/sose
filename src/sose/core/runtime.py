@@ -31,7 +31,7 @@ class ScheduledWork:
 
 @dataclass(frozen=True, slots=True)
 class SimulationPosition:
-    """Durable recovery boundary independent from legacy tick semantics."""
+    """Durable recovery boundary for logical time, tick, and execution ordering."""
 
     logical_time: datetime
     execution_sequence: int
