@@ -18,7 +18,7 @@ SOSE is intended for domains with persistent entities, explicit lifecycle rules,
 causal relationships, exceptions and time: MRO, logistics, e-commerce, banking,
 manufacturing, healthcare, telecom, insurance, construction and supply chain.
 
-## v0.4 architecture
+## v0.5 architecture
 
 ```text
 StateChart
@@ -37,9 +37,9 @@ SOSE runtime
     = deterministic execution of all of the above
 ```
 
-The key v0.4 change is making the **Scenario Engine** a first-class runtime layer over the probabilistic behavioral model. Scenarios modify environmental context and transition weights without duplicating StateChart lifecycle logic.
+The key v0.5 change is introducing a **simulation-backend boundary**. SOSE continues to own domain semantics, determinism, causality and persistence contracts, while SimPy becomes the first optional backend for in-memory discrete-event timing and resource contention.
 
-## v0.4 capabilities
+## v0.5 capabilities
 
 - deterministic logical clock;
 - scoped deterministic randomness;
@@ -66,7 +66,13 @@ The key v0.4 change is making the **Scenario Engine** a first-class runtime laye
 - temporary scenario activations;
 - environment attribute overlays;
 - transition-weight modifiers and composite effects;
-- automatic scenario integration with probabilistic transition evaluation.
+- automatic scenario integration with probabilistic transition evaluation;
+- backend-neutral temporal/resource contracts;
+- optional SimPy discrete-event backend;
+- inclusive `run_until()` boundary semantics;
+- deterministic same-time priority ordering;
+- backend-neutral resource requests, leases and snapshots;
+- priority-based resource contention without exposing SimPy objects.
 
 ## Behavioral boundary
 
@@ -113,6 +119,9 @@ ctx.schedules
 ctx.transitions
 ctx.scenarios
 ctx.statecharts
+
+# v0.5 execution backends are constructed explicitly
+# and are not yet owned by SimulationContext.
 ```
 
 ### Entity creation
@@ -252,6 +261,9 @@ src/sose/
 │   ├── engine.py
 │   ├── model.py
 │   └── rules.py
+├── backends/
+│   ├── base.py
+│   └── simpy.py
 ├── persistence/
 │   ├── base.py
 │   └── memory.py
@@ -263,6 +275,40 @@ src/sose/
     ├── statecharts.py
     └── simulation.py
 ```
+
+
+
+## SimPy backend
+
+Install the optional backend with:
+
+```bash
+pip install "sose[simpy]"
+```
+
+The public API remains backend-neutral:
+
+```python
+from datetime import datetime, timedelta, timezone
+
+from sose.backends.simpy import SimPyBackend
+
+backend = SimPyBackend(
+    origin=datetime(2026, 1, 1, tzinfo=timezone.utc),
+)
+
+backend.schedule_after(
+    timedelta(hours=2),
+    callback,
+    priority=100,
+)
+
+backend.create_resource("technicians", capacity=3)
+```
+
+Domain code does not receive `simpy.Environment`, `simpy.Event`, generators, or native resource-request objects.
+
+v0.5 intentionally keeps this backend ephemeral. The existing SOSE scheduler remains valid until v0.6 defines durable scheduled-work and resource-reservation reconstruction.
 
 ## Kernel invariants
 
@@ -282,10 +328,11 @@ src/sose/
 
 ## Development direction
 
-v0.4 establishes deterministic external interventions over the probabilistic behavioral layer. The next architectural milestone is a simulation-backend abstraction, with SimPy as the primary candidate for discrete-event scheduling, waiting and resource contention while SOSE retains persistence, replay and domain semantics.
+v0.5 establishes the simulation-backend boundary and provides SimPy as the first execution backend. The next milestone is durable discrete-event execution: persisted scheduled work and resource reservations must be sufficient to rebuild a fresh backend after restart without serializing SimPy environments or Python generator stacks.
 
 See:
 
 - [`docs/factories.md`](docs/factories.md)
 - [`docs/probabilistic-transition-graph.md`](docs/probabilistic-transition-graph.md)
 - [`docs/architecture/scenario-engine.md`](docs/architecture/scenario-engine.md)
+- [`docs/architecture/simpy-backend.md`](docs/architecture/simpy-backend.md)
