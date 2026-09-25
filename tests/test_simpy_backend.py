@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-simpy = pytest.importorskip("simpy")
+pytest.importorskip("simpy")
 
 from sose.backends import ResourceLease, ResourceSnapshot, ScheduledCall
 from sose.backends.simpy import SimPyBackend
@@ -227,3 +227,22 @@ def test_unknown_resource_and_lease_fail_explicitly():
 
     with pytest.raises(KeyError, match="unknown resource lease"):
         runtime.release_resource("missing")
+
+
+
+def test_backend_accepts_equivalent_aware_datetime_in_another_timezone():
+    runtime = backend()
+    same_instant = (ORIGIN + timedelta(hours=1)).astimezone(timezone(timedelta(hours=1)))
+    observed = []
+
+    runtime.schedule_at(same_instant, lambda: observed.append(runtime.now))
+    runtime.run_until(ORIGIN + timedelta(hours=1))
+
+    assert observed == [ORIGIN + timedelta(hours=1)]
+
+
+def test_backend_rejects_mixed_naive_and_aware_datetimes():
+    runtime = backend()
+
+    with pytest.raises(ValueError, match="timezone awareness"):
+        runtime.schedule_at(datetime(2026, 1, 1, 9), lambda: None)
