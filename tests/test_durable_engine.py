@@ -175,3 +175,47 @@ def test_engine_binds_schedule_factory_to_durable_scheduler():
     assert work[0].command_id == scheduled.command_id
     assert work[0].due_at == scheduled.due_at
     assert work[0].priority == 7
+
+
+class RecordingTemporalBackend:
+    def __init__(self, now):
+        self.now = now
+        self.calls = []
+
+    def schedule_at(self, at, callback, *, priority=100, key=None):
+        self.calls.append((at, priority, key, callback))
+        return None
+
+    def create_resource(self, name, *, capacity=1):
+        return None
+
+    def request_resource(self, name, *, request_id, on_acquired, priority=100):
+        return None
+
+
+def test_schedule_created_after_rebuild_is_enqueued_on_live_backend():
+    now, context, persistence, engine, work_order = build_runtime()
+    backend = RecordingTemporalBackend(now)
+
+    assert engine.rebuild_backend(backend) == 0
+
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        key=("live-durable-schedule", work_order.id),
+    )
+    scheduled = context.schedules.after(hours=2, command=command, priority=7)
+
+    assert len(backend.calls) == 1
+    at, priority, key, callback = backend.calls[0]
+    assert at == now + timedelta(hours=2)
+    assert priority == 7
+    assert key == ("durable-work", persistence.scheduled_work()[0].work_id)
+
+    backend.now = at
+    callback()
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "released"
+    assert persistence.scheduled_work() == ()
