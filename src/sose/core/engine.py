@@ -9,7 +9,7 @@ from sose.scenarios.model import Scenario
 from sose.scenarios.rules import ScenarioRule
 
 from .context import SimulationContext
-from .durable import DurableScheduledItem
+from .durable import DurableScheduledItem, RuntimeRebuilder
 from .events import Command
 from .runtime import SimulationPosition
 
@@ -53,44 +53,80 @@ class Engine:
             self.context.scenarios.on_event(event)
 
 
-    def dispatch_scheduled(self, item: DurableScheduledItem) -> None:
-        """Execute and consume durable scheduled work in one commit boundary."""
+    def dispatch_scheduled(self, item: DurableScheduledItem) -> bool:
+        """Execute and consume durable scheduled work in one commit boundary.
+
+        Returns False for an already-consumed stale callback so backend duplication
+        cannot replay a committed transition.
+        """
 
         command = item.command
         work = item.work
         if command.command_id != work.command_id:
             raise ValueError("scheduled work does not match command")
+        if work.due_at != command.due_at:
+            raise ValueError("scheduled work due time does not match command")
+        previous_time = self.context.clock.now
+        previous_tick = self.context.clock.tick
+        try:
+            with self.persistence.transaction() as uow:
+                persisted_work = uow.get_scheduled_work(work.work_id)
+                persisted_command = uow.get_command(command.command_id)
+                if persisted_work != work or persisted_command != command:
+                    return False
+                if work.due_at < self.context.clock.now:
+                    raise ValueError("scheduled work cannot execute before current logical time")
 
-        with self.persistence.transaction() as uow:
-            entity = uow.get_entity(command.entity_type, command.entity_id)
-            if entity is None:
-                raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
+                self.context.clock.now = work.due_at
+                entity = uow.get_entity(command.entity_type, command.entity_id)
+                if entity is None:
+                    raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
 
-            if self.context.statecharts is None:  # pragma: no cover - constructor invariant
-                raise RuntimeError("statechart factory is not configured")
+                if self.context.statecharts is None:  # pragma: no cover - constructor invariant
+                    raise RuntimeError("statechart factory is not configured")
 
-            chart = self.context.statecharts.bind(entity, caused_by=command)
-            chart.send(command.name, **dict(command.payload))
-            uow.save_entity(entity)
-            emitted = self.context.drain_events()
-            for event in emitted:
-                uow.append_event(event)
+                chart = self.context.statecharts.bind(entity, caused_by=command)
+                chart.send(command.name, **dict(command.payload))
+                uow.save_entity(entity)
+                emitted = self.context.drain_events()
+                for event in emitted:
+                    uow.append_event(event)
 
-            uow.delete_scheduled_work(work.work_id)
-            uow.delete_command(command.command_id)
+                uow.delete_scheduled_work(work.work_id)
+                uow.delete_command(command.command_id)
 
-            previous = self.persistence.simulation_position()
-            next_sequence = 1 if previous is None else previous.execution_sequence + 1
-            uow.set_simulation_position(
-                SimulationPosition(
-                    logical_time=self.context.clock.now,
-                    execution_sequence=next_sequence,
-                    committed_sequence=next_sequence,
+                previous = self.persistence.simulation_position()
+                next_sequence = 1 if previous is None else previous.execution_sequence + 1
+                uow.set_simulation_position(
+                    SimulationPosition(
+                        logical_time=self.context.clock.now,
+                        execution_sequence=next_sequence,
+                        committed_sequence=next_sequence,
+                        logical_tick=self.context.clock.tick,
+                    )
                 )
-            )
+        except Exception:
+            self.context.clock.now = previous_time
+            self.context.clock.tick = previous_tick
+            raise
 
         for event in emitted:
             self.context.scenarios.on_event(event)
+        return True
+
+
+    def rebuild_backend(self, backend) -> int:
+        """Restore the durable recovery position and rebuild pending backend work."""
+
+        position = self.persistence.simulation_position()
+        if position is not None:
+            self.context.clock.now = position.logical_time
+            self.context.clock.tick = position.logical_tick
+
+        return RuntimeRebuilder(self.persistence).rebuild(
+            backend,
+            on_due=self.dispatch_scheduled,
+        )
 
 
     def choose_transition(
@@ -178,7 +214,21 @@ class Engine:
         for command in self.context.scheduler.due(self.context.clock.now):
             self.dispatch(command)
 
+        next_time = self.context.clock.now + self.context.clock.step
+        next_tick = self.context.clock.tick + 1
+        position = self.persistence.simulation_position()
+        execution_sequence = 0 if position is None else position.execution_sequence
+        committed_sequence = 0 if position is None else position.committed_sequence
+
         with self.persistence.transaction() as uow:
             uow.set_committed_tick(self.context.clock.tick)
+            uow.set_simulation_position(
+                SimulationPosition(
+                    logical_time=next_time,
+                    execution_sequence=execution_sequence,
+                    committed_sequence=committed_sequence,
+                    logical_tick=next_tick,
+                )
+            )
 
         self.context.clock.advance()

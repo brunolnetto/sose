@@ -31,13 +31,16 @@ class ScheduledWork:
 
 @dataclass(frozen=True, slots=True)
 class SimulationPosition:
-    """Durable recovery boundary independent from legacy tick semantics."""
+    """Durable recovery boundary for logical time, tick, and execution ordering."""
 
     logical_time: datetime
     execution_sequence: int
     committed_sequence: int
+    logical_tick: int = 0
 
     def __post_init__(self) -> None:
+        if self.logical_tick < 0:
+            raise ValueError("logical_tick must be >= 0")
         if self.execution_sequence < 0:
             raise ValueError("execution_sequence must be >= 0")
         if self.committed_sequence < 0:

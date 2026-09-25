@@ -59,3 +59,96 @@ def test_dispatch_scheduled_commits_transition_and_consumption_atomically():
     assert position.logical_time == now
     assert position.execution_sequence == 1
     assert position.committed_sequence == 1
+
+
+def test_dispatch_scheduled_advances_logical_time_to_due_at():
+    now, context, persistence, engine, work_order = build_runtime()
+    due_at = now + timedelta(hours=2)
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=due_at,
+        key=("durable-release-later", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    scheduler.schedule(command)
+    item = scheduler.pending()[0]
+
+    engine.dispatch_scheduled(item)
+
+    assert context.clock.now == due_at
+    assert persistence.events()[0].occurred_at == due_at
+    assert persistence.simulation_position().logical_time == due_at
+
+
+def test_failed_scheduled_dispatch_rolls_back_work_and_logical_time():
+    now, context, persistence, engine, work_order = build_runtime()
+    due_at = now + timedelta(hours=2)
+    command = context.commands.create(
+        "complete",
+        target=work_order,
+        due_at=due_at,
+        key=("invalid-durable-transition", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    work = scheduler.schedule(command)
+    item = scheduler.pending()[0]
+
+    import pytest
+
+    with pytest.raises(Exception):
+        engine.dispatch_scheduled(item)
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "planned"
+    assert persistence.command(command.command_id) == command
+    assert persistence.scheduled_work() == (work,)
+    assert persistence.events() == ()
+    assert persistence.simulation_position() is None
+    assert context.clock.now == now
+
+
+def test_duplicate_stale_callback_does_not_execute_consumed_work_twice():
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now,
+        key=("duplicate-callback", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    scheduler.schedule(command)
+    item = scheduler.pending()[0]
+
+    assert engine.dispatch_scheduled(item) is True
+    assert engine.dispatch_scheduled(item) is False
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "released"
+    assert len(persistence.events()) == 1
+
+
+def test_stale_callback_cannot_consume_rescheduled_replacement():
+    now, context, persistence, engine, work_order = build_runtime()
+    original = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now,
+        key=("replacement-callback", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    scheduler.schedule(original)
+    stale_item = scheduler.pending()[0]
+
+    assert engine.dispatch_scheduled(stale_item) is True
+
+    replacement = original.rescheduled(now + timedelta(hours=3))
+    replacement_work = scheduler.schedule(replacement)
+
+    assert replacement_work.work_id == stale_item.work.work_id
+    assert engine.dispatch_scheduled(stale_item) is False
+
+    assert persistence.command(replacement.command_id) == replacement
+    assert persistence.scheduled_work() == (replacement_work,)
