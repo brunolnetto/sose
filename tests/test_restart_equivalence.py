@@ -45,9 +45,10 @@ def build_engine(
     persistence: MemoryPersistence,
     *,
     now: datetime,
+    tick: int = 0,
 ) -> tuple[SimulationContext, Engine]:
     context = SimulationContext(
-        clock=SimulationClock(now=now, step=timedelta(hours=1)),
+        clock=SimulationClock(now=now, step=timedelta(hours=1), tick=tick),
         random=RandomSource(root_seed=42),
         scheduler=Scheduler(),
     )
@@ -129,3 +130,57 @@ def test_restart_execution_is_equivalent_to_continuous_execution():
     assert restarted["scheduled_work"] == ()
     assert restarted["position"].execution_sequence == 4
     assert restarted["position"].committed_sequence == 4
+
+
+def test_restart_restores_nonzero_logical_tick():
+    continuous_store = MemoryPersistence()
+    continuous_id = seed_workflow(continuous_store)
+    continuous_context, continuous_engine = build_engine(
+        continuous_store,
+        now=ORIGIN,
+        tick=7,
+    )
+    continuous_backend = ExecutableBackend(now=ORIGIN)
+
+    assert continuous_engine.rebuild_backend(continuous_backend) == 4
+    continuous_backend.run_until(ORIGIN + timedelta(hours=2))
+
+    position = continuous_store.simulation_position()
+    assert position is not None
+    assert position.logical_tick == 7
+    assert continuous_context.clock.tick == 7
+
+    restarted_store = MemoryPersistence()
+    restarted_id = seed_workflow(restarted_store)
+    _, first_engine = build_engine(restarted_store, now=ORIGIN, tick=7)
+    first_backend = ExecutableBackend(now=ORIGIN)
+
+    assert first_engine.rebuild_backend(first_backend) == 4
+    first_backend.run_until(ORIGIN + timedelta(hours=1))
+
+    restart_position = restarted_store.simulation_position()
+    assert restart_position is not None
+    assert restart_position.logical_tick == 7
+
+    restarted_context, second_engine = build_engine(
+        restarted_store,
+        now=restart_position.logical_time,
+        tick=0,
+    )
+    second_backend = ExecutableBackend(now=restart_position.logical_time)
+
+    assert second_engine.rebuild_backend(second_backend) == 3
+    assert restarted_context.clock.tick == 7
+
+    second_backend.run_until(ORIGIN + timedelta(hours=2))
+
+    assert [
+        (event.event_id, event.tick)
+        for event in restarted_store.events()
+    ] == [
+        (event.event_id, event.tick)
+        for event in continuous_store.events()
+    ]
+    assert restarted_store.entity("work_order", restarted_id).state == continuous_store.entity(
+        "work_order", continuous_id
+    ).state
