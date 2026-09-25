@@ -274,3 +274,30 @@ def test_build_demo_schedule_remains_executable_without_backend_rebuild():
     assert stored is not None
     assert stored.state == "released"
     assert persistence.scheduled_work() == ()
+
+
+def test_advance_tick_executes_between_tick_durable_work_at_due_time():
+    now, context, persistence, engine, work_order = build_runtime()
+    due_at = now + timedelta(minutes=30)
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=due_at,
+        key=("between-tick-durable-schedule", work_order.id),
+    )
+    context.schedules.at(due_at, command=command)
+
+    engine.advance_tick()
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "released"
+    assert persistence.scheduled_work() == ()
+    assert persistence.events()[0].occurred_at == due_at
+    assert context.clock.now == now + timedelta(hours=1)
+    assert context.clock.tick == 1
+
+    position = persistence.simulation_position()
+    assert position is not None
+    assert position.logical_time == now + timedelta(hours=1)
+    assert position.logical_tick == 1
