@@ -125,6 +125,14 @@ class RuntimeRebuilder:
                 "backend logical time does not match persisted recovery boundary"
             )
 
+        boundary = position.logical_time if position is not None else backend.now
+        items = DurableScheduler(self._persistence).pending()
+        for item in items:
+            if item.work.due_at < boundary:
+                raise RuntimeError(
+                    f"scheduled work {item.work.work_id} is before recovery boundary"
+                )
+
         if self._context is not None:
             if position is not None:
                 self._context.clock.now = position.logical_time
@@ -134,14 +142,7 @@ class RuntimeRebuilder:
         if self._resources is not None:
             self._resources.rebuild_backend(backend)
 
-        boundary = position.logical_time if position is not None else backend.now
-        items = DurableScheduler(self._persistence).pending()
         for item in items:
-            if item.work.due_at < boundary:
-                raise RuntimeError(
-                    f"scheduled work {item.work.work_id} is before recovery boundary"
-                )
-
             backend.schedule_at(
                 item.work.due_at,
                 lambda item=item: on_due(item),
