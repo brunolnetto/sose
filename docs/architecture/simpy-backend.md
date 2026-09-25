@@ -402,3 +402,36 @@ include:
 
 These should continue to preserve the rule that backend-native state is
 ephemeral and reconstructible.
+
+
+---
+
+## Preemptive resources (v0.7)
+
+SOSE exposes SimPy preemption without exposing SimPy processes or interrupts.
+
+```text
+SOSE request
+    ↓
+backend-neutral priority + preempt flag
+    ↓
+SimPyBackend internal process
+    ↓
+simpy.PreemptiveResource
+    ↓
+ResourceLease / ResourcePreemption callbacks
+```
+
+A holder may receive a backend-neutral `ResourcePreemption` when a higher-priority
+request displaces it. The notification records:
+
+- the displaced lease and request;
+- the resource name;
+- logical preemption time;
+- the request ID that caused the preemption when available.
+
+Native `simpy.Interrupt`, `Preempted`, request objects, and process generators
+remain private adapter state and are never persistence records.
+
+A request can set `preempt=False` to retain priority ordering while waiting for
+normal release instead of displacing an active holder.
