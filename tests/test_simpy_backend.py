@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("simpy")
 
-from sose.backends import ResourceLease, ResourceSnapshot, ScheduledCall
+from sose.backends import ResourceLease, ResourceSnapshot, ScheduledCall, StoreItem, StoreSnapshot
 from sose.backends.simpy import SimPyBackend
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
@@ -272,3 +272,98 @@ def test_aware_datetime_conversion_respects_dst_offset_changes():
 
     assert observed == [target]
     assert runtime.now == target
+
+
+def test_fifo_store_delivers_items_in_put_order():
+    runtime = backend()
+    runtime.create_store("inbox", capacity=2)
+    received: list[StoreItem] = []
+
+    runtime.put_store("inbox", item_id="a", value={"value": 1})
+    runtime.put_store("inbox", item_id="b", value={"value": 2})
+    runtime.get_store("inbox", request_id="get-1", on_received=received.append)
+    runtime.get_store("inbox", request_id="get-2", on_received=received.append)
+
+    runtime.run_until(ORIGIN)
+
+    assert [item.item_id for item in received] == ["a", "b"]
+    snapshot = runtime.store_snapshot("inbox")
+    assert isinstance(snapshot, StoreSnapshot)
+    assert snapshot.size == 0
+
+
+def test_priority_store_delivers_lower_priority_first_then_sequence():
+    runtime = backend()
+    runtime.create_priority_store("dispatch")
+    received: list[StoreItem] = []
+
+    runtime.put_store("dispatch", item_id="normal-1", value=1, priority=100)
+    runtime.put_store("dispatch", item_id="urgent", value=2, priority=1)
+    runtime.put_store("dispatch", item_id="normal-2", value=3, priority=100)
+
+    for i in range(3):
+        runtime.get_store(
+            "dispatch",
+            request_id=f"get-{i}",
+            on_received=received.append,
+        )
+
+    runtime.run_until(ORIGIN)
+
+    assert [item.item_id for item in received] == ["urgent", "normal-1", "normal-2"]
+
+
+def test_filter_store_delivers_first_matching_item_without_consuming_others():
+    runtime = backend()
+    runtime.create_filter_store("parts")
+    received: list[StoreItem] = []
+
+    runtime.put_store("parts", item_id="bolt", value={"kind": "bolt"})
+    runtime.put_store("parts", item_id="bearing", value={"kind": "bearing"})
+    runtime.get_store(
+        "parts",
+        request_id="bearing-request",
+        filter=lambda item: item.value["kind"] == "bearing",
+        on_received=received.append,
+    )
+
+    runtime.run_until(ORIGIN)
+
+    assert [item.item_id for item in received] == ["bearing"]
+    snapshot = runtime.store_snapshot("parts")
+    assert snapshot.size == 1
+
+
+def test_bounded_store_reports_pending_put_until_capacity_frees():
+    runtime = backend()
+    runtime.create_store("buffer", capacity=1)
+
+    runtime.put_store("buffer", item_id="first", value=1)
+    runtime.put_store("buffer", item_id="second", value=2)
+    runtime.run_until(ORIGIN)
+
+    snapshot = runtime.store_snapshot("buffer")
+    assert snapshot.size == 1
+    assert snapshot.queued_puts == 1
+
+    received: list[StoreItem] = []
+    runtime.get_store("buffer", request_id="get-first", on_received=received.append)
+    runtime.run_until(ORIGIN)
+
+    snapshot = runtime.store_snapshot("buffer")
+    assert [item.item_id for item in received] == ["first"]
+    assert snapshot.size == 1
+    assert snapshot.queued_puts == 0
+
+
+def test_duplicate_store_item_and_request_ids_are_rejected():
+    runtime = backend()
+    runtime.create_store("inbox")
+    runtime.put_store("inbox", item_id="item-1", value=1)
+
+    with pytest.raises(ValueError, match="already exists"):
+        runtime.put_store("inbox", item_id="item-1", value=2)
+
+    runtime.get_store("inbox", request_id="get-1", on_received=lambda _: None)
+    with pytest.raises(ValueError, match="already exists"):
+        runtime.get_store("inbox", request_id="get-1", on_received=lambda _: None)
