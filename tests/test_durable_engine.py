@@ -8,6 +8,7 @@ from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.examples.mro.entities import WorkOrder
+from sose.examples.mro.simulation import build_demo
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
 
@@ -152,3 +153,181 @@ def test_stale_callback_cannot_consume_rescheduled_replacement():
 
     assert persistence.command(replacement.command_id) == replacement
     assert persistence.scheduled_work() == (replacement_work,)
+
+
+def test_engine_binds_schedule_factory_to_durable_scheduler():
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        key=("schedule-factory-durable", work_order.id),
+    )
+
+    scheduled = context.schedules.after(
+        hours=2,
+        command=command,
+        priority=7,
+    )
+
+    assert scheduled.due_at == now + timedelta(hours=2)
+    assert context.scheduler.due(now + timedelta(hours=2)) == []
+    work = persistence.scheduled_work()
+    assert len(work) == 1
+    assert work[0].command_id == scheduled.command_id
+    assert work[0].due_at == scheduled.due_at
+    assert work[0].priority == 7
+
+
+class RecordingTemporalBackend:
+    def __init__(self, now):
+        self.now = now
+        self.calls = []
+
+    def schedule_at(self, at, callback, *, priority=100, key=None):
+        self.calls.append((at, priority, key, callback))
+        return None
+
+    def create_resource(self, name, *, capacity=1):
+        return None
+
+    def request_resource(self, name, *, request_id, on_acquired, priority=100):
+        return None
+
+
+def test_schedule_created_after_rebuild_is_enqueued_on_live_backend():
+    now, context, persistence, engine, work_order = build_runtime()
+    backend = RecordingTemporalBackend(now)
+
+    assert engine.rebuild_backend(backend) == 0
+
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        key=("live-durable-schedule", work_order.id),
+    )
+    scheduled = context.schedules.after(hours=2, command=command, priority=7)
+
+    assert len(backend.calls) == 1
+    at, priority, key, callback = backend.calls[0]
+    assert at == now + timedelta(hours=2)
+    assert priority == 7
+    assert key == ("durable-work", persistence.scheduled_work()[0].work_id)
+
+    backend.now = at
+    callback()
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "released"
+    assert persistence.scheduled_work() == ()
+
+
+def test_durable_schedule_executes_on_tick_without_backend_rebuild():
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now,
+        key=("tick-durable-schedule", work_order.id),
+    )
+    context.schedules.at(now, command=command)
+
+    engine.advance_tick()
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "released"
+    assert persistence.scheduled_work() == ()
+    assert len(persistence.events()) == 1
+
+
+def test_backend_callback_after_tick_execution_is_stale_and_harmless():
+    now, context, persistence, engine, work_order = build_runtime()
+    backend = RecordingTemporalBackend(now)
+    engine.rebuild_backend(backend)
+
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now,
+        key=("tick-and-backend-durable-schedule", work_order.id),
+    )
+    context.schedules.at(now, command=command)
+
+    assert len(backend.calls) == 1
+    callback = backend.calls[0][3]
+
+    engine.advance_tick()
+    assert persistence.entity("work_order", work_order.id).state == "released"
+    assert len(persistence.events()) == 1
+
+    assert callback() is False
+    assert len(persistence.events()) == 1
+
+
+def test_build_demo_schedule_remains_executable_without_backend_rebuild():
+    engine, persistence, work_order_id = build_demo()
+
+    engine.advance_tick()
+
+    stored = persistence.entity("work_order", work_order_id)
+    assert stored is not None
+    assert stored.state == "released"
+    assert persistence.scheduled_work() == ()
+
+
+def test_advance_tick_executes_between_tick_durable_work_at_due_time():
+    now, context, persistence, engine, work_order = build_runtime()
+    due_at = now + timedelta(minutes=30)
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=due_at,
+        key=("between-tick-durable-schedule", work_order.id),
+    )
+    context.schedules.at(due_at, command=command)
+
+    engine.advance_tick()
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "released"
+    assert persistence.scheduled_work() == ()
+    assert persistence.events()[0].occurred_at == due_at
+    assert context.clock.now == now + timedelta(hours=1)
+    assert context.clock.tick == 1
+
+    position = persistence.simulation_position()
+    assert position is not None
+    assert position.logical_time == now + timedelta(hours=1)
+    assert position.logical_tick == 1
+
+
+def test_advance_tick_executes_multiple_between_tick_items_in_time_order():
+    now, context, persistence, engine, work_order = build_runtime()
+    release = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now + timedelta(minutes=15),
+        key=("between-tick-order", work_order.id, "release"),
+    )
+    start = context.commands.create(
+        "start",
+        target=work_order,
+        due_at=now + timedelta(minutes=30),
+        key=("between-tick-order", work_order.id, "start"),
+    )
+    context.schedules.at(release.due_at, command=release)
+    context.schedules.at(start.due_at, command=start)
+
+    engine.advance_tick()
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "in_progress"
+    assert [event.occurred_at for event in persistence.events()] == [
+        now + timedelta(minutes=15),
+        now + timedelta(minutes=30),
+    ]
+    assert context.clock.now == now + timedelta(hours=1)
+    assert context.clock.tick == 1

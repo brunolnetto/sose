@@ -120,3 +120,95 @@ def test_rebuilder_rejects_work_before_backend_time_without_saved_position():
 
     with pytest.raises(RuntimeError, match="before recovery boundary"):
         RuntimeRebuilder(store).rebuild(backend, on_due=lambda _: None)
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = ORIGIN
+        self.tick = 0
+
+
+class FakeScenarios:
+    def __init__(self):
+        self.restored = []
+
+    def restore_state(self, state):
+        self.restored.append(state)
+
+
+class FakeContext:
+    def __init__(self):
+        self.clock = FakeClock()
+        self.scenarios = FakeScenarios()
+
+
+class FakeResources:
+    def __init__(self):
+        self.backends = []
+
+    def rebuild_backend(self, backend):
+        self.backends.append(backend)
+        return 0
+
+
+def test_rebuilder_restores_runtime_position_scenarios_and_resources():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.set_simulation_position(
+            SimulationPosition(
+                logical_time=ORIGIN + timedelta(hours=2),
+                execution_sequence=3,
+                committed_sequence=3,
+                logical_tick=9,
+            )
+        )
+
+    backend = RecordingBackend(now=ORIGIN + timedelta(hours=2))
+    context = FakeContext()
+    resources = FakeResources()
+
+    rebuilt = RuntimeRebuilder(
+        store,
+        context=context,
+        resources=resources,
+    ).rebuild(
+        backend,
+        on_due=lambda _: None,
+    )
+
+    assert rebuilt == 0
+    assert context.clock.now == ORIGIN + timedelta(hours=2)
+    assert context.clock.tick == 9
+    assert context.scenarios.restored == [None]
+    assert resources.backends == [backend]
+
+
+def test_rebuilder_validates_all_scheduled_work_before_resource_reconstruction():
+    store = MemoryPersistence()
+    scheduler = DurableScheduler(store)
+    scheduler.schedule(command("stale", ORIGIN))
+
+    with store.transaction() as uow:
+        uow.set_simulation_position(
+            SimulationPosition(
+                logical_time=ORIGIN + timedelta(hours=1),
+                execution_sequence=1,
+                committed_sequence=1,
+                logical_tick=1,
+            )
+        )
+
+    backend = RecordingBackend(now=ORIGIN + timedelta(hours=1))
+    resources = FakeResources()
+
+    with pytest.raises(RuntimeError, match="before recovery boundary"):
+        RuntimeRebuilder(
+            store,
+            context=FakeContext(),
+            resources=resources,
+        ).rebuild(
+            backend,
+            on_due=lambda _: None,
+        )
+
+    assert resources.backends == []

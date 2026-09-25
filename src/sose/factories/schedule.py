@@ -14,6 +14,10 @@ class ScheduleFactory:
         self._now = now
         self._scheduler = scheduler
 
+    def bind_scheduler(self, scheduler) -> None:
+        """Replace the scheduling mechanism while preserving the domain-facing API."""
+        self._scheduler = scheduler
+
     def at(self, at: datetime, *, command: Command, priority: int = 100) -> Command:
         if command.due_at != at:
             command = command.rescheduled(at)

@@ -481,3 +481,78 @@ def test_release_intent_is_persisted_before_backend_release():
     assert len(observed) == 1
     assert observed[0].reservation_id == "res-holder"
     assert store.resource_release_intents() == ()
+
+
+def test_request_failure_after_demand_persistence_keeps_recoverable_demand():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+
+    class FailingRequestBackend:
+        def request_resource(self, name, *, request_id, on_acquired, priority=100):
+            raise RuntimeError("backend request failed")
+
+    manager = DurableResourceManager(store)
+
+    with pytest.raises(RuntimeError, match="backend request failed"):
+        manager.request(
+            FailingRequestBackend(),
+            resource_name="bay",
+            request_id="wo-1",
+            requested_at=NOW,
+            priority=10,
+        )
+
+    assert [d.request_id for d in store.resource_demands()] == ["wo-1"]
+    assert store.resource_reservations() == ()
+
+
+def test_grant_commit_failure_leaves_demand_recoverable_on_next_runtime():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+
+    class GrantingBackend:
+        def __init__(self):
+            self.active = {}
+
+        def create_resource(self, name, *, capacity=1):
+            self.active[name] = {}
+
+        def request_resource(self, name, *, request_id, on_acquired, priority=100):
+            lease = ResourceLease(
+                lease_id=f"lease-{request_id}",
+                request_id=request_id,
+                resource_name=name,
+                acquired_at=NOW,
+            )
+            self.active.setdefault(name, {})[request_id] = lease
+            on_acquired(lease)
+
+    class FailingGrantManager(DurableResourceManager):
+        def commit_grant(self, *, request_id, acquired_at):
+            raise RuntimeError("grant commit failed")
+
+    first = GrantingBackend()
+    first.create_resource("bay", capacity=1)
+    manager = FailingGrantManager(store)
+
+    with pytest.raises(RuntimeError, match="grant commit failed"):
+        manager.request(
+            first,
+            resource_name="bay",
+            request_id="wo-1",
+            requested_at=NOW,
+            priority=10,
+        )
+
+    assert [d.request_id for d in store.resource_demands()] == ["wo-1"]
+    assert store.resource_reservations() == ()
+
+    second = GrantingBackend()
+    recovered = DurableResourceManager(store)
+    recovered.rebuild_backend(second)
+
+    assert store.resource_demands() == ()
+    assert [r.request_id for r in store.resource_reservations()] == ["wo-1"]
+    assert list(second.active["bay"]) == ["wo-1"]

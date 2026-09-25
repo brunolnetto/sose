@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import heapq
+
+import pytest
 from datetime import datetime, timedelta, timezone
 
 from sose.core.clock import SimulationClock
@@ -209,3 +211,54 @@ def test_advance_tick_persists_and_restores_next_tick_boundary():
     assert restarted_engine.rebuild_backend(backend) == 0
     assert restarted_context.clock.now == position.logical_time
     assert restarted_context.clock.tick == 4
+
+
+def test_interrupted_tick_rolls_back_durable_items_and_preserves_tick_start():
+    store = MemoryPersistence()
+    context, engine = build_engine(store, now=ORIGIN, tick=0)
+    work_order = context.entities.create(
+        WorkOrder,
+        key=("interrupted-tick-boundary", 1),
+        state="planned",
+    )
+    with store.transaction() as uow:
+        uow.save_entity(work_order)
+        uow.set_simulation_position(
+            SimulationPosition(
+                logical_time=ORIGIN,
+                execution_sequence=0,
+                committed_sequence=0,
+                logical_tick=0,
+            )
+        )
+
+    scheduler = DurableScheduler(store)
+    release = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=ORIGIN + timedelta(minutes=15),
+        key=("interrupted-tick-boundary", work_order.id, "release"),
+    )
+    invalid_complete = context.commands.create(
+        "complete",
+        target=work_order,
+        due_at=ORIGIN + timedelta(minutes=30),
+        key=("interrupted-tick-boundary", work_order.id, "complete"),
+    )
+    scheduler.schedule(release)
+    scheduler.schedule(invalid_complete)
+
+    with pytest.raises(Exception):
+        engine.advance_tick()
+
+    position = store.simulation_position()
+    assert position is not None
+    assert position.logical_time == ORIGIN
+    assert position.logical_tick == 0
+    assert position.execution_sequence == 0
+    assert position.committed_sequence == 0
+    assert store.entity("work_order", work_order.id).state == "planned"
+    assert store.events() == ()
+    assert len(store.scheduled_work()) == 2
+    assert context.clock.now == ORIGIN
+    assert context.clock.tick == 0
