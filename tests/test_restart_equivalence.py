@@ -10,6 +10,7 @@ from sose.core.context import SimulationContext
 from sose.core.durable import DurableScheduler
 from sose.core.engine import Engine
 from sose.core.randomness import RandomSource
+from sose.core.runtime import SimulationPosition
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.examples.mro.entities import WorkOrder
