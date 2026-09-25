@@ -119,7 +119,7 @@ def test_restored_decision_prevents_duplicate_activation_for_same_tick():
 def test_event_triggered_scenario_state_is_durable_across_restart():
     scenario = Scenario(
         name="release_pressure",
-        trigger=EventTrigger(event="work_order.released", entity_type="work_order"),
+        trigger=EventTrigger(event="entity.state_transition", entity_type="work_order"),
         duration=timedelta(hours=3),
         effects=(AttributeEffect("release.pressure", "high"),),
     )
