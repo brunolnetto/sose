@@ -261,10 +261,10 @@ class SimPyBackend:
             raise KeyError(f"unknown resource: {name}") from exc
 
     def _to_sim_time(self, value: datetime) -> float:
-        if self._origin.tzinfo != value.tzinfo:
-            # Datetime arithmetic can hide accidental naive/aware or timezone
-            # contract mismatches. Require one explicit SOSE timeline.
-            raise ValueError("backend datetime timezone must match origin timezone")
+        origin_aware = self._origin.tzinfo is not None and self._origin.utcoffset() is not None
+        value_aware = value.tzinfo is not None and value.utcoffset() is not None
+        if origin_aware != value_aware:
+            raise ValueError("backend datetimes must have consistent timezone awareness")
         return (value - self._origin).total_seconds()
 
     def _from_sim_time(self, value: float) -> datetime:
