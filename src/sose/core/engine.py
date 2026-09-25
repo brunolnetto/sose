@@ -11,6 +11,7 @@ from sose.scenarios.rules import ScenarioRule
 from .context import SimulationContext
 from .durable import DurableScheduledItem, RuntimeRebuilder
 from .events import Command
+from .resources import DurableResourceManager
 from .runtime import SimulationPosition
 
 
@@ -30,6 +31,7 @@ class Engine:
         self.registry = registry
         self.persistence = persistence
         self.rules_for = rules_for or (lambda _: ())
+        self.resources = DurableResourceManager(persistence)
         self.context.scenarios.register_many(scenarios)
         self.context.bind_statecharts(registry)
 
@@ -130,6 +132,7 @@ class Engine:
             self.context.clock.now = position.logical_time
             self.context.clock.tick = position.logical_tick
         self.context.scenarios.restore_state(self.persistence.scenario_state())
+        self.resources.rebuild_backend(backend)
 
         return RuntimeRebuilder(self.persistence).rebuild(
             backend,
