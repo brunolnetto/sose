@@ -435,3 +435,44 @@ remain private adapter state and are never persistence records.
 
 A request can set `preempt=False` to retain priority ordering while waiting for
 normal release instead of displacing an active holder.
+
+
+---
+
+## Preemptive resources (v0.7)
+
+Preemption remains an optional backend capability rather than part of the base
+`ResourceBackend` contract.
+
+The backend-neutral surface is:
+
+```text
+PreemptiveResourceBackend
+├── create_preemptive_resource
+├── request_preemptive_resource
+├── release_preemptive_resource
+└── preemptive_resource_snapshot
+```
+
+A preempted holder receives a `ResourcePreemption` value containing only SOSE
+metadata:
+
+```text
+request_id
+resource_name
+preempted_by
+preempted_at
+```
+
+No `simpy.Interrupt`, `Preempted`, `Process`, or generator crosses the adapter
+boundary.
+
+Internally the SimPy adapter uses one process per preemptive request because
+SimPy delivers preemption as a process interrupt. That process is disposable
+execution state. Durable ownership and restart semantics must continue to be
+modeled by SOSE records if preemptive resources are later promoted into the
+durable runtime layer.
+
+Priority semantics follow SimPy: lower numeric priority is more important, and
+`preempt=False` permits priority queueing without interrupting the current
+holder.
