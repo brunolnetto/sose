@@ -32,7 +32,8 @@ class Engine:
         self.persistence = persistence
         self.rules_for = rules_for or (lambda _: ())
         self.resources = DurableResourceManager(persistence)
-        self.context.schedules.bind_scheduler(DurableScheduler(persistence))
+        self.scheduler = DurableScheduler(persistence)
+        self.context.schedules.bind_scheduler(self.scheduler)
         self.context.scenarios.register_many(scenarios)
         self.context.bind_statecharts(registry)
 
@@ -126,9 +127,10 @@ class Engine:
 
 
     def rebuild_backend(self, backend) -> int:
-        """Restore durable runtime state into a fresh ephemeral backend."""
+        """Restore durable runtime state and attach the fresh live backend."""
 
-        return RuntimeRebuilder(
+        self.scheduler.detach_backend()
+        rebuilt = RuntimeRebuilder(
             self.persistence,
             context=self.context,
             resources=self.resources,
@@ -136,6 +138,11 @@ class Engine:
             backend,
             on_due=self.dispatch_scheduled,
         )
+        self.scheduler.attach_backend(
+            backend,
+            on_due=self.dispatch_scheduled,
+        )
+        return rebuilt
 
 
     def choose_transition(
