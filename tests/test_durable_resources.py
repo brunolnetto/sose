@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from sose.core.resources import (
     DurableResourceManager,
     ResourceDefinition,
@@ -12,6 +14,7 @@ from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
+from sose.core.runtime import SimulationPosition
 from sose.domain.registry import DomainRegistry
 from sose.persistence.memory import MemoryPersistence
 
@@ -313,3 +316,89 @@ def test_engine_rebuild_restores_durable_resource_state():
     assert engine.rebuild_backend(backend) == 0
     assert list(backend.active["bay"]) == ["holder"]
     assert [entry[2] for entry in backend.queues["bay"]] == ["urgent", "normal"]
+
+
+def test_backend_release_failure_preserves_durable_reservation():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_reservation(
+            ResourceReservation("res-holder", "holder", "bay", NOW, sequence=1)
+        )
+
+    class FailingReleaseBackend(CapacityBackend):
+        def release_resource(self, lease):
+            raise RuntimeError("backend release failed")
+
+    backend = FailingReleaseBackend()
+    manager = DurableResourceManager(store)
+    manager.rebuild_backend(backend)
+
+    with pytest.raises(RuntimeError, match="backend release failed"):
+        manager.release(backend, "res-holder")
+
+    assert [r.reservation_id for r in store.resource_reservations()] == ["res-holder"]
+
+
+def test_release_before_reconstructed_lease_is_available_preserves_reservation():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_reservation(
+            ResourceReservation("res-holder", "holder", "bay", NOW, sequence=1)
+        )
+
+    backend = RecordingResourceBackend()
+    manager = DurableResourceManager(store)
+    manager.rebuild_backend(backend)
+
+    with pytest.raises(RuntimeError, match="backend lease is not reconstructed"):
+        manager.release(backend, "res-holder")
+
+    assert [r.reservation_id for r in store.resource_reservations()] == ["res-holder"]
+
+
+def test_recovery_time_mismatch_does_not_mutate_resource_state():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.set_simulation_position(
+            SimulationPosition(
+                logical_time=NOW,
+                execution_sequence=0,
+                committed_sequence=0,
+                logical_tick=0,
+            )
+        )
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_demand(ResourceDemand("waiter", "bay", 10, NOW, 1))
+
+    context = SimulationContext(
+        clock=SimulationClock(NOW, timedelta(hours=1)),
+        random=RandomSource(42),
+        scheduler=Scheduler(),
+    )
+    engine = Engine(context=context, registry=DomainRegistry(), persistence=store)
+    backend = CapacityBackend(now=NOW + timedelta(hours=1))
+
+    with pytest.raises(RuntimeError, match="recovery boundary"):
+        engine.rebuild_backend(backend)
+
+    assert store.resource_demands()[0].request_id == "waiter"
+    assert store.resource_reservations() == ()
+    assert backend.capacity == {}
+
+
+def test_persistence_rejects_reservation_for_still_pending_request():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_demand(ResourceDemand("wo-1", "bay", 10, NOW, 1))
+
+    with pytest.raises(ValueError, match="still pending"):
+        with store.transaction() as uow:
+            uow.save_resource_reservation(
+                ResourceReservation("res-1", "wo-1", "bay", NOW, sequence=1)
+            )
+
+    assert [d.request_id for d in store.resource_demands()] == ["wo-1"]
+    assert store.resource_reservations() == ()
