@@ -58,6 +58,14 @@ class ScenarioEngine:
 
     @property
     def active_activations(self) -> tuple[ScenarioActivation, ...]:
+        now = self._now()
+        return tuple(
+            activation
+            for activation in self._ordered_activations()
+            if activation.expires_at is None or activation.expires_at > now
+        )
+
+    def _ordered_activations(self) -> tuple[ScenarioActivation, ...]:
         return tuple(self._activations[key] for key in sorted(self._activations))
 
     @property
@@ -65,7 +73,6 @@ class ScenarioEngine:
         return tuple(self._decisions[key] for key in sorted(self._decisions))
 
     def on_tick(self) -> tuple[ScenarioDecision, ...]:
-        self.expire_due()
         return self.evaluate(
             ScenarioSignal(
                 kind=ScenarioSignalKind.TICK,
@@ -75,7 +82,6 @@ class ScenarioEngine:
         )
 
     def on_event(self, event: DomainEvent) -> tuple[ScenarioDecision, ...]:
-        self.expire_due()
         return self.evaluate(
             ScenarioSignal(
                 kind=ScenarioSignalKind.EVENT,
@@ -86,6 +92,7 @@ class ScenarioEngine:
         )
 
     def evaluate(self, signal: ScenarioSignal) -> tuple[ScenarioDecision, ...]:
+        self.expire_due(signal.now)
         decisions: list[ScenarioDecision] = []
         scenarios = sorted(self._scenarios.values(), key=lambda s: (s.priority, s.name))
         for scenario in scenarios:
@@ -185,7 +192,7 @@ class ScenarioEngine:
         now = at or self._now()
         expired = tuple(
             activation
-            for activation in self.active_activations
+            for activation in self._ordered_activations()
             if activation.expires_at is not None and activation.expires_at <= now
         )
         for activation in expired:
