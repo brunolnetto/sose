@@ -49,6 +49,21 @@ class _LeaseState:
     lease: ResourceLease
 
 
+@dataclass(slots=True)
+class _PreemptiveResourceState:
+    resource: PreemptiveResource
+    requests: dict[str, PriorityRequest]
+    holds: dict[str, Event]
+
+
+@dataclass(slots=True)
+class _PreemptiveLeaseState:
+    resource_name: str
+    request: PriorityRequest
+    lease: ResourceLease
+    hold: Event
+
+
 class _ScheduledCallback(Event):
     """Priority-aware delayed callback event isolated behind the SimPy adapter.
 
@@ -90,6 +105,9 @@ class SimPyBackend:
         self._resources: dict[str, _ResourceState] = {}
         self._leases: dict[str, _LeaseState] = {}
         self._request_to_lease: dict[str, str] = {}
+        self._preemptive_resources: dict[str, _PreemptiveResourceState] = {}
+        self._preemptive_leases: dict[str, _PreemptiveLeaseState] = {}
+        self._preemptive_process_to_request: dict[object, str] = {}
         self._preemptive_resources: dict[str, _PreemptiveResourceState] = {}
         self._preemptive_leases: dict[str, _PreemptiveLeaseState] = {}
         self._preemptive_request_to_lease: dict[str, str] = {}
@@ -276,6 +294,123 @@ class SimPyBackend:
             queued=len(resource.queue),
         )
 
+    def create_preemptive_resource(self, name: str, *, capacity: int = 1) -> None:
+        if not name:
+            raise ValueError("resource name cannot be empty")
+        if capacity < 1:
+            raise ValueError("resource capacity must be >= 1")
+        if name in self._preemptive_resources or name in self._resources:
+            raise ValueError(f"resource already exists: {name}")
+        self._preemptive_resources[name] = _PreemptiveResourceState(
+            resource=PreemptiveResource(self._env, capacity=capacity),
+            requests={},
+            holds={},
+        )
+
+    def request_preemptive_resource(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        on_acquired: Callable[[ResourceLease], None],
+        on_preempted: Callable[[ResourcePreemption], None],
+        priority: int = 100,
+        preempt: bool = True,
+    ) -> ResourceRequest:
+        state = self._preemptive_resource(name)
+        if not request_id:
+            raise ValueError("request_id cannot be empty")
+        if (
+            any(request_id in resource_state.requests for resource_state in self._resources.values())
+            or any(
+                request_id in resource_state.requests
+                for resource_state in self._preemptive_resources.values()
+            )
+            or request_id in self._request_to_lease
+        ):
+            raise ValueError(f"resource request already exists: {request_id}")
+
+        requested_at = self.now
+        public_request = ResourceRequest(
+            request_id=request_id,
+            resource_name=name,
+            priority=priority,
+            requested_at=requested_at,
+        )
+
+        def user():
+            process = self._env.active_process
+            if process is None:  # pragma: no cover - SimPy process invariant
+                raise RuntimeError("preemptive resource request is not running in a process")
+            self._preemptive_process_to_request[process] = request_id
+            request = state.resource.request(priority=priority, preempt=preempt)
+            state.requests[request_id] = request
+            lease_id: str | None = None
+            try:
+                yield request
+                lease = ResourceLease(
+                    lease_id=deterministic_id("resource-lease", name, request_id),
+                    request_id=request_id,
+                    resource_name=name,
+                    acquired_at=self.now,
+                )
+                hold = self._env.event()
+                state.holds[request_id] = hold
+                self._preemptive_leases[lease.lease_id] = _PreemptiveLeaseState(
+                    resource_name=name,
+                    request=request,
+                    lease=lease,
+                    hold=hold,
+                )
+                self._request_to_lease[request_id] = lease.lease_id
+                lease_id = lease.lease_id
+                on_acquired(lease)
+                try:
+                    yield hold
+                except simpy.Interrupt as interrupt:
+                    cause = interrupt.cause
+                    preempted_by = self._preemptive_process_to_request.get(
+                        getattr(cause, "by", None)
+                    )
+                    on_preempted(
+                        ResourcePreemption(
+                            request_id=request_id,
+                            resource_name=name,
+                            preempted_by=preempted_by,
+                            preempted_at=self.now,
+                        )
+                    )
+            finally:
+                state.requests.pop(request_id, None)
+                state.holds.pop(request_id, None)
+                self._preemptive_process_to_request.pop(process, None)
+                if lease_id is not None:
+                    self._preemptive_leases.pop(lease_id, None)
+                    self._request_to_lease.pop(request_id, None)
+                if request in state.resource.users:
+                    state.resource.release(request)
+
+        self._env.process(user())
+        return public_request
+
+    def release_preemptive_resource(self, lease: ResourceLease | str) -> None:
+        lease_id = lease.lease_id if isinstance(lease, ResourceLease) else lease
+        state = self._preemptive_leases.get(lease_id)
+        if state is None:
+            raise KeyError(f"unknown preemptive resource lease: {lease_id}")
+        if not state.hold.triggered:
+            state.hold.succeed()
+
+    def preemptive_resource_snapshot(self, name: str) -> ResourceSnapshot:
+        state = self._preemptive_resource(name)
+        resource = state.resource
+        return ResourceSnapshot(
+            name=name,
+            capacity=resource.capacity,
+            in_use=resource.count,
+            queued=len(resource.queue),
+        )
+
 
     def create_preemptive_resource(self, name: str, *, capacity: int = 1) -> None:
         if not name:
@@ -403,6 +538,12 @@ class SimPyBackend:
             in_use=resource.count,
             queued=len(resource.queue),
         )
+
+    def _preemptive_resource(self, name: str) -> _PreemptiveResourceState:
+        try:
+            return self._preemptive_resources[name]
+        except KeyError as exc:
+            raise KeyError(f"unknown preemptive resource: {name}") from exc
 
     def _preemptive_resource(self, name: str) -> _PreemptiveResourceState:
         try:
