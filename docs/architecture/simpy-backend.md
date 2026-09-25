@@ -408,43 +408,8 @@ ephemeral and reconstructible.
 
 ## Preemptive resources (v0.7)
 
-SOSE exposes SimPy preemption without exposing SimPy processes or interrupts.
-
-```text
-SOSE request
-    ↓
-backend-neutral priority + preempt flag
-    ↓
-SimPyBackend internal process
-    ↓
-simpy.PreemptiveResource
-    ↓
-ResourceLease / ResourcePreemption callbacks
-```
-
-A holder may receive a backend-neutral `ResourcePreemption` when a higher-priority
-request displaces it. The notification records:
-
-- the displaced lease and request;
-- the resource name;
-- logical preemption time;
-- the request ID that caused the preemption when available.
-
-Native `simpy.Interrupt`, `Preempted`, request objects, and process generators
-remain private adapter state and are never persistence records.
-
-A request can set `preempt=False` to retain priority ordering while waiting for
-normal release instead of displacing an active holder.
-
-
----
-
-## Preemptive resources (v0.7)
-
-Preemption remains an optional backend capability rather than part of the base
-`ResourceBackend` contract.
-
-The backend-neutral surface is:
+Preemption is an optional backend capability exposed through
+`PreemptiveResourceBackend`, not an expansion of the base `ResourceBackend`.
 
 ```text
 PreemptiveResourceBackend
@@ -454,25 +419,13 @@ PreemptiveResourceBackend
 └── preemptive_resource_snapshot
 ```
 
-A preempted holder receives a `ResourcePreemption` value containing only SOSE
-metadata:
+A displaced holder receives a backend-neutral `ResourcePreemption` describing
+the displaced lease/request, resource, logical preemption time, and the request
+that caused preemption when known.
 
-```text
-request_id
-resource_name
-preempted_by
-preempted_at
-```
+The SimPy adapter internally creates a process per preemptive request because
+SimPy delivers preemption as a process interrupt. Those processes, interrupts,
+native requests, and generator continuations remain private ephemeral state.
 
-No `simpy.Interrupt`, `Preempted`, `Process`, or generator crosses the adapter
-boundary.
-
-Internally the SimPy adapter uses one process per preemptive request because
-SimPy delivers preemption as a process interrupt. That process is disposable
-execution state. Durable ownership and restart semantics must continue to be
-modeled by SOSE records if preemptive resources are later promoted into the
-durable runtime layer.
-
-Priority semantics follow SimPy: lower numeric priority is more important, and
-`preempt=False` permits priority queueing without interrupting the current
-holder.
+Lower numeric priority remains more important. Setting `preempt=False` keeps
+priority queueing but prevents that request from interrupting an active holder.
