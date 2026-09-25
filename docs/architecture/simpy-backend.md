@@ -406,35 +406,30 @@ ephemeral and reconstructible.
 
 ---
 
-## Stores (v0.7)
+## Containers (v0.7)
 
-SOSE exposes three backend-neutral storage mechanics:
+SOSE exposes quantitative capacity through a backend-neutral Container contract.
 
-- FIFO Store;
-- PriorityStore;
-- FilterStore.
+A container has:
 
-The public surface uses `StoreItem`, `StoreRequest`, and `StoreSnapshot`.
-Native SimPy put/get events remain private.
+- finite capacity;
+- current level;
+- blocking put operations;
+- blocking get operations.
 
-Priority ordering is implemented with an internal envelope:
+The public surface uses `ContainerRequest` and `ContainerSnapshot`.
 
 ```text
-(priority, insertion sequence, StoreItem)
+put(amount)
+    waits while level + amount > capacity
+
+get(amount)
+    waits while level < amount
 ```
 
-so equal-priority items remain deterministic without requiring arbitrary user
-payloads to be comparable.
+Completion callbacks receive the original backend-neutral request metadata. Native
+`simpy.ContainerPut` and `simpy.ContainerGet` events remain private adapter state.
 
-Filter predicates receive the backend-neutral `StoreItem`. A FilterStore can
-therefore select items by semantic payload without exposing SimPy objects.
-
-Store snapshots expose:
-
-- capacity (`None` for unbounded);
-- current item count;
-- pending put count;
-- pending get count.
-
-Store contents and native waiting events are execution mechanics only; durability
-must be represented by higher-level SOSE semantic records when required.
+Snapshots expose level, capacity, and the number of pending put/get operations.
+As with resources and stores, native Container state is execution mechanics and
+must not be treated as durable SOSE truth.

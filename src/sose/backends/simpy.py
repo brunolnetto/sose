@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 try:
     import simpy
     from simpy.events import Event
+    from simpy.resources.container import Container
     from simpy.resources.resource import PriorityRequest, PriorityResource
     from simpy.resources.store import FilterStore, PriorityStore, Store
 except ImportError as exc:  # pragma: no cover - exercised in packaging environments
@@ -19,28 +20,18 @@ except ImportError as exc:  # pragma: no cover - exercised in packaging environm
 from sose.core.identity import deterministic_id
 
 from .base import (
+    ContainerRequest,
+    ContainerSnapshot,
     ResourceLease,
     ResourceRequest,
     ResourceSnapshot,
     ScheduledCall,
-    StoreItem,
-    StoreRequest,
-    StoreSnapshot,
 )
 
 
-@dataclass(order=True, slots=True)
-class _PriorityEnvelope:
-    priority: int
-    sequence: int
-    item: StoreItem = field(compare=False)
-
-
 @dataclass(slots=True)
-class _StoreState:
-    store: Store
-    kind: str
-    items: dict[str, StoreItem]
+class _ContainerState:
+    container: Container
 
 
 @dataclass(slots=True)
@@ -112,9 +103,8 @@ class SimPyBackend:
         self._resources: dict[str, _ResourceState] = {}
         self._leases: dict[str, _LeaseState] = {}
         self._request_to_lease: dict[str, str] = {}
-        self._stores: dict[str, _StoreState] = {}
-        self._store_request_ids: set[str] = set()
-        self._store_sequence = 0
+        self._containers: dict[str, _ContainerState] = {}
+        self._container_request_ids: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -216,126 +206,111 @@ class SimPyBackend:
         return processed
 
 
-    def create_store(self, name: str, *, capacity: int | None = None) -> None:
-        self._create_store(name, kind="fifo", capacity=capacity)
-
-    def create_priority_store(self, name: str, *, capacity: int | None = None) -> None:
-        self._create_store(name, kind="priority", capacity=capacity)
-
-    def create_filter_store(self, name: str, *, capacity: int | None = None) -> None:
-        self._create_store(name, kind="filter", capacity=capacity)
-
-    def put_store(
+    def create_container(
         self,
         name: str,
         *,
-        item_id: str,
-        value: object,
-        priority: int = 100,
-        on_stored: Callable[[StoreItem], None] | None = None,
-    ) -> StoreItem:
-        state = self._store(name)
-        if not item_id:
-            raise ValueError("item_id cannot be empty")
-        if any(item_id in current.items for current in self._stores.values()):
-            raise ValueError(f"store item already exists: {item_id}")
-
-        item = StoreItem(
-            item_id=item_id,
-            store_name=name,
-            value=value,
-            priority=priority,
+        capacity: float,
+        initial: float = 0.0,
+    ) -> None:
+        if not name:
+            raise ValueError("container name cannot be empty")
+        if capacity <= 0:
+            raise ValueError("container capacity must be > 0")
+        if initial < 0 or initial > capacity:
+            raise ValueError("container initial level must be between 0 and capacity")
+        if name in self._containers:
+            raise ValueError(f"container already exists: {name}")
+        self._containers[name] = _ContainerState(
+            container=Container(self._env, capacity=capacity, init=initial)
         )
-        state.items[item_id] = item
 
-        native_item: object = item
-        if state.kind == "priority":
-            self._store_sequence += 1
-            native_item = _PriorityEnvelope(priority, self._store_sequence, item)
-
-        event = state.store.put(native_item)
-        if on_stored is not None:
-            if event.callbacks is None:  # pragma: no cover - defensive SimPy boundary
-                raise RuntimeError("store put was processed before callback attachment")
-            event.callbacks.append(lambda _: on_stored(item))
-        return item
-
-    def get_store(
+    def put_container(
         self,
         name: str,
         *,
         request_id: str,
-        on_received: Callable[[StoreItem], None],
-        filter: Callable[[StoreItem], bool] | None = None,
-    ) -> StoreRequest:
-        state = self._store(name)
+        amount: float,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest:
+        return self._container_operation(
+            name,
+            request_id=request_id,
+            amount=amount,
+            operation="put",
+            on_completed=on_completed,
+        )
+
+    def get_container(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        amount: float,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest:
+        return self._container_operation(
+            name,
+            request_id=request_id,
+            amount=amount,
+            operation="get",
+            on_completed=on_completed,
+        )
+
+    def container_snapshot(self, name: str) -> ContainerSnapshot:
+        state = self._container(name)
+        container = state.container
+        return ContainerSnapshot(
+            name=name,
+            capacity=float(container.capacity),
+            level=float(container.level),
+            queued_puts=len(container.put_queue),
+            queued_gets=len(container.get_queue),
+        )
+
+    def _container_operation(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        amount: float,
+        operation: str,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest:
+        state = self._container(name)
         if not request_id:
             raise ValueError("request_id cannot be empty")
-        if request_id in self._store_request_ids:
-            raise ValueError(f"store request already exists: {request_id}")
-        self._store_request_ids.add(request_id)
+        if request_id in self._container_request_ids:
+            raise ValueError(f"container request already exists: {request_id}")
+        if amount <= 0:
+            raise ValueError("container amount must be > 0")
 
-        public_request = StoreRequest(
+        request = ContainerRequest(
             request_id=request_id,
-            store_name=name,
+            container_name=name,
+            operation=operation,
+            amount=float(amount),
             requested_at=self.now,
         )
+        self._container_request_ids.add(request_id)
 
-        if filter is not None:
-            if state.kind != "filter":
-                raise ValueError("filters are supported only by filter stores")
-            event = state.store.get(filter=filter)
-        else:
-            event = state.store.get()
-
-        def received(completed: Event) -> None:
-            native_item = completed.value
-            item = native_item.item if isinstance(native_item, _PriorityEnvelope) else native_item
-            if not isinstance(item, StoreItem):  # pragma: no cover - adapter invariant
-                raise RuntimeError("store returned a non-SOSE item")
-            state.items.pop(item.item_id, None)
-            on_received(item)
+        if operation == "put":
+            event = state.container.put(amount)
+        elif operation == "get":
+            event = state.container.get(amount)
+        else:  # pragma: no cover - internal invariant
+            raise ValueError(f"unknown container operation: {operation}")
 
         if event.callbacks is None:  # pragma: no cover - defensive SimPy boundary
-            raise RuntimeError("store get was processed before callback attachment")
-        event.callbacks.append(received)
-        return public_request
+            raise RuntimeError("container operation was processed before callback attachment")
+        event.callbacks.append(lambda _: on_completed(request))
+        return request
 
-    def store_snapshot(self, name: str) -> StoreSnapshot:
-        state = self._store(name)
-        capacity = None if math.isinf(float(state.store.capacity)) else int(state.store.capacity)
-        return StoreSnapshot(
-            name=name,
-            capacity=capacity,
-            size=len(state.store.items),
-            queued_puts=len(state.store.put_queue),
-            queued_gets=len(state.store.get_queue),
-        )
-
-    def _create_store(self, name: str, *, kind: str, capacity: int | None) -> None:
-        if not name:
-            raise ValueError("store name cannot be empty")
-        if capacity is not None and capacity < 1:
-            raise ValueError("store capacity must be >= 1")
-        if name in self._stores:
-            raise ValueError(f"store already exists: {name}")
-
-        kwargs = {} if capacity is None else {"capacity": capacity}
-        if kind == "fifo":
-            store = Store(self._env, **kwargs)
-        elif kind == "priority":
-            store = PriorityStore(self._env, **kwargs)
-        elif kind == "filter":
-            store = FilterStore(self._env, **kwargs)
-        else:  # pragma: no cover - internal invariant
-            raise ValueError(f"unknown store kind: {kind}")
-        self._stores[name] = _StoreState(store=store, kind=kind, items={})
-
-    def _store(self, name: str) -> _StoreState:
+    def _container(self, name: str) -> _ContainerState:
         try:
-            return self._stores[name]
+            return self._containers[name]
         except KeyError as exc:
-            raise KeyError(f"unknown store: {name}") from exc
+            raise KeyError(f"unknown container: {name}") from exc
 
     def create_resource(self, name: str, *, capacity: int = 1) -> None:
         if not name:

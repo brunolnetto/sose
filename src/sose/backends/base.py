@@ -59,25 +59,19 @@ class ResourceSnapshot:
 
 
 @dataclass(frozen=True, slots=True)
-class StoreItem:
-    item_id: str
-    store_name: str
-    value: object
-    priority: int = 100
-
-
-@dataclass(frozen=True, slots=True)
-class StoreRequest:
+class ContainerRequest:
     request_id: str
-    store_name: str
+    container_name: str
+    operation: str
+    amount: float
     requested_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
-class StoreSnapshot:
+class ContainerSnapshot:
     name: str
-    capacity: int | None
-    size: int
+    capacity: float
+    level: float
     queued_puts: int
     queued_gets: int
 
@@ -131,33 +125,34 @@ class ResourceBackend(Protocol):
 
 
 @runtime_checkable
-class StoreBackend(Protocol):
-    def create_store(self, name: str, *, capacity: int | None = None) -> None: ...
-
-    def create_priority_store(self, name: str, *, capacity: int | None = None) -> None: ...
-
-    def create_filter_store(self, name: str, *, capacity: int | None = None) -> None: ...
-
-    def put_store(
+class ContainerBackend(Protocol):
+    def create_container(
         self,
         name: str,
         *,
-        item_id: str,
-        value: object,
-        priority: int = 100,
-        on_stored: Callable[[StoreItem], None] | None = None,
-    ) -> StoreItem: ...
+        capacity: float,
+        initial: float = 0.0,
+    ) -> None: ...
 
-    def get_store(
+    def put_container(
         self,
         name: str,
         *,
         request_id: str,
-        on_received: Callable[[StoreItem], None],
-        filter: Callable[[StoreItem], bool] | None = None,
-    ) -> StoreRequest: ...
+        amount: float,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest: ...
 
-    def store_snapshot(self, name: str) -> StoreSnapshot: ...
+    def get_container(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        amount: float,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest: ...
+
+    def container_snapshot(self, name: str) -> ContainerSnapshot: ...
 
 
 @runtime_checkable

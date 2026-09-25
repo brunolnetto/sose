@@ -1,5 +1,7 @@
 from .base import (
-    PreemptiveResourceBackend,
+    ContainerBackend,
+    ContainerRequest,
+    ContainerSnapshot,
     ResourceBackend,
     ResourceLease,
     ResourcePreemption,
@@ -15,7 +17,9 @@ from .base import (
 )
 
 __all__ = [
-    "PreemptiveResourceBackend",
+    "ContainerBackend",
+    "ContainerRequest",
+    "ContainerSnapshot",
     "ResourceBackend",
     "ResourceLease",
     "ResourcePreemption",
