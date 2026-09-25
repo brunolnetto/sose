@@ -402,3 +402,34 @@ include:
 
 These should continue to preserve the rule that backend-native state is
 ephemeral and reconstructible.
+
+
+---
+
+## Containers (v0.7)
+
+SOSE exposes quantitative capacity through a backend-neutral Container contract.
+
+A container has:
+
+- finite capacity;
+- current level;
+- blocking put operations;
+- blocking get operations.
+
+The public surface uses `ContainerRequest` and `ContainerSnapshot`.
+
+```text
+put(amount)
+    waits while level + amount > capacity
+
+get(amount)
+    waits while level < amount
+```
+
+Completion callbacks receive the original backend-neutral request metadata. Native
+`simpy.ContainerPut` and `simpy.ContainerGet` events remain private adapter state.
+
+Snapshots expose level, capacity, and the number of pending put/get operations.
+As with resources and stores, native Container state is execution mechanics and
+must not be treated as durable SOSE truth.
