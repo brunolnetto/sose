@@ -406,26 +406,35 @@ ephemeral and reconstructible.
 
 ---
 
-## Preemptive resources (v0.7)
+## Stores (v0.7)
 
-Preemption is an optional backend capability exposed through
-`PreemptiveResourceBackend`, not an expansion of the base `ResourceBackend`.
+SOSE exposes three backend-neutral storage mechanics:
+
+- FIFO Store;
+- PriorityStore;
+- FilterStore.
+
+The public surface uses `StoreItem`, `StoreRequest`, and `StoreSnapshot`.
+Native SimPy put/get events remain private.
+
+Priority ordering is implemented with an internal envelope:
 
 ```text
-PreemptiveResourceBackend
-├── create_preemptive_resource
-├── request_preemptive_resource
-├── release_preemptive_resource
-└── preemptive_resource_snapshot
+(priority, insertion sequence, StoreItem)
 ```
 
-A displaced holder receives a backend-neutral `ResourcePreemption` describing
-the displaced lease/request, resource, logical preemption time, and the request
-that caused preemption when known.
+so equal-priority items remain deterministic without requiring arbitrary user
+payloads to be comparable.
 
-The SimPy adapter internally creates a process per preemptive request because
-SimPy delivers preemption as a process interrupt. Those processes, interrupts,
-native requests, and generator continuations remain private ephemeral state.
+Filter predicates receive the backend-neutral `StoreItem`. A FilterStore can
+therefore select items by semantic payload without exposing SimPy objects.
 
-Lower numeric priority remains more important. Setting `preempt=False` keeps
-priority queueing but prevents that request from interrupting an active holder.
+Store snapshots expose:
+
+- capacity (`None` for unbounded);
+- current item count;
+- pending put count;
+- pending get count.
+
+Store contents and native waiting events are execution mechanics only; durability
+must be represented by higher-level SOSE semantic records when required.

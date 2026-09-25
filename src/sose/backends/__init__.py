@@ -6,6 +6,10 @@ from .base import (
     ResourceRequest,
     ResourceSnapshot,
     ScheduledCall,
+    StoreBackend,
+    StoreItem,
+    StoreRequest,
+    StoreSnapshot,
     SimulationBackend,
     TemporalBackend,
 )
@@ -18,6 +22,10 @@ __all__ = [
     "ResourceRequest",
     "ResourceSnapshot",
     "ScheduledCall",
+    "StoreBackend",
+    "StoreItem",
+    "StoreRequest",
+    "StoreSnapshot",
     "SimulationBackend",
     "TemporalBackend",
 ]

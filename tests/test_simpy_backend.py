@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("simpy")
 
-from sose.backends import ResourceLease, ResourcePreemption, ResourceSnapshot, ScheduledCall
+from sose.backends import ResourceLease, ResourceSnapshot, ScheduledCall, StoreItem, StoreSnapshot
 from sose.backends.simpy import SimPyBackend
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
@@ -274,98 +274,96 @@ def test_aware_datetime_conversion_respects_dst_offset_changes():
     assert runtime.now == target
 
 
-def test_preemptive_resource_interrupts_lower_priority_holder():
+def test_fifo_store_delivers_items_in_put_order():
     runtime = backend()
-    runtime.create_preemptive_resource("crew", capacity=1)
-    acquired: list[ResourceLease] = []
-    preempted: list[ResourcePreemption] = []
+    runtime.create_store("inbox", capacity=2)
+    received: list[StoreItem] = []
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="planned",
-        priority=100,
-        on_acquired=acquired.append,
-        on_preempted=preempted.append,
-    )
-    while len(acquired) < 1:
-        assert runtime.step() is True
+    runtime.put_store("inbox", item_id="a", value={"value": 1})
+    runtime.put_store("inbox", item_id="b", value={"value": 2})
+    runtime.get_store("inbox", request_id="get-1", on_received=received.append)
+    runtime.get_store("inbox", request_id="get-2", on_received=received.append)
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="emergency",
-        priority=1,
-        on_acquired=acquired.append,
-        on_preempted=preempted.append,
-    )
-    while len(acquired) < 2 or len(preempted) < 1:
-        assert runtime.step() is True
+    runtime.run_until(ORIGIN)
 
-    assert [lease.request_id for lease in acquired] == ["planned", "emergency"]
-    assert preempted[0].request_id == "planned"
-    assert preempted[0].preempted_by == "emergency"
-    assert preempted[0].resource_name == "crew"
-    assert preempted[0].preempted_at == ORIGIN
+    assert [item.item_id for item in received] == ["a", "b"]
+    snapshot = runtime.store_snapshot("inbox")
+    assert isinstance(snapshot, StoreSnapshot)
+    assert snapshot.size == 0
 
 
-def test_preemptive_resource_can_disable_preemption_for_waiter():
+def test_priority_store_delivers_lower_priority_first_then_sequence():
     runtime = backend()
-    runtime.create_preemptive_resource("crew", capacity=1)
-    acquired: list[ResourceLease] = []
-    preempted: list[ResourcePreemption] = []
+    runtime.create_priority_store("dispatch")
+    received: list[StoreItem] = []
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="holder",
-        priority=100,
-        on_acquired=acquired.append,
-        on_preempted=preempted.append,
-    )
-    while len(acquired) < 1:
-        assert runtime.step() is True
+    runtime.put_store("dispatch", item_id="normal-1", value=1, priority=100)
+    runtime.put_store("dispatch", item_id="urgent", value=2, priority=1)
+    runtime.put_store("dispatch", item_id="normal-2", value=3, priority=100)
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="urgent-but-nonpreemptive",
-        priority=1,
-        preempt=False,
-        on_acquired=acquired.append,
-        on_preempted=preempted.append,
-    )
-    while runtime.preemptive_resource_snapshot("crew").queued < 1:
-        assert runtime.step() is True
+    for i in range(3):
+        runtime.get_store(
+            "dispatch",
+            request_id=f"get-{i}",
+            on_received=received.append,
+        )
 
-    assert runtime.preemptive_resource_snapshot("crew").in_use == 1
-    assert runtime.preemptive_resource_snapshot("crew").queued == 1
-    assert preempted == []
+    runtime.run_until(ORIGIN)
+
+    assert [item.item_id for item in received] == ["urgent", "normal-1", "normal-2"]
 
 
-def test_releasing_preemptive_lease_grants_next_waiter():
+def test_filter_store_delivers_first_matching_item_without_consuming_others():
     runtime = backend()
-    runtime.create_preemptive_resource("crew", capacity=1)
-    acquired: list[ResourceLease] = []
+    runtime.create_filter_store("parts")
+    received: list[StoreItem] = []
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="holder",
-        on_acquired=acquired.append,
-        on_preempted=lambda _: None,
+    runtime.put_store("parts", item_id="bolt", value={"kind": "bolt"})
+    runtime.put_store("parts", item_id="bearing", value={"kind": "bearing"})
+    runtime.get_store(
+        "parts",
+        request_id="bearing-request",
+        filter=lambda item: item.value["kind"] == "bearing",
+        on_received=received.append,
     )
-    while len(acquired) < 1:
-        assert runtime.step() is True
 
-    runtime.request_preemptive_resource(
-        "crew",
-        request_id="waiter",
-        priority=100,
-        preempt=False,
-        on_acquired=acquired.append,
-        on_preempted=lambda _: None,
-    )
-    while runtime.preemptive_resource_snapshot("crew").queued < 1:
-        assert runtime.step() is True
+    runtime.run_until(ORIGIN)
 
-    runtime.release_preemptive_resource(acquired[0])
-    while len(acquired) < 2:
-        assert runtime.step() is True
+    assert [item.item_id for item in received] == ["bearing"]
+    snapshot = runtime.store_snapshot("parts")
+    assert snapshot.size == 1
 
-    assert acquired[1].request_id == "waiter"
+
+def test_bounded_store_reports_pending_put_until_capacity_frees():
+    runtime = backend()
+    runtime.create_store("buffer", capacity=1)
+
+    runtime.put_store("buffer", item_id="first", value=1)
+    runtime.put_store("buffer", item_id="second", value=2)
+    runtime.run_until(ORIGIN)
+
+    snapshot = runtime.store_snapshot("buffer")
+    assert snapshot.size == 1
+    assert snapshot.queued_puts == 1
+
+    received: list[StoreItem] = []
+    runtime.get_store("buffer", request_id="get-first", on_received=received.append)
+    runtime.run_until(ORIGIN)
+
+    snapshot = runtime.store_snapshot("buffer")
+    assert [item.item_id for item in received] == ["first"]
+    assert snapshot.size == 1
+    assert snapshot.queued_puts == 0
+
+
+def test_duplicate_store_item_and_request_ids_are_rejected():
+    runtime = backend()
+    runtime.create_store("inbox")
+    runtime.put_store("inbox", item_id="item-1", value=1)
+
+    with pytest.raises(ValueError, match="already exists"):
+        runtime.put_store("inbox", item_id="item-1", value=2)
+
+    runtime.get_store("inbox", request_id="get-1", on_received=lambda _: None)
+    with pytest.raises(ValueError, match="already exists"):
+        runtime.get_store("inbox", request_id="get-1", on_received=lambda _: None)
