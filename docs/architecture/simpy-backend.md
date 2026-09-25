@@ -402,3 +402,39 @@ include:
 
 These should continue to preserve the rule that backend-native state is
 ephemeral and reconstructible.
+
+
+---
+
+## Stores (v0.7)
+
+SOSE exposes three backend-neutral storage mechanics:
+
+- FIFO Store;
+- PriorityStore;
+- FilterStore.
+
+The public surface uses `StoreItem`, `StoreRequest`, and `StoreSnapshot`.
+Native SimPy put/get events remain private.
+
+Priority ordering is implemented with an internal envelope:
+
+```text
+(priority, insertion sequence, StoreItem)
+```
+
+so equal-priority items remain deterministic without requiring arbitrary user
+payloads to be comparable.
+
+Filter predicates receive the backend-neutral `StoreItem`. A FilterStore can
+therefore select items by semantic payload without exposing SimPy objects.
+
+Store snapshots expose:
+
+- capacity (`None` for unbounded);
+- current item count;
+- pending put count;
+- pending get count.
+
+Store contents and native waiting events are execution mechanics only; durability
+must be represented by higher-level SOSE semantic records when required.
