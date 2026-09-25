@@ -338,6 +338,7 @@ def test_backend_release_failure_preserves_durable_reservation():
         manager.release(backend, "res-holder")
 
     assert [r.reservation_id for r in store.resource_reservations()] == ["res-holder"]
+    assert len(store.resource_release_intents()) == 1
 
 
 def test_release_before_reconstructed_lease_is_available_preserves_reservation():
