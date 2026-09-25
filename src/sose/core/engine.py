@@ -9,7 +9,7 @@ from sose.scenarios.model import Scenario
 from sose.scenarios.rules import ScenarioRule
 
 from .context import SimulationContext
-from .durable import DurableScheduledItem
+from .durable import DurableScheduledItem, RuntimeRebuilder
 from .events import Command
 from .runtime import SimulationPosition
 
@@ -94,6 +94,15 @@ class Engine:
 
         for event in emitted:
             self.context.scenarios.on_event(event)
+
+
+    def rebuild_backend(self, backend) -> int:
+        """Reconstruct pending durable work into a fresh ephemeral backend."""
+
+        return RuntimeRebuilder(self.persistence).rebuild(
+            backend,
+            on_due=self.dispatch_scheduled,
+        )
 
 
     def choose_transition(
