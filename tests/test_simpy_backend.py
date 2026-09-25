@@ -331,6 +331,8 @@ def test_preemptive_resource_can_disable_preemption_for_waiter():
         on_acquired=acquired.append,
         on_preempted=preempted.append,
     )
+    while runtime.preemptive_resource_snapshot("crew").queued < 1:
+        assert runtime.step() is True
 
     assert runtime.preemptive_resource_snapshot("crew").in_use == 1
     assert runtime.preemptive_resource_snapshot("crew").queued == 1
@@ -350,6 +352,7 @@ def test_releasing_preemptive_lease_grants_next_waiter():
     )
     while len(acquired) < 1:
         assert runtime.step() is True
+
     runtime.request_preemptive_resource(
         "crew",
         request_id="waiter",
@@ -358,9 +361,10 @@ def test_releasing_preemptive_lease_grants_next_waiter():
         on_acquired=acquired.append,
         on_preempted=lambda _: None,
     )
+    while runtime.preemptive_resource_snapshot("crew").queued < 1:
+        assert runtime.step() is True
 
     runtime.release_preemptive_resource(acquired[0])
-
     while len(acquired) < 2:
         assert runtime.step() is True
 
