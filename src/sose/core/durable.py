@@ -33,16 +33,8 @@ class RebuildBackend(Protocol):
 class DurableScheduler:
     """Persist future execution intent independently from any backend queue."""
 
-    def __init__(
-        self,
-        persistence: Persistence,
-        *,
-        context=None,
-        resources=None,
-    ) -> None:
+    def __init__(self, persistence: Persistence) -> None:
         self._persistence = persistence
-        self._context = context
-        self._resources = resources
 
     def schedule(self, command: Command, *, priority: int = 100) -> ScheduledWork:
         if self._persistence.command(command.command_id) is not None:
@@ -77,10 +69,18 @@ class DurableScheduler:
 
 
 class RuntimeRebuilder:
-    """Reconstruct ephemeral backend events from durable semantic state."""
+    """Reconstruct a fresh runtime from durable semantic state."""
 
-    def __init__(self, persistence: Persistence) -> None:
+    def __init__(
+        self,
+        persistence: Persistence,
+        *,
+        context=None,
+        resources=None,
+    ) -> None:
         self._persistence = persistence
+        self._context = context
+        self._resources = resources
 
     def rebuild(
         self,
