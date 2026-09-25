@@ -156,16 +156,21 @@ class DurableResourceManager:
         if reservation is None:
             return False
 
-        with self._persistence.transaction() as uow:
-            persisted = uow.get_resource_reservation(reservation_id)
-            if persisted != reservation:
-                return False
-            uow.delete_resource_reservation(reservation_id)
-
-        lease = self._backend_leases.pop(reservation_id, None)
+        lease = self._backend_leases.get(reservation_id)
         if lease is None:
             raise RuntimeError(
                 f"backend lease is not reconstructed for reservation: {reservation_id}"
             )
+
         backend.release_resource(lease)
+
+        with self._persistence.transaction() as uow:
+            persisted = uow.get_resource_reservation(reservation_id)
+            if persisted != reservation:
+                raise RuntimeError(
+                    f"resource reservation changed during release: {reservation_id}"
+                )
+            uow.delete_resource_reservation(reservation_id)
+
+        self._backend_leases.pop(reservation_id, None)
         return True
