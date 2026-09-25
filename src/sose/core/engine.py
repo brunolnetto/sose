@@ -125,20 +125,13 @@ class Engine:
 
 
     def rebuild_backend(self, backend) -> int:
-        """Restore the durable recovery position and rebuild pending backend work."""
+        """Restore durable runtime state into a fresh ephemeral backend."""
 
-        position = self.persistence.simulation_position()
-        if position is not None:
-            if backend.now != position.logical_time:
-                raise RuntimeError(
-                    "backend logical time does not match persisted recovery boundary"
-                )
-            self.context.clock.now = position.logical_time
-            self.context.clock.tick = position.logical_tick
-        self.context.scenarios.restore_state(self.persistence.scenario_state())
-        self.resources.rebuild_backend(backend)
-
-        return RuntimeRebuilder(self.persistence).rebuild(
+        return RuntimeRebuilder(
+            self.persistence,
+            context=self.context,
+            resources=self.resources,
+        ).rebuild(
             backend,
             on_due=self.dispatch_scheduled,
         )
