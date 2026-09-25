@@ -47,6 +47,24 @@ class ResourceSnapshot:
     queued: int
 
 
+@dataclass(frozen=True, slots=True)
+class ContainerRequest:
+    request_id: str
+    container_name: str
+    operation: str
+    amount: float
+    requested_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ContainerSnapshot:
+    name: str
+    capacity: float
+    level: float
+    queued_puts: int
+    queued_gets: int
+
+
 @runtime_checkable
 class TemporalBackend(Protocol):
     @property
@@ -93,6 +111,37 @@ class ResourceBackend(Protocol):
     def release_resource(self, lease: ResourceLease | str) -> None: ...
 
     def resource_snapshot(self, name: str) -> ResourceSnapshot: ...
+
+
+@runtime_checkable
+class ContainerBackend(Protocol):
+    def create_container(
+        self,
+        name: str,
+        *,
+        capacity: float,
+        initial: float = 0.0,
+    ) -> None: ...
+
+    def put_container(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        amount: float,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest: ...
+
+    def get_container(
+        self,
+        name: str,
+        *,
+        request_id: str,
+        amount: float,
+        on_completed: Callable[[ContainerRequest], None],
+    ) -> ContainerRequest: ...
+
+    def container_snapshot(self, name: str) -> ContainerSnapshot: ...
 
 
 @runtime_checkable
