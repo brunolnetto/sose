@@ -5,8 +5,13 @@ from datetime import datetime
 from typing import Protocol
 
 from sose.core.events import Command, DomainEvent
-from sose.core.runtime import ScheduledWork, SimulationPosition
-from sose.core.resources import ResourceDefinition, ResourceDemand, ResourceReservation
+from sose.core.runtime import (
+    ResourceDefinition,
+    ResourceDemand,
+    ResourceReservation,
+    ScheduledWork,
+    SimulationPosition,
+)
 from sose.domain.entity import Entity
 from sose.scenarios.model import ScenarioRuntimeState
 
