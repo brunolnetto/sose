@@ -9,7 +9,7 @@ from sose.scenarios.model import Scenario
 from sose.scenarios.rules import ScenarioRule
 
 from .context import SimulationContext
-from .durable import DurableScheduledItem, RuntimeRebuilder
+from .durable import DurableScheduledItem, DurableScheduler, RuntimeRebuilder
 from .events import Command
 from .resources import DurableResourceManager
 from .runtime import SimulationPosition
@@ -32,6 +32,7 @@ class Engine:
         self.persistence = persistence
         self.rules_for = rules_for or (lambda _: ())
         self.resources = DurableResourceManager(persistence)
+        self.context.schedules.bind_scheduler(DurableScheduler(persistence))
         self.context.scenarios.register_many(scenarios)
         self.context.bind_statecharts(registry)
 
