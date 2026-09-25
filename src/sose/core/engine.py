@@ -61,12 +61,8 @@ class Engine:
             raise
 
 
-    def dispatch_scheduled(self, item: DurableScheduledItem) -> bool:
-        """Execute and consume durable scheduled work in one commit boundary.
-
-        Returns False for an already-consumed stale callback so backend duplication
-        cannot replay a committed transition.
-        """
+    def _dispatch_scheduled_in_uow(self, item: DurableScheduledItem, uow) -> bool:
+        """Execute one durable item inside an existing transaction."""
 
         command = item.command
         work = item.work
@@ -74,37 +70,50 @@ class Engine:
             raise ValueError("scheduled work does not match command")
         if work.due_at != command.due_at:
             raise ValueError("scheduled work due time does not match command")
+
+        persisted_work = uow.get_scheduled_work(work.work_id)
+        persisted_command = uow.get_command(command.command_id)
+        if persisted_work != work or persisted_command != command:
+            return False
+        if work.due_at < self.context.clock.now:
+            raise ValueError("scheduled work cannot execute before current logical time")
+
+        self.context.clock.now = work.due_at
+        entity = uow.get_entity(command.entity_type, command.entity_id)
+        if entity is None:
+            raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
+
+        if self.context.statecharts is None:  # pragma: no cover - constructor invariant
+            raise RuntimeError("statechart factory is not configured")
+
+        chart = self.context.statecharts.bind(entity, caused_by=command)
+        chart.send(command.name, **dict(command.payload))
+        uow.save_entity(entity)
+        emitted = self.context.drain_events()
+        for event in emitted:
+            uow.append_event(event)
+            self.context.scenarios.on_event(event)
+        uow.set_scenario_state(self.context.scenarios.snapshot_state())
+
+        uow.delete_scheduled_work(work.work_id)
+        uow.delete_command(command.command_id)
+        return True
+
+    def dispatch_scheduled(self, item: DurableScheduledItem) -> bool:
+        """Execute and consume one durable callback atomically.
+
+        Returns False for an already-consumed stale callback so backend duplication
+        cannot replay a committed transition.
+        """
+
         previous_time = self.context.clock.now
         previous_tick = self.context.clock.tick
+        scenario_before = self.context.scenarios.snapshot_state()
+        pending_before = list(self.context.pending_events)
         try:
             with self.persistence.transaction() as uow:
-                persisted_work = uow.get_scheduled_work(work.work_id)
-                persisted_command = uow.get_command(command.command_id)
-                if persisted_work != work or persisted_command != command:
+                if not self._dispatch_scheduled_in_uow(item, uow):
                     return False
-                if work.due_at < self.context.clock.now:
-                    raise ValueError("scheduled work cannot execute before current logical time")
-
-                self.context.clock.now = work.due_at
-                entity = uow.get_entity(command.entity_type, command.entity_id)
-                if entity is None:
-                    raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
-
-                if self.context.statecharts is None:  # pragma: no cover - constructor invariant
-                    raise RuntimeError("statechart factory is not configured")
-
-                chart = self.context.statecharts.bind(entity, caused_by=command)
-                chart.send(command.name, **dict(command.payload))
-                uow.save_entity(entity)
-                emitted = self.context.drain_events()
-                scenario_before = self.context.scenarios.snapshot_state()
-                for event in emitted:
-                    uow.append_event(event)
-                    self.context.scenarios.on_event(event)
-                uow.set_scenario_state(self.context.scenarios.snapshot_state())
-
-                uow.delete_scheduled_work(work.work_id)
-                uow.delete_command(command.command_id)
 
                 previous = self.persistence.simulation_position()
                 next_sequence = 1 if previous is None else previous.execution_sequence + 1
@@ -119,8 +128,8 @@ class Engine:
         except Exception:
             self.context.clock.now = previous_time
             self.context.clock.tick = previous_tick
-            if "scenario_before" in locals():
-                self.context.scenarios.restore_state(scenario_before)
+            self.context.pending_events = pending_before
+            self.context.scenarios.restore_state(scenario_before)
             raise
 
         return True
@@ -223,7 +232,7 @@ class Engine:
                 )
 
     def advance_tick(self) -> None:
-        """Evaluate one fixed logical-time interval and commit its end boundary."""
+        """Evaluate and atomically commit one fixed logical-time interval."""
 
         tick_start = self.context.clock.now
         tick_end = tick_start + self.context.clock.step
@@ -231,34 +240,47 @@ class Engine:
         next_tick = current_tick + 1
 
         scenario_before = self.context.scenarios.snapshot_state()
+        pending_before = list(self.context.pending_events)
+        position_before = self.persistence.simulation_position()
+        execution_sequence = (
+            0 if position_before is None else position_before.execution_sequence
+        )
+        committed_sequence = (
+            0 if position_before is None else position_before.committed_sequence
+        )
+
         try:
             self.context.scenarios.on_tick()
+
+            # The legacy in-memory scheduler is retained only as a compatibility
+            # bridge. Engine-bound ScheduleFactory instances use DurableScheduler.
+            for command in self.context.scheduler.due(tick_start):
+                self.dispatch(command)
+
             with self.persistence.transaction() as uow:
                 uow.set_scenario_state(self.context.scenarios.snapshot_state())
+
+                executed = 0
+                for item in self.scheduler.due(tick_end):
+                    if self._dispatch_scheduled_in_uow(item, uow):
+                        executed += 1
+
+                next_sequence = execution_sequence + executed
+                uow.set_committed_tick(current_tick)
+                uow.set_simulation_position(
+                    SimulationPosition(
+                        logical_time=tick_end,
+                        execution_sequence=next_sequence,
+                        committed_sequence=next_sequence,
+                        logical_tick=next_tick,
+                    )
+                )
         except Exception:
+            self.context.clock.now = tick_start
+            self.context.clock.tick = current_tick
+            self.context.pending_events = pending_before
             self.context.scenarios.restore_state(scenario_before)
             raise
-
-        for command in self.context.scheduler.due(tick_start):
-            self.dispatch(command)
-
-        for item in self.scheduler.due(tick_end):
-            self.dispatch_scheduled(item)
-
-        position = self.persistence.simulation_position()
-        execution_sequence = 0 if position is None else position.execution_sequence
-        committed_sequence = 0 if position is None else position.committed_sequence
-
-        with self.persistence.transaction() as uow:
-            uow.set_committed_tick(current_tick)
-            uow.set_simulation_position(
-                SimulationPosition(
-                    logical_time=tick_end,
-                    execution_sequence=execution_sequence,
-                    committed_sequence=committed_sequence,
-                    logical_tick=next_tick,
-                )
-            )
 
         self.context.clock.now = tick_end
         self.context.clock.tick = next_tick
