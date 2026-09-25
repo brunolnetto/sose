@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -246,3 +247,28 @@ def test_backend_rejects_mixed_naive_and_aware_datetimes():
 
     with pytest.raises(ValueError, match="timezone awareness"):
         runtime.schedule_at(datetime(2026, 1, 1, 9), lambda: None)
+
+
+def test_duplicate_request_id_is_rejected_across_different_resources():
+    runtime = backend()
+    runtime.create_resource("bay-a")
+    runtime.create_resource("bay-b")
+
+    runtime.request_resource("bay-a", request_id="shared", on_acquired=lambda _: None)
+
+    with pytest.raises(ValueError, match="already exists"):
+        runtime.request_resource("bay-b", request_id="shared", on_acquired=lambda _: None)
+
+
+def test_aware_datetime_conversion_respects_dst_offset_changes():
+    new_york = ZoneInfo("America/New_York")
+    origin = datetime(2026, 1, 1, 8, tzinfo=new_york)
+    runtime = SimPyBackend(origin=origin)
+    target = datetime(2026, 7, 1, 8, tzinfo=new_york)
+    observed = []
+
+    runtime.schedule_at(target, lambda: observed.append(runtime.now))
+    runtime.run_until(target)
+
+    assert observed == [target]
+    assert runtime.now == target
