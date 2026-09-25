@@ -287,7 +287,8 @@ def test_preemptive_resource_interrupts_lower_priority_holder():
         on_acquired=acquired.append,
         on_preempted=preempted.append,
     )
-    runtime.step()
+    while len(acquired) < 1:
+        assert runtime.step() is True
 
     runtime.request_preemptive_resource(
         "crew",
@@ -319,7 +320,8 @@ def test_preemptive_resource_can_disable_preemption_for_waiter():
         on_acquired=acquired.append,
         on_preempted=preempted.append,
     )
-    runtime.step()
+    while len(acquired) < 1:
+        assert runtime.step() is True
 
     runtime.request_preemptive_resource(
         "crew",
@@ -346,7 +348,8 @@ def test_releasing_preemptive_lease_grants_next_waiter():
         on_acquired=acquired.append,
         on_preempted=lambda _: None,
     )
-    runtime.step()
+    while len(acquired) < 1:
+        assert runtime.step() is True
     runtime.request_preemptive_resource(
         "crew",
         request_id="waiter",
