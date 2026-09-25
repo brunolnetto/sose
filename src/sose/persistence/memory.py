@@ -9,6 +9,7 @@ from typing import Iterator
 from sose.core.events import Command, DomainEvent
 from sose.core.runtime import ScheduledWork, SimulationPosition
 from sose.domain.entity import Entity
+from sose.scenarios.model import ScenarioRuntimeState
 
 
 @dataclass
@@ -18,6 +19,7 @@ class _State:
     commands: dict[str, Command] = field(default_factory=dict)
     scheduled_work: dict[str, ScheduledWork] = field(default_factory=dict)
     simulation_position: SimulationPosition | None = None
+    scenario_state: ScenarioRuntimeState | None = None
     committed_tick: int = -1
 
 
@@ -61,6 +63,9 @@ class MemoryUnitOfWork:
 
     def set_simulation_position(self, position: SimulationPosition) -> None:
         self._working.simulation_position = deepcopy(position)
+
+    def set_scenario_state(self, state: ScenarioRuntimeState) -> None:
+        self._working.scenario_state = deepcopy(state)
 
     def set_committed_tick(self, tick: int) -> None:
         self._working.committed_tick = tick
@@ -110,3 +115,6 @@ class MemoryPersistence:
 
     def simulation_position(self) -> SimulationPosition | None:
         return deepcopy(self._state.simulation_position)
+
+    def scenario_state(self) -> ScenarioRuntimeState | None:
+        return deepcopy(self._state.scenario_state)
