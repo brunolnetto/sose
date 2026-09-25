@@ -3,8 +3,7 @@ from __future__ import annotations
 import math
 from collections.abc import Callable
 from dataclasses import dataclass
-from datetime import datetime, timedelta
-from typing import Any
+from datetime import datetime, timedelta, timezone
 
 try:
     import simpy
@@ -268,7 +267,14 @@ class SimPyBackend:
         value_aware = value.tzinfo is not None and value.utcoffset() is not None
         if origin_aware != value_aware:
             raise ValueError("backend datetimes must have consistent timezone awareness")
+        if origin_aware:
+            origin = self._origin.astimezone(timezone.utc)
+            target = value.astimezone(timezone.utc)
+            return (target - origin).total_seconds()
         return (value - self._origin).total_seconds()
 
     def _from_sim_time(self, value: float) -> datetime:
+        if self._origin.tzinfo is not None and self._origin.utcoffset() is not None:
+            instant = self._origin.astimezone(timezone.utc) + timedelta(seconds=value)
+            return instant.astimezone(self._origin.tzinfo)
         return self._origin + timedelta(seconds=value)
