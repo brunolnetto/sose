@@ -152,3 +152,26 @@ def test_stale_callback_cannot_consume_rescheduled_replacement():
 
     assert persistence.command(replacement.command_id) == replacement
     assert persistence.scheduled_work() == (replacement_work,)
+
+
+def test_engine_binds_schedule_factory_to_durable_scheduler():
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        key=("schedule-factory-durable", work_order.id),
+    )
+
+    scheduled = context.schedules.after(
+        hours=2,
+        command=command,
+        priority=7,
+    )
+
+    assert scheduled.due_at == now + timedelta(hours=2)
+    assert context.scheduler.due(now + timedelta(hours=2)) == []
+    work = persistence.scheduled_work()
+    assert len(work) == 1
+    assert work[0].command_id == scheduled.command_id
+    assert work[0].due_at == scheduled.due_at
+    assert work[0].priority == 7
