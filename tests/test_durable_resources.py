@@ -131,8 +131,10 @@ def test_release_removes_reservation_without_touching_waiters():
         uow.save_resource_reservation(ResourceReservation("res-1", "holder", "bay", NOW))
         uow.save_resource_demand(ResourceDemand("waiter", "bay", 10, NOW, 1))
 
+    backend = CapacityBackend()
     manager = DurableResourceManager(store)
-    assert manager.release("res-1") is True
+    manager.rebuild_backend(backend)
+    assert manager.release(backend, "res-1") is True
 
     assert store.resource_reservations() == ()
     assert [d.request_id for d in store.resource_demands()] == ["waiter"]
