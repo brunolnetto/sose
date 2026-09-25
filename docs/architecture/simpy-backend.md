@@ -1,8 +1,15 @@
 # Simulation Backends and SimPy
 
+> **Version note:** this document originated with the v0.5 backend-boundary work.
+> Sections below that describe v0.5 are historical context. In v0.6 the backend
+> remains ephemeral, but durable schedules, scenario runtime state, resource
+> state, and recovery position are persisted and a fresh backend can be rebuilt.
+> See [durable-runtime.md](durable-runtime.md) for the authoritative v0.6
+> recovery architecture.
+
 ## Purpose
 
-SOSE v0.5 introduces a backend boundary between **operational simulation semantics** and **discrete-event execution mechanics**.
+SOSE v0.5 introduced a backend boundary between **operational simulation semantics** and **discrete-event execution mechanics**.
 
 The first backend is powered by SimPy.
 
@@ -291,7 +298,9 @@ SOSE state
     = durable semantic state
 ```
 
-The v0.5 backend API uses explicit callbacks and handles so that v0.6 can reconstruct pending work from durable SOSE records.
+The v0.5 backend API established explicit callbacks and handles specifically so
+v0.6 could reconstruct pending work from durable SOSE records. That
+reconstruction is implemented in v0.6 through `RuntimeRebuilder`.
 
 ---
 
@@ -303,7 +312,7 @@ Never treat this as the persistence model:
 pickle(SimPy Environment)
 ```
 
-The intended future flow is:
+The implemented v0.6 recovery flow is:
 
 ```text
 durable SOSE state
@@ -321,30 +330,29 @@ new backend instance
 reconstruct ephemeral events/resources
 ```
 
-v0.5 does not yet implement that reconstruction.
+v0.6 implements that reconstruction without persisting backend-native runtime
+objects.
 
 ---
 
-## Relationship to the existing Scheduler
+## Relationship to scheduling in v0.6
 
-The existing heap-based `Scheduler` remains part of the current kernel.
-
-v0.5 does not silently replace it.
-
-Instead:
+The heap-based `Scheduler` still exists as a compatibility bridge, but
+Engine-bound `ScheduleFactory` instances use `DurableScheduler`.
 
 ```text
-v0.5
-    define backend contract
-    validate SimPy execution semantics
-
-v0.6
-    define durable scheduled-work model
-    reconstruct backend from persistence
-    integrate Engine execution with backend
+ScheduleFactory
+    ↓
+DurableScheduler
+    ↓
+Persistence
+    ↓
+active backend, when attached
 ```
 
-This avoids a flag-day migration and preserves current tests.
+A later cleanup may remove the legacy in-memory path from the engine entirely,
+but it is no longer the authoritative scheduling mechanism for an Engine-bound
+runtime.
 
 ---
 
@@ -364,7 +372,7 @@ Importing `sose.backends.simpy` without the optional dependency raises an explic
 
 ---
 
-## v0.5 invariants
+## Backend invariants
 
 1. No SimPy native object is part of the backend-neutral public API.
 2. Domain code does not use `yield` or SimPy processes.
@@ -374,24 +382,23 @@ Importing `sose.backends.simpy` without the optional dependency raises an explic
 6. Resources expose SOSE requests, leases, and snapshots.
 7. Business priority is supplied by SOSE/domain code.
 8. SimPy state is ephemeral.
-9. Durable execution/reconstruction is deferred to v0.6.
-10. The existing SOSE scheduler remains valid during migration.
+9. Durable execution/reconstruction is owned by SOSE v0.6, not by SimPy.
+10. Backend-native runtime objects remain reconstructible implementation state.
 
 ---
 
-## Deliberately deferred
+## Deliberately deferred after v0.6
 
-v0.5 does not yet provide:
+The durable runtime is now implemented. Remaining backend/runtime extensions
+include:
 
-- persistent scheduled calls;
-- persistent resource requests or leases;
 - resource-request cancellation;
 - preemptive resources;
 - Store / FilterStore / Container abstractions;
 - calendar-aware time;
 - scenario-driven capacity mutation;
-- Engine replacement of the current scheduler;
-- restart reconstruction;
+- complete removal of the legacy in-memory scheduler path;
 - realtime execution.
 
-These capabilities should be added only after the durable execution model is defined.
+These should continue to preserve the rule that backend-native state is
+ephemeral and reconstructible.
