@@ -59,3 +59,23 @@ def test_dispatch_scheduled_commits_transition_and_consumption_atomically():
     assert position.logical_time == now
     assert position.execution_sequence == 1
     assert position.committed_sequence == 1
+
+
+def test_dispatch_scheduled_advances_logical_time_to_due_at():
+    now, context, persistence, engine, work_order = build_runtime()
+    due_at = now + timedelta(hours=2)
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=due_at,
+        key=("durable-release-later", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    scheduler.schedule(command)
+    item = scheduler.pending()[0]
+
+    engine.dispatch_scheduled(item)
+
+    assert context.clock.now == due_at
+    assert persistence.events()[0].occurred_at == due_at
+    assert persistence.simulation_position().logical_time == due_at
