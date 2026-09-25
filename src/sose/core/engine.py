@@ -34,23 +34,27 @@ class Engine:
         self.context.bind_statecharts(registry)
 
     def dispatch(self, command: Command) -> None:
-        with self.persistence.transaction() as uow:
-            entity = uow.get_entity(command.entity_type, command.entity_id)
-            if entity is None:
-                raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
+        scenario_before = self.context.scenarios.snapshot_state()
+        try:
+            with self.persistence.transaction() as uow:
+                entity = uow.get_entity(command.entity_type, command.entity_id)
+                if entity is None:
+                    raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
 
-            if self.context.statecharts is None:  # pragma: no cover - constructor invariant
-                raise RuntimeError("statechart factory is not configured")
+                if self.context.statecharts is None:  # pragma: no cover - constructor invariant
+                    raise RuntimeError("statechart factory is not configured")
 
-            chart = self.context.statecharts.bind(entity, caused_by=command)
-            chart.send(command.name, **dict(command.payload))
-            uow.save_entity(entity)
-            emitted = self.context.drain_events()
-            for event in emitted:
-                uow.append_event(event)
-
-        for event in emitted:
-            self.context.scenarios.on_event(event)
+                chart = self.context.statecharts.bind(entity, caused_by=command)
+                chart.send(command.name, **dict(command.payload))
+                uow.save_entity(entity)
+                emitted = self.context.drain_events()
+                for event in emitted:
+                    uow.append_event(event)
+                    self.context.scenarios.on_event(event)
+                uow.set_scenario_state(self.context.scenarios.snapshot_state())
+        except Exception:
+            self.context.scenarios.restore_state(scenario_before)
+            raise
 
 
     def dispatch_scheduled(self, item: DurableScheduledItem) -> bool:
@@ -89,8 +93,11 @@ class Engine:
                 chart.send(command.name, **dict(command.payload))
                 uow.save_entity(entity)
                 emitted = self.context.drain_events()
+                scenario_before = self.context.scenarios.snapshot_state()
                 for event in emitted:
                     uow.append_event(event)
+                    self.context.scenarios.on_event(event)
+                uow.set_scenario_state(self.context.scenarios.snapshot_state())
 
                 uow.delete_scheduled_work(work.work_id)
                 uow.delete_command(command.command_id)
@@ -108,6 +115,8 @@ class Engine:
         except Exception:
             self.context.clock.now = previous_time
             self.context.clock.tick = previous_tick
+            if "scenario_before" in locals():
+                self.context.scenarios.restore_state(scenario_before)
             raise
 
         for event in emitted:
@@ -122,6 +131,7 @@ class Engine:
         if position is not None:
             self.context.clock.now = position.logical_time
             self.context.clock.tick = position.logical_tick
+        self.context.scenarios.restore_state(self.persistence.scenario_state())
 
         return RuntimeRebuilder(self.persistence).rebuild(
             backend,
@@ -209,7 +219,14 @@ class Engine:
     def advance_tick(self) -> None:
         """Evaluate external conditions, process due work, then commit the tick."""
 
-        self.context.scenarios.on_tick()
+        scenario_before = self.context.scenarios.snapshot_state()
+        try:
+            self.context.scenarios.on_tick()
+            with self.persistence.transaction() as uow:
+                uow.set_scenario_state(self.context.scenarios.snapshot_state())
+        except Exception:
+            self.context.scenarios.restore_state(scenario_before)
+            raise
 
         for command in self.context.scheduler.due(self.context.clock.now):
             self.dispatch(command)
