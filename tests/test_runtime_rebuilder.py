@@ -110,3 +110,13 @@ def test_rebuilder_rejects_pending_work_before_committed_logical_time():
 
     with pytest.raises(RuntimeError, match="before recovery boundary"):
         RuntimeRebuilder(store).rebuild(backend, on_due=lambda _: None)
+
+
+def test_rebuilder_rejects_work_before_backend_time_without_saved_position():
+    store = MemoryPersistence()
+    scheduler = DurableScheduler(store)
+    scheduler.schedule(command("cmd-1", ORIGIN))
+    backend = RecordingBackend(now=ORIGIN + timedelta(hours=1))
+
+    with pytest.raises(RuntimeError, match="before recovery boundary"):
+        RuntimeRebuilder(store).rebuild(backend, on_due=lambda _: None)
