@@ -223,7 +223,12 @@ class Engine:
                 )
 
     def advance_tick(self) -> None:
-        """Evaluate external conditions, process due work, then commit the tick."""
+        """Evaluate one fixed logical-time interval and commit its end boundary."""
+
+        tick_start = self.context.clock.now
+        tick_end = tick_start + self.context.clock.step
+        current_tick = self.context.clock.tick
+        next_tick = current_tick + 1
 
         scenario_before = self.context.scenarios.snapshot_state()
         try:
@@ -234,27 +239,26 @@ class Engine:
             self.context.scenarios.restore_state(scenario_before)
             raise
 
-        for command in self.context.scheduler.due(self.context.clock.now):
+        for command in self.context.scheduler.due(tick_start):
             self.dispatch(command)
 
-        for item in self.scheduler.due(self.context.clock.now):
+        for item in self.scheduler.due(tick_end):
             self.dispatch_scheduled(item)
 
-        next_time = self.context.clock.now + self.context.clock.step
-        next_tick = self.context.clock.tick + 1
         position = self.persistence.simulation_position()
         execution_sequence = 0 if position is None else position.execution_sequence
         committed_sequence = 0 if position is None else position.committed_sequence
 
         with self.persistence.transaction() as uow:
-            uow.set_committed_tick(self.context.clock.tick)
+            uow.set_committed_tick(current_tick)
             uow.set_simulation_position(
                 SimulationPosition(
-                    logical_time=next_time,
+                    logical_time=tick_end,
                     execution_sequence=execution_sequence,
                     committed_sequence=committed_sequence,
                     logical_tick=next_tick,
                 )
             )
 
-        self.context.clock.advance()
+        self.context.clock.now = tick_end
+        self.context.clock.tick = next_tick
