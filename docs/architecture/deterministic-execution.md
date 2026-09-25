@@ -102,6 +102,10 @@ The same scope must produce the same pseudo-random sequence.
 
 Different scopes must remain isolated.
 
+Scope parts are encoded with a type-tagged, length-prefixed canonical encoding before hashing. This preserves both value types and part boundaries, so scopes such as `("a|b", "c")` and `("a", "b|c")`, or `1` and `"1"`, remain distinct.
+
+Unsupported scope-part types fail explicitly rather than falling back to unstable `str(object)` representations.
+
 This prevents unrelated changes in one part of the simulation from unnecessarily shifting random choices elsewhere.
 
 ---
@@ -110,10 +114,22 @@ This prevents unrelated changes in one part of the simulation from unnecessarily
 
 SOSE should use deterministic identity generation for relevant synthetic entities and events.
 
-Example:
+When creating an entity, use the public entity factory:
 
 ```python
-purchase_order_id = ctx.identities.create(
+purchase_order = ctx.entities.create(
+    PurchaseOrder,
+    key=(supplier_id, requisition_id, occurrence),
+    entity_type="purchase_order",
+)
+```
+
+When only a deterministic identifier is required, use the implemented identity function directly:
+
+```python
+from sose.core.identity import deterministic_id
+
+purchase_order_id = deterministic_id(
     "purchase_order",
     supplier_id,
     requisition_id,
@@ -362,14 +378,9 @@ result_b = run_simulation(seed=42)
 assert result_a == result_b
 ```
 
-and:
+Different seeds are **not** required to produce different observable traces in every model. A model may expose only one legal path, or two distinct seeds may legitimately select the same branch.
 
-```python
-result_a = run_simulation(seed=42)
-result_b = run_simulation(seed=43)
-
-assert result_a != result_b
-```
+Seed sensitivity should therefore be tested only with a deliberately seed-sensitive fixture, for example by asserting that a controlled set of seeds spans more than one stochastic outcome.
 
 Also test scoped stability where the architecture intends independence.
 
