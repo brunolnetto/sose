@@ -86,9 +86,10 @@ class RuntimeRebuilder:
                 "backend logical time does not match persisted recovery boundary"
             )
 
+        boundary = position.logical_time if position is not None else backend.now
         items = DurableScheduler(self._persistence).pending()
         for item in items:
-            if position is not None and item.work.due_at < position.logical_time:
+            if item.work.due_at < boundary:
                 raise RuntimeError(
                     f"scheduled work {item.work.work_id} is before recovery boundary"
                 )
