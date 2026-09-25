@@ -10,6 +10,7 @@ from sose.core.events import Command, DomainEvent
 from sose.core.runtime import (
     ResourceDefinition,
     ResourceDemand,
+    ResourceReleaseIntent,
     ResourceReservation,
     ScheduledWork,
     SimulationPosition,
@@ -29,6 +30,7 @@ class _State:
     resource_definitions: dict[str, ResourceDefinition] = field(default_factory=dict)
     resource_demands: dict[str, ResourceDemand] = field(default_factory=dict)
     resource_reservations: dict[str, ResourceReservation] = field(default_factory=dict)
+    resource_release_intents: dict[str, ResourceReleaseIntent] = field(default_factory=dict)
     committed_tick: int = -1
 
 
@@ -122,6 +124,21 @@ class MemoryUnitOfWork:
     def delete_resource_reservation(self, reservation_id: str) -> None:
         self._working.resource_reservations.pop(reservation_id, None)
 
+    def get_resource_release_intent(self, intent_id: str) -> ResourceReleaseIntent | None:
+        value = self._working.resource_release_intents.get(intent_id)
+        return deepcopy(value) if value else None
+
+    def save_resource_release_intent(self, intent: ResourceReleaseIntent) -> None:
+        if intent.reservation_id not in self._working.resource_reservations:
+            raise KeyError(f"unknown resource reservation: {intent.reservation_id}")
+        existing = self._working.resource_release_intents.get(intent.intent_id)
+        if existing is not None and existing != intent:
+            raise ValueError(f"resource release intent already exists: {intent.intent_id}")
+        self._working.resource_release_intents[intent.intent_id] = deepcopy(intent)
+
+    def delete_resource_release_intent(self, intent_id: str) -> None:
+        self._working.resource_release_intents.pop(intent_id, None)
+
     def set_committed_tick(self, tick: int) -> None:
         self._working.committed_tick = tick
 
@@ -187,4 +204,10 @@ class MemoryPersistence:
         return tuple(
             deepcopy(self._state.resource_reservations[key])
             for key in sorted(self._state.resource_reservations)
+        )
+
+    def resource_release_intents(self) -> tuple[ResourceReleaseIntent, ...]:
+        return tuple(
+            deepcopy(self._state.resource_release_intents[key])
+            for key in sorted(self._state.resource_release_intents)
         )
