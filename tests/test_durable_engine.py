@@ -128,3 +128,27 @@ def test_duplicate_stale_callback_does_not_execute_consumed_work_twice():
     assert stored is not None
     assert stored.state == "released"
     assert len(persistence.events()) == 1
+
+
+def test_stale_callback_cannot_consume_rescheduled_replacement():
+    now, context, persistence, engine, work_order = build_runtime()
+    original = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now,
+        key=("replacement-callback", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    scheduler.schedule(original)
+    stale_item = scheduler.pending()[0]
+
+    assert engine.dispatch_scheduled(stale_item) is True
+
+    replacement = original.rescheduled(now + timedelta(hours=3))
+    replacement_work = scheduler.schedule(replacement)
+
+    assert replacement_work.work_id == stale_item.work.work_id
+    assert engine.dispatch_scheduled(stale_item) is False
+
+    assert persistence.command(replacement.command_id) == replacement
+    assert persistence.scheduled_work() == (replacement_work,)
