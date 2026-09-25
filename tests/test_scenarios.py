@@ -347,3 +347,47 @@ def test_non_reentrant_scenario_does_not_stack_effects_while_active():
     assert second.activated is False
     assert second.reason == "already_active"
     assert ctx.scenarios.transition_weight_multiplier("work_order", "wait") == 2.0
+
+
+
+def test_active_activations_excludes_expired_effects_without_explicit_expire_call():
+    ctx = context()
+    ctx.scenarios.register(
+        Scenario(
+            name="temporary_overlay",
+            trigger=TickTrigger(every=100),
+            duration=timedelta(hours=1),
+            effects=(AttributeEffect("plant.available", False),),
+        )
+    )
+
+    ctx.scenarios.on_tick()
+    assert len(ctx.scenarios.active_activations) == 1
+
+    ctx.clock.advance()
+
+    assert ctx.scenarios.active_activations == ()
+
+
+def test_effect_readers_ignore_expired_activations_without_new_signal():
+    ctx = context()
+    ctx.scenarios.register(
+        Scenario(
+            name="temporary_shortage",
+            trigger=TickTrigger(every=100),
+            duration=timedelta(hours=1),
+            effects=(
+                AttributeEffect("inventory.shortage", True),
+                TransitionWeightEffect("wait", multiplier=4.0, entity_type="work_order"),
+            ),
+        )
+    )
+
+    ctx.scenarios.on_tick()
+    assert ctx.scenarios.attribute("inventory.shortage", False) is True
+    assert ctx.scenarios.transition_weight_multiplier("work_order", "wait") == 4.0
+
+    ctx.clock.advance()
+
+    assert ctx.scenarios.attribute("inventory.shortage", False) is False
+    assert ctx.scenarios.transition_weight_multiplier("work_order", "wait") == 1.0
