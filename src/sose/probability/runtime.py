@@ -42,6 +42,11 @@ class ProbabilisticTransitionRuntime:
             entity=entity,
             context=context,
             enabled_events=enabled,
+            weight_transform=getattr(
+                getattr(context, "scenarios", None),
+                "transform_transition_weight",
+                None,
+            ),
         )
         rng = self._random.for_scope(
             "transition",
