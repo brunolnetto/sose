@@ -18,7 +18,7 @@ SOSE is intended for domains with persistent entities, explicit lifecycle rules,
 causal relationships, exceptions and time: MRO, logistics, e-commerce, banking,
 manufacturing, healthcare, telecom, insurance, construction and supply chain.
 
-## v0.3 architecture
+## v0.4 architecture
 
 ```text
 StateChart
@@ -37,10 +37,9 @@ SOSE runtime
     = deterministic execution of all of the above
 ```
 
-The key v0.3 change is making `ProbabilisticTransitionGraph` a first-class kernel
-component **before** building the full Scenario Engine.
+The key v0.4 change is making the **Scenario Engine** a first-class runtime layer over the probabilistic behavioral model. Scenarios modify environmental context and transition weights without duplicating StateChart lifecycle logic.
 
-## v0.3 goals
+## v0.4 capabilities
 
 - deterministic logical clock;
 - scoped deterministic randomness;
@@ -60,7 +59,14 @@ component **before** building the full Scenario Engine.
 - standardized state-transition events suitable for process mining;
 - state persisted independently from immutable event history;
 - persistence protocol with an in-memory adapter;
-- MRO vertical slice.
+- MRO vertical slice;
+- deterministic Scenario Engine;
+- tick, event and scheduled scenario triggers;
+- scenario conditions and activation probabilities;
+- temporary scenario activations;
+- environment attribute overlays;
+- transition-weight modifiers and composite effects;
+- automatic scenario integration with probabilistic transition evaluation.
 
 ## Behavioral boundary
 
@@ -105,6 +111,7 @@ ctx.commands
 ctx.events
 ctx.schedules
 ctx.transitions
+ctx.scenarios
 ctx.statecharts
 ```
 
@@ -242,6 +249,8 @@ src/sose/
 │   ├── entity.py
 │   └── registry.py
 ├── scenarios/
+│   ├── engine.py
+│   ├── model.py
 │   └── rules.py
 ├── persistence/
 │   ├── base.py
@@ -273,11 +282,10 @@ src/sose/
 
 ## Development direction
 
-v0.3 establishes the probabilistic behavioral layer. The next release can build the
-Scenario Engine on top of it, focusing on external conditions, shocks, interventions,
-resources and cross-entity causality rather than repeating branch-decision logic.
+v0.4 establishes deterministic external interventions over the probabilistic behavioral layer. The next architectural milestone is a simulation-backend abstraction, with SimPy as the primary candidate for discrete-event scheduling, waiting and resource contention while SOSE retains persistence, replay and domain semantics.
 
 See:
 
 - [`docs/factories.md`](docs/factories.md)
 - [`docs/probabilistic-transition-graph.md`](docs/probabilistic-transition-graph.md)
+- [`docs/architecture/scenario-engine.md`](docs/architecture/scenario-engine.md)

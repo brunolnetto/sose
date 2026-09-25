@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable
 from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry
 from sose.persistence.base import Persistence
+from sose.scenarios.model import Scenario
 from sose.scenarios.rules import ScenarioRule
 
 from .context import SimulationContext
@@ -20,12 +21,14 @@ class Engine:
         context: SimulationContext,
         registry: DomainRegistry,
         persistence: Persistence,
-        rules_for: Callable[[str], Iterable[ScenarioRule]],
+        rules_for: Callable[[str], Iterable[ScenarioRule]] | None = None,
+        scenarios: Iterable[Scenario] = (),
     ) -> None:
         self.context = context
         self.registry = registry
         self.persistence = persistence
-        self.rules_for = rules_for
+        self.rules_for = rules_for or (lambda _: ())
+        self.context.scenarios.register_many(scenarios)
         self.context.bind_statecharts(registry)
 
     def dispatch(self, command: Command) -> None:
@@ -40,8 +43,12 @@ class Engine:
             chart = self.context.statecharts.bind(entity, caused_by=command)
             chart.send(command.name, **dict(command.payload))
             uow.save_entity(entity)
-            for event in self.context.drain_events():
+            emitted = self.context.drain_events()
+            for event in emitted:
                 uow.append_event(event)
+
+        for event in emitted:
+            self.context.scenarios.on_event(event)
 
 
     def choose_transition(
@@ -122,7 +129,9 @@ class Engine:
                 )
 
     def advance_tick(self) -> None:
-        """Process scheduled commands up to current logical time and commit the tick."""
+        """Evaluate external conditions, process due work, then commit the tick."""
+
+        self.context.scenarios.on_tick()
 
         for command in self.context.scheduler.due(self.context.clock.now):
             self.dispatch(command)

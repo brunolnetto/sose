@@ -12,7 +12,10 @@ Decision = Callable[[Entity, SimulationContext], str | None]
 
 @dataclass(frozen=True, slots=True)
 class ScenarioRule:
-    """Chooses a valid statechart event; it never mutates entity state directly."""
+    """Legacy v0.3 event-selection rule kept for compatibility.
+
+    New external interventions should use ``Scenario`` and ``ScenarioEngine``.
+    """
 
     name: str
     when: Predicate

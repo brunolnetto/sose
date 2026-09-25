@@ -3,7 +3,7 @@ from __future__ import annotations
 import math
 import random
 from collections import defaultdict
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 
 from sose.domain.entity import Entity
 
@@ -68,6 +68,7 @@ class ProbabilisticTransitionGraph:
         entity: Entity,
         context,
         enabled_events: Iterable[str] | None = None,
+        weight_transform: Callable[[TransitionEvaluation, float], float] | None = None,
     ) -> tuple[TransitionOption, ...]:
         grouped = self.event_edges(configuration, enabled_events=enabled_events)
         weighted: list[tuple[str, float, tuple[TransitionEdge, ...]]] = []
@@ -82,6 +83,8 @@ class ProbabilisticTransitionGraph:
                 context=context,
             )
             weight = policy.weight_for(evaluation)
+            if weight_transform is not None:
+                weight = float(weight_transform(evaluation, weight))
             if not math.isfinite(weight):
                 raise ValueError(f"transition weight for {event!r} must be finite")
             if weight < 0:

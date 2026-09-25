@@ -8,6 +8,7 @@ from sose.factories.event import EventFactory
 from sose.factories.schedule import ScheduleFactory
 from sose.factories.statechart import StateChartFactory
 from sose.probability.runtime import ProbabilisticTransitionRuntime
+from sose.scenarios.engine import ScenarioEngine
 
 from .clock import SimulationClock
 from .events import DomainEvent
@@ -26,6 +27,7 @@ class SimulationContext:
     events: EventFactory = field(init=False)
     schedules: ScheduleFactory = field(init=False)
     transitions: ProbabilisticTransitionRuntime = field(init=False)
+    scenarios: ScenarioEngine = field(init=False)
     statecharts: StateChartFactory | None = field(default=None, init=False)
 
     def __post_init__(self) -> None:
@@ -45,6 +47,12 @@ class SimulationContext:
         self.transitions = ProbabilisticTransitionRuntime(
             random_source=self.random,
             tick=lambda: self.clock.tick,
+        )
+        self.scenarios = ScenarioEngine(
+            random_source=self.random,
+            now=lambda: self.clock.now,
+            tick=lambda: self.clock.tick,
+            context=lambda: self,
         )
 
     def bind_statecharts(self, registry) -> None:
