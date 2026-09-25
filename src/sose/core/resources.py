@@ -3,7 +3,12 @@ from __future__ import annotations
 from datetime import datetime
 
 from sose.core.identity import deterministic_id
-from sose.core.runtime import ResourceDefinition, ResourceDemand, ResourceReservation
+from sose.core.runtime import (
+    ResourceDefinition,
+    ResourceDemand,
+    ResourceReleaseIntent,
+    ResourceReservation,
+)
 from sose.persistence.base import Persistence
 
 
@@ -15,6 +20,8 @@ class DurableResourceManager:
         self._backend_leases: dict[str, object] = {}
 
     def rebuild_backend(self, backend) -> int:
+        self._finalize_interrupted_releases()
+
         for definition in self._persistence.resource_definitions():
             backend.create_resource(definition.name, capacity=definition.capacity)
 
@@ -162,15 +169,55 @@ class DurableResourceManager:
                 f"backend lease is not reconstructed for reservation: {reservation_id}"
             )
 
-        backend.release_resource(lease)
-
+        intent = ResourceReleaseIntent(
+            intent_id=deterministic_id("resource-release", reservation_id),
+            reservation_id=reservation_id,
+            resource_name=reservation.resource_name,
+            requested_at=getattr(backend, "now", reservation.acquired_at),
+        )
         with self._persistence.transaction() as uow:
             persisted = uow.get_resource_reservation(reservation_id)
             if persisted != reservation:
-                raise RuntimeError(
-                    f"resource reservation changed during release: {reservation_id}"
-                )
-            uow.delete_resource_reservation(reservation_id)
+                return False
+            uow.save_resource_release_intent(intent)
 
+        backend.release_resource(lease)
+
+        self._finalize_release_intent(intent, reservation)
         self._backend_leases.pop(reservation_id, None)
         return True
+
+    def _finalize_release_intent(
+        self,
+        intent: ResourceReleaseIntent,
+        reservation: ResourceReservation,
+    ) -> None:
+        with self._persistence.transaction() as uow:
+            persisted_intent = uow.get_resource_release_intent(intent.intent_id)
+            persisted_reservation = uow.get_resource_reservation(reservation.reservation_id)
+            if persisted_intent != intent:
+                raise RuntimeError(
+                    f"resource release intent changed: {intent.intent_id}"
+                )
+            if persisted_reservation != reservation:
+                raise RuntimeError(
+                    f"resource reservation changed during release: {reservation.reservation_id}"
+                )
+            uow.delete_resource_reservation(reservation.reservation_id)
+            uow.delete_resource_release_intent(intent.intent_id)
+
+    def _finalize_interrupted_releases(self) -> None:
+        for intent in self._persistence.resource_release_intents():
+            reservation = next(
+                (
+                    reservation
+                    for reservation in self._persistence.resource_reservations()
+                    if reservation.reservation_id == intent.reservation_id
+                ),
+                None,
+            )
+            if reservation is None:
+                with self._persistence.transaction() as uow:
+                    uow.delete_resource_release_intent(intent.intent_id)
+                continue
+            self._finalize_release_intent(intent, reservation)
