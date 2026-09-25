@@ -1,0 +1,22 @@
+name: mro
+entities:
+  - name: supplier
+    statechart: none
+    kind: master
+  - name: work_order
+    statechart: sose.examples.mro.statecharts.WorkOrderChart
+    kind: stateful
+relationships:
+  - name: work_order_supplier
+    from_entity: work_order
+    to_entity: supplier
+    cardinality: many-to-one
+scenarios:
+  # Scenario probabilities describe external conditions/interventions.
+  # Ordinary lifecycle branch weights belong to WorkOrderChart's
+  # ProbabilisticTransitionGraph policy instead.
+  - name: supplier_disruption
+    entity: supplier
+    trigger: scheduled
+    policy: reduce_supplier_availability
+    activation_probability: 0.05
