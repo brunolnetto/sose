@@ -47,3 +47,50 @@ class SimulationPosition:
             raise ValueError("committed_sequence must be >= 0")
         if self.committed_sequence > self.execution_sequence:
             raise ValueError("committed_sequence cannot exceed execution_sequence")
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceDefinition:
+    name: str
+    capacity: int
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("resource name cannot be empty")
+        if self.capacity < 1:
+            raise ValueError("resource capacity must be >= 1")
+
+
+@dataclass(frozen=True, order=True, slots=True)
+class ResourceDemand:
+    priority: int
+    sequence: int
+    request_id: str
+    resource_name: str
+    requested_at: datetime
+
+    def __init__(
+        self,
+        request_id: str,
+        resource_name: str,
+        priority: int,
+        requested_at: datetime,
+        sequence: int,
+    ) -> None:
+        if not request_id:
+            raise ValueError("request_id cannot be empty")
+        if not resource_name:
+            raise ValueError("resource_name cannot be empty")
+        object.__setattr__(self, "priority", priority)
+        object.__setattr__(self, "sequence", sequence)
+        object.__setattr__(self, "request_id", request_id)
+        object.__setattr__(self, "resource_name", resource_name)
+        object.__setattr__(self, "requested_at", requested_at)
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceReservation:
+    reservation_id: str
+    request_id: str
+    resource_name: str
+    acquired_at: datetime
