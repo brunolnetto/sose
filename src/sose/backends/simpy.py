@@ -198,7 +198,10 @@ class SimPyBackend:
         state = self._resource(name)
         if not request_id:
             raise ValueError("request_id cannot be empty")
-        if request_id in state.requests or request_id in self._request_to_lease:
+        if (
+            any(request_id in resource_state.requests for resource_state in self._resources.values())
+            or request_id in self._request_to_lease
+        ):
             raise ValueError(f"resource request already exists: {request_id}")
 
         requested_at = self.now
