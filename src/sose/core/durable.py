@@ -33,8 +33,16 @@ class RebuildBackend(Protocol):
 class DurableScheduler:
     """Persist future execution intent independently from any backend queue."""
 
-    def __init__(self, persistence: Persistence) -> None:
+    def __init__(
+        self,
+        persistence: Persistence,
+        *,
+        context=None,
+        resources=None,
+    ) -> None:
         self._persistence = persistence
+        self._context = context
+        self._resources = resources
 
     def schedule(self, command: Command, *, priority: int = 100) -> ScheduledWork:
         if self._persistence.command(command.command_id) is not None:
@@ -85,6 +93,15 @@ class RuntimeRebuilder:
             raise RuntimeError(
                 "backend logical time does not match persisted recovery boundary"
             )
+
+        if self._context is not None:
+            if position is not None:
+                self._context.clock.now = position.logical_time
+                self._context.clock.tick = position.logical_tick
+            self._context.scenarios.restore_state(self._persistence.scenario_state())
+
+        if self._resources is not None:
+            self._resources.rebuild_backend(backend)
 
         boundary = position.logical_time if position is not None else backend.now
         items = DurableScheduler(self._persistence).pending()
