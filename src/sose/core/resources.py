@@ -32,10 +32,68 @@ class DurableResourceManager:
                 demand.resource_name,
                 request_id=demand.request_id,
                 priority=demand.priority,
-                on_acquired=lambda _lease: None,
+                on_acquired=lambda lease, request_id=demand.request_id: self.commit_grant(
+                    request_id=request_id,
+                    acquired_at=lease.acquired_at,
+                ),
             )
             restored += 1
         return restored
+
+    def request(
+        self,
+        backend,
+        *,
+        resource_name: str,
+        request_id: str,
+        requested_at: datetime,
+        priority: int = 100,
+        on_acquired=None,
+    ) -> ResourceDemand:
+        definitions = {definition.name for definition in self._persistence.resource_definitions()}
+        if resource_name not in definitions:
+            raise KeyError(f"unknown resource definition: {resource_name}")
+        if any(
+            demand.request_id == request_id
+            for demand in self._persistence.resource_demands()
+        ) or any(
+            reservation.request_id == request_id
+            for reservation in self._persistence.resource_reservations()
+        ):
+            raise ValueError(f"resource request already exists: {request_id}")
+
+        sequence = max(
+            [
+                *(demand.sequence for demand in self._persistence.resource_demands()),
+                *(reservation.sequence for reservation in self._persistence.resource_reservations()),
+            ],
+            default=0,
+        ) + 1
+        demand = ResourceDemand(
+            request_id=request_id,
+            resource_name=resource_name,
+            priority=priority,
+            requested_at=requested_at,
+            sequence=sequence,
+        )
+        with self._persistence.transaction() as uow:
+            uow.save_resource_demand(demand)
+
+        def granted(lease) -> None:
+            reservation = self.commit_grant(
+                request_id=request_id,
+                acquired_at=lease.acquired_at,
+            )
+            if on_acquired is not None:
+                on_acquired(reservation)
+
+        backend.request_resource(
+            resource_name,
+            request_id=request_id,
+            priority=priority,
+            on_acquired=granted,
+        )
+        return demand
 
     def commit_grant(self, *, request_id: str, acquired_at: datetime) -> ResourceReservation:
         existing = next(
@@ -65,6 +123,7 @@ class DurableResourceManager:
             request_id=demand.request_id,
             resource_name=demand.resource_name,
             acquired_at=acquired_at,
+            sequence=demand.sequence,
         )
         with self._persistence.transaction() as uow:
             persisted = uow.get_resource_demand(request_id)
