@@ -181,3 +181,34 @@ def test_rebuilder_restores_runtime_position_scenarios_and_resources():
     assert context.clock.tick == 9
     assert context.scenarios.restored == [None]
     assert resources.backends == [backend]
+
+
+def test_rebuilder_validates_all_scheduled_work_before_resource_reconstruction():
+    store = MemoryPersistence()
+    scheduler = DurableScheduler(store)
+    scheduler.schedule(command("stale", ORIGIN))
+
+    with store.transaction() as uow:
+        uow.set_simulation_position(
+            SimulationPosition(
+                logical_time=ORIGIN + timedelta(hours=1),
+                execution_sequence=1,
+                committed_sequence=1,
+                logical_tick=1,
+            )
+        )
+
+    backend = RecordingBackend(now=ORIGIN + timedelta(hours=1))
+    resources = FakeResources()
+
+    with pytest.raises(RuntimeError, match="before recovery boundary"):
+        RuntimeRebuilder(
+            store,
+            context=FakeContext(),
+            resources=resources,
+        ).rebuild(
+            backend,
+            on_due=lambda _: None,
+        )
+
+    assert resources.backends == []
