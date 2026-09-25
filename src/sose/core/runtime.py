@@ -94,3 +94,4 @@ class ResourceReservation:
     request_id: str
     resource_name: str
     acquired_at: datetime
+    sequence: int = 0
