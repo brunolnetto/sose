@@ -41,23 +41,13 @@ class ResourceLease:
 
 @dataclass(frozen=True, slots=True)
 class ResourcePreemption:
-    """Backend-neutral notification that an active lease lost capacity."""
+    """Backend-neutral notification that an acquired lease was preempted."""
 
     lease_id: str
     request_id: str
     resource_name: str
     preempted_at: datetime
     preempted_by: str | None = None
-
-
-@dataclass(frozen=True, slots=True)
-class ResourcePreemption:
-    """Backend-neutral notification that an acquired lease was preempted."""
-
-    request_id: str
-    resource_name: str
-    preempted_by: str | None
-    preempted_at: datetime
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,27 +104,6 @@ class ResourceBackend(Protocol):
     def release_resource(self, lease: ResourceLease | str) -> None: ...
 
     def resource_snapshot(self, name: str) -> ResourceSnapshot: ...
-
-
-@runtime_checkable
-class PreemptiveResourceBackend(Protocol):
-    def create_preemptive_resource(self, name: str, *, capacity: int = 1) -> None: ...
-
-    def request_preemptive_resource(
-        self,
-        name: str,
-        *,
-        request_id: str,
-        on_acquired: Callable[[ResourceLease], None],
-        on_preempted: Callable[[ResourcePreemption], None],
-        priority: int = 100,
-        preempt: bool = True,
-    ) -> ResourceRequest: ...
-
-    def release_preemptive_resource(self, lease: ResourceLease | str) -> None: ...
-
-    def preemptive_resource_snapshot(self, name: str) -> ResourceSnapshot: ...
-
 
 
 @runtime_checkable
