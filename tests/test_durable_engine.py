@@ -219,3 +219,46 @@ def test_schedule_created_after_rebuild_is_enqueued_on_live_backend():
     assert stored is not None
     assert stored.state == "released"
     assert persistence.scheduled_work() == ()
+
+
+def test_durable_schedule_executes_on_tick_without_backend_rebuild():
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now,
+        key=("tick-durable-schedule", work_order.id),
+    )
+    context.schedules.at(now, command=command)
+
+    engine.advance_tick()
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "released"
+    assert persistence.scheduled_work() == ()
+    assert len(persistence.events()) == 1
+
+
+def test_backend_callback_after_tick_execution_is_stale_and_harmless():
+    now, context, persistence, engine, work_order = build_runtime()
+    backend = RecordingTemporalBackend(now)
+    engine.rebuild_backend(backend)
+
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now,
+        key=("tick-and-backend-durable-schedule", work_order.id),
+    )
+    context.schedules.at(now, command=command)
+
+    assert len(backend.calls) == 1
+    callback = backend.calls[0][3]
+
+    engine.advance_tick()
+    assert persistence.entity("work_order", work_order.id).state == "released"
+    assert len(persistence.events()) == 1
+
+    assert callback() is False
+    assert len(persistence.events()) == 1
