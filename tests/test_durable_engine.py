@@ -53,7 +53,13 @@ def test_dispatch_scheduled_commits_transition_and_consumption_atomically():
     assert stored.state == "released"
     assert persistence.command(command.command_id) is None
     assert persistence.scheduled_work() == ()
-    assert [event.name for event in persistence.events()] == ["work_order.released"]
+    events = persistence.events()
+    assert [event.name for event in events] == ["entity.state_transition"]
+    assert events[0].payload == {
+        "trigger": "release",
+        "from_state": "planned",
+        "to_state": "released",
+    }
 
     position = persistence.simulation_position()
     assert position is not None
@@ -85,11 +91,16 @@ def test_dispatch_scheduled_advances_logical_time_to_due_at():
 def test_failed_scheduled_dispatch_rolls_back_work_and_logical_time():
     now, context, persistence, engine, work_order = build_runtime()
     due_at = now + timedelta(hours=2)
+    missing = context.entities.create(
+        WorkOrder,
+        key=("missing-durable-target", 1),
+        state="planned",
+    )
     command = context.commands.create(
-        "complete",
-        target=work_order,
+        "release",
+        target=missing,
         due_at=due_at,
-        key=("invalid-durable-transition", work_order.id),
+        key=("missing-durable-target", missing.id),
     )
     scheduler = DurableScheduler(persistence)
     work = scheduler.schedule(command)
@@ -97,7 +108,7 @@ def test_failed_scheduled_dispatch_rolls_back_work_and_logical_time():
 
     import pytest
 
-    with pytest.raises(Exception):
+    with pytest.raises(KeyError, match="entity not found"):
         engine.dispatch_scheduled(item)
 
     stored = persistence.entity("work_order", work_order.id)
