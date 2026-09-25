@@ -402,3 +402,30 @@ include:
 
 These should continue to preserve the rule that backend-native state is
 ephemeral and reconstructible.
+
+
+---
+
+## Preemptive resources (v0.7)
+
+Preemption is an optional backend capability exposed through
+`PreemptiveResourceBackend`, not an expansion of the base `ResourceBackend`.
+
+```text
+PreemptiveResourceBackend
+├── create_preemptive_resource
+├── request_preemptive_resource
+├── release_preemptive_resource
+└── preemptive_resource_snapshot
+```
+
+A displaced holder receives a backend-neutral `ResourcePreemption` describing
+the displaced lease/request, resource, logical preemption time, and the request
+that caused preemption when known.
+
+The SimPy adapter internally creates a process per preemptive request because
+SimPy delivers preemption as a process interrupt. Those processes, interrupts,
+native requests, and generator continuations remain private ephemeral state.
+
+Lower numeric priority remains more important. Setting `preempt=False` keeps
+priority queueing but prevents that request from interrupting an active holder.
