@@ -5,9 +5,11 @@ from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
-from sose.domain.registry import DomainRegistry
+from sose.domain.registry import DomainRegistry, EntityType
+from sose.examples.mro.entities import WorkOrder
+from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
-from sose.scenarios import AttributeEffect, Scenario, TickTrigger, TransitionWeightEffect
+from sose.scenarios import AttributeEffect, EventTrigger, Scenario, TickTrigger, TransitionWeightEffect
 
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
@@ -112,3 +114,73 @@ def test_restored_decision_prevents_duplicate_activation_for_same_tick():
     assert len(decisions) == 1
     assert decisions[0] == store.scenario_state().decisions[0]
     assert len(second_context.scenarios.active_activations) == 1
+
+
+def test_event_triggered_scenario_state_is_durable_across_restart():
+    scenario = Scenario(
+        name="release_pressure",
+        trigger=EventTrigger(event="work_order.released", entity_type="work_order"),
+        duration=timedelta(hours=3),
+        effects=(AttributeEffect("release.pressure", "high"),),
+    )
+    store = MemoryPersistence()
+    context = SimulationContext(
+        clock=SimulationClock(now=ORIGIN, step=timedelta(hours=1)),
+        random=RandomSource(42),
+        scheduler=Scheduler(),
+    )
+    registry = DomainRegistry()
+    registry.register(EntityType("work_order", WorkOrderChart))
+    work_order = context.entities.create(
+        WorkOrder,
+        key=("durable-scenario-event", 1),
+        state="planned",
+    )
+    with store.transaction() as uow:
+        uow.save_entity(work_order)
+
+    engine = Engine(
+        context=context,
+        registry=registry,
+        persistence=store,
+        scenarios=(scenario,),
+    )
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        key=("durable-scenario-event", work_order.id, "release"),
+    )
+
+    engine.dispatch(command)
+
+    assert context.scenarios.attribute("release.pressure") == "high"
+    saved = store.scenario_state()
+    assert saved is not None
+    assert len(saved.activations) == 1
+    assert len(saved.decisions) == 1
+
+    restarted_context = SimulationContext(
+        clock=SimulationClock(now=ORIGIN, step=timedelta(hours=1)),
+        random=RandomSource(42),
+        scheduler=Scheduler(),
+    )
+    restarted_engine = Engine(
+        context=restarted_context,
+        registry=registry,
+        persistence=store,
+        scenarios=(scenario,),
+    )
+
+    class EmptyBackend:
+        @property
+        def now(self):
+            position = store.simulation_position()
+            return position.logical_time if position is not None else ORIGIN
+
+        def schedule_at(self, at, callback, *, priority=100, key=None):
+            raise AssertionError("no scheduled work expected")
+
+    restarted_engine.rebuild_backend(EmptyBackend())
+
+    assert restarted_context.scenarios.attribute("release.pressure") == "high"
+    assert restarted_context.scenarios.decisions == context.scenarios.decisions
