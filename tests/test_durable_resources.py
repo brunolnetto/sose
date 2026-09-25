@@ -6,6 +6,7 @@ from sose.core.resources import (
     ResourceDemand,
     ResourceReservation,
 )
+from sose.backends.base import ResourceLease
 from sose.persistence.memory import MemoryPersistence
 
 
@@ -135,3 +136,52 @@ def test_release_removes_reservation_without_touching_waiters():
 
     assert store.resource_reservations() == ()
     assert [d.request_id for d in store.resource_demands()] == ["waiter"]
+
+
+def test_rebuilt_pending_demand_becomes_durable_reservation_when_backend_grants():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_demand(ResourceDemand("wo-1", "bay", 10, NOW, 7))
+
+    backend = RecordingResourceBackend()
+    manager = DurableResourceManager(store)
+    manager.rebuild_backend(backend)
+
+    _, _, _, callback = backend.requests[0]
+    callback(
+        ResourceLease(
+            lease_id="backend-lease",
+            request_id="wo-1",
+            resource_name="bay",
+            acquired_at=NOW,
+        )
+    )
+
+    assert store.resource_demands() == ()
+    reservation = store.resource_reservations()[0]
+    assert reservation.request_id == "wo-1"
+    assert reservation.sequence == 7
+
+
+def test_new_request_sequence_advances_past_existing_reservations():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_reservation(
+            ResourceReservation("res-holder", "holder", "bay", NOW, sequence=12)
+        )
+
+    backend = RecordingResourceBackend()
+    manager = DurableResourceManager(store)
+
+    demand = manager.request(
+        backend,
+        resource_name="bay",
+        request_id="waiter",
+        requested_at=NOW,
+        priority=100,
+    )
+
+    assert demand.sequence == 13
+    assert store.resource_demands() == (demand,)
