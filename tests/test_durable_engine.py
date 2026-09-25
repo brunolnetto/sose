@@ -8,6 +8,7 @@ from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.examples.mro.entities import WorkOrder
+from sose.examples.mro.simulation import build_demo
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
 
@@ -262,3 +263,14 @@ def test_backend_callback_after_tick_execution_is_stale_and_harmless():
 
     assert callback() is False
     assert len(persistence.events()) == 1
+
+
+def test_build_demo_schedule_remains_executable_without_backend_rebuild():
+    engine, persistence, work_order_id = build_demo()
+
+    engine.advance_tick()
+
+    stored = persistence.entity("work_order", work_order_id)
+    assert stored is not None
+    assert stored.state == "released"
+    assert persistence.scheduled_work() == ()
