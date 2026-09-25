@@ -37,11 +37,19 @@ class MemoryUnitOfWork:
     def append_event(self, event: DomainEvent) -> None:
         self._working.events.append(event)
 
+    def get_command(self, command_id: str) -> Command | None:
+        value = self._working.commands.get(command_id)
+        return deepcopy(value) if value else None
+
     def save_command(self, command: Command) -> None:
         self._working.commands[command.command_id] = deepcopy(command)
 
     def delete_command(self, command_id: str) -> None:
         self._working.commands.pop(command_id, None)
+
+    def get_scheduled_work(self, work_id: str) -> ScheduledWork | None:
+        value = self._working.scheduled_work.get(work_id)
+        return deepcopy(value) if value else None
 
     def save_scheduled_work(self, work: ScheduledWork) -> None:
         if work.command_id not in self._working.commands:
