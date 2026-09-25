@@ -66,9 +66,20 @@ Schedules created while a backend is attached are both persisted and enqueued
 for live execution. Schedules created without an attached backend remain
 durable and are consumed by logical-tick execution or reconstructed later.
 
-Ticks are fixed intervals. Durable work may execute at arbitrary timestamps
-inside a tick interval, while `SimulationPosition` advances only to the tick
-boundary.
+Ticks are fixed intervals, but recovery positions are not restricted to tick
+boundaries.
+
+There are two execution paths:
+
+- During `Engine.advance_tick()`, durable work may execute at arbitrary
+  timestamps inside the interval, while the transaction commits
+  `SimulationPosition.logical_time` at the tick boundary.
+- During live backend callback execution through `Engine.dispatch_scheduled()`,
+  the callback commits `SimulationPosition.logical_time` at the scheduled
+  work's exact `due_at`, which may be between tick boundaries.
+
+Therefore every persisted `SimulationPosition.logical_time` is a valid
+recovery boundary, whether tick-aligned or event-time-aligned.
 
 ## Resource durability
 
