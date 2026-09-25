@@ -8,13 +8,13 @@ from sose.core.resources import (
     ResourceDemand,
     ResourceReservation,
 )
+from sose.core.runtime import ResourceReleaseIntent, SimulationPosition
 from sose.backends.base import ResourceLease
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
-from sose.core.runtime import SimulationPosition
 from sose.domain.registry import DomainRegistry
 from sose.persistence.memory import MemoryPersistence
 
@@ -402,3 +402,81 @@ def test_persistence_rejects_reservation_for_still_pending_request():
 
     assert [d.request_id for d in store.resource_demands()] == ["wo-1"]
     assert store.resource_reservations() == ()
+
+
+def test_rebuild_completes_release_intent_after_waiter_was_promoted_before_crash():
+    store = MemoryPersistence()
+    holder = ResourceReservation("res-holder", "holder", "bay", NOW, sequence=1)
+    waiter = ResourceReservation("res-waiter", "waiter", "bay", NOW, sequence=2)
+    intent = ResourceReleaseIntent(
+        intent_id="release-res-holder",
+        reservation_id=holder.reservation_id,
+        resource_name="bay",
+        requested_at=NOW,
+    )
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_reservation(holder)
+        uow.save_resource_reservation(waiter)
+        uow.save_resource_release_intent(intent)
+
+    backend = CapacityBackend()
+    manager = DurableResourceManager(store)
+
+    manager.rebuild_backend(backend)
+
+    assert [r.reservation_id for r in store.resource_reservations()] == ["res-waiter"]
+    assert store.resource_release_intents() == ()
+    assert list(backend.active["bay"]) == ["waiter"]
+    assert backend.queues["bay"] == []
+
+
+def test_rebuild_completes_release_intent_and_promotes_pending_waiter():
+    store = MemoryPersistence()
+    holder = ResourceReservation("res-holder", "holder", "bay", NOW, sequence=1)
+    intent = ResourceReleaseIntent(
+        intent_id="release-res-holder",
+        reservation_id=holder.reservation_id,
+        resource_name="bay",
+        requested_at=NOW,
+    )
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_reservation(holder)
+        uow.save_resource_demand(ResourceDemand("waiter", "bay", 10, NOW, 2))
+        uow.save_resource_release_intent(intent)
+
+    backend = CapacityBackend()
+    manager = DurableResourceManager(store)
+
+    manager.rebuild_backend(backend)
+
+    assert store.resource_release_intents() == ()
+    assert [r.request_id for r in store.resource_reservations()] == ["waiter"]
+    assert store.resource_demands() == ()
+    assert list(backend.active["bay"]) == ["waiter"]
+
+
+def test_release_intent_is_persisted_before_backend_release():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_reservation(
+            ResourceReservation("res-holder", "holder", "bay", NOW, sequence=1)
+        )
+
+    observed = []
+
+    class InspectingBackend(CapacityBackend):
+        def release_resource(self, lease):
+            observed.extend(store.resource_release_intents())
+            super().release_resource(lease)
+
+    backend = InspectingBackend()
+    manager = DurableResourceManager(store)
+    manager.rebuild_backend(backend)
+
+    assert manager.release(backend, "res-holder") is True
+    assert len(observed) == 1
+    assert observed[0].reservation_id == "res-holder"
+    assert store.resource_release_intents() == ()
