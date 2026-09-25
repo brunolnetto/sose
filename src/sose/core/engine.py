@@ -119,8 +119,6 @@ class Engine:
                 self.context.scenarios.restore_state(scenario_before)
             raise
 
-        for event in emitted:
-            self.context.scenarios.on_event(event)
         return True
 
 
