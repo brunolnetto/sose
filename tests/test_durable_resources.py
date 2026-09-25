@@ -67,6 +67,9 @@ class RecordingResourceBackend:
         self.created = []
         self.requests = []
 
+    def schedule_at(self, at, callback, *, priority=100, key=None):
+        raise AssertionError("no scheduled work expected")
+
     def create_resource(self, name, *, capacity=1):
         self.created.append((name, capacity))
 
@@ -142,8 +145,8 @@ def test_release_removes_reservation_without_touching_waiters():
     manager.rebuild_backend(backend)
     assert manager.release(backend, "res-1") is True
 
-    assert store.resource_reservations() == ()
-    assert [d.request_id for d in store.resource_demands()] == ["waiter"]
+    assert [r.request_id for r in store.resource_reservations()] == ["waiter"]
+    assert store.resource_demands() == ()
 
 
 def test_rebuilt_pending_demand_becomes_durable_reservation_when_backend_grants():
@@ -196,7 +199,8 @@ def test_new_request_sequence_advances_past_existing_reservations():
 
 
 class CapacityBackend:
-    def __init__(self):
+    def __init__(self, *, now=NOW):
+        self.now = now
         self.capacity = {}
         self.active = {}
         self.queues = {}
