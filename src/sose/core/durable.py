@@ -84,6 +84,9 @@ class DurableScheduler:
 
         return work
 
+    def due(self, at) -> tuple[DurableScheduledItem, ...]:
+        return tuple(item for item in self.pending() if item.work.due_at <= at)
+
     def pending(self) -> tuple[DurableScheduledItem, ...]:
         items: list[DurableScheduledItem] = []
         for work in self._persistence.scheduled_work():
