@@ -237,6 +237,9 @@ class Engine:
         for command in self.context.scheduler.due(self.context.clock.now):
             self.dispatch(command)
 
+        for item in self.scheduler.due(self.context.clock.now):
+            self.dispatch_scheduled(item)
+
         next_time = self.context.clock.now + self.context.clock.step
         next_tick = self.context.clock.tick + 1
         position = self.persistence.simulation_position()
