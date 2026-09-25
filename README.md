@@ -339,6 +339,7 @@ v0.6 closes the durable discrete-event runtime milestone. Durable semantic state
 
 See:
 
+- [`docs/architecture/domain-implementation-blueprints.md`](docs/architecture/domain-implementation-blueprints.md)
 - [`docs/factories.md`](docs/factories.md)
 - [`docs/probabilistic-transition-graph.md`](docs/probabilistic-transition-graph.md)
 - [`docs/architecture/scenario-engine.md`](docs/architecture/scenario-engine.md)
