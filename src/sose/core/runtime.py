@@ -95,3 +95,11 @@ class ResourceReservation:
     resource_name: str
     acquired_at: datetime
     sequence: int = 0
+
+
+@dataclass(frozen=True, slots=True)
+class ResourceReleaseIntent:
+    intent_id: str
+    reservation_id: str
+    resource_name: str
+    requested_at: datetime
