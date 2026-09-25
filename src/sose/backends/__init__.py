@@ -1,6 +1,8 @@
 from .base import (
+    PreemptiveResourceBackend,
     ResourceBackend,
     ResourceLease,
+    ResourcePreemption,
     ResourceRequest,
     ResourceSnapshot,
     ScheduledCall,
@@ -13,8 +15,10 @@ from .base import (
 )
 
 __all__ = [
+    "PreemptiveResourceBackend",
     "ResourceBackend",
     "ResourceLease",
+    "ResourcePreemption",
     "ResourceRequest",
     "ResourceSnapshot",
     "ScheduledCall",

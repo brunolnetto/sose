@@ -40,6 +40,17 @@ class ResourceLease:
 
 
 @dataclass(frozen=True, slots=True)
+class ResourcePreemption:
+    """Backend-neutral notification that an acquired lease was preempted."""
+
+    lease_id: str
+    request_id: str
+    resource_name: str
+    preempted_at: datetime
+    preempted_by: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ResourceSnapshot:
     name: str
     capacity: int
