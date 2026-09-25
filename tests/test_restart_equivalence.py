@@ -184,3 +184,28 @@ def test_restart_restores_nonzero_logical_tick():
     assert restarted_store.entity("work_order", restarted_id).state == continuous_store.entity(
         "work_order", continuous_id
     ).state
+
+
+def test_advance_tick_persists_and_restores_next_tick_boundary():
+    store = MemoryPersistence()
+    context, engine = build_engine(store, now=ORIGIN, tick=3)
+
+    engine.advance_tick()
+
+    position = store.simulation_position()
+    assert position is not None
+    assert position.logical_time == ORIGIN + timedelta(hours=1)
+    assert position.logical_tick == 4
+    assert context.clock.now == ORIGIN + timedelta(hours=1)
+    assert context.clock.tick == 4
+
+    restarted_context, restarted_engine = build_engine(
+        store,
+        now=position.logical_time,
+        tick=0,
+    )
+    backend = ExecutableBackend(now=position.logical_time)
+
+    assert restarted_engine.rebuild_backend(backend) == 0
+    assert restarted_context.clock.now == position.logical_time
+    assert restarted_context.clock.tick == 4
