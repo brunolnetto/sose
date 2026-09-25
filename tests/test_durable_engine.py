@@ -79,3 +79,52 @@ def test_dispatch_scheduled_advances_logical_time_to_due_at():
     assert context.clock.now == due_at
     assert persistence.events()[0].occurred_at == due_at
     assert persistence.simulation_position().logical_time == due_at
+
+
+def test_failed_scheduled_dispatch_rolls_back_work_and_logical_time():
+    now, context, persistence, engine, work_order = build_runtime()
+    due_at = now + timedelta(hours=2)
+    command = context.commands.create(
+        "complete",
+        target=work_order,
+        due_at=due_at,
+        key=("invalid-durable-transition", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    work = scheduler.schedule(command)
+    item = scheduler.pending()[0]
+
+    import pytest
+
+    with pytest.raises(Exception):
+        engine.dispatch_scheduled(item)
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "planned"
+    assert persistence.command(command.command_id) == command
+    assert persistence.scheduled_work() == (work,)
+    assert persistence.events() == ()
+    assert persistence.simulation_position() is None
+    assert context.clock.now == now
+
+
+def test_duplicate_stale_callback_does_not_execute_consumed_work_twice():
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now,
+        key=("duplicate-callback", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    scheduler.schedule(command)
+    item = scheduler.pending()[0]
+
+    assert engine.dispatch_scheduled(item) is True
+    assert engine.dispatch_scheduled(item) is False
+
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "released"
+    assert len(persistence.events()) == 1
