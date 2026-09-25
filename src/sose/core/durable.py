@@ -35,10 +35,28 @@ class DurableScheduler:
 
     def __init__(self, persistence: Persistence) -> None:
         self._persistence = persistence
+        self._backend: RebuildBackend | None = None
+        self._on_due: Callable[[DurableScheduledItem], None] | None = None
+
+    def attach_backend(
+        self,
+        backend: RebuildBackend,
+        *,
+        on_due: Callable[[DurableScheduledItem], None],
+    ) -> None:
+        """Attach the active ephemeral backend for schedules created after recovery."""
+        self._backend = backend
+        self._on_due = on_due
+
+    def detach_backend(self) -> None:
+        self._backend = None
+        self._on_due = None
 
     def schedule(self, command: Command, *, priority: int = 100) -> ScheduledWork:
         if self._persistence.command(command.command_id) is not None:
             raise ValueError(f"command already scheduled: {command.command_id}")
+        if self._backend is not None and command.due_at < self._backend.now:
+            raise ValueError("scheduled work cannot be created before backend logical time")
 
         existing = self._persistence.scheduled_work()
         sequence = max((work.sequence for work in existing), default=0) + 1
@@ -53,6 +71,16 @@ class DurableScheduler:
         with self._persistence.transaction() as uow:
             uow.save_command(command)
             uow.save_scheduled_work(work)
+
+        if self._backend is not None:
+            if self._on_due is None:  # pragma: no cover - attachment invariant
+                raise RuntimeError("durable scheduler backend is missing on_due callback")
+            self._backend.schedule_at(
+                work.due_at,
+                lambda item=DurableScheduledItem(work=work, command=command): self._on_due(item),
+                priority=work.priority,
+                key=("durable-work", work.work_id),
+            )
 
         return work
 
