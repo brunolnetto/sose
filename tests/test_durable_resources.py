@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sose.core.resources import (
     DurableResourceManager,
@@ -7,6 +7,12 @@ from sose.core.resources import (
     ResourceReservation,
 )
 from sose.backends.base import ResourceLease
+from sose.core.clock import SimulationClock
+from sose.core.context import SimulationContext
+from sose.core.engine import Engine
+from sose.core.randomness import RandomSource
+from sose.core.scheduler import Scheduler
+from sose.domain.registry import DomainRegistry
 from sose.persistence.memory import MemoryPersistence
 
 
@@ -276,3 +282,30 @@ def test_resource_release_is_idempotent_after_durable_consumption():
 
     assert manager.release(backend, "res-holder") is True
     assert manager.release(backend, "res-holder") is False
+
+
+def test_engine_rebuild_restores_durable_resource_state():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_reservation(
+            ResourceReservation("res-holder", "holder", "bay", NOW, sequence=1)
+        )
+        uow.save_resource_demand(ResourceDemand("normal", "bay", 100, NOW, 2))
+        uow.save_resource_demand(ResourceDemand("urgent", "bay", 1, NOW, 3))
+
+    context = SimulationContext(
+        clock=SimulationClock(NOW, timedelta(hours=1)),
+        random=RandomSource(42),
+        scheduler=Scheduler(),
+    )
+    engine = Engine(
+        context=context,
+        registry=DomainRegistry(),
+        persistence=store,
+    )
+    backend = CapacityBackend()
+
+    assert engine.rebuild_backend(backend) == 0
+    assert list(backend.active["bay"]) == ["holder"]
+    assert [entry[2] for entry in backend.queues["bay"]] == ["urgent", "normal"]
