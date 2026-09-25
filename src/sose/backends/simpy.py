@@ -27,22 +27,6 @@ class _ResourceState:
 
 
 @dataclass(slots=True)
-class _PreemptiveResourceState:
-    resource: PreemptiveResource
-    requests: dict[str, PriorityRequest]
-    processes: dict[str, object]
-
-
-@dataclass(slots=True)
-class _PreemptiveLeaseState:
-    resource_name: str
-    request: PriorityRequest
-    lease: ResourceLease
-    process: object
-    stop_event: Event
-
-
-@dataclass(slots=True)
 class _LeaseState:
     resource_name: str
     request: PriorityRequest
@@ -108,10 +92,6 @@ class SimPyBackend:
         self._preemptive_resources: dict[str, _PreemptiveResourceState] = {}
         self._preemptive_leases: dict[str, _PreemptiveLeaseState] = {}
         self._preemptive_process_to_request: dict[object, str] = {}
-        self._preemptive_resources: dict[str, _PreemptiveResourceState] = {}
-        self._preemptive_leases: dict[str, _PreemptiveLeaseState] = {}
-        self._preemptive_request_to_lease: dict[str, str] = {}
-        self._process_to_request: dict[object, str] = {}
 
     @property
     def name(self) -> str:
@@ -299,7 +279,7 @@ class SimPyBackend:
             raise ValueError("resource name cannot be empty")
         if capacity < 1:
             raise ValueError("resource capacity must be >= 1")
-        if name in self._preemptive_resources or name in self._resources:
+        if name in self._resources or name in self._preemptive_resources:
             raise ValueError(f"resource already exists: {name}")
         self._preemptive_resources[name] = _PreemptiveResourceState(
             resource=PreemptiveResource(self._env, capacity=capacity),
@@ -330,18 +310,17 @@ class SimPyBackend:
         ):
             raise ValueError(f"resource request already exists: {request_id}")
 
-        requested_at = self.now
         public_request = ResourceRequest(
             request_id=request_id,
             resource_name=name,
             priority=priority,
-            requested_at=requested_at,
+            requested_at=self.now,
         )
 
-        def user():
+        def lifecycle():
             process = self._env.active_process
             if process is None:  # pragma: no cover - SimPy process invariant
-                raise RuntimeError("preemptive resource request is not running in a process")
+                raise RuntimeError("preemptive resource request has no active process")
             self._preemptive_process_to_request[process] = request_id
             request = state.resource.request(priority=priority, preempt=preempt)
             state.requests[request_id] = request
@@ -368,16 +347,15 @@ class SimPyBackend:
                 try:
                     yield hold
                 except simpy.Interrupt as interrupt:
-                    cause = interrupt.cause
-                    preempted_by = self._preemptive_process_to_request.get(
-                        getattr(cause, "by", None)
-                    )
                     on_preempted(
                         ResourcePreemption(
+                            lease_id=lease.lease_id,
                             request_id=request_id,
                             resource_name=name,
-                            preempted_by=preempted_by,
                             preempted_at=self.now,
+                            preempted_by=self._preemptive_process_to_request.get(
+                                getattr(interrupt.cause, "by", None)
+                            ),
                         )
                     )
             finally:
@@ -390,7 +368,7 @@ class SimPyBackend:
                 if request in state.resource.users:
                     state.resource.release(request)
 
-        self._env.process(user())
+        self._env.process(lifecycle())
         return public_request
 
     def release_preemptive_resource(self, lease: ResourceLease | str) -> None:
@@ -410,140 +388,6 @@ class SimPyBackend:
             in_use=resource.count,
             queued=len(resource.queue),
         )
-
-
-    def create_preemptive_resource(self, name: str, *, capacity: int = 1) -> None:
-        if not name:
-            raise ValueError("resource name cannot be empty")
-        if capacity < 1:
-            raise ValueError("resource capacity must be >= 1")
-        if name in self._preemptive_resources or name in self._resources:
-            raise ValueError(f"resource already exists: {name}")
-        self._preemptive_resources[name] = _PreemptiveResourceState(
-            resource=PreemptiveResource(self._env, capacity=capacity),
-            requests={},
-            processes={},
-        )
-
-    def request_preemptive_resource(
-        self,
-        name: str,
-        *,
-        request_id: str,
-        on_acquired: Callable[[ResourceLease], None],
-        on_preempted: Callable[[ResourcePreemption], None],
-        priority: int = 100,
-        preempt: bool = True,
-    ) -> ResourceRequest:
-        state = self._preemptive_resource(name)
-        if not request_id:
-            raise ValueError("request_id cannot be empty")
-        if (
-            any(request_id in resource_state.requests for resource_state in self._resources.values())
-            or any(
-                request_id in resource_state.requests
-                for resource_state in self._preemptive_resources.values()
-            )
-            or request_id in self._request_to_lease
-            or request_id in self._preemptive_request_to_lease
-        ):
-            raise ValueError(f"resource request already exists: {request_id}")
-
-        requested_at = self.now
-        public_request = ResourceRequest(
-            request_id=request_id,
-            resource_name=name,
-            priority=priority,
-            requested_at=requested_at,
-        )
-
-        def lifecycle():
-            request = state.resource.request(priority=priority, preempt=preempt)
-            state.requests[request_id] = request
-            try:
-                yield request
-                lease = ResourceLease(
-                    lease_id=deterministic_id("resource-lease", name, request_id),
-                    request_id=request_id,
-                    resource_name=name,
-                    acquired_at=self.now,
-                )
-                stop_event = self._env.event()
-                process = self._env.active_process
-                if process is None:  # pragma: no cover - SimPy process invariant
-                    raise RuntimeError("preemptive resource acquisition has no active process")
-                self._preemptive_leases[lease.lease_id] = _PreemptiveLeaseState(
-                    resource_name=name,
-                    request=request,
-                    lease=lease,
-                    process=process,
-                    stop_event=stop_event,
-                )
-                self._preemptive_request_to_lease[request_id] = lease.lease_id
-                on_acquired(lease)
-                yield stop_event
-            except simpy.Interrupt as interrupt:
-                lease_id = self._preemptive_request_to_lease.pop(request_id, None)
-                lease_state = (
-                    self._preemptive_leases.pop(lease_id, None)
-                    if lease_id is not None
-                    else None
-                )
-                cause = getattr(interrupt, "cause", None)
-                by_process = getattr(cause, "by", None)
-                preempted_by = self._process_to_request.get(by_process)
-                on_preempted(
-                    ResourcePreemption(
-                        lease_id=(
-                            lease_state.lease.lease_id
-                            if lease_state is not None
-                            else deterministic_id("resource-lease", name, request_id)
-                        ),
-                        request_id=request_id,
-                        resource_name=name,
-                        preempted_at=self.now,
-                        preempted_by=preempted_by,
-                    )
-                )
-            finally:
-                state.requests.pop(request_id, None)
-                process = state.processes.pop(request_id, None)
-                if process is not None:
-                    self._process_to_request.pop(process, None)
-
-        process = self._env.process(lifecycle())
-        state.processes[request_id] = process
-        self._process_to_request[process] = request_id
-        return public_request
-
-    def release_preemptive_resource(self, lease: ResourceLease | str) -> None:
-        lease_id = lease.lease_id if isinstance(lease, ResourceLease) else lease
-        state = self._preemptive_leases.pop(lease_id, None)
-        if state is None:
-            raise KeyError(f"unknown preemptive resource lease: {lease_id}")
-
-        resource = self._preemptive_resource(state.resource_name)
-        resource.resource.release(state.request)
-        resource.requests.pop(state.lease.request_id, None)
-        self._preemptive_request_to_lease.pop(state.lease.request_id, None)
-        if not state.stop_event.triggered:
-            state.stop_event.succeed()
-
-    def preemptive_resource_snapshot(self, name: str) -> ResourceSnapshot:
-        state = self._preemptive_resource(name)
-        resource = state.resource
-        return ResourceSnapshot(
-            name=name,
-            capacity=resource.capacity,
-            in_use=resource.count,
-            queued=len(resource.queue),
-        )
-
-    def _preemptive_resource(self, name: str) -> _PreemptiveResourceState:
-        try:
-            return self._preemptive_resources[name]
-        except KeyError as exc:
-            raise KeyError(f"unknown preemptive resource: {name}") from exc
 
     def _preemptive_resource(self, name: str) -> _PreemptiveResourceState:
         try:
