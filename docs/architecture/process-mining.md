@@ -26,6 +26,7 @@ Recommended fields:
 
 ```text
 event_id
+event_sequence
 case_id
 activity
 occurred_at
@@ -99,6 +100,16 @@ occurred_at = 2027-01-04T10:00:00
 ```
 
 This creates a process-mining-ready event stream.
+
+When multiple events share the same logical timestamp, exports must preserve a deterministic sequence. The canonical ordering key is:
+
+```text
+occurred_at
+event_sequence
+event_id
+```
+
+`event_sequence` is persisted as part of the process-event projection so consumers do not need simulator-private tick metadata to reconstruct order.
 
 ---
 
@@ -331,7 +342,7 @@ instead of forcing every event into one case identifier.
 
 1. Domain-visible transitions can be converted into canonical process events.
 2. Case identity is domain-defined.
-3. Event ordering uses logical simulation time and deterministic sequence.
+3. Event ordering uses `(occurred_at, event_sequence, event_id)` as an unambiguous deterministic ordering key.
 4. Causal metadata remains available.
 5. Internal engine events are not automatically process activities.
 6. Resource context is preserved when relevant.
