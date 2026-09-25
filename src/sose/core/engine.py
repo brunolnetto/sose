@@ -60,6 +60,9 @@ class Engine:
         work = item.work
         if command.command_id != work.command_id:
             raise ValueError("scheduled work does not match command")
+        if work.due_at < self.context.clock.now:
+            raise ValueError("scheduled work cannot execute before current logical time")
+        self.context.clock.now = work.due_at
 
         with self.persistence.transaction() as uow:
             entity = uow.get_entity(command.entity_type, command.entity_id)
