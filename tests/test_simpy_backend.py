@@ -5,7 +5,7 @@ import pytest
 
 pytest.importorskip("simpy")
 
-from sose.backends import ResourceLease, ResourceSnapshot, ScheduledCall
+from sose.backends import ContainerRequest, ContainerSnapshot, ResourceLease, ResourceSnapshot, ScheduledCall
 from sose.backends.simpy import SimPyBackend
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
@@ -272,3 +272,114 @@ def test_aware_datetime_conversion_respects_dst_offset_changes():
 
     assert observed == [target]
     assert runtime.now == target
+
+
+def test_container_exposes_initial_level_and_capacity():
+    runtime = backend()
+    runtime.create_container("fuel", capacity=100.0, initial=25.0)
+
+    snapshot = runtime.container_snapshot("fuel")
+
+    assert isinstance(snapshot, ContainerSnapshot)
+    assert snapshot.capacity == 100.0
+    assert snapshot.level == 25.0
+    assert snapshot.queued_puts == 0
+    assert snapshot.queued_gets == 0
+
+
+def test_container_put_and_get_update_level():
+    runtime = backend()
+    runtime.create_container("fuel", capacity=100.0, initial=25.0)
+    completed: list[ContainerRequest] = []
+
+    runtime.put_container(
+        "fuel",
+        request_id="delivery",
+        amount=15.0,
+        on_completed=completed.append,
+    )
+    runtime.get_container(
+        "fuel",
+        request_id="consume",
+        amount=10.0,
+        on_completed=completed.append,
+    )
+    runtime.run_until(ORIGIN)
+
+    assert [request.request_id for request in completed] == ["delivery", "consume"]
+    assert runtime.container_snapshot("fuel").level == 30.0
+
+
+def test_container_get_waits_until_enough_level_is_available():
+    runtime = backend()
+    runtime.create_container("fuel", capacity=100.0, initial=5.0)
+    completed: list[ContainerRequest] = []
+
+    runtime.get_container(
+        "fuel",
+        request_id="consume",
+        amount=10.0,
+        on_completed=completed.append,
+    )
+    runtime.run_until(ORIGIN)
+
+    assert completed == []
+    assert runtime.container_snapshot("fuel").queued_gets == 1
+
+    runtime.put_container(
+        "fuel",
+        request_id="delivery",
+        amount=10.0,
+        on_completed=completed.append,
+    )
+    runtime.run_until(ORIGIN)
+
+    assert [request.request_id for request in completed] == ["delivery", "consume"]
+    assert runtime.container_snapshot("fuel").level == 5.0
+
+
+def test_container_put_waits_until_capacity_is_available():
+    runtime = backend()
+    runtime.create_container("buffer", capacity=10.0, initial=9.0)
+    completed: list[ContainerRequest] = []
+
+    runtime.put_container(
+        "buffer",
+        request_id="fill",
+        amount=5.0,
+        on_completed=completed.append,
+    )
+    runtime.run_until(ORIGIN)
+
+    assert completed == []
+    assert runtime.container_snapshot("buffer").queued_puts == 1
+
+    runtime.get_container(
+        "buffer",
+        request_id="drain",
+        amount=5.0,
+        on_completed=completed.append,
+    )
+    runtime.run_until(ORIGIN)
+
+    assert [request.request_id for request in completed] == ["drain", "fill"]
+    assert runtime.container_snapshot("buffer").level == 9.0
+
+
+def test_container_rejects_invalid_levels_amounts_and_duplicate_requests():
+    runtime = backend()
+
+    with pytest.raises(ValueError, match="capacity"):
+        runtime.create_container("invalid", capacity=0)
+
+    with pytest.raises(ValueError, match="initial"):
+        runtime.create_container("invalid", capacity=10, initial=11)
+
+    runtime.create_container("fuel", capacity=10, initial=5)
+
+    with pytest.raises(ValueError, match="amount"):
+        runtime.get_container("fuel", request_id="zero", amount=0, on_completed=lambda _: None)
+
+    runtime.get_container("fuel", request_id="consume", amount=1, on_completed=lambda _: None)
+    with pytest.raises(ValueError, match="already exists"):
+        runtime.put_container("fuel", request_id="consume", amount=1, on_completed=lambda _: None)
