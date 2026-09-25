@@ -109,6 +109,8 @@ class MemoryUnitOfWork:
     def save_resource_reservation(self, reservation: ResourceReservation) -> None:
         if reservation.resource_name not in self._working.resource_definitions:
             raise KeyError(f"unknown resource definition: {reservation.resource_name}")
+        if reservation.request_id in self._working.resource_demands:
+            raise ValueError(f"resource request is still pending: {reservation.request_id}")
         if any(
             current.request_id == reservation.request_id
             and current.reservation_id != reservation.reservation_id
