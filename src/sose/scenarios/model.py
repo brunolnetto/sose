@@ -188,3 +188,9 @@ def iter_leaf_effects(effects: tuple[ScenarioEffect, ...]):
             yield from iter_leaf_effects(effect.effects)
         else:
             yield effect
+
+
+@dataclass(frozen=True, slots=True)
+class ScenarioRuntimeState:
+    decisions: tuple[ScenarioDecision, ...] = ()
+    activations: tuple[ScenarioActivation, ...] = ()
