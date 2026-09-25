@@ -262,3 +262,110 @@ def test_full_runtime_is_equivalent_across_multiple_restarts():
     assert [r.request_id for r in restarted_store.resource_reservations()] == ["urgent"]
     assert [d.request_id for d in restarted_store.resource_demands()] == ["normal"]
     assert restarted_store.scenario_state() == continuous_store.scenario_state()
+
+
+
+def run_with_restart_after_each_recovery_boundary():
+    store = MemoryPersistence()
+    work_order_id = seed(store)
+
+    context1, engine1 = build(store, now=ORIGIN)
+    backend1 = IntegratedBackend(now=ORIGIN)
+    engine1.rebuild_backend(backend1)
+    engine1.resources.request(
+        backend1,
+        resource_name="bay",
+        request_id="holder",
+        requested_at=ORIGIN,
+        priority=100,
+    )
+    engine1.resources.request(
+        backend1,
+        resource_name="bay",
+        request_id="urgent",
+        requested_at=ORIGIN,
+        priority=1,
+    )
+    engine1.resources.request(
+        backend1,
+        resource_name="bay",
+        request_id="normal",
+        requested_at=ORIGIN,
+        priority=100,
+    )
+
+    # Boundary 1: the first fixed tick commits release at 09:00.
+    engine1.advance_tick()
+    position1 = store.simulation_position()
+    assert position1.logical_time == ORIGIN + timedelta(hours=1)
+
+    context2, engine2 = build(store, now=position1.logical_time)
+    backend2 = IntegratedBackend(now=position1.logical_time)
+    engine2.rebuild_backend(backend2)
+
+    # Boundary 2: start executes at 10:00 and holder release promotes urgent.
+    backend2.run_until(ORIGIN + timedelta(hours=2))
+    holder = next(
+        reservation
+        for reservation in store.resource_reservations()
+        if reservation.request_id == "holder"
+    )
+    engine2.resources.release(backend2, holder.reservation_id)
+
+    position2 = store.simulation_position()
+    assert position2.logical_time == ORIGIN + timedelta(hours=2)
+
+    context3, engine3 = build(store, now=position2.logical_time)
+    backend3 = IntegratedBackend(now=position2.logical_time)
+    engine3.rebuild_backend(backend3)
+
+    # Boundary 3: complete executes at 11:00.
+    backend3.run_until(ORIGIN + timedelta(hours=3))
+    position3 = store.simulation_position()
+    assert position3.logical_time == ORIGIN + timedelta(hours=3)
+
+    context4, engine4 = build(store, now=position3.logical_time)
+    backend4 = IntegratedBackend(now=position3.logical_time)
+    engine4.rebuild_backend(backend4)
+
+    # Final boundary: close executes at 12:00.
+    backend4.run_until(ORIGIN + timedelta(hours=4))
+
+    return store, work_order_id, backend4
+
+
+def test_multi_restart_equivalence_is_an_architectural_gate():
+    continuous_store, continuous_id, _ = run_continuous()
+    restarted_store, restarted_id, final_backend = (
+        run_with_restart_after_each_recovery_boundary()
+    )
+
+    assert durable_snapshot(restarted_store, restarted_id) == durable_snapshot(
+        continuous_store,
+        continuous_id,
+    )
+
+    position = restarted_store.simulation_position()
+    assert position is not None
+    assert position.logical_time == ORIGIN + timedelta(hours=4)
+    assert position.execution_sequence == position.committed_sequence
+
+    assert restarted_store.entity("work_order", restarted_id).state == "closed"
+    assert [event.name for event in restarted_store.events()] == [
+        "work_order.released",
+        "work_order.started",
+        "work_order.completed",
+        "work_order.closed",
+    ]
+    assert restarted_store.scheduled_work() == ()
+    assert restarted_store.resource_release_intents() == ()
+    assert [r.request_id for r in restarted_store.resource_reservations()] == [
+        "urgent"
+    ]
+    assert [d.request_id for d in restarted_store.resource_demands()] == [
+        "normal"
+    ]
+
+    # Backend execution mechanics are reconstructed from the same durable truth.
+    assert list(final_backend.active["bay"]) == ["urgent"]
+    assert [entry[2] for entry in final_backend.queues["bay"]] == ["normal"]
