@@ -129,6 +129,7 @@ class SimPyBackend:
         self._preemptive_resources: dict[str, _PreemptiveResourceState] = {}
         self._preemptive_leases: dict[str, _PreemptiveLeaseState] = {}
         self._preemptive_process_to_request: dict[object, str] = {}
+        self._cancelled_preemptive_requests: set[str] = set()
 
     @property
     def name(self) -> str:
@@ -531,7 +532,16 @@ class SimPyBackend:
             if request is None:
                 continue
             if request.triggered:
-                return False
+                # Capacity can be granted synchronously while the callback is still
+                # waiting in SimPy's event queue. Remove the callback and release
+                # the underlying request before it can become an unmanaged lease.
+                if request.callbacks is None:
+                    return False
+                request.callbacks.clear()
+                if request in state.resource.users:
+                    state.resource.release(request)
+                state.requests.pop(request_id, None)
+                return True
             request.cancel()
             state.requests.pop(request_id, None)
             return True
@@ -606,11 +616,18 @@ class SimPyBackend:
             if process is None:  # pragma: no cover - SimPy process invariant
                 raise RuntimeError("preemptive resource request has no active process")
             self._preemptive_process_to_request[process] = request_id
+            if request_id in self._cancelled_preemptive_requests:
+                self._cancelled_preemptive_requests.discard(request_id)
+                self._preemptive_process_to_request.pop(process, None)
+                return
             request = state.resource.request(priority=priority, preempt=preempt)
             state.requests[request_id] = request
             lease_id: str | None = None
             try:
                 yield request
+                if request_id in self._cancelled_preemptive_requests:
+                    self._cancelled_preemptive_requests.discard(request_id)
+                    return
                 lease = ResourceLease(
                     lease_id=deterministic_id("resource-lease", name, request_id),
                     request_id=request_id,
@@ -656,18 +673,32 @@ class SimPyBackend:
         return public_request
 
     def cancel_preemptive_resource_request(self, request_id: str) -> bool:
-        if request_id in self._request_to_lease:
-            return False
+        lease_id = self._request_to_lease.get(request_id)
+        if lease_id is not None:
+            # A preemptive grant may be backend-acquired while durable truth still
+            # remains a demand during the two-callback preemption handshake.
+            self.release_preemptive_resource(lease_id)
+            return True
+
         for state in self._preemptive_resources.values():
             request = state.requests.get(request_id)
             if request is None:
                 continue
-            if request.triggered:
-                return False
-            request.cancel()
+            self._cancelled_preemptive_requests.add(request_id)
+            if not request.triggered:
+                request.cancel()
+                # Wake the waiting lifecycle so its finally block can terminate
+                # without ever owning capacity.
+                request.succeed()
+            elif request in state.resource.users:
+                state.resource.release(request)
             state.requests.pop(request_id, None)
             return True
-        return False
+
+        # The lifecycle process is scheduled but has not yet registered its
+        # backend request. A tombstone makes that first process step terminate.
+        self._cancelled_preemptive_requests.add(request_id)
+        return True
 
     def release_preemptive_resource(self, lease: ResourceLease | str) -> None:
         lease_id = lease.lease_id if isinstance(lease, ResourceLease) else lease
