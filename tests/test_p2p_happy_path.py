@@ -9,6 +9,7 @@ from sose.examples.p2p.simulation import (
     build_runtime,
     flow_correlation_id,
     reconcile_consumption,
+    reconcile_receiving_resources,
     reconcile_stocking,
     run_happy_path,
     seed_happy_path,
@@ -45,8 +46,8 @@ def test_p2p_happy_path_reaches_consumed_inventory():
         "dispatch",
         "receive",
         "begin_receiving",
-        "close",
         "inspect",
+        "close",
         "stock",
         "allocate",
         "consume",
@@ -90,6 +91,13 @@ def test_stocking_reconciliation_recovers_from_partial_inventory_commit():
     _, engine = build_runtime(persistence)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
+    backend.run_until(ORIGIN + timedelta(hours=10))
+    assert reconcile_receiving_resources(
+        persistence,
+        engine,
+        backend,
+        entities=ids,
+    ) is True
     backend.run_until(ORIGIN + timedelta(hours=11))
 
     engine.stores.put(

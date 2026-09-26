@@ -9,7 +9,7 @@ from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.identity import deterministic_id
 from sose.core.randomness import RandomSource
-from sose.core.runtime import ContainerDefinition, StoreDefinition
+from sose.core.runtime import ContainerDefinition, ResourceDefinition, StoreDefinition
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.memory import MemoryPersistence
@@ -110,6 +110,8 @@ def seed_happy_path(
     with persistence.transaction() as uow:
         for entity in (requisition, purchase_order, receipt, material_demand):
             uow.save_entity(entity)
+        uow.save_resource_definition(ResourceDefinition("receiving_dock", capacity=1))
+        uow.save_resource_definition(ResourceDefinition("inspector", capacity=1))
 
     engine.stores.define(StoreDefinition("received_lots", kind="fifo", capacity=10))
     engine.containers.define(
@@ -128,9 +130,7 @@ def seed_happy_path(
         (purchase_order, "dispatch", timedelta(hours=4)),
         # The gap between dispatch and receive is the durable supplier lead time.
         (purchase_order, "receive", timedelta(hours=10)),
-        (receipt, "begin_receiving", timedelta(hours=10)),
         (purchase_order, "close", timedelta(hours=11)),
-        (receipt, "inspect", timedelta(hours=11)),
     )
     previous = None
     for entity, trigger, offset in schedule:
@@ -151,6 +151,138 @@ def seed_happy_path(
         receipt_id=receipt.id,
         material_demand_id=material_demand.id,
     )
+
+
+def request_receiving_slot(
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    receipt_id: str,
+    requested_at: datetime,
+    priority: int = 100,
+):
+    return engine.resources.request(
+        backend,
+        resource_name="receiving_dock",
+        request_id=f"receiving-dock:{receipt_id}",
+        requested_at=requested_at,
+        priority=priority,
+    )
+
+
+def request_inspector(
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    receipt_id: str,
+    requested_at: datetime,
+    priority: int = 100,
+):
+    return engine.resources.request(
+        backend,
+        resource_name="inspector",
+        request_id=f"inspector:{receipt_id}",
+        requested_at=requested_at,
+        priority=priority,
+    )
+
+
+def _resource_request_exists(persistence: MemoryPersistence, request_id: str) -> bool:
+    return any(
+        demand.request_id == request_id for demand in persistence.resource_demands()
+    ) or any(
+        reservation.request_id == request_id
+        for reservation in persistence.resource_reservations()
+    )
+
+
+def _reservation_for(persistence: MemoryPersistence, request_id: str):
+    return next(
+        (
+            reservation
+            for reservation in persistence.resource_reservations()
+            if reservation.request_id == request_id
+        ),
+        None,
+    )
+
+
+def reconcile_receiving_resources(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: P2PEntities,
+) -> bool:
+    """Advance receipt lifecycle only while required durable capacity is held."""
+
+    correlation_id = flow_correlation_id()
+    dock_request_id = f"receiving-dock:{entities.receipt_id}"
+    inspector_request_id = f"inspector:{entities.receipt_id}"
+
+    receipt = persistence.entity("receipt", entities.receipt_id)
+    if receipt is None:  # pragma: no cover - seed invariant
+        raise RuntimeError("receipt was not persisted")
+
+    if receipt.state == "pending" and not _resource_request_exists(
+        persistence, dock_request_id
+    ):
+        request_receiving_slot(
+            engine,
+            backend,
+            receipt_id=entities.receipt_id,
+            requested_at=backend.now,
+        )
+    backend.run_until(backend.now)
+
+    dock = _reservation_for(persistence, dock_request_id)
+    if receipt.state == "pending" and dock is None:
+        return False
+
+    if receipt.state == "pending":
+        begin = engine.context.commands.create(
+            "begin_receiving",
+            target=receipt,
+            correlation_id=correlation_id,
+            key=("p2p-receiving", receipt.id, "begin"),
+        )
+        engine.dispatch(begin)
+        receipt = persistence.entity("receipt", entities.receipt_id)
+
+    if receipt.state == "receiving" and not _resource_request_exists(
+        persistence, inspector_request_id
+    ):
+        request_inspector(
+            engine,
+            backend,
+            receipt_id=entities.receipt_id,
+            requested_at=backend.now,
+        )
+    backend.run_until(backend.now)
+
+    inspector = _reservation_for(persistence, inspector_request_id)
+    if receipt.state == "receiving" and inspector is None:
+        return False
+
+    if receipt.state == "receiving":
+        inspect = engine.context.commands.create(
+            "inspect",
+            target=receipt,
+            correlation_id=correlation_id,
+            key=("p2p-receiving", receipt.id, "inspect"),
+        )
+        engine.dispatch(inspect)
+        receipt = persistence.entity("receipt", entities.receipt_id)
+
+    if receipt.state == "inspected":
+        for request_id in (inspector_request_id, dock_request_id):
+            reservation = _reservation_for(persistence, request_id)
+            if reservation is not None:
+                engine.resources.release(backend, reservation.reservation_id)
+                backend.run_until(backend.now)
+        return True
+
+    return receipt.state == "stocked"
 
 
 def reconcile_stocking(
@@ -327,6 +459,14 @@ def run_happy_path(
     backend = SimPyBackend(origin=ORIGIN)
 
     engine.rebuild_backend(backend)
+    backend.run_until(ORIGIN + timedelta(hours=10))
+    if not reconcile_receiving_resources(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ):
+        raise RuntimeError("receipt capacity is still unavailable")
     backend.run_until(ORIGIN + timedelta(hours=11))
     reconcile_stocking(
         persistence,
