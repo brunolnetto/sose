@@ -31,7 +31,7 @@ Receipt(stocked)
     ↓
 Inventory Store / Container
     ↓
-MaterialDemand(allocation)
+MaterialDemand(allocated)
     ↓
 MaterialDemand(consumed)
 ```
