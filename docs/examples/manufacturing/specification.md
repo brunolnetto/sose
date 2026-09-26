@@ -112,9 +112,104 @@ Represents the executable routing step performed for the production order.
 - inventory balances;
 - machine or operator ownership.
 
-## 4. StateCharts
+## 4. Persistent data model / ERD
 
-### 4.1 ProductionOrder StateChart
+The diagrams in this section describe durable semantics, not a physical relational
+schema. The reference flow creates one ProductionOrder and one Operation under the
+same deterministic business correlation; the current entities do not persist a
+foreign-key field between them.
+
+### 4.1 Business entities ERD
+
+```mermaid
+erDiagram
+    PRODUCTION_ORDER ||--|| OPERATION : "reference flow correlates"
+
+    PRODUCTION_ORDER {
+        string id
+        string state
+        string sku
+        float quantity
+        int version
+    }
+
+    OPERATION {
+        string id
+        string state
+        string work_center
+        float quantity
+        int version
+    }
+```
+
+The one-to-one relationship above describes the current executable reference slice:
+one production order and one routing operation participate in the same flow. It is
+process correlation, not a persisted entity-to-entity foreign key.
+
+### 4.2 Durable operational ERD
+
+```mermaid
+erDiagram
+    PRODUCTION_ORDER ||--o{ COMMAND : "targeted by"
+    PRODUCTION_ORDER ||--o{ DOMAIN_EVENT : "emits"
+    OPERATION ||--o{ COMMAND : "targeted by"
+    OPERATION ||--o{ DOMAIN_EVENT : "emits"
+    COMMAND ||--o| SCHEDULED_WORK : "scheduled as"
+
+    RESOURCE_DEFINITION ||--o{ RESOURCE_DEMAND : "operator requests"
+    RESOURCE_DEMAND ||--o| RESOURCE_RESERVATION : "operator grant"
+
+    PREEMPTIVE_RESOURCE_DEFINITION ||--o{ PREEMPTIVE_RESOURCE_DEMAND : "machine requests"
+    PREEMPTIVE_RESOURCE_DEMAND ||--o| PREEMPTIVE_RESOURCE_RESERVATION : "machine grant"
+    PREEMPTIVE_RESOURCE_RESERVATION ||--o{ RESOURCE_PREEMPTION_RESULT : "breakdown evidence"
+
+    STORE_DEFINITION ||--o{ DURABLE_STORE_ITEM : "raw lots / WIP"
+    STORE_DEFINITION ||--o{ STORE_GET_REQUEST : "withdrawal"
+    STORE_GET_REQUEST ||--o| STORE_GET_RESULT : "terminal identity effect"
+
+    CONTAINER_DEFINITION ||--|| CONTAINER_STATE : "raw / finished balance"
+    CONTAINER_DEFINITION ||--o{ CONTAINER_OPERATION_INTENT : "quantity operation"
+    CONTAINER_OPERATION_INTENT ||--o| CONTAINER_OPERATION_RESULT : "terminal quantity effect"
+
+    SCENARIO_RUNTIME_STATE ||--o{ DOMAIN_EVENT : "changes operational context"
+```
+
+Relevant named durable objects are:
+
+- Resource: `operator`;
+- PreemptiveResource: `machine`;
+- Stores: `raw_material_lots`, `wip_buffer`;
+- Containers: `raw_material`, `finished_goods`;
+- preemption evidence for machine breakdown/repair;
+- commands, scheduled work, events, scenario state, and simulation position.
+
+For raw material, Store and Container are complementary representations: lot identity
+and aggregate quantity. Neither is a cache of the other.
+
+### 4.3 Persistence ownership
+
+| Business fact | Durable owner |
+|---|---|
+| production-order lifecycle | `ProductionOrder.state` |
+| routing-operation lifecycle | `Operation.state` |
+| operator demand/ownership | `ResourceDemand` / `ResourceReservation` |
+| machine demand/ownership | `PreemptiveResourceDemand` / `PreemptiveResourceReservation` |
+| machine displacement | `ResourcePreemptionResult` |
+| raw-material lot identity | Store `raw_material_lots` |
+| raw-material quantity | Container `raw_material` |
+| WIP identity | Store `wip_buffer` |
+| released finished quantity | Container `finished_goods` |
+| lifecycle history | `DomainEvent` |
+| future lifecycle work | `Command` + `ScheduledWork` |
+| scenario intervention state | `ScenarioRuntimeState` |
+| logical recovery boundary | `SimulationPosition` |
+
+The complete runtime vocabulary is documented in
+[`docs/architecture/persistent-model.md`](../../architecture/persistent-model.md).
+
+## 5. StateCharts
+
+### 5.1 ProductionOrder StateChart
 
 ```text
 planned
@@ -166,7 +261,7 @@ Cancellation is legal from `planned`, `released`, and `waiting_material`.
 | `rework` | `resume_rework` | held WIP will be reprocessed | `producing` | transition event |
 | `inspection` | `complete` | WIP release and finished-goods commit completed | `completed` | Store GET + Container result |
 
-### 4.2 Operation StateChart
+### 5.2 Operation StateChart
 
 ```text
 pending
@@ -193,9 +288,9 @@ done ──rework──> ready_state
 | `running` | `finish` | processing pass ended | `done` |
 | `done` | `rework` | another processing pass is required | `ready_state` |
 
-## 5. Process specifications
+## 6. Process specifications
 
-### 5.1 Happy path
+### 6.1 Happy path
 
 ```text
 ProductionOrder(planned)
@@ -231,7 +326,7 @@ The business lifecycle always follows durable operational evidence. Resource
 possession, inventory movement, WIP creation, and finished-goods release are not
 side effects that happen after lifecycle claims; they gate those claims.
 
-### 5.2 Sad path — material shortage
+### 6.2 Sad path — material shortage
 
 **Trigger**
 
@@ -261,7 +356,7 @@ released
 Replenishment makes material durable; `material_ready` returns the order to
 `released`, after which normal resource/setup gating applies.
 
-### 5.3 Sad path — machine breakdown
+### 6.3 Sad path — machine breakdown
 
 **Trigger**
 
@@ -294,7 +389,7 @@ ProductionOrder(producing)     Operation(running)
 The emergency repair reservation is released. Production reacquires the machine
 before `repair` may return the order to setup.
 
-### 5.4 Sad path — quality failure and rework
+### 6.4 Sad path — quality failure and rework
 
 **Trigger**
 
@@ -335,7 +430,7 @@ completed
 Rework reuses held WIP. A later successful inspection consumes/releases WIP and
 only then commits finished goods.
 
-### 5.5 External disruption — scenarios
+### 6.5 External disruption — scenarios
 
 Finite one-shot scenarios may represent:
 
@@ -346,7 +441,7 @@ Finite one-shot scenarios may represent:
 Scenario state changes operational context. It does not mutate StateChart topology
 or bypass the durable business workflow.
 
-## 6. Commands and domain events
+## 7. Commands and domain events
 
 | Command | Target | Meaning | Preconditions |
 |---|---|---|---|
@@ -369,7 +464,7 @@ The production flow uses a stable correlation identity so release, capacity,
 material issue, breakdown, repair, inspection, and rework remain traceable as one
 business process.
 
-## 7. Invariants
+## 8. Invariants
 
 **MFG-01 — Setup capacity**
 
@@ -418,7 +513,7 @@ must again belong to production.
 Continuous execution and execution interrupted at supported durable boundaries
 must produce equivalent semantic results, including representative sad paths.
 
-## 8. Durable truth and ownership
+## 9. Durable truth and ownership
 
 | Concept | Durable owner | Why |
 |---|---|---|
@@ -437,7 +532,7 @@ must produce equivalent semantic results, including representative sad paths.
 Ephemeral and reconstructible objects include SimPy environments, events, request
 objects, callbacks, queues, and process continuations.
 
-## 9. Restart semantics
+## 10. Restart semantics
 
 Meaningful recovery boundaries include:
 
@@ -454,7 +549,7 @@ inventory balances, terminal operational results, resource/preemption truth,
 scenario state, and causal event history. Backend-native objects are explicitly
 excluded.
 
-## 10. Scenario specification
+## 11. Scenario specification
 
 ### Machine downtime
 
@@ -480,7 +575,7 @@ excluded.
 - **Effect:** `manufacturing.demand.multiplier = 2.0`;
 - **Interpretation:** represents increased production pressure.
 
-## 11. Example runs
+## 12. Example runs
 
 ### A. Nominal
 
@@ -534,7 +629,7 @@ WIP created
 → completed
 ```
 
-## 12. Executable evidence
+## 13. Executable evidence
 
 | Specification area | Implementation | Tests |
 |---|---|---|
