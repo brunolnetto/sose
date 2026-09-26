@@ -283,3 +283,22 @@ def test_recovery_participant_rejects_manager_without_rebuild_contract():
 
     with pytest.raises(TypeError, match="has no rebuild_backend"):
         participant.rebuild(RecordingBackend(now=ORIGIN))
+
+
+def test_malformed_late_participant_fails_before_any_rebuild():
+    observed = []
+    valid = OrderedParticipant("valid", observed)
+
+    with pytest.raises(TypeError, match="has no rebuild_backend"):
+        RuntimeRebuilder(
+            MemoryPersistence(),
+            participants=(
+                RecoveryParticipant("valid", valid),
+                RecoveryParticipant("invalid", object()),
+            ),
+        ).rebuild(
+            RecordingBackend(now=ORIGIN),
+            on_due=lambda _: None,
+        )
+
+    assert observed == [("validate", "valid")]
