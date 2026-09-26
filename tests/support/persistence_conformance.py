@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 import pytest
 
 from sose.core.events import DomainEvent
+from sose.domain.entity import Entity
 from sose.core.runtime import (
     ContainerDefinition,
     ContainerOperationIntent,
@@ -36,6 +37,43 @@ class PersistenceConformanceSuite:
             assert store.resource_definitions() == ()
 
         assert store.resource_definitions() == (ResourceDefinition("bay", capacity=1),)
+
+    def test_entity_round_trip_and_rollback_are_durable(self):
+        store = self.make_persistence()
+        entity = Entity(
+            id="entity-1",
+            entity_type="demo",
+            state="planned",
+            attributes={"nested": {"value": 1}},
+            created_at=NOW,
+            updated_at=NOW,
+            version=1,
+        )
+
+        with store.transaction() as uow:
+            uow.save_entity(entity)
+
+        with store.transaction() as uow:
+            loaded = uow.get_entity("demo", "entity-1")
+            assert loaded == entity
+
+        changed = Entity(
+            id="entity-1",
+            entity_type="demo",
+            state="running",
+            attributes={"nested": {"value": 2}},
+            created_at=NOW,
+            updated_at=NOW,
+            version=2,
+        )
+        with pytest.raises(RuntimeError, match="abort entity"):
+            with store.transaction() as uow:
+                uow.save_entity(changed)
+                assert uow.get_entity("demo", "entity-1") == changed
+                raise RuntimeError("abort entity")
+
+        with store.transaction() as uow:
+            assert uow.get_entity("demo", "entity-1") == entity
 
     def test_transaction_exception_rolls_back_every_write(self):
         store = self.make_persistence()
