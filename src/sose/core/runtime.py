@@ -170,3 +170,22 @@ class StoreGetRequest:
             raise ValueError("store_name cannot be empty")
         if self.sequence < 1:
             raise ValueError("store get sequence must be >= 1")
+
+
+@dataclass(frozen=True, slots=True)
+class StoreGetResult:
+    request_id: str
+    store_name: str
+    item: DurableStoreItem
+    completed_at: datetime
+    sequence: int
+
+    def __post_init__(self) -> None:
+        if not self.request_id:
+            raise ValueError("request_id cannot be empty")
+        if not self.store_name:
+            raise ValueError("store_name cannot be empty")
+        if self.item.store_name != self.store_name:
+            raise ValueError("store get result item belongs to a different store")
+        if self.sequence < 1:
+            raise ValueError("store get result sequence must be >= 1")
