@@ -34,10 +34,11 @@ class OperationChart(StateChart):
     ready_state = State()
     running = State()
     blocked = State()
-    done = State(final=True)
+    done = State()
 
     ready = pending.to(ready_state)
     start = ready_state.to(running)
     block = ready_state.to(blocked) | running.to(blocked)
     unblock = blocked.to(ready_state)
     finish = running.to(done)
+    rework = done.to(ready_state)
