@@ -2,7 +2,7 @@
 
 ## Status
 
-**Blueprint under implementation for v0.8.**
+**Reference implementation candidate for v0.8.**
 
 This directory defines the reference contract for the first domain built on top of the
 v0.7 durable runtime.
@@ -47,7 +47,7 @@ exercise SOSE's durable runtime.
 
 ## Acceptance gates
 
-The domain is promoted from **Partial** to **Reference implementation** only when it has:
+The domain is promoted from **Partial** to **Reference implementation** when the stacked v0.8 implementation and restart-equivalence gate are green. The implementation now targets:
 
 1. persistent domain entities and explicit StateCharts;
 2. commands and immutable transition events;

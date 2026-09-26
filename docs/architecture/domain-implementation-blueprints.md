@@ -1526,7 +1526,7 @@ Domain documentation should use the following status vocabulary.
 At the time of this document:
 
 - **Maintenance / MRO**: Reference implementation.
-- **Procure-to-Pay**: Partial, with a concrete v0.8 reference-domain contract under implementation.
+- **Procure-to-Pay**: Reference implementation candidate for v0.8, with executable happy path, receiving contention, shortage/backorder, scenarios and multi-restart equivalence coverage.
 - All other domains in this document: Blueprint.
 
 ---
