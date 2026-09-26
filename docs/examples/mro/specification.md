@@ -228,27 +228,24 @@ The complete runtime vocabulary is documented in
 
 ### 5.1 WorkOrder StateChart
 
-```text
-planned
-  ├──release──> released
-  │               ├──wait_for_material──> waiting_material
-  │               │                        │ material_ready
-  │               │                        └──────────────> released
-  │               ├──wait_for_resource──> waiting_resource
-  │               │                        │ resource_ready
-  │               │                        └──────────────> released
-  │               └──start──────────────> in_progress
-  │                                          │
-  │                                          ├──interrupt──> interrupted
-  │                                          │                │ resume
-  │                                          │                └──────> in_progress
-  │                                          │
-  │                                          └──complete───> completed
-  │                                                             │ close
-  │                                                             ▼
-  │                                                           closed
-  │
-  └──cancel──────────────────────────────────────────────────> cancelled
+```mermaid
+stateDiagram-v2
+    [*] --> planned
+    planned --> released: release
+    planned --> cancelled: cancel
+    released --> waiting_material: wait_for_material
+    waiting_material --> released: material_ready
+    released --> waiting_resource: wait_for_resource
+    waiting_resource --> released: resource_ready
+    waiting_resource --> waiting_material: wait_for_material
+    released --> in_progress: start
+    in_progress --> interrupted: interrupt
+    interrupted --> in_progress: resume
+    in_progress --> completed: complete
+    completed --> closed: close
+    released --> cancelled: cancel
+    waiting_material --> cancelled: cancel
+    waiting_resource --> cancelled: cancel
 ```
 
 `cancel` is also legal from `released`, `waiting_material`, and
@@ -271,17 +268,15 @@ planned
 
 ### 5.2 PartDemand StateChart
 
-```text
-open
-  ├──wait──────> waiting_inventory
-  │                │
-  └──allocate──────┘
-        │
-        ▼
-    allocated
-        │ consume
-        ▼
-    consumed
+```mermaid
+stateDiagram-v2
+    [*] --> open
+    open --> waiting_inventory: wait
+    open --> allocated: allocate
+    waiting_inventory --> allocated: allocate
+    allocated --> consumed: consume
+    open --> cancelled: cancel
+    waiting_inventory --> cancelled: cancel
 ```
 
 `cancel` is legal from `open` and `waiting_inventory`.
@@ -311,25 +306,16 @@ the transition explicitly.
 
 ### 6.1 Canonical happy path
 
-```text
-WorkOrder(planned)
-  │ durable release
-  ▼
-released
-  │
-  ├── verify spare-part availability
-  ├── acquire technician
-  ├── acquire maintenance bay
-  └── consume spare-part Store lot + Container quantity
-          │
-          ▼
-      in_progress
-          │ complete
-          ▼
-       completed
-          │ close
-          ▼
-         closed
+```mermaid
+flowchart TD
+    A["WorkOrder(planned)"] -->|durable release| B["released"]
+    B --> C["Verify spare-part availability"]
+    C --> D["Acquire technician"]
+    D --> E["Acquire maintenance bay"]
+    E --> F["Consume Store lot + Container quantity"]
+    F --> G["in_progress"]
+    G -->|complete| H["completed"]
+    H -->|close| I["closed"]
 ```
 
 Parts are consumed before `in_progress` is claimed. Technician and maintenance-bay
@@ -339,14 +325,14 @@ reservations gate active work. Capacity is released after closure.
 
 The original demo remains a useful focused path:
 
-```text
-persist WorkOrder(planned)
-→ persist ScheduledWork(release)
-→ execute due work
-→ commit WorkOrder(released)
-→ persist transition event
-→ consume scheduled work
-→ advance SimulationPosition
+```mermaid
+flowchart LR
+    A["Persist WorkOrder(planned)"] --> B["Persist ScheduledWork(release)"]
+    B --> C["Execute due work"]
+    C --> D["Commit WorkOrder(released)"]
+    D --> E["Persist transition event"]
+    E --> F["Consume scheduled work"]
+    F --> G["Advance SimulationPosition"]
 ```
 
 This path provides focused evidence for scheduler atomicity and stale-callback
@@ -363,18 +349,12 @@ active.
 
 **Expected behavior**
 
-```text
-released
-  │ wait_for_material
-  ▼
-waiting_material
-  │ replenishment / availability restored
-  │ material_ready
-  ▼
-released
-  │ normal prerequisite checks
-  ▼
-in_progress
+```mermaid
+flowchart TD
+    A["released"] -->|wait_for_material| B["waiting_material"]
+    B -->|replenishment / availability restored| C["material_ready"]
+    C --> A
+    A -->|normal prerequisite checks| D["in_progress"]
 ```
 
 **Durable truth**
@@ -398,17 +378,11 @@ scenario context.
 
 **Expected behavior**
 
-```text
-released
-  │ wait_for_resource
-  ▼
-waiting_resource
-  │ resource_ready
-  ▼
-released
-  │ reservations + parts terminal
-  ▼
-in_progress
+```mermaid
+flowchart TD
+    A["released"] -->|wait_for_resource| B["waiting_resource"]
+    B -->|resource_ready| A
+    A -->|reservations + parts terminal| C["in_progress"]
 ```
 
 **Durable truth**
@@ -423,16 +397,12 @@ Emergency work requests the preemptible maintenance bay with higher priority.
 
 **Expected behavior**
 
-```text
-normal WorkOrder(in_progress)
-  │ bay preempted
-  ▼
-interrupted
-  │ emergency releases bay
-  │ normal work reacquires bay
-  │ resume
-  ▼
-in_progress
+```mermaid
+flowchart TD
+    A["WorkOrder(in_progress)"] -->|bay preempted| B["interrupted"]
+    B --> C["Emergency releases bay"]
+    C --> D["Normal work reacquires bay"]
+    D -->|resume| A
 ```
 
 **Durable truth**
@@ -639,69 +609,69 @@ Finite scenarios expire without implicit retriggering.
 
 ### A. Nominal
 
-```text
-08:00 WorkOrder(planned)
-09:00 release
-→ spare part available
-→ technician acquired
-→ maintenance bay acquired
-→ spare-part lot + quantity consumed
-→ in_progress
-→ completed
-→ closed
-→ capacity released
+```mermaid
+flowchart LR
+    A["08:00 WorkOrder(planned)"] --> B["09:00 release"]
+    B --> C["spare part available"]
+    C --> D["technician acquired"]
+    D --> E["maintenance bay acquired"]
+    E --> F["part lot + quantity consumed"]
+    F --> G["in_progress"]
+    G --> H["completed"]
+    H --> I["closed"]
+    I --> J["capacity released"]
 ```
 
 ### B. Material shortage
 
-```text
-released
-→ part unavailable
-→ WorkOrder(waiting_material)
-→ PartDemand(waiting_inventory)
-→ replenishment
-→ material_ready
-→ released
-→ part allocation/consumption
-→ in_progress
-→ completed
-→ closed
+```mermaid
+flowchart LR
+    A["released"] --> B["part unavailable"]
+    B --> C["WorkOrder(waiting_material)"]
+    C --> D["PartDemand(waiting_inventory)"]
+    D --> E["replenishment"]
+    E --> F["material_ready"]
+    F --> G["released"]
+    G --> H["part allocation / consumption"]
+    H --> I["in_progress"]
+    I --> J["completed"]
+    J --> K["closed"]
 ```
 
 ### C. Resource contention
 
-```text
-technician occupied
-→ normal WorkOrder requests capacity
-→ waiting_resource
-→ capacity released
-→ resource_ready
-→ released
-→ in_progress
+```mermaid
+flowchart LR
+    A["technician occupied"] --> B["WorkOrder requests capacity"]
+    B --> C["waiting_resource"]
+    C --> D["capacity released"]
+    D --> E["resource_ready"]
+    E --> F["released"]
+    F --> G["in_progress"]
 ```
 
 ### D. Emergency priority
 
-```text
-normal work owns maintenance bay
-→ emergency request arrives
-→ durable preemption result
-→ normal WorkOrder(interrupted)
-→ emergency releases bay
-→ normal work reacquires bay
-→ resume
-→ in_progress
+```mermaid
+flowchart LR
+    A["Normal work owns maintenance bay"] --> B["Emergency request arrives"]
+    B --> C["Durable preemption result"]
+    C --> D["WorkOrder(interrupted)"]
+    D --> E["Emergency releases bay"]
+    E --> F["Normal work reacquires bay"]
+    F --> G["resume"]
+    G --> H["in_progress"]
 ```
 
 ### E. Restarted sad path
 
-```text
-waiting_material or interrupted
-→ process restart
-→ backend reconstructed from durable truth
-→ replenishment / bay reacquisition
-→ normal flow resumes
-→ final semantic snapshot equals continuous execution
+```mermaid
+flowchart LR
+    A["waiting_material or interrupted"] --> B["process restart"]
+    B --> C["backend reconstructed from durable truth"]
+    C --> D["replenishment / bay reacquisition"]
+    D --> E["normal flow resumes"]
+    E --> F["final semantic snapshot = continuous execution"]
 ```
 
 ## 14. Executable evidence

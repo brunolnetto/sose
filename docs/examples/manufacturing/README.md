@@ -10,25 +10,25 @@ This reference domain validates SOSE against a capacity-constrained production f
 
 ## Canonical flow
 
-```text
-ProductionOrder(planned)
-  -> released
-  -> setup
-  -> producing
-  -> inspection
-  -> completed
+```mermaid
+flowchart LR
+    A["ProductionOrder(planned)"] --> B["released"]
+    B --> C["setup"]
+    C --> D["producing"]
+    D --> E["inspection"]
+    E --> F["completed"]
 ```
 
 Operational effects are explicit:
 
-```text
-raw material available
-  -> machine + operator acquired
-  -> material issued
-  -> processing
-  -> WIP produced
-  -> inspection
-  -> finished goods committed
+```mermaid
+flowchart LR
+    A["Raw material available"] --> B["Machine + operator acquired"]
+    B --> C["Material issued"]
+    C --> D["Processing"]
+    D --> E["WIP produced"]
+    E --> F["Inspection"]
+    F --> G["Finished goods committed"]
 ```
 
 Exception paths introduced incrementally:

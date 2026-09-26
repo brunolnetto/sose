@@ -278,10 +278,12 @@ The complete runtime vocabulary is documented in
 
 ### 5.1 Requisition StateChart
 
-```text
-requested
-  ├──approve──> approved ──order──> ordered
-  └──reject──────────────────────> rejected
+```mermaid
+stateDiagram-v2
+    [*] --> requested
+    requested --> approved: approve
+    approved --> ordered: order
+    requested --> rejected: reject
 ```
 
 | Current state | Command | Preconditions | Next state |
@@ -292,23 +294,17 @@ requested
 
 ### 5.2 PurchaseOrder StateChart
 
-```text
-created
-  │ submit
-  ▼
-submitted
-  │ confirm
-  ▼
-confirmed ──mark_delayed──> delayed
-  │ dispatch                  │ dispatch
-  ▼                           ▼
-in_transit ─mark_delayed──> delayed
-  │ receive
-  ▼
-received
-  │ close
-  ▼
-closed
+```mermaid
+stateDiagram-v2
+    [*] --> created
+    created --> submitted: submit
+    submitted --> confirmed: confirm
+    confirmed --> delayed: mark_delayed
+    delayed --> in_transit: dispatch
+    confirmed --> in_transit: dispatch
+    in_transit --> delayed: mark_delayed
+    in_transit --> received: receive
+    received --> closed: close
 ```
 
 Cancellation is legal from `created`, `submitted`, and `confirmed`.
@@ -324,19 +320,17 @@ Cancellation is legal from `created`, `submitted`, and `confirmed`.
 
 ### 5.3 Receipt StateChart
 
-```text
-pending
-  │ begin_receiving
-  ▼
-receiving ──mark_partial──> partial
-  │  │                     │
-  │  ├──inspect────────────┤
-  │  │                     ▼
-  │  └──reject────────> rejected
-  ▼
-inspected
-  ├──stock──> stocked
-  └──reject─> rejected
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> receiving: begin_receiving
+    receiving --> partial: mark_partial
+    receiving --> inspected: inspect
+    receiving --> rejected: reject
+    partial --> inspected: inspect
+    partial --> rejected: reject
+    inspected --> stocked: stock
+    inspected --> rejected: reject
 ```
 
 | Current state | Command | Operational precondition | Next state | Durable evidence |
@@ -349,21 +343,16 @@ inspected
 
 ### 5.4 MaterialDemand StateChart
 
-```text
-open
-  ├──wait_for_inventory──> waiting_inventory
-  │                            │
-  ├──backorder─────────────────┤
-  │                            ▼
-  │                        backordered
-  │                            │
-  └────────allocate────────────┘
-               │
-               ▼
-           allocated
-               │ consume
-               ▼
-           consumed
+```mermaid
+stateDiagram-v2
+    [*] --> open
+    open --> waiting_inventory: wait_for_inventory
+    open --> backordered: backorder
+    waiting_inventory --> backordered: backorder
+    open --> allocated: allocate
+    waiting_inventory --> allocated: allocate
+    backordered --> allocated: allocate
+    allocated --> consumed: consume
 ```
 
 Cancellation is legal from `open`, `waiting_inventory`, and `backordered`.
@@ -379,41 +368,19 @@ Cancellation is legal from `open`, `waiting_inventory`, and `backordered`.
 
 ### 6.1 Happy path
 
-```text
-Requisition(requested)
-    │ approve / order
-    ▼
-Requisition(ordered)
-    │
-    ▼
-PurchaseOrder(created)
-    │ submit / confirm / dispatch
-    ▼
-PurchaseOrder(in_transit)
-    │ durable supplier lead time
-    ▼
-PurchaseOrder(received)
-    │
-    ▼
-Receipt(pending)
-    │ acquire receiving dock
-    ▼
-Receipt(receiving)
-    │ acquire inspector
-    ▼
-Receipt(inspected)
-    │ commit Store lot + Container quantity
-    ▼
-Receipt(stocked)
-    │
-    ▼
-MaterialDemand
-    │ withdraw Store lot + Container quantity
-    ▼
-allocated
-    │ consume
-    ▼
-consumed
+```mermaid
+flowchart TD
+    A["Requisition(requested)"] -->|approve / order| B["Requisition(ordered)"]
+    B --> C["PurchaseOrder(created)"]
+    C -->|submit / confirm / dispatch| D["PurchaseOrder(in_transit)"]
+    D -->|durable supplier lead time| E["PurchaseOrder(received)"]
+    E --> F["Receipt(pending)"]
+    F -->|acquire receiving dock| G["Receipt(receiving)"]
+    G -->|acquire inspector| H["Receipt(inspected)"]
+    H -->|commit Store lot + Container quantity| I["Receipt(stocked)"]
+    I --> J["MaterialDemand"]
+    J -->|withdraw Store lot + Container quantity| K["allocated"]
+    K -->|consume| L["consumed"]
 ```
 
 The receipt is not considered stocked before both inventory representations are
@@ -446,20 +413,12 @@ Required inventory is unavailable.
 
 **Expected behavior**
 
-```text
-MaterialDemand(open)
-  │
-  ▼
-waiting_inventory
-  │
-  ▼
-backordered
-  │ replenishment
-  ▼
-allocated
-  │
-  ▼
-consumed
+```mermaid
+flowchart TD
+    A["MaterialDemand(open)"] --> B["waiting_inventory"]
+    B --> C["backordered"]
+    C -->|replenishment| D["allocated"]
+    D --> E["consumed"]
 ```
 
 **Durable truth**
@@ -479,21 +438,12 @@ Supplier delivers less than the demanded quantity.
 
 **Expected behavior**
 
-```text
-receiving
-  │ mark_partial
-  ▼
-partial
-  │ inspect
-  ▼
-inspected
-  │ stock received quantity only
-  ▼
-stocked
-
-available quantity < required demand
-  ↓
-MaterialDemand(backordered)
+```mermaid
+flowchart TD
+    A["receiving"] -->|mark_partial| B["partial"]
+    B -->|inspect| C["inspected"]
+    C -->|stock received quantity only| D["stocked"]
+    E["Available quantity < required demand"] --> F["MaterialDemand(backordered)"]
 ```
 
 **Durable truth**
@@ -513,11 +463,11 @@ Receiving/inspection rejects the shipment.
 
 **Expected behavior**
 
-```text
-receiving / partial / inspected
-  │ reject
-  ▼
-rejected
+```mermaid
+flowchart TD
+    A["receiving"] -->|reject| D["rejected"]
+    B["partial"] -->|reject| D
+    C["inspected"] -->|reject| D
 ```
 
 **Durable truth**
@@ -662,47 +612,46 @@ items, terminal request results, resource truth, scenario state, and causal even
 
 ### A. Nominal
 
-```text
-request
-→ requisition approved/ordered
-→ PO submitted/confirmed/dispatched
-→ lead time
-→ receipt
-→ dock + inspector
-→ inventory stocked
-→ material allocated/consumed
+```mermaid
+flowchart LR
+    A["request"] --> B["requisition approved / ordered"]
+    B --> C["PO submitted / confirmed / dispatched"]
+    C --> D["lead time"]
+    D --> E["receipt"]
+    E --> F["dock + inspector"]
+    F --> G["inventory stocked"]
+    G --> H["material allocated / consumed"]
 ```
 
 ### B. Receiving contention
 
-```text
-receipt A holds dock
-receipt B requests dock
-→ B remains pending
-→ A releases
-→ B acquires
-→ B enters receiving
+```mermaid
+flowchart LR
+    A["Receipt A holds dock"] --> B["Receipt B requests dock"]
+    B --> C["B remains pending"]
+    C --> D["A releases"]
+    D --> E["B acquires"]
+    E --> F["B enters receiving"]
 ```
 
 ### C. Partial receipt
 
-```text
-required = 5
-received = 3
-→ receipt partial/inspected/stocked(3)
-→ inventory remains 3
-→ demand becomes backordered
-→ partial lot is not prematurely consumed
+```mermaid
+flowchart LR
+    A["Required = 5"] --> B["Received = 3"]
+    B --> C["Receipt partial / inspected / stocked(3)"]
+    C --> D["Inventory remains 3"]
+    D --> E["Demand becomes backordered"]
+    E --> F["Partial lot not prematurely consumed"]
 ```
 
 ### D. Rejected receipt
 
-```text
-receipt arrives
-→ receiving
-→ reject
-→ rejected
-→ inventory remains 0
+```mermaid
+flowchart LR
+    A["Receipt arrives"] --> B["receiving"]
+    B -->|reject| C["rejected"]
+    C --> D["Inventory remains 0"]
 ```
 
 ## 13. Executable evidence
