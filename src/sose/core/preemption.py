@@ -93,6 +93,7 @@ class DurablePreemptiveResourceManager:
                 )
 
     def rebuild_backend(self, backend) -> int:
+        self._clear_ephemeral_state()
         self.validate_rebuild()
         self._finalize_interrupted_releases()
 
@@ -119,12 +120,6 @@ class DurablePreemptiveResourceManager:
                 on_preempted=lambda event: self._record_preempted(event),
             )
             restored += 1
-
-        # SimPy must materialize durable holders before pending higher-priority
-        # demands are replayed, otherwise queue ordering can bypass preemption.
-        run_until = getattr(backend, "run_until", None)
-        if callable(run_until) and self._persistence.preemptive_resource_reservations():
-            run_until(backend.now)
 
         for demand in self._persistence.preemptive_resource_demands():
             self._submit_demand(backend, demand)
@@ -197,6 +192,14 @@ class DurablePreemptiveResourceManager:
         self._backend_leases.pop(reservation_id, None)
         self._reconcile_pending_grants(reservation.resource_name)
         return True
+
+    def _clear_ephemeral_state(self) -> None:
+        """Discard all handles and handshake fragments owned by a dead backend."""
+
+        self._backend_leases.clear()
+        self._pending_grants.clear()
+        self._pending_preemptions.clear()
+        self._pending_callbacks.clear()
 
     def _submit_demand(self, backend, demand: PreemptiveResourceDemand) -> None:
         backend.request_preemptive_resource(
