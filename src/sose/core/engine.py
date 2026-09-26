@@ -27,13 +27,14 @@ class Engine:
         persistence: Persistence,
         rules_for: Callable[[str], Iterable[ScenarioRule]] | None = None,
         scenarios: Iterable[Scenario] = (),
+        store_filters=None,
     ) -> None:
         self.context = context
         self.registry = registry
         self.persistence = persistence
         self.rules_for = rules_for or (lambda _: ())
         self.resources = DurableResourceManager(persistence)
-        self.stores = DurableStoreManager(persistence)
+        self.stores = DurableStoreManager(persistence, filters=store_filters)
         self.scheduler = DurableScheduler(persistence)
         self.context.schedules.bind_scheduler(self.scheduler)
         self.context.scenarios.register_many(scenarios)
