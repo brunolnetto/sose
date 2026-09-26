@@ -14,16 +14,16 @@ backend execution state   = ephemeral and reconstructible
 
 The recovery boundary is represented by durable semantic objects:
 
-- `ScheduledWork` — future command execution intent.
+- `ScheduledWork` and persisted commands — future execution intent.
 - `SimulationPosition` — logical time, tick, execution sequence, and committed sequence.
 - `ScenarioRuntimeState` — scenario decisions and active effects.
-- `ResourceDefinition` — resource name and capacity.
-- `ResourceDemand` — pending resource acquisition intent.
-- `ResourceReservation` — durable ownership of acquired capacity.
-- `ResourceReleaseIntent` — crash-safe release protocol marker.
+- normal resource definitions, demands, reservations, and release intents.
+- Store definitions, durable items, put intents, get requests, and terminal get results.
+- preemptive resource definitions, demands, reservations, release intents, and terminal preemption results.
+- Container definitions, committed levels, pending operation intents, and terminal operation results.
 
-Commands referenced by `ScheduledWork` are persisted separately so the backend
-queue is never authoritative.
+These records are authoritative. Backend-native queues, requests, leases,
+callbacks, processes, and container/store internals are reconstructed from them.
 
 ## Reconstruction
 
@@ -33,19 +33,21 @@ A fresh process/backend is rebuilt from persistence:
 Persistence
     ↓
 RuntimeRebuilder
-    ├── validate recovery boundary
-    ├── validate pending scheduled work
-    ├── restore logical time and tick
-    ├── restore scenario runtime state
-    ├── rebuild resources
+    ├── validate recovery boundary + scheduled work
+    ├── validate every RecoveryParticipant
+    ├── restore logical time, tick, and scenario runtime state
+    ├── rebuild normal resources
+    ├── rebuild Stores
+    ├── rebuild preemptive resources
+    ├── rebuild Containers
     └── enqueue pending scheduled work
     ↓
 fresh ephemeral backend
 ```
 
-Recovery validation happens before mutating reconstruction phases. If the
-persisted state is inconsistent with the requested recovery boundary, rebuild
-fails without partially rebuilding resources.
+All participant validation happens before mutating reconstruction phases. If any
+persisted subsystem is inconsistent with the requested recovery boundary,
+rebuild fails before context or backend reconstruction begins.
 
 ## Durable scheduling
 
