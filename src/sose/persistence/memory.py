@@ -76,7 +76,7 @@ class MemoryUnitOfWork:
         self._working.entities[(entity.entity_type, entity.id)] = deepcopy(entity)
 
     def append_event(self, event: DomainEvent) -> None:
-        self._working.events.append(event)
+        self._working.events.append(deepcopy(event))
 
     def get_command(self, command_id: str) -> Command | None:
         value = self._working.commands.get(command_id)
@@ -439,7 +439,7 @@ class MemoryPersistence:
         return self._state.committed_tick
 
     def events(self) -> tuple[DomainEvent, ...]:
-        return tuple(self._state.events)
+        return tuple(deepcopy(self._state.events))
 
     def entity(self, entity_type: str, entity_id: str) -> Entity | None:
         value = self._state.entities.get((entity_type, entity_id))
