@@ -14,6 +14,13 @@ from sose.probability import probabilistic_transitions
         "close": 1.0,
     },
     strict=False,
+    excluded_events={
+        "start",
+        "material_ready",
+        "resource_ready",
+        "interrupt",
+        "resume",
+    },
 )
 class WorkOrderChart(StateChart):
     planned = State(initial=True)

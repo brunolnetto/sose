@@ -55,3 +55,35 @@ def test_statechart_topology_is_extracted_without_duplicating_domain_graph():
 def test_probability_policy_can_be_embedded_on_statechart_class():
     policy = policy_from_statechart(FakeChart())
     assert set(policy.events) == {"start", "wait"}
+
+
+
+@probabilistic_transitions(
+    {"start": 0.8, "wait": 0.2},
+    excluded_events="start",
+)
+class StringExcludedFakeChart(FakeChart):
+    pass
+
+
+def test_string_exclusion_is_treated_as_one_event():
+    policy = policy_from_statechart(StringExcludedFakeChart())
+
+    assert policy.is_probabilistically_eligible("start") is False
+    assert policy.excluded_events == ("start",)
+
+
+@probabilistic_transitions(
+    {"start": 0.8, "wait": 0.2},
+    excluded_events={"start"},
+)
+class GatedFakeChart(FakeChart):
+    pass
+
+
+def test_probability_policy_can_exclude_legal_events_from_direct_sampling():
+    policy = policy_from_statechart(GatedFakeChart())
+
+    assert policy.is_probabilistically_eligible("wait") is True
+    assert policy.is_probabilistically_eligible("start") is False
+    assert policy.excluded_events == ("start",)

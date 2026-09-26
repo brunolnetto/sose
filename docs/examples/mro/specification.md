@@ -198,10 +198,17 @@ open
 
 ### Probabilistic transition metadata
 
-The WorkOrder model retains probabilistic metadata for applicable lifecycle choices,
-including release, start, wait-for-material, wait-for-resource, cancellation,
-completion, and closure. Operational reconciler preconditions remain authoritative:
-a probabilistic choice cannot bypass missing material, capacity, or durable evidence.
+The WorkOrder model retains probabilistic metadata for lifecycle choices such as
+release, waiting, cancellation, completion, and closure.
+
+StateChart legality and direct probabilistic-dispatch eligibility are intentionally
+different. The reconciler-only events `start`, `material_ready`,
+`resource_ready`, `interrupt`, and `resume` remain legal StateChart transitions
+but are excluded from direct stochastic selection because each depends on durable
+operational evidence outside the StateChart.
+
+The corresponding reconciler establishes that evidence first and only then dispatches
+the transition explicitly.
 
 ## 5. Process specifications
 
@@ -405,6 +412,12 @@ Executing scheduled work advances durable logical time to the scheduled instant.
 
 A failed scheduled dispatch leaves command/work pending and does not advance durable
 logical time.
+
+**MRO-04A — Probabilistic policy cannot bypass operational gates**
+
+StateChart-legal reconciler-only transitions are excluded from direct probabilistic
+selection. They may only be dispatched after their durable operational prerequisites
+have been reconciled.
 
 **MRO-05 — Resource gating**
 

@@ -179,3 +179,32 @@ normal deterministic SOSE execution
 ```
 
 This prevents the future Scenario Engine from duplicating StateChart decision logic.
+
+
+## Direct probabilistic eligibility
+
+StateChart legality and probabilistic-dispatch eligibility are separate concerns.
+
+A transition may be legally present in the StateChart while still requiring durable
+operational prerequisites that must be established by a reconciler before dispatch.
+Such events can be excluded from direct stochastic sampling:
+
+```python
+@probabilistic_transitions(
+    {
+        "start": 0.78,
+        "wait_for_material": 0.20,
+        "cancel": 0.02,
+    },
+    excluded_events={"start", "material_ready", "resource_ready", "interrupt", "resume"},
+)
+class WorkOrderChart(StateChart):
+    ...
+```
+
+A single string is accepted as one event, so `excluded_events="start"` is equivalent
+to `excluded_events={"start"}`.
+
+Excluded events remain legal StateChart events and can still be dispatched explicitly
+after durable prerequisites are satisfied. They are simply absent from
+`choose_transition()` / `dispatch_probabilistic()` distributions.

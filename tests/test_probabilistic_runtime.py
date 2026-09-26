@@ -87,3 +87,24 @@ def test_runtime_uses_statechart_enabled_events_as_guard_boundary():
 
     assert decision.event in {"wait", "cancel"}
     assert decision.event != "start"
+
+
+
+def test_policy_exclusion_removes_legal_event_from_distribution():
+    ctx = build_context()
+    entity = ctx.entities.create(Entity, entity_type="work_order", key=("wo-excluded",))
+    policy = probabilistic(
+        {"start": 1000, "wait": 1, "cancel": 1},
+        excluded_events="start",
+    )
+
+    decision = ctx.transitions.decide(
+        chart=FakeChart(),
+        graph=build_graph(),
+        policy=policy,
+        entity=entity,
+        context=ctx,
+    )
+
+    assert decision.event in {"wait", "cancel"}
+    assert decision.event != "start"
