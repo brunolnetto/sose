@@ -542,22 +542,32 @@ def reconcile_scenario_emergency(
             request_prefix=prefix,
         )
 
-    committed = _committed_emergency_result(
-        persistence,
-        entities.work_order_id,
-        prefix=prefix,
-    )
     emergency_id = _active_emergency_request_id(
         persistence,
         entities.work_order_id,
         prefix=prefix,
     )
-    if committed is None and emergency_id is None:
-        return False
+    committed = _committed_emergency_result(
+        persistence,
+        entities.work_order_id,
+        prefix=prefix,
+    )
 
     work_order = persistence.entity("work_order", entities.work_order_id)
     if work_order is None:
         raise RuntimeError("work order was not persisted")
+
+    normal_id = f"bay:{entities.work_order_id}"
+    normal_pending = _preemptive_request_exists(persistence, normal_id)
+
+    # After the emergency reservation is released, cleanup may still be
+    # incomplete while the interrupted work waits to reacquire its normal bay.
+    # That normal request becomes the durable retry marker. Historical
+    # preemption results alone are not sufficient.
+    if emergency_id is None and not (
+        work_order.state == "interrupted" and normal_pending
+    ):
+        return False
 
     if work_order.state == "in_progress" and committed is not None:
         reconcile_emergency_interrupt(
