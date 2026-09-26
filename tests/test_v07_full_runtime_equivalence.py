@@ -135,11 +135,35 @@ def start_operational_state(
     )
     backend.run_until(ORIGIN)
 
+    engine.preemptive_resources.request(
+        backend,
+        resource_name="crew",
+        request_id="backup-crew",
+        requested_at=ORIGIN,
+        priority=75,
+        preempt=False,
+    )
+    backend.run_until(ORIGIN)
+
     engine.stores.put(
         backend,
         store_name="inbox",
         item_id="part-1",
         value={"sku": "bearing-1"},
+        requested_at=ORIGIN,
+    )
+    backend.run_until(ORIGIN)
+    engine.stores.get(
+        backend,
+        store_name="inbox",
+        request_id="consume-part-1",
+        requested_at=ORIGIN,
+    )
+    backend.run_until(ORIGIN)
+    engine.stores.get(
+        backend,
+        store_name="inbox",
+        request_id="await-part",
         requested_at=ORIGIN,
     )
     backend.run_until(ORIGIN)
@@ -164,11 +188,13 @@ def start_operational_state(
     assert store.entity("work_order", work_order_id).state == "planned"
     assert [d.request_id for d in store.resource_demands()] == ["bay-waiter"]
     assert [d.request_id for d in store.preemptive_resource_demands()] == [
-        "standby-crew"
+        "standby-crew",
+        "backup-crew",
     ]
-    standby = store.preemptive_resource_demands()[0]
-    assert standby.priority == 50
-    assert standby.preempt is False
+    standby, backup = store.preemptive_resource_demands()
+    assert (standby.priority, standby.preempt) == (50, False)
+    assert (backup.priority, backup.preempt) == (75, False)
+    assert [r.request_id for r in store.store_get_requests()] == ["await-part"]
     assert [i.item_id for i in store.store_put_intents()] == ["part-2"]
     assert [i.request_id for i in store.container_operation_intents()] == [
         "consume-fuel"
@@ -180,8 +206,9 @@ def assert_rebuilt_backend_pending_state(backend: SimPyBackend) -> None:
     assert backend.resource_snapshot("bay").in_use == 1
     assert backend.resource_snapshot("bay").queued == 1
     assert backend.preemptive_resource_snapshot("crew").in_use == 1
-    assert backend.preemptive_resource_snapshot("crew").queued == 1
-    assert backend.store_snapshot("inbox").size == 1
+    assert backend.preemptive_resource_snapshot("crew").queued == 2
+    assert backend.store_snapshot("inbox").size == 0
+    assert backend.store_snapshot("inbox").queued_gets == 1
     assert backend.store_snapshot("inbox").queued_puts == 1
     assert backend.container_snapshot("fuel").level == 20.0
     assert backend.container_snapshot("fuel").queued_gets == 1
@@ -206,12 +233,6 @@ def complete_pending_operations(
     )
     engine.preemptive_resources.release(backend, emergency.reservation_id)
 
-    engine.stores.get(
-        backend,
-        store_name="inbox",
-        request_id="consume-part-1",
-        requested_at=backend.now,
-    )
     engine.containers.put(
         backend,
         container_name="fuel",
@@ -226,9 +247,16 @@ def complete_pending_operations(
     assert [r.request_id for r in store.preemptive_resource_reservations()] == [
         "standby-crew"
     ]
-    assert store.preemptive_resource_demands() == ()
-    assert [i.item_id for i in store.store_items()] == ["part-2"]
+    assert [d.request_id for d in store.preemptive_resource_demands()] == [
+        "backup-crew"
+    ]
+    assert store.store_items() == ()
     assert store.store_put_intents() == ()
+    assert store.store_get_requests() == ()
+    assert [r.request_id for r in store.store_get_results()] == [
+        "consume-part-1",
+        "await-part",
+    ]
     assert store.container_operation_intents() == ()
     assert store.container_states()[0].level == 10.0
 
@@ -300,9 +328,10 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
         assert backend.resource_snapshot("bay").in_use == 1
         assert backend.resource_snapshot("bay").queued == 0
         assert backend.preemptive_resource_snapshot("crew").in_use == 1
-        assert backend.preemptive_resource_snapshot("crew").queued == 0
-        assert backend.store_snapshot("inbox").size == 1
+        assert backend.preemptive_resource_snapshot("crew").queued == 1
+        assert backend.store_snapshot("inbox").size == 0
         assert backend.store_snapshot("inbox").queued_puts == 0
+        assert backend.store_snapshot("inbox").queued_gets == 0
         assert backend.container_snapshot("fuel").level == 10.0
 
         backend.run_until(ORIGIN + timedelta(hours=boundary))
@@ -327,9 +356,13 @@ def test_v07_full_durable_runtime_is_multi_restart_equivalent():
         "standby-crew"
     ]
     assert len(restarted_store.resource_preemption_results()) == 1
-    assert [i.item_id for i in restarted_store.store_items()] == ["part-2"]
+    assert [d.request_id for d in restarted_store.preemptive_resource_demands()] == [
+        "backup-crew"
+    ]
+    assert restarted_store.store_items() == ()
     assert [r.request_id for r in restarted_store.store_get_results()] == [
-        "consume-part-1"
+        "consume-part-1",
+        "await-part",
     ]
     assert restarted_store.container_states()[0].level == 10.0
     assert [r.request_id for r in restarted_store.container_operation_results()] == [
