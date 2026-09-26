@@ -151,6 +151,29 @@ class DurableResourceManager:
         self._backend_leases[reservation.reservation_id] = lease
         return reservation
 
+    def cancel_pending(self, backend, request_id: str) -> bool:
+        demand = next(
+            (
+                demand
+                for demand in self._persistence.resource_demands()
+                if demand.request_id == request_id
+            ),
+            None,
+        )
+        if demand is None:
+            return False
+
+        with self._persistence.transaction() as uow:
+            if uow.get_resource_demand(request_id) != demand:
+                return False
+            uow.delete_resource_demand(request_id)
+
+        if not backend.cancel_resource_request(request_id):
+            raise RuntimeError(
+                f"backend resource request is not pending: {request_id}"
+            )
+        return True
+
     def release(self, backend, reservation_id: str) -> bool:
         reservation = next(
             (
