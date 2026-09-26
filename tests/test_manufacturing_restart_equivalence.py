@@ -37,6 +37,10 @@ def _prepare(store: MemoryPersistence):
 
     engine.advance_tick()
     assert context.scenarios.attribute("manufacturing.restart.window", False) is True
+    # Keep the ephemeral backend aligned with the durable logical clock so
+    # continuous and reconstructed execution stamp operational completions
+    # at the same semantic time.
+    backend.run_until(context.clock.now)
     seed_material(engine, backend, quantity=5.0)
     return ids, scenario, engine, backend
 
