@@ -494,6 +494,190 @@ def reconcile_start(
     return persistence.entity("work_order", entities.work_order_id).state == "in_progress"
 
 
+def _active_emergency_request_id(
+    persistence: MemoryPersistence,
+    work_order_id: str,
+) -> str | None:
+    prefix = f"bay-emergency:{work_order_id}:"
+    for demand in persistence.preemptive_resource_demands():
+        if demand.request_id.startswith(prefix):
+            return demand.request_id
+    for reservation in persistence.preemptive_resource_reservations():
+        if reservation.request_id.startswith(prefix):
+            return reservation.request_id
+    return None
+
+
+def _committed_emergency_result(
+    persistence: MemoryPersistence,
+    work_order_id: str,
+):
+    normal_id = f"bay:{work_order_id}"
+    prefix = f"bay-emergency:{work_order_id}:"
+    return next(
+        (
+            result
+            for result in persistence.resource_preemption_results()
+            if result.displaced_request_id == normal_id
+            and result.preempting_request_id.startswith(prefix)
+        ),
+        None,
+    )
+
+
+def _next_emergency_request_id(
+    persistence: MemoryPersistence,
+    work_order_id: str,
+) -> str:
+    active = _active_emergency_request_id(persistence, work_order_id)
+    if active is not None:
+        return active
+    prefix = f"bay-emergency:{work_order_id}:"
+    occurrence = 1 + sum(
+        result.preempting_request_id.startswith(prefix)
+        for result in persistence.resource_preemption_results()
+    )
+    return f"{prefix}{occurrence}"
+
+
+def reconcile_emergency_interrupt(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: MROEntities,
+) -> bool:
+    """Preempt an active bay or reconcile an already-committed preemption."""
+
+    wo = persistence.entity("work_order", entities.work_order_id)
+    if wo is None:
+        raise RuntimeError("work order was not persisted")
+    if wo.state != "in_progress":
+        return wo.state == "interrupted"
+
+    normal_id = f"bay:{entities.work_order_id}"
+    normal = _preemptive_reservation(persistence, normal_id)
+    if normal is None:
+        committed = _committed_emergency_result(
+            persistence, entities.work_order_id
+        )
+        if committed is None:
+            return False
+        engine.dispatch(
+            engine.context.commands.create(
+                "interrupt",
+                target=wo,
+                correlation_id=flow_correlation_id(),
+                key=(
+                    "mro-emergency",
+                    wo.id,
+                    committed.preempting_request_id,
+                    "interrupt",
+                ),
+            )
+        )
+        return True
+
+    emergency_id = _next_emergency_request_id(
+        persistence, entities.work_order_id
+    )
+    if not _preemptive_request_exists(persistence, emergency_id):
+        engine.preemptive_resources.request(
+            backend,
+            resource_name="maintenance_bay",
+            request_id=emergency_id,
+            requested_at=backend.now,
+            priority=1,
+            preempt=True,
+        )
+    backend.run_until(backend.now)
+
+    emergency = _preemptive_reservation(persistence, emergency_id)
+    if emergency is None:
+        return False
+
+    displaced = next(
+        (
+            result
+            for result in persistence.resource_preemption_results()
+            if result.preempting_request_id == emergency_id
+            and result.displaced_request_id == normal_id
+        ),
+        None,
+    )
+    if displaced is None:
+        engine.preemptive_resources.release(backend, emergency.reservation_id)
+        backend.run_until(backend.now)
+        return False
+
+    wo = persistence.entity("work_order", entities.work_order_id)
+    if wo is not None and wo.state == "in_progress":
+        engine.dispatch(
+            engine.context.commands.create(
+                "interrupt",
+                target=wo,
+                correlation_id=flow_correlation_id(),
+                key=("mro-emergency", wo.id, emergency_id, "interrupt"),
+            )
+        )
+    return True
+
+
+def reconcile_emergency_resume(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: MROEntities,
+) -> bool:
+    """Release emergency capacity and reacquire the bay only for interrupted work."""
+
+    wo = persistence.entity("work_order", entities.work_order_id)
+    if wo is None:
+        raise RuntimeError("work order was not persisted")
+    if wo.state == "in_progress":
+        return True
+    if wo.state != "interrupted":
+        return False
+
+    emergency_id = _active_emergency_request_id(
+        persistence, entities.work_order_id
+    )
+    normal_id = f"bay:{entities.work_order_id}"
+
+    if emergency_id is not None:
+        emergency = _preemptive_reservation(persistence, emergency_id)
+        if emergency is not None:
+            engine.preemptive_resources.release(backend, emergency.reservation_id)
+            backend.run_until(backend.now)
+
+    if not _preemptive_request_exists(persistence, normal_id):
+        engine.preemptive_resources.request(
+            backend,
+            resource_name="maintenance_bay",
+            request_id=normal_id,
+            requested_at=backend.now,
+            priority=100,
+            preempt=False,
+        )
+    backend.run_until(backend.now)
+
+    if _preemptive_reservation(persistence, normal_id) is None:
+        return False
+
+    wo = persistence.entity("work_order", entities.work_order_id)
+    if wo is not None and wo.state == "interrupted":
+        engine.dispatch(
+            engine.context.commands.create(
+                "resume",
+                target=wo,
+                correlation_id=flow_correlation_id(),
+                key=("mro-emergency", wo.id, emergency_id or "none", "resume"),
+            )
+        )
+    return persistence.entity("work_order", entities.work_order_id).state == "in_progress"
+
+
 def reconcile_complete(
     persistence: MemoryPersistence,
     engine: Engine,
