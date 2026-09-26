@@ -211,37 +211,22 @@ The complete runtime vocabulary is documented in
 
 ### 5.1 ProductionOrder StateChart
 
-```text
-planned
-  │ release
-  ▼
-released ──wait_for_material──> waiting_material
-  │                              │
-  │ <──────material_ready────────┘
-  │
-  │ begin_setup
-  ▼
-setup ─────────────breakdown────────────┐
-  │                                     │
-  │ start_production                    ▼
-  ▼                                machine_down
-producing ─────────breakdown────────────┘
-  │                                     │
-  │ begin_inspection                    │ repair
-  ▼                                     ▼
-inspection                            setup
-  │   │
-  │   ├──hold_quality──> quality_hold
-  │   │                    │ rework_order
-  │   │                    ▼
-  │   │                  rework
-  │   │                    │ resume_rework
-  │   │                    ▼
-  │   └────────────────> producing
-  │
-  │ complete
-  ▼
-completed
+```mermaid
+stateDiagram-v2
+    [*] --> planned
+    planned --> released: release
+    released --> waiting_material: wait_for_material
+    waiting_material --> released: material_ready
+    released --> setup: begin_setup
+    setup --> producing: start_production
+    setup --> machine_down: breakdown
+    producing --> machine_down: breakdown
+    machine_down --> setup: repair
+    producing --> inspection: begin_inspection
+    inspection --> quality_hold: hold_quality
+    quality_hold --> rework: rework_order
+    rework --> producing: resume_rework
+    inspection --> completed: complete
 ```
 
 Cancellation is legal from `planned`, `released`, and `waiting_material`.
@@ -263,18 +248,16 @@ Cancellation is legal from `planned`, `released`, and `waiting_material`.
 
 ### 5.2 Operation StateChart
 
-```text
-pending
-  │ ready
-  ▼
-ready_state
-  │ start
-  ▼
-running ──block──> blocked
-  │                 │
-  │ finish          │ unblock
-  ▼                 ▼
-done ──rework──> ready_state
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> ready_state: ready
+    ready_state --> running: start
+    ready_state --> blocked: block
+    running --> blocked: block
+    blocked --> ready_state: unblock
+    running --> done: finish
+    done --> ready_state: rework
 ```
 
 `block` is also legal from `ready_state`.
@@ -292,34 +275,23 @@ done ──rework──> ready_state
 
 ### 6.1 Happy path
 
-```text
-ProductionOrder(planned)
-    │ release
-    ▼
-released
-    │
-    ├── acquire machine
-    └── acquire operator
-            │
-            ▼
-          setup
-            │
-            ├── withdraw raw-material lot
-            └── withdraw raw-material quantity
-                    │
-                    ▼
-                 producing
-                    │
-                    └── commit WIP
-                           │
-                           ▼
-                       inspection
-                           │ quality pass
-                           ├── consume/release WIP
-                           └── increment finished goods
-                                   │
-                                   ▼
-                               completed
+```mermaid
+flowchart TD
+    A["ProductionOrder(planned)"] -->|release| B["released"]
+    B --> C["Acquire machine"]
+    B --> D["Acquire operator"]
+    C --> E["setup"]
+    D --> E
+    E --> F["Withdraw raw-material lot"]
+    E --> G["Withdraw raw-material quantity"]
+    F --> H["producing"]
+    G --> H
+    H --> I["Commit WIP"]
+    I --> J["inspection"]
+    J -->|quality pass| K["Consume / release WIP"]
+    J -->|quality pass| L["Increment finished goods"]
+    K --> M["completed"]
+    L --> M
 ```
 
 The business lifecycle always follows durable operational evidence. Resource
@@ -334,15 +306,11 @@ Required raw material is unavailable.
 
 **Expected behavior**
 
-```text
-released
-  │ wait_for_material
-  ▼
-waiting_material
-  │ replenishment arrives
-  │ material_ready
-  ▼
-released
+```mermaid
+flowchart TD
+    A["released"] -->|wait_for_material| B["waiting_material"]
+    B -->|replenishment arrives| C["material_ready"]
+    C --> A
 ```
 
 **Durable truth**
@@ -364,18 +332,13 @@ Emergency repair preempts the machine held by production.
 
 **Expected behavior**
 
-```text
-ProductionOrder(producing)     Operation(running)
-          │ breakdown                  │ block
-          ▼                            ▼
-     machine_down                  blocked
-          │                            │
-       repair                      unblock
-          ▼                            ▼
-        setup                      ready_state
-                                       │ start
-                                       ▼
-                                    running
+```mermaid
+flowchart LR
+    A["ProductionOrder(producing)"] -->|breakdown| B["machine_down"]
+    C["Operation(running)"] -->|block| D["blocked"]
+    B -->|repair| E["setup"]
+    D -->|unblock| F["ready_state"]
+    F -->|start| G["running"]
 ```
 
 **Durable truth**
@@ -397,26 +360,14 @@ Inspection fails.
 
 **Expected behavior**
 
-```text
-producing
-   │ WIP committed
-   ▼
-inspection
-   │ hold_quality
-   ▼
-quality_hold
-   │ rework_order
-   ▼
-rework
-   │ resume_rework
-   ▼
-producing
-   │ second processing/inspection
-   ▼
-inspection
-   │ pass
-   ▼
-completed
+```mermaid
+flowchart TD
+    A["producing"] -->|WIP committed| B["inspection"]
+    B -->|hold_quality| C["quality_hold"]
+    C -->|rework_order| D["rework"]
+    D -->|resume_rework| E["producing"]
+    E -->|second processing / inspection| F["inspection"]
+    F -->|pass| G["completed"]
 ```
 
 **Durable truth**
@@ -579,54 +530,54 @@ excluded.
 
 ### A. Nominal
 
-```text
-order created
-→ released
-→ machine + operator acquired
-→ raw material issued
-→ producing
-→ WIP created
-→ inspection passes
-→ WIP released
-→ finished goods +quantity
-→ completed
+```mermaid
+flowchart LR
+    A["Order created"] --> B["released"]
+    B --> C["machine + operator acquired"]
+    C --> D["raw material issued"]
+    D --> E["producing"]
+    E --> F["WIP created"]
+    F --> G["inspection passes"]
+    G --> H["WIP released"]
+    H --> I["finished goods +quantity"]
+    I --> J["completed"]
 ```
 
 ### B. Material shortage
 
-```text
-required material > available
-→ waiting_material
-→ replenishment
-→ material_ready
-→ released
-→ normal flow resumes
+```mermaid
+flowchart LR
+    A["Required material > available"] --> B["waiting_material"]
+    B --> C["replenishment"]
+    C --> D["material_ready"]
+    D --> E["released"]
+    E --> F["normal flow resumes"]
 ```
 
 ### C. Machine breakdown
 
-```text
-producing
-→ emergency repair preempts machine
-→ machine_down + operation blocked
-→ repair completes
-→ production machine reacquired
-→ setup/running restored
-→ normal flow resumes
+```mermaid
+flowchart LR
+    A["producing"] --> B["emergency repair preempts machine"]
+    B --> C["machine_down + operation blocked"]
+    C --> D["repair completes"]
+    D --> E["production machine reacquired"]
+    E --> F["setup / running restored"]
+    F --> G["normal flow resumes"]
 ```
 
 ### D. Quality rework
 
-```text
-WIP created
-→ inspection fails
-→ quality_hold
-→ restart may occur here
-→ rework
-→ producing
-→ second inspection passes
-→ finished goods
-→ completed
+```mermaid
+flowchart LR
+    A["WIP created"] --> B["inspection fails"]
+    B --> C["quality_hold"]
+    C --> D["restart may occur here"]
+    D --> E["rework"]
+    E --> F["producing"]
+    F --> G["second inspection passes"]
+    G --> H["finished goods"]
+    H --> I["completed"]
 ```
 
 ## 13. Executable evidence

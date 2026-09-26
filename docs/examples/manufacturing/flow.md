@@ -2,28 +2,13 @@
 
 ## Happy path
 
-```text
-ProductionOrder(planned)
-    |
-    | release
-    v
-ProductionOrder(released)
-    |
-    | acquire machine + operator
-    v
-ProductionOrder(setup)
-    |
-    | durable raw-material issue
-    v
-ProductionOrder(producing)
-    |
-    | durable WIP/output
-    v
-ProductionOrder(inspection)
-    |
-    | durable finished-goods commit
-    v
-ProductionOrder(completed)
+```mermaid
+flowchart TD
+    A["ProductionOrder(planned)"] -->|release| B["ProductionOrder(released)"]
+    B -->|acquire machine + operator| C["ProductionOrder(setup)"]
+    C -->|durable raw-material issue| D["ProductionOrder(producing)"]
+    D -->|durable WIP/output| E["ProductionOrder(inspection)"]
+    E -->|durable finished-goods commit| F["ProductionOrder(completed)"]
 ```
 
 ## Recovery boundaries

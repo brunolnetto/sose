@@ -22,55 +22,62 @@ prove the first runtime slice.
 
 ### Requisition
 
-```text
-requested
-→ approved
-→ ordered
-
-exception:
-→ rejected
+```mermaid
+stateDiagram-v2
+    [*] --> requested
+    requested --> approved: approve
+    approved --> ordered: order
+    requested --> rejected: reject
 ```
 
 ### PurchaseOrder
 
-```text
-created
-→ submitted
-→ confirmed
-→ in_transit
-→ received
-→ closed
-
-exception:
-→ delayed
-→ partially_received
-→ cancelled
+```mermaid
+stateDiagram-v2
+    [*] --> created
+    created --> submitted: submit
+    submitted --> confirmed: confirm
+    confirmed --> in_transit: dispatch
+    confirmed --> delayed: mark_delayed
+    in_transit --> delayed: mark_delayed
+    delayed --> in_transit: dispatch
+    in_transit --> received: receive
+    received --> closed: close
+    created --> cancelled: cancel
+    submitted --> cancelled: cancel
+    confirmed --> cancelled: cancel
 ```
 
 ### Receipt
 
-```text
-pending
-→ receiving
-→ inspected
-→ stocked
-
-exception:
-→ rejected
-→ partial
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> receiving: begin_receiving
+    receiving --> inspected: inspect
+    receiving --> partial: mark_partial
+    receiving --> rejected: reject
+    partial --> inspected: inspect
+    partial --> rejected: reject
+    inspected --> stocked: stock
+    inspected --> rejected: reject
 ```
 
 ### MaterialDemand
 
-```text
-open
-→ waiting_inventory
-→ allocated
-→ consumed
-
-exception:
-→ backordered
-→ cancelled
+```mermaid
+stateDiagram-v2
+    [*] --> open
+    open --> waiting_inventory: wait_for_inventory
+    open --> backordered: backorder
+    waiting_inventory --> backordered: backorder
+    open --> allocated: allocate
+    waiting_inventory --> allocated: allocate
+    backordered --> allocated: allocate
+    allocated --> consumed: consume
+    open --> cancelled: cancel
+    waiting_inventory --> cancelled: cancel
+    backordered --> cancelled: cancel
 ```
 
 ## Commands
