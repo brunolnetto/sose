@@ -139,6 +139,8 @@ class PersistenceConformanceSuite:
 
         with store.transaction() as uow:
             uow.save_store_definition(definition)
+
+        with store.transaction() as uow:
             uow.save_store_definition(definition)
 
         assert store.store_definitions() == (definition,)
