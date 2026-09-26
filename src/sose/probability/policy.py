@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Iterable
 from typing import Callable, Mapping, Protocol, TYPE_CHECKING
 
 from sose.domain.entity import Entity
@@ -59,13 +60,20 @@ class TransitionPolicy:
         *,
         default_weight: WeightSpec = 1.0,
         strict: bool = False,
+        excluded_events: Iterable[str] | str = (),
     ) -> None:
         self._weights = dict(weights or {})
         self._default_weight = default_weight
+        if isinstance(excluded_events, str):
+            excluded_events = (excluded_events,)
+        self._excluded_events = frozenset(str(event) for event in excluded_events)
         self.strict = strict
 
     def has_explicit_weight(self, event: str) -> bool:
         return event in self._weights
+
+    def is_probabilistically_eligible(self, event: str) -> bool:
+        return event not in self._excluded_events
 
     def weight_for(self, evaluation: TransitionEvaluation) -> float:
         if self.strict and evaluation.event not in self._weights:
@@ -77,16 +85,26 @@ class TransitionPolicy:
     def events(self) -> tuple[str, ...]:
         return tuple(self._weights)
 
+    @property
+    def excluded_events(self) -> tuple[str, ...]:
+        return tuple(sorted(self._excluded_events))
+
 
 def probabilistic(
     weights: Mapping[str, WeightSpec],
     *,
     default_weight: WeightSpec = 1.0,
     strict: bool = True,
+    excluded_events: Iterable[str] | str = (),
 ) -> TransitionPolicy:
     """Concise domain-facing constructor for a transition policy."""
 
-    return TransitionPolicy(weights, default_weight=default_weight, strict=strict)
+    return TransitionPolicy(
+        weights,
+        default_weight=default_weight,
+        strict=strict,
+        excluded_events=excluded_events,
+    )
 
 
 def _resolve(spec: WeightSpec, evaluation: TransitionEvaluation) -> float:
@@ -105,10 +123,16 @@ def probabilistic_transitions(
     *,
     default_weight: WeightSpec = 1.0,
     strict: bool = False,
+    excluded_events: Iterable[str] | str = (),
 ):
     """Attach stochastic semantics to a StateChart class without altering its FSM API."""
 
-    policy = TransitionPolicy(weights, default_weight=default_weight, strict=strict)
+    policy = TransitionPolicy(
+        weights,
+        default_weight=default_weight,
+        strict=strict,
+        excluded_events=excluded_events,
+    )
 
     def decorate(chart_cls):
         chart_cls.sose_transition_policy = policy

@@ -74,6 +74,8 @@ class ProbabilisticTransitionGraph:
         weighted: list[tuple[str, float, tuple[TransitionEdge, ...]]] = []
 
         for event in sorted(grouped):
+            if not policy.is_probabilistically_eligible(event):
+                continue
             edges = grouped[event]
             evaluation = TransitionEvaluation(
                 event=event,
