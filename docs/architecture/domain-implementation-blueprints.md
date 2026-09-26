@@ -1328,6 +1328,9 @@ exception branches:
 
 ## 31. Procure-to-Pay
 
+The concrete v0.8 reference-domain contract is documented under
+[`docs/examples/procure-to-pay/`](../examples/procure-to-pay/README.md).
+
 ### Core entities
 
 ```text
@@ -1523,7 +1526,7 @@ Domain documentation should use the following status vocabulary.
 At the time of this document:
 
 - **Maintenance / MRO**: Reference implementation.
-- **Procure-to-Pay**: Partial, through the MRO procurement concepts.
+- **Procure-to-Pay**: Partial, with a concrete v0.8 reference-domain contract under implementation.
 - All other domains in this document: Blueprint.
 
 ---
