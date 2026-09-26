@@ -235,7 +235,7 @@ def reconcile_material_availability(
     if wo is None or demand is None:
         raise RuntimeError("MRO entities were not persisted")
 
-    if available < quantity:
+    if not lot_available or available < quantity:
         if wo.state == "released":
             engine.dispatch(
                 engine.context.commands.create(
@@ -535,6 +535,27 @@ def release_capacity(
         backend.run_until(backend.now)
 
 
+def _part_issue_started(persistence: MemoryPersistence) -> bool:
+    return (
+        any(
+            request.request_id == "consume-part-lot-1"
+            for request in persistence.store_get_requests()
+        )
+        or any(
+            result.request_id == "consume-part-lot-1"
+            for result in persistence.store_get_results()
+        )
+        or any(
+            intent.request_id == "consume-spare-part-1"
+            for intent in persistence.container_operation_intents()
+        )
+        or any(
+            result.request_id == "consume-spare-part-1"
+            for result in persistence.container_operation_results()
+        )
+    )
+
+
 def reconcile_cancel(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -548,6 +569,10 @@ def reconcile_cancel(
     demand = persistence.entity("part_demand", entities.part_demand_id)
     if wo is None or demand is None:
         raise RuntimeError("MRO entities were not persisted")
+    if _part_issue_started(persistence):
+        raise RuntimeError(
+            "work order cannot be cancelled after spare-part issue has started"
+        )
 
     if wo.state == "planned":
         with persistence.transaction() as uow:
@@ -570,6 +595,11 @@ def reconcile_cancel(
                 key=("mro", wo.id, "cancel"),
             )
         )
+
+    tech_request_id = f"technician:{entities.work_order_id}"
+    bay_request_id = f"bay:{entities.work_order_id}"
+    engine.resources.cancel_pending(backend, tech_request_id)
+    engine.preemptive_resources.cancel_pending(backend, bay_request_id)
 
     demand = persistence.entity("part_demand", entities.part_demand_id)
     if demand.state in {"open", "waiting_inventory"}:
