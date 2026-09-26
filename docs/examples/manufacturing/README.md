@@ -54,3 +54,17 @@ The core invariant remains:
 domain semantics are durable
 backend execution state is ephemeral and reconstructible
 ```
+
+
+## Implemented reference surface
+
+The executable reference now covers:
+
+- durable ProductionOrder and Operation lifecycles;
+- machine and operator contention;
+- explicit material shortage and resumption;
+- raw-material issue and WIP transfer;
+- durable machine breakdown and preemption;
+- repair and resource reacquisition;
+- finite scenario interventions;
+- deterministic multi-restart equivalence.
