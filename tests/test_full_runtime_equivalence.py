@@ -351,11 +351,13 @@ def test_multi_restart_equivalence_is_an_architectural_gate():
     assert position.execution_sequence == position.committed_sequence
 
     assert restarted_store.entity("work_order", restarted_id).state == "closed"
-    assert [event.name for event in restarted_store.events()] == [
-        "work_order.released",
-        "work_order.started",
-        "work_order.completed",
-        "work_order.closed",
+    events = restarted_store.events()
+    assert [event.name for event in events] == ["entity.state_transition"] * 4
+    assert [event.payload["trigger"] for event in events] == [
+        "release",
+        "start",
+        "complete",
+        "close",
     ]
     assert restarted_store.scheduled_work() == ()
     assert restarted_store.resource_release_intents() == ()

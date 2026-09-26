@@ -151,3 +151,126 @@ Future milestones may extend operational abstractions or add richer persistence
 adapters, but they must preserve the same rule:
 
 > backend state is reconstructible; durable semantic state is authoritative.
+
+
+---
+
+## Durable Store semantics — v0.7
+
+Store execution mechanics remain backend-owned, but their semantic state is now
+represented durably.
+
+The durable records are:
+
+- `StoreDefinition` — store name, kind, and optional capacity;
+- `DurableStoreItem` — item accepted into the semantic store;
+- `StorePutIntent` — put requested but not yet durably accepted;
+- `StoreGetRequest` — outstanding consume request;
+- `StoreGetResult` — terminal durable receipt containing the consumed item.
+
+The lifecycle of a put is:
+
+```text
+put requested
+    ↓ persist
+StorePutIntent
+    ↓ backend accepts
+DurableStoreItem
+```
+
+The lifecycle of a get is:
+
+```text
+get requested
+    ↓ persist
+StoreGetRequest
+    ↓ backend returns matching item
+atomic transaction:
+  delete DurableStoreItem / pending put
+  delete StoreGetRequest
+  persist StoreGetResult
+```
+
+The consume transaction removes both the item and request atomically and writes
+the terminal result in the same commit. A replayed GET can therefore complete
+after restart without a live callback and still preserve the consumed value.
+
+Completed `request_id` values remain globally reserved by their
+`StoreGetResult`. Reusing a completed ID is rejected before a new request is
+persisted or submitted to the backend.
+
+### Restart reconstruction
+
+A fresh backend is reconstructed in two phases:
+
+```text
+1. create Store definitions
+2. restore already-accepted items
+3. merge pending put/get operations by durable sequence
+4. replay pending operations in original semantic order
+```
+
+For `PriorityStore`, accepted items are restored by:
+
+```text
+(priority, original durable sequence)
+```
+
+so equal-priority order remains deterministic across restart.
+
+Bounded stores keep blocked puts as `StorePutIntent` records. A crash therefore
+does not lose a put merely because backend capacity was unavailable.
+
+### FilterStore
+
+Python callables are never persisted.
+
+A durable filtered get stores:
+
+```text
+filter_key = "bearing"
+```
+
+The Engine receives a runtime registry mapping stable keys to predicates:
+
+```python
+Engine(
+    ...,
+    store_filters={
+        "bearing": lambda item: item.value["kind"] == "bearing",
+    },
+)
+```
+
+Recovery fails before mutating resource/store reconstruction if a persisted
+`filter_key` cannot be resolved.
+
+This preserves the general SOSE rule:
+
+```text
+persist semantic identity of behavior
+not Python continuation/code objects
+```
+
+### Crash boundaries
+
+The durable protocol explicitly covers:
+
+```text
+StorePutIntent persisted
+↓ crash before backend acceptance
+
+backend accepts put
+↓ crash before DurableStoreItem commit
+
+StoreGetRequest persisted
+↓ crash before matching item exists
+
+backend matches item
+↓ crash before consume commit
+```
+
+All of these states can be replayed into a fresh backend from persistence.
+
+Native `simpy.Store`, `StorePut`, `StoreGet`, queues, callbacks, and filter
+closures remain ephemeral execution mechanics.

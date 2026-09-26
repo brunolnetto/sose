@@ -12,6 +12,7 @@ from .context import SimulationContext
 from .durable import DurableScheduledItem, DurableScheduler, RuntimeRebuilder
 from .events import Command
 from .resources import DurableResourceManager
+from .stores import DurableStoreManager
 from .runtime import SimulationPosition
 
 
@@ -26,12 +27,14 @@ class Engine:
         persistence: Persistence,
         rules_for: Callable[[str], Iterable[ScenarioRule]] | None = None,
         scenarios: Iterable[Scenario] = (),
+        store_filters=None,
     ) -> None:
         self.context = context
         self.registry = registry
         self.persistence = persistence
         self.rules_for = rules_for or (lambda _: ())
         self.resources = DurableResourceManager(persistence)
+        self.stores = DurableStoreManager(persistence, filters=store_filters)
         self.scheduler = DurableScheduler(persistence)
         self.context.schedules.bind_scheduler(self.scheduler)
         self.context.scenarios.register_many(scenarios)
@@ -143,6 +146,7 @@ class Engine:
             self.persistence,
             context=self.context,
             resources=self.resources,
+            stores=self.stores,
         ).rebuild(
             backend,
             on_due=self.dispatch_scheduled,
