@@ -1,19 +1,22 @@
 from __future__ import annotations
 
 from abc import abstractmethod
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sose.core.events import DomainEvent
+from sose.core.events import Command, DomainEvent
 from sose.domain.entity import Entity
 from sose.core.runtime import (
     ContainerDefinition,
     ContainerOperationIntent,
     ContainerState,
     DurableStoreItem,
+    PreemptiveResourceDefinition,
+    PreemptiveResourceDemand,
     ResourceDefinition,
     ResourceDemand,
+    ScheduledWork,
     StoreDefinition,
     StoreGetRequest,
     StoreGetResult,
@@ -159,6 +162,133 @@ class PersistenceConformanceSuite:
         returned.payload["nested"]["value"] = 999
 
         assert store.events()[0].payload == {"nested": {"value": 1}}
+
+    def test_commands_and_scheduled_work_are_atomic_isolated_and_ordered(self):
+        store = self.make_persistence()
+        payload = {"nested": {"value": 1}}
+        later_command = Command(
+            command_id="command-later",
+            name="run",
+            entity_type="demo",
+            entity_id="entity-1",
+            due_at=NOW + timedelta(hours=2),
+            payload=payload,
+        )
+        earlier_command = Command(
+            command_id="command-earlier",
+            name="run",
+            entity_type="demo",
+            entity_id="entity-1",
+            due_at=NOW + timedelta(hours=1),
+            payload={"nested": {"value": 2}},
+        )
+        later_work = ScheduledWork(
+            "work-later",
+            later_command.due_at,
+            priority=100,
+            sequence=2,
+            command_id=later_command.command_id,
+        )
+        earlier_work = ScheduledWork(
+            "work-earlier",
+            earlier_command.due_at,
+            priority=100,
+            sequence=1,
+            command_id=earlier_command.command_id,
+        )
+
+        with store.transaction() as uow:
+            uow.save_command(later_command)
+            uow.save_command(earlier_command)
+            uow.save_scheduled_work(later_work)
+            uow.save_scheduled_work(earlier_work)
+            assert uow.get_command(later_command.command_id) == later_command
+            assert uow.get_scheduled_work(earlier_work.work_id) == earlier_work
+
+        payload["nested"]["value"] = 500
+        assert store.command(later_command.command_id).payload == {
+            "nested": {"value": 1}
+        }
+
+        returned = store.command(later_command.command_id)
+        assert returned is not None
+        returned.payload["nested"]["value"] = 999
+        assert store.command(later_command.command_id).payload == {
+            "nested": {"value": 1}
+        }
+
+        assert store.scheduled_work() == (earlier_work, later_work)
+        assert store.due_scheduled_work(NOW + timedelta(hours=1)) == (earlier_work,)
+
+        rollback_command = Command(
+            command_id="command-rollback",
+            name="run",
+            entity_type="demo",
+            entity_id="entity-1",
+            due_at=NOW + timedelta(hours=3),
+            payload={"phase": "rollback"},
+        )
+        rollback_work = ScheduledWork(
+            "work-rollback",
+            rollback_command.due_at,
+            priority=100,
+            sequence=3,
+            command_id=rollback_command.command_id,
+        )
+        with pytest.raises(RuntimeError, match="abort schedule"):
+            with store.transaction() as uow:
+                uow.save_command(rollback_command)
+                uow.save_scheduled_work(rollback_work)
+                assert uow.get_command(rollback_command.command_id) == rollback_command
+                assert uow.get_scheduled_work(rollback_work.work_id) == rollback_work
+                raise RuntimeError("abort schedule")
+
+        assert store.command(rollback_command.command_id) is None
+        assert store.scheduled_work() == (earlier_work, later_work)
+
+    def test_preemptive_resource_demands_use_semantic_priority_and_sequence_order(self):
+        store = self.make_persistence()
+
+        with store.transaction() as uow:
+            uow.save_preemptive_resource_definition(
+                PreemptiveResourceDefinition("crew", capacity=1)
+            )
+            uow.save_preemptive_resource_demand(
+                PreemptiveResourceDemand(
+                    "later",
+                    "crew",
+                    priority=50,
+                    preempt=False,
+                    requested_at=NOW,
+                    sequence=3,
+                )
+            )
+            uow.save_preemptive_resource_demand(
+                PreemptiveResourceDemand(
+                    "urgent",
+                    "crew",
+                    priority=1,
+                    preempt=True,
+                    requested_at=NOW,
+                    sequence=4,
+                )
+            )
+            uow.save_preemptive_resource_demand(
+                PreemptiveResourceDemand(
+                    "earlier",
+                    "crew",
+                    priority=50,
+                    preempt=False,
+                    requested_at=NOW,
+                    sequence=2,
+                )
+            )
+
+        assert [d.request_id for d in store.preemptive_resource_demands()] == [
+            "urgent",
+            "earlier",
+            "later",
+        ]
 
     def test_sequence_order_is_backend_independent(self):
         store = self.make_persistence()
