@@ -14,6 +14,7 @@ from .events import Command
 from .resources import DurableResourceManager
 from .stores import DurableStoreManager
 from .preemption import DurablePreemptiveResourceManager
+from .containers import DurableContainerManager
 from .runtime import SimulationPosition
 
 
@@ -37,6 +38,7 @@ class Engine:
         self.resources = DurableResourceManager(persistence)
         self.preemptive_resources = DurablePreemptiveResourceManager(persistence)
         self.stores = DurableStoreManager(persistence, filters=store_filters)
+        self.containers = DurableContainerManager(persistence)
         self.scheduler = DurableScheduler(persistence)
         self.context.schedules.bind_scheduler(self.scheduler)
         self.context.scenarios.register_many(scenarios)
@@ -150,6 +152,7 @@ class Engine:
             resources=self.resources,
             stores=self.stores,
             preemptive_resources=self.preemptive_resources,
+            containers=self.containers,
         ).rebuild(
             backend,
             on_due=self.dispatch_scheduled,
