@@ -1,5 +1,11 @@
 # Manufacturing reference domain
 
+> **Canonical human-readable contract:** [specification.md](specification.md)
+>
+> The specification defines the modeled system, StateCharts, happy/sad processes,
+> invariants, durable ownership and restart semantics. The remaining documents are
+> supporting implementation notes.
+
 This reference domain validates SOSE against a capacity-constrained production flow.
 
 ## Canonical flow
