@@ -17,6 +17,7 @@ from sose.core.runtime import (
     DurableStoreItem,
     PreemptiveResourceDefinition,
     PreemptiveResourceDemand,
+    PreemptiveResourceReservation,
     ResourceDefinition,
     ResourceDemand,
     ResourceReleaseIntent,
@@ -520,6 +521,46 @@ class PersistenceConformanceSuite:
         assert store.resource_reservations() == ()
         assert store.resource_release_intents() == ()
 
+    def test_preemptive_demand_to_reservation_transition_is_atomic(self):
+        store = self.make_persistence()
+        definition = PreemptiveResourceDefinition("crew", capacity=1)
+        demand = PreemptiveResourceDemand(
+            "crew-request",
+            "crew",
+            priority=10,
+            preempt=False,
+            requested_at=NOW,
+            sequence=1,
+        )
+        reservation = PreemptiveResourceReservation(
+            reservation_id="crew-reservation",
+            request_id=demand.request_id,
+            resource_name=demand.resource_name,
+            acquired_at=NOW,
+            priority=demand.priority,
+            sequence=demand.sequence,
+        )
+
+        with store.transaction() as uow:
+            uow.save_preemptive_resource_definition(definition)
+            uow.save_preemptive_resource_demand(demand)
+
+        with pytest.raises(RuntimeError, match="abort preemptive grant"):
+            with store.transaction() as uow:
+                uow.delete_preemptive_resource_demand(demand.request_id)
+                uow.save_preemptive_resource_reservation(reservation)
+                raise RuntimeError("abort preemptive grant")
+
+        assert store.preemptive_resource_demands() == (demand,)
+        assert store.preemptive_resource_reservations() == ()
+
+        with store.transaction() as uow:
+            uow.delete_preemptive_resource_demand(demand.request_id)
+            uow.save_preemptive_resource_reservation(reservation)
+
+        assert store.preemptive_resource_demands() == ()
+        assert store.preemptive_resource_reservations() == (reservation,)
+
     def test_preemptive_resource_demands_use_semantic_priority_and_sequence_order(self):
         store = self.make_persistence()
 
@@ -676,12 +717,15 @@ class PersistenceConformanceSuite:
 
         with store.transaction() as uow:
             uow.save_store_definition(StoreDefinition("inbox"))
+            uow.save_store_item(item)
             uow.save_store_get_request(request)
 
         with store.transaction() as uow:
+            uow.delete_store_item(item.item_id)
             uow.save_store_get_result(result)
             uow.delete_store_get_request(request.request_id)
 
+        assert store.store_items() == ()
         assert store.store_get_requests() == ()
         assert store.store_get_results() == (result,)
 
@@ -699,14 +743,17 @@ class PersistenceConformanceSuite:
 
         with store.transaction() as uow:
             uow.save_store_definition(StoreDefinition("inbox"))
+            uow.save_store_item(item)
             uow.save_store_get_request(request)
 
         with pytest.raises(RuntimeError, match="abort transition"):
             with store.transaction() as uow:
+                uow.delete_store_item(item.item_id)
                 uow.save_store_get_result(result)
                 uow.delete_store_get_request(request.request_id)
                 raise RuntimeError("abort transition")
 
+        assert store.store_items() == (item,)
         assert store.store_get_requests() == (request,)
         assert store.store_get_results() == ()
 
