@@ -404,6 +404,58 @@ def reconcile_stocking(
         raise RuntimeError(f"receipt is not ready to stock: {receipt.state}")
 
 
+
+def reconcile_shortage_state(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: P2PEntities,
+    required_quantity: float,
+) -> bool:
+    """Expose insufficient inventory as durable demand state before withdrawal.
+
+    This guard deliberately runs before Store/Container GET operations so a
+    partial receipt cannot consume the discrete lot while the quantitative
+    withdrawal remains blocked.
+    """
+
+    _validate_quantity(required_quantity)
+    available = next(
+        (
+            state.level
+            for state in persistence.container_states()
+            if state.name == "inventory"
+        ),
+        0.0,
+    )
+    if available >= required_quantity:
+        return False
+
+    demand = persistence.entity("material_demand", entities.material_demand_id)
+    if demand is None:
+        raise RuntimeError("material demand was not persisted")
+
+    if demand.state == "open":
+        wait = engine.context.commands.create(
+            "wait_for_inventory",
+            target=demand,
+            correlation_id=flow_correlation_id(),
+            key=("p2p-shortage", demand.id, "wait"),
+        )
+        engine.dispatch(wait)
+        demand = persistence.entity("material_demand", entities.material_demand_id)
+
+    if demand is not None and demand.state == "waiting_inventory":
+        backorder = engine.context.commands.create(
+            "backorder",
+            target=demand,
+            correlation_id=flow_correlation_id(),
+            key=("p2p-shortage", demand.id, "backorder"),
+        )
+        engine.dispatch(backorder)
+
+    return True
+
 def reconcile_consumption(
     persistence: MemoryPersistence,
     engine: Engine,
