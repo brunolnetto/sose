@@ -68,3 +68,16 @@ The executable reference now covers:
 - repair and resource reacquisition;
 - finite scenario interventions;
 - deterministic multi-restart equivalence.
+
+
+## Happy and sad paths
+
+The reference implementation treats both normal and abnormal operation as first-class:
+
+- happy: release -> setup -> produce -> inspect -> finished goods;
+- sad: material shortage -> replenishment;
+- sad: machine breakdown -> preemption -> repair -> resume;
+- sad: inspection failure -> quality hold -> rework -> second inspection;
+- external: finite downtime and yield-degradation scenarios.
+
+A domain is not considered reference-grade if only its golden path is executable.
