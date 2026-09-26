@@ -32,7 +32,44 @@ class DurableStoreManager:
         with self._persistence.transaction() as uow:
             uow.save_store_definition(definition)
 
+    def validate_rebuild(self) -> None:
+        definitions = {
+            definition.name: definition
+            for definition in self._persistence.store_definitions()
+        }
+        for item in self._persistence.store_items():
+            if item.store_name not in definitions:
+                raise RuntimeError(f"store item references unknown definition: {item.item_id}")
+        for intent in self._persistence.store_put_intents():
+            if intent.store_name not in definitions:
+                raise RuntimeError(f"store put references unknown definition: {intent.item_id}")
+        for request in self._persistence.store_get_requests():
+            definition = definitions.get(request.store_name)
+            if definition is None:
+                raise RuntimeError(
+                    f"store get references unknown definition: {request.request_id}"
+                )
+            if request.filter_key is not None:
+                if definition.kind != "filter":
+                    raise RuntimeError(
+                        f"filtered get targets non-filter store: {request.request_id}"
+                    )
+                self._filter(request.filter_key)
+
+        for definition in definitions.values():
+            if definition.capacity is None:
+                continue
+            count = sum(
+                item.store_name == definition.name
+                for item in self._persistence.store_items()
+            )
+            if count > definition.capacity:
+                raise RuntimeError(
+                    f"durable store {definition.name} contains more items than capacity"
+                )
+
     def rebuild_backend(self, backend) -> int:
+        self.validate_rebuild()
         definitions = {
             definition.name: definition
             for definition in self._persistence.store_definitions()
@@ -47,10 +84,6 @@ class DurableStoreManager:
                 for item in self._persistence.store_items()
                 if item.store_name == definition.name
             ]
-            if definition.capacity is not None and len(items) > definition.capacity:
-                raise RuntimeError(
-                    f"durable store {definition.name} contains more items than capacity"
-                )
             for item in self._ordered_items(definition, items):
                 backend.put_store(
                     definition.name,
@@ -140,7 +173,7 @@ class DurableStoreManager:
         self._submit_get_request(backend, request, on_received=on_received)
         return request
 
-    def commit_put(self, item_id: str) -> DurableStoreItem:
+    def commit_put(self, item_id: str) -> DurableStoreItem | None:
         existing = next(
             (item for item in self._persistence.store_items() if item.item_id == item_id),
             None,
@@ -157,7 +190,7 @@ class DurableStoreManager:
             None,
         )
         if intent is None:
-            raise KeyError(f"unknown store put intent: {item_id}")
+            return None
 
         item = DurableStoreItem(
             item_id=intent.item_id,
@@ -244,7 +277,7 @@ class DurableStoreManager:
     ) -> None:
         def stored(_: StoreItem) -> None:
             item = self.commit_put(intent.item_id)
-            if on_stored is not None:
+            if item is not None and on_stored is not None:
                 on_stored(item)
 
         backend.put_store(
