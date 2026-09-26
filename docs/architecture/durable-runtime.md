@@ -274,3 +274,142 @@ All of these states can be replayed into a fresh backend from persistence.
 
 Native `simpy.Store`, `StorePut`, `StoreGet`, queues, callbacks, and filter
 closures remain ephemeral execution mechanics.
+
+
+---
+
+## Durable preemption semantics — v0.7
+
+Preemption is a semantic ownership change and must be crash-consistent. Native
+`simpy.Interrupt`, `Preempted`, process objects, and request queues remain
+ephemeral backend mechanics.
+
+The durable records are:
+
+- `PreemptiveResourceDefinition` — capacity;
+- `PreemptiveResourceDemand` — pending request, priority, and preempt flag;
+- `PreemptiveResourceReservation` — active semantic holder;
+- `PreemptiveResourceReleaseIntent` — release committed semantically but not yet finalized;
+- `ResourcePreemptionResult` — terminal causal record of holder displacement.
+
+### Normal acquisition
+
+```text
+PreemptiveResourceDemand
+    ↓ backend acquisition
+PreemptiveResourceReservation
+```
+
+### Preemption handshake
+
+A backend preemption produces two independent ephemeral observations:
+
+```text
+A. old holder receives preemption callback
+B. new request receives acquisition callback
+```
+
+SOSE does not mutate durable truth after only one observation.
+
+Instead, both callbacks are retained ephemerally until they can be paired by
+`preempting_request_id`.
+
+Only then does one durable transaction perform:
+
+```text
+delete old reservation
+delete preempting demand
+persist successor reservation
+persist ResourcePreemptionResult
+```
+
+This prevents transient durable over-allocation.
+
+### Crash between callbacks
+
+If the process crashes after A or B but before the pair is complete, persistence
+still contains:
+
+```text
+old reservation
++ preempting demand
+```
+
+The changed backend state dies with the process. Recovery reconstructs the last
+valid durable truth and replays the demand, so the preemption can occur again.
+
+### Terminal result
+
+`ResourcePreemptionResult` records:
+
+- displaced reservation ID;
+- displaced request ID;
+- preempting request ID;
+- successor reservation ID;
+- resource name;
+- logical preemption time;
+- durable sequence.
+
+The result is saved only after the displaced reservation has been removed and the
+successor reservation exists in the same transaction.
+
+### Release while waiters exist
+
+Manual release uses the same intent-first discipline as non-preemptive resources:
+
+```text
+active reservation
+    ↓ persist release intent
+reservation + release intent
+    ↓ backend release
+backend may synchronously grant waiter
+    ↓
+finalize holder removal
+    ↓
+commit deferred waiter grant
+```
+
+If the process crashes after backend release but before durable finalization,
+recovery completes the release intent before replaying pending demands.
+
+### Restart reconstruction
+
+Recovery performs:
+
+```text
+validate durable preemptive state
+↓
+finalize interrupted releases
+↓
+create native PreemptiveResource definitions
+↓
+reconstruct active reservations
+↓
+materialize holders at current backend time
+↓
+replay pending demands by durable priority/sequence
+```
+
+Existing holders are materialized before pending higher-priority demands so that
+a replayed urgent request exercises real preemption rather than bypassing the
+durable holder through initial queue ordering.
+
+### Recovery invariants
+
+Before mutating runtime state, SOSE validates that:
+
+- every demand and reservation references a known definition;
+- active durable reservations do not exceed capacity;
+- one request cannot be both demand and reservation;
+- release intents reference live reservations on the same resource;
+- preemption results reference known resource definitions.
+
+The persistence layer additionally requires a preemption result to reference an
+existing successor reservation while the displaced reservation is already gone.
+
+The invariant remains:
+
+```text
+preemptive demand/reservation/result = durable semantic truth
+simpy.PreemptiveResource / Process / Interrupt = ephemeral execution mechanics
+```

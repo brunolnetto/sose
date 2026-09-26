@@ -109,11 +109,13 @@ class RuntimeRebuilder:
         context=None,
         resources=None,
         stores=None,
+        preemptive_resources=None,
     ) -> None:
         self._persistence = persistence
         self._context = context
         self._resources = resources
         self._stores = stores
+        self._preemptive_resources = preemptive_resources
 
     def rebuild(
         self,
@@ -137,6 +139,8 @@ class RuntimeRebuilder:
 
         if self._stores is not None:
             self._stores.validate_rebuild()
+        if self._preemptive_resources is not None:
+            self._preemptive_resources.validate_rebuild()
 
         if self._context is not None:
             if position is not None:
@@ -149,6 +153,8 @@ class RuntimeRebuilder:
 
         if self._stores is not None:
             self._stores.rebuild_backend(backend)
+        if self._preemptive_resources is not None:
+            self._preemptive_resources.rebuild_backend(backend)
 
         for item in items:
             backend.schedule_at(
