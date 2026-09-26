@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from datetime import datetime
 
 
@@ -289,3 +290,89 @@ class ResourcePreemptionResult:
             raise ValueError("successor_reservation_id cannot be empty")
         if self.sequence < 1:
             raise ValueError("preemption result sequence must be >= 1")
+
+
+@dataclass(frozen=True, slots=True)
+class ContainerDefinition:
+    name: str
+    capacity: float
+    initial: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("container name cannot be empty")
+        if not math.isfinite(self.capacity) or self.capacity <= 0:
+            raise ValueError("container capacity must be finite and > 0")
+        if (
+            not math.isfinite(self.initial)
+            or self.initial < 0
+            or self.initial > self.capacity
+        ):
+            raise ValueError(
+                "container initial level must be finite and between 0 and capacity"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class ContainerState:
+    name: str
+    level: float
+
+    def __post_init__(self) -> None:
+        if not self.name:
+            raise ValueError("container name cannot be empty")
+        if not math.isfinite(self.level) or self.level < 0:
+            raise ValueError("container level must be finite and >= 0")
+
+
+@dataclass(frozen=True, slots=True)
+class ContainerOperationIntent:
+    request_id: str
+    container_name: str
+    operation: str
+    amount: float
+    requested_at: datetime
+    sequence: int
+
+    def __post_init__(self) -> None:
+        if not self.request_id:
+            raise ValueError("request_id cannot be empty")
+        if not self.container_name:
+            raise ValueError("container_name cannot be empty")
+        if self.operation not in {"put", "get"}:
+            raise ValueError("container operation must be put or get")
+        if not math.isfinite(self.amount) or self.amount <= 0:
+            raise ValueError("container amount must be finite and > 0")
+        if self.sequence < 1:
+            raise ValueError("container operation sequence must be >= 1")
+
+
+@dataclass(frozen=True, slots=True)
+class ContainerOperationResult:
+    request_id: str
+    container_name: str
+    operation: str
+    amount: float
+    completed_at: datetime
+    level_before: float
+    level_after: float
+    sequence: int
+
+    def __post_init__(self) -> None:
+        if not self.request_id:
+            raise ValueError("request_id cannot be empty")
+        if not self.container_name:
+            raise ValueError("container_name cannot be empty")
+        if self.operation not in {"put", "get"}:
+            raise ValueError("container operation must be put or get")
+        if not math.isfinite(self.amount) or self.amount <= 0:
+            raise ValueError("container amount must be finite and > 0")
+        if (
+            not math.isfinite(self.level_before)
+            or not math.isfinite(self.level_after)
+            or self.level_before < 0
+            or self.level_after < 0
+        ):
+            raise ValueError("container levels must be finite and >= 0")
+        if self.sequence < 1:
+            raise ValueError("container result sequence must be >= 1")
