@@ -146,12 +146,22 @@ and make restart portability impossible.
 
 ## v0.7 boundary
 
-v0.6 establishes durable discrete-event execution and restart reconstruction.
-Future milestones may extend operational abstractions or add richer persistence
-adapters, but they must preserve the same rule:
+v0.7 closes the durable operational-runtime milestone. Restart-safe semantic
+truth now covers scheduled work, logical position, scenario runtime state,
+normal resources, Stores, preemptive resources, and quantitative Containers.
+
+The runtime is considered ready for domain vertical slices because:
+
+- backend-native execution state remains fully reconstructible;
+- multi-restart equivalence is enforced as an architectural gate;
+- crash boundaries have reusable fault-injection coverage;
+- persistence adapters have a behavioral conformance contract;
+- recovery validates all participants before any reconstruction begins.
+
+Future work should focus on domain implementations and additional persistence
+adapters rather than persisting backend-native execution objects.
 
 > backend state is reconstructible; durable semantic state is authoritative.
-
 
 ---
 
