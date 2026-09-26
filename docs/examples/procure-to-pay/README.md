@@ -73,3 +73,17 @@ The domain is promoted from **Partial** to **Reference implementation** when the
 No new runtime primitive should be introduced solely to make the example convenient.
 A primitive addition requires a demonstrated semantic gap rather than an ergonomic
 preference.
+
+
+## Happy and sad paths
+
+The reference implementation treats both normal and abnormal procurement as first-class:
+
+- happy: requisition -> PO -> receipt -> stock -> consumption;
+- sad: receiving capacity contention;
+- sad: shortage -> waiting inventory -> backorder -> replenishment;
+- sad: partial receipt -> partial stock -> residual demand remains blocked/backordered;
+- sad: rejected receipt -> terminal rejection with no inventory effect;
+- external: supplier delay, demand spike and receiving-congestion scenarios.
+
+A domain is not reference-grade if only its golden path is executable.

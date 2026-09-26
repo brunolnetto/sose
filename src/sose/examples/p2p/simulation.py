@@ -216,8 +216,18 @@ def reconcile_receiving_resources(
     backend: SimPyBackend,
     *,
     entities: P2PEntities,
+    outcome: str = "accepted",
 ) -> bool:
-    """Advance receipt lifecycle only while required durable capacity is held."""
+    """Advance receipt lifecycle only while required durable capacity is held.
+
+    outcome controls the explicit business branch after dock acquisition:
+    accepted -> inspection;
+    partial -> mark partial, then inspection;
+    rejected -> reject before inventory effects.
+    """
+
+    if outcome not in {"accepted", "partial", "rejected"}:
+        raise ValueError(f"unsupported receipt outcome: {outcome}")
 
     correlation_id = flow_correlation_id()
     dock_request_id = f"receiving-dock:{entities.receipt_id}"
@@ -252,7 +262,32 @@ def reconcile_receiving_resources(
         engine.dispatch(begin)
         receipt = persistence.entity("receipt", entities.receipt_id)
 
-    if receipt.state == "receiving" and not _resource_request_exists(
+    if receipt.state == "receiving" and outcome == "rejected":
+        reject = engine.context.commands.create(
+            "reject",
+            target=receipt,
+            correlation_id=correlation_id,
+            key=("p2p-receiving", receipt.id, "reject"),
+        )
+        engine.dispatch(reject)
+        receipt = persistence.entity("receipt", entities.receipt_id)
+        dock = _reservation_for(persistence, dock_request_id)
+        if dock is not None:
+            engine.resources.release(backend, dock.reservation_id)
+            backend.run_until(backend.now)
+        return True
+
+    if receipt.state == "receiving" and outcome == "partial":
+        partial = engine.context.commands.create(
+            "mark_partial",
+            target=receipt,
+            correlation_id=correlation_id,
+            key=("p2p-receiving", receipt.id, "partial"),
+        )
+        engine.dispatch(partial)
+        receipt = persistence.entity("receipt", entities.receipt_id)
+
+    if receipt.state in {"receiving", "partial"} and not _resource_request_exists(
         persistence, inspector_request_id
     ):
         request_inspector(
@@ -264,10 +299,10 @@ def reconcile_receiving_resources(
     backend.run_until(backend.now)
 
     inspector = _reservation_for(persistence, inspector_request_id)
-    if receipt.state == "receiving" and inspector is None:
+    if receipt.state in {"receiving", "partial"} and inspector is None:
         return False
 
-    if receipt.state == "receiving":
+    if receipt.state in {"receiving", "partial"}:
         inspect = engine.context.commands.create(
             "inspect",
             target=receipt,
@@ -368,6 +403,58 @@ def reconcile_stocking(
     elif receipt.state != "stocked":
         raise RuntimeError(f"receipt is not ready to stock: {receipt.state}")
 
+
+
+def reconcile_shortage_state(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: P2PEntities,
+    required_quantity: float,
+) -> bool:
+    """Expose insufficient inventory as durable demand state before withdrawal.
+
+    This guard deliberately runs before Store/Container GET operations so a
+    partial receipt cannot consume the discrete lot while the quantitative
+    withdrawal remains blocked.
+    """
+
+    _validate_quantity(required_quantity)
+    available = next(
+        (
+            state.level
+            for state in persistence.container_states()
+            if state.name == "inventory"
+        ),
+        0.0,
+    )
+    if available >= required_quantity:
+        return False
+
+    demand = persistence.entity("material_demand", entities.material_demand_id)
+    if demand is None:
+        raise RuntimeError("material demand was not persisted")
+
+    if demand.state == "open":
+        wait = engine.context.commands.create(
+            "wait_for_inventory",
+            target=demand,
+            correlation_id=flow_correlation_id(),
+            key=("p2p-shortage", demand.id, "wait"),
+        )
+        engine.dispatch(wait)
+        demand = persistence.entity("material_demand", entities.material_demand_id)
+
+    if demand is not None and demand.state == "waiting_inventory":
+        backorder = engine.context.commands.create(
+            "backorder",
+            target=demand,
+            correlation_id=flow_correlation_id(),
+            key=("p2p-shortage", demand.id, "backorder"),
+        )
+        engine.dispatch(backorder)
+
+    return True
 
 def reconcile_consumption(
     persistence: MemoryPersistence,
