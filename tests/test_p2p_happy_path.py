@@ -71,9 +71,7 @@ def test_illegal_receipt_stock_transition_is_rejected():
         key=("illegal-stock", receipt.id),
     )
 
-    import pytest
-
-    with pytest.raises(Exception):
-        engine.dispatch(command)
+    engine.dispatch(command)
 
     assert persistence.entity("receipt", ids.receipt_id).state == "pending"
+    assert persistence.events() == ()
