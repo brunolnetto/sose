@@ -25,25 +25,27 @@ backend execution state is ephemeral and reconstructible
 
 The reference slice covers the operational path:
 
-```text
-requisition
-→ purchase order
-→ supplier lead time
-→ receipt
-→ receiving / inspection
-→ inventory
-→ material consumption
+```mermaid
+flowchart LR
+    A["Requisition"] --> B["Purchase order"]
+    B --> C["Supplier lead time"]
+    C --> D["Receipt"]
+    D --> E["Receiving / inspection"]
+    E --> F["Inventory"]
+    F --> G["Material consumption"]
 ```
 
 and representative exception paths:
 
-```text
-supplier delay
-partial receipt
-shortage
-backorder
-receiving congestion
-demand spike
+```mermaid
+flowchart TD
+    A["Exception / external conditions"]
+    A --> B["Supplier delay"]
+    A --> C["Partial receipt"]
+    A --> D["Shortage"]
+    A --> E["Backorder"]
+    A --> F["Receiving congestion"]
+    A --> G["Demand spike"]
 ```
 
 Financial invoice approval, three-way matching and payment remain documented extensions

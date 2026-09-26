@@ -6,13 +6,22 @@
 
 Lifecycle:
 
-```text
-planned -> released -> setup -> producing -> inspection -> completed
-
-exception branches:
-released/setup -> waiting_material
-setup/producing -> machine_down
-inspection -> quality_hold -> rework -> producing
+```mermaid
+stateDiagram-v2
+    [*] --> planned
+    planned --> released: release
+    released --> setup: begin_setup
+    setup --> producing: start_production
+    producing --> inspection: begin_inspection
+    inspection --> completed: complete
+    released --> waiting_material: wait_for_material
+    waiting_material --> released: material_ready
+    setup --> machine_down: breakdown
+    producing --> machine_down: breakdown
+    machine_down --> setup: repair
+    inspection --> quality_hold: hold_quality
+    quality_hold --> rework: rework_order
+    rework --> producing: resume_rework
 ```
 
 ### Operation
@@ -21,12 +30,16 @@ Represents the executable routing step associated with the production order.
 
 Lifecycle:
 
-```text
-pending -> ready -> running -> done
-
-exception:
-ready/running -> blocked
-blocked -> ready
+```mermaid
+stateDiagram-v2
+    [*] --> pending
+    pending --> ready_state: ready
+    ready_state --> running: start
+    running --> done: finish
+    ready_state --> blocked: block
+    running --> blocked: block
+    blocked --> ready_state: unblock
+    done --> ready_state: rework
 ```
 
 ## Commands
