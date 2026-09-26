@@ -284,6 +284,23 @@ def seed_material(
 
 
 
+
+def reconcile_scenario_breakdown(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: ManufacturingEntities,
+) -> bool:
+    """Translate scenario context into the explicit durable breakdown workflow."""
+
+    if not engine.context.scenarios.attribute("manufacturing.machine.down", False):
+        return False
+    return reconcile_breakdown(
+        persistence, engine, backend, entities=entities
+    )
+
+
 def reconcile_breakdown(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -507,6 +524,10 @@ def reconcile_output(
     quantity: float,
 ) -> None:
     _validate_quantity(quantity)
+    yield_factor = float(engine.context.scenarios.attribute("manufacturing.yield.factor", 1.0))
+    if yield_factor <= 0 or yield_factor > 1:
+        raise ValueError("manufacturing yield factor must be in (0, 1]")
+    output_quantity = quantity * yield_factor
     wip_id = "wip-1"
     fg_request = "finish-goods-1"
 
@@ -517,7 +538,7 @@ def reconcile_output(
             backend,
             store_name="wip_buffer",
             item_id=wip_id,
-            value={"sku": SKU, "quantity": quantity},
+            value={"sku": SKU, "quantity": output_quantity},
             requested_at=backend.now,
         )
     if not any(i.request_id == fg_request for i in persistence.container_operation_intents()) and not any(
@@ -527,7 +548,7 @@ def reconcile_output(
             backend,
             container_name="finished_goods",
             request_id=fg_request,
-            amount=quantity,
+            amount=output_quantity,
             requested_at=backend.now,
         )
     backend.run_until(backend.now)
