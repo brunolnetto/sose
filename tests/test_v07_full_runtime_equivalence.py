@@ -131,7 +131,7 @@ def start_operational_state(
         resource_name="crew",
         request_id="standby-crew",
         requested_at=ORIGIN,
-        priority=50,
+        priority=0,
         preempt=False,
     )
     backend.run_until(ORIGIN)
@@ -187,7 +187,7 @@ def start_operational_state(
         "backup-crew",
     ]
     standby, backup = store.preemptive_resource_demands()
-    assert (standby.priority, standby.preempt) == (50, False)
+    assert (standby.priority, standby.preempt) == (0, False)
     assert (backup.priority, backup.preempt) == (75, False)
     assert [r.request_id for r in store.store_get_requests()] == ["await-part"]
     assert [i.item_id for i in store.store_put_intents()] == ["buffer-part-2"]
@@ -305,7 +305,12 @@ def run_continuous() -> tuple[MemoryPersistence, str]:
     work_order_id = seed(store)
     engine, backend = start_operational_state(store, work_order_id)
     backend.run_until(ORIGIN + timedelta(hours=1))
-    assert store.scenario_state() is not None
+    scenario_state = store.scenario_state()
+    assert scenario_state is not None
+    assert "runtime-marker" in scenario_state.decisions
+    assert "runtime-marker" in scenario_state.activations
+    assert scenario_state.activations["runtime-marker"].active is True
+    assert scenario_state.activations["runtime-marker"].effects["runtime.marker"] == "active"
     complete_pending_operations(store, engine, backend)
     backend.run_until(ORIGIN + timedelta(hours=4))
     return store, work_order_id
@@ -317,7 +322,12 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
     _, backend1 = start_operational_state(store, work_order_id)
 
     backend1.run_until(ORIGIN + timedelta(hours=1))
-    assert store.scenario_state() is not None
+    scenario_state = store.scenario_state()
+    assert scenario_state is not None
+    assert "runtime-marker" in scenario_state.decisions
+    assert "runtime-marker" in scenario_state.activations
+    assert scenario_state.activations["runtime-marker"].active is True
+    assert scenario_state.activations["runtime-marker"].effects["runtime.marker"] == "active"
 
     position = store.simulation_position()
     assert position is not None
