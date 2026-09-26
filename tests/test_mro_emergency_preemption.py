@@ -137,3 +137,46 @@ def test_same_work_order_can_be_interrupted_by_multiple_emergencies():
     ]
     assert len({r.result_id for r in results}) == 2
     assert persistence.entity("work_order", ids.work_order_id).state == "interrupted"
+
+
+
+def test_recovery_selects_second_active_preemption_after_prior_cycle():
+    persistence, ids, engine, backend = _active_work()
+
+    assert reconcile_emergency_interrupt(
+        persistence, engine, backend, entities=ids
+    )
+    assert reconcile_emergency_resume(
+        persistence, engine, backend, entities=ids
+    )
+    assert persistence.entity("work_order", ids.work_order_id).state == "in_progress"
+
+    second_id = f"bay-emergency:{ids.work_order_id}:2"
+    engine.preemptive_resources.request(
+        backend,
+        resource_name="maintenance_bay",
+        request_id=second_id,
+        requested_at=backend.now,
+        priority=1,
+        preempt=True,
+    )
+    backend.run_until(backend.now)
+
+    results = persistence.resource_preemption_results()
+    assert len(results) == 2
+    assert results[-1].preempting_request_id == second_id
+    assert persistence.entity("work_order", ids.work_order_id).state == "in_progress"
+
+    _, restarted_engine = build_runtime(persistence, now=backend.now)
+    restarted_backend = SimPyBackend(origin=backend.now)
+    restarted_engine.rebuild_backend(restarted_backend)
+    restarted_backend.run_until(backend.now)
+
+    assert reconcile_emergency_interrupt(
+        persistence,
+        restarted_engine,
+        restarted_backend,
+        entities=ids,
+    )
+    assert persistence.entity("work_order", ids.work_order_id).state == "interrupted"
+    assert len(persistence.resource_preemption_results()) == 2
