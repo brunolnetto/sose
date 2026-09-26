@@ -26,19 +26,19 @@ def test_manufacturing_happy_path_reaches_completed_output():
     assert {e.correlation_id for e in persistence.events()} == {flow_correlation_id()}
 
 
-def test_setup_is_durable_scheduled_work():
+def test_release_and_readiness_are_durable_scheduled_work():
     persistence = MemoryPersistence()
     ids = seed_happy_path(persistence, quantity=5.0)
 
     work = persistence.scheduled_work()
-    assert len(work) == 4
-    begin_setup = next(
+    assert len(work) == 2
+    release = next(
         persistence.command(item.command_id)
         for item in work
-        if persistence.command(item.command_id).name == "begin_setup"
+        if persistence.command(item.command_id).name == "release"
     )
-    assert begin_setup.entity_id == ids.production_order_id
-    assert begin_setup.due_at == ORIGIN + timedelta(hours=2)
+    assert release.entity_id == ids.production_order_id
+    assert release.due_at == ORIGIN + timedelta(hours=1)
 
 
 def test_quantity_must_fit_capacities():
