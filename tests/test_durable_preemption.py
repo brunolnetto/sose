@@ -353,3 +353,70 @@ def test_models_validate_preemptive_resource_invariants():
         PreemptiveResourceDemand("x", "crew", 1, True, NOW, 0)
     with pytest.raises(ValueError, match="sequence"):
         PreemptiveResourceReservation("r", "x", "crew", NOW, 1, 0)
+
+
+def test_rebuild_clears_stale_handshake_state_from_dead_backend():
+    store = MemoryPersistence()
+    backend1 = ControlledPreemptiveBackend()
+    manager = _seed_holder(store, backend1)
+
+    manager.request(
+        backend1,
+        resource_name="crew",
+        request_id="urgent",
+        requested_at=NOW,
+        priority=1,
+        preempt=True,
+    )
+    backend1.acquire("urgent")
+
+    assert "urgent" in manager._pending_grants
+
+    backend2 = ControlledPreemptiveBackend()
+    manager.rebuild_backend(backend2)
+
+    assert manager._pending_grants == {}
+    assert manager._pending_preemptions == {}
+    assert manager._backend_leases == {}
+    assert manager._pending_callbacks == {}
+
+    backend2.acquire("holder")
+    backend2.preempt("holder", by="urgent")
+
+    # Fresh preemption callback alone must not pair with the stale lease.
+    assert [r.request_id for r in store.preemptive_resource_reservations()] == ["holder"]
+    assert [d.request_id for d in store.preemptive_resource_demands()] == ["urgent"]
+
+    backend2.acquire("urgent")
+
+    assert [r.request_id for r in store.preemptive_resource_reservations()] == ["urgent"]
+
+
+def test_rebuild_does_not_run_unrelated_current_time_backend_events():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_preemptive_resource_definition(
+            PreemptiveResourceDefinition("crew", capacity=1)
+        )
+        uow.save_preemptive_resource_reservation(
+            PreemptiveResourceReservation(
+                reservation_id="res-holder",
+                request_id="holder",
+                resource_name="crew",
+                acquired_at=NOW,
+                priority=100,
+                sequence=1,
+            )
+        )
+
+    backend = SimPyBackend(origin=NOW)
+    observed = []
+    backend.schedule_at(NOW, lambda: observed.append("unrelated"), priority=1)
+
+    manager = DurablePreemptiveResourceManager(store)
+    manager.rebuild_backend(backend)
+
+    assert observed == []
+
+    backend.run_until(NOW)
+    assert observed == ["unrelated"]
