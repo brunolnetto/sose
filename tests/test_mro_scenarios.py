@@ -172,3 +172,63 @@ def test_expired_asset_failure_cleanup_is_idempotent_after_resume():
     assert [r.request_id for r in persistence.preemptive_resource_reservations()] == [
         f"bay:{ids.work_order_id}"
     ]
+
+
+
+def test_expired_asset_failure_retries_until_normal_bay_is_reacquired():
+    persistence, ids, context, engine, backend = _scenario_runtime(
+        asset_failure_scenario()
+    )
+    seed_spare_parts(engine, backend, quantity=1.0)
+    assert reconcile_start(
+        persistence, engine, backend, entities=ids, quantity=1.0
+    )
+    assert reconcile_scenario_emergency(
+        persistence, engine, backend, entities=ids
+    )
+
+    # A competing waiter is already queued when the scenario expires.
+    engine.preemptive_resources.request(
+        backend,
+        resource_name="maintenance_bay",
+        request_id="bay-cleanup-blocker",
+        requested_at=backend.now,
+        priority=50,
+        preempt=False,
+    )
+    backend.run_until(backend.now)
+
+    for _ in range(4):
+        engine.advance_tick()
+        backend.run_until(context.clock.now)
+
+    assert context.scenarios.attribute("mro.asset.emergency", False) is False
+
+    # First cleanup releases the emergency bay. The queued blocker wins it,
+    # leaving the normal work interrupted with a durable bay demand pending.
+    assert reconcile_scenario_emergency(
+        persistence, engine, backend, entities=ids
+    ) is False
+    assert persistence.entity("work_order", ids.work_order_id).state == "interrupted"
+    assert any(
+        demand.request_id == f"bay:{ids.work_order_id}"
+        for demand in persistence.preemptive_resource_demands()
+    )
+
+    blocker = next(
+        reservation
+        for reservation in persistence.preemptive_resource_reservations()
+        if reservation.request_id == "bay-cleanup-blocker"
+    )
+    engine.preemptive_resources.release(backend, blocker.reservation_id)
+    backend.run_until(backend.now)
+
+    # A later reconciliation must keep retrying even though no scenario-owned
+    # emergency reservation exists anymore.
+    assert reconcile_scenario_emergency(
+        persistence, engine, backend, entities=ids
+    )
+    assert persistence.entity("work_order", ids.work_order_id).state == "in_progress"
+    assert [r.request_id for r in persistence.preemptive_resource_reservations()] == [
+        f"bay:{ids.work_order_id}"
+    ]
