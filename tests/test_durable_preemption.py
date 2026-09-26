@@ -420,3 +420,30 @@ def test_rebuild_does_not_run_unrelated_current_time_backend_events():
 
     backend.run_until(NOW)
     assert observed == ["unrelated"]
+
+
+
+def test_cancel_pending_before_preemptive_lifecycle_registration():
+    store = MemoryPersistence()
+    manager = DurablePreemptiveResourceManager(store)
+    backend = SimPyBackend(origin=NOW)
+    manager.define(PreemptiveResourceDefinition("crew", capacity=1))
+    manager.rebuild_backend(backend)
+
+    manager.request(
+        backend,
+        resource_name="crew",
+        request_id="waiter",
+        requested_at=NOW,
+        priority=100,
+        preempt=False,
+    )
+
+    assert [d.request_id for d in store.preemptive_resource_demands()] == ["waiter"]
+    assert manager.cancel_pending(backend, "waiter") is True
+    assert store.preemptive_resource_demands() == ()
+
+    backend.run_until(NOW)
+
+    assert store.preemptive_resource_reservations() == ()
+    assert backend.preemptive_resource_snapshot("crew").in_use == 0
