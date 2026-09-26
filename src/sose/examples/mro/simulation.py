@@ -226,12 +226,21 @@ def reconcile_material_availability(
     if _part_issue_complete(persistence):
         return True
 
-    lot_available = any(
-        item.item_id == "part-lot-1" for item in persistence.store_items()
+    scenario_available = engine.context.scenarios.attribute(
+        "mro.spare_parts.available", True
     )
-    available = next(
-        (s.level for s in persistence.container_states() if s.name == "spare_parts"),
-        0.0,
+    lot_available = (
+        any(item.item_id == "part-lot-1" for item in persistence.store_items())
+        if scenario_available
+        else False
+    )
+    available = (
+        next(
+            (s.level for s in persistence.container_states() if s.name == "spare_parts"),
+            0.0,
+        )
+        if scenario_available
+        else 0.0
     )
     wo = persistence.entity("work_order", entities.work_order_id)
     demand = persistence.entity("part_demand", entities.part_demand_id)
@@ -278,6 +287,9 @@ def reconcile_capacity(
     *,
     entities: MROEntities,
 ) -> bool:
+    if not engine.context.scenarios.attribute("mro.technician.available", True):
+        return False
+
     tech_id = f"technician:{entities.work_order_id}"
     bay_id = f"bay:{entities.work_order_id}"
 
@@ -494,11 +506,72 @@ def reconcile_start(
     return persistence.entity("work_order", entities.work_order_id).state == "in_progress"
 
 
+def reconcile_scenario_emergency(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: MROEntities,
+) -> bool:
+    """Apply or unwind scenario-owned emergency pressure durably."""
+
+    prefix = f"bay-emergency-scenario:{entities.work_order_id}:"
+    active = engine.context.scenarios.attribute("mro.asset.emergency", False)
+
+    if active:
+        return reconcile_emergency_interrupt(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            request_prefix=prefix,
+        )
+
+    committed = _committed_emergency_result(
+        persistence,
+        entities.work_order_id,
+        prefix=prefix,
+    )
+    emergency_id = _active_emergency_request_id(
+        persistence,
+        entities.work_order_id,
+        prefix=prefix,
+    )
+    if committed is None and emergency_id is None:
+        return False
+
+    work_order = persistence.entity("work_order", entities.work_order_id)
+    if work_order is None:
+        raise RuntimeError("work order was not persisted")
+
+    if work_order.state == "in_progress" and committed is not None:
+        reconcile_emergency_interrupt(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            request_prefix=prefix,
+        )
+        work_order = persistence.entity("work_order", entities.work_order_id)
+
+    if work_order is not None and work_order.state == "interrupted":
+        return reconcile_emergency_resume(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            request_prefix=prefix,
+        )
+    return False
+
+
 def _active_emergency_request_id(
     persistence: MemoryPersistence,
     work_order_id: str,
+    *,
+    prefix: str | None = None,
 ) -> str | None:
-    prefix = f"bay-emergency:{work_order_id}:"
+    prefix = prefix or f"bay-emergency:{work_order_id}:"
     for demand in persistence.preemptive_resource_demands():
         if demand.request_id.startswith(prefix):
             return demand.request_id
@@ -511,9 +584,11 @@ def _active_emergency_request_id(
 def _committed_emergency_result(
     persistence: MemoryPersistence,
     work_order_id: str,
+    *,
+    prefix: str | None = None,
 ):
     normal_id = f"bay:{work_order_id}"
-    prefix = f"bay-emergency:{work_order_id}:"
+    prefix = prefix or f"bay-emergency:{work_order_id}:"
     return next(
         (
             result
@@ -528,11 +603,15 @@ def _committed_emergency_result(
 def _next_emergency_request_id(
     persistence: MemoryPersistence,
     work_order_id: str,
+    *,
+    prefix: str | None = None,
 ) -> str:
-    active = _active_emergency_request_id(persistence, work_order_id)
+    prefix = prefix or f"bay-emergency:{work_order_id}:"
+    active = _active_emergency_request_id(
+        persistence, work_order_id, prefix=prefix
+    )
     if active is not None:
         return active
-    prefix = f"bay-emergency:{work_order_id}:"
     occurrence = 1 + sum(
         result.preempting_request_id.startswith(prefix)
         for result in persistence.resource_preemption_results()
@@ -546,6 +625,7 @@ def reconcile_emergency_interrupt(
     backend: SimPyBackend,
     *,
     entities: MROEntities,
+    request_prefix: str | None = None,
 ) -> bool:
     """Preempt an active bay or reconcile an already-committed preemption."""
 
@@ -559,7 +639,9 @@ def reconcile_emergency_interrupt(
     normal = _preemptive_reservation(persistence, normal_id)
     if normal is None:
         committed = _committed_emergency_result(
-            persistence, entities.work_order_id
+            persistence,
+            entities.work_order_id,
+            prefix=request_prefix,
         )
         if committed is None:
             return False
@@ -579,7 +661,9 @@ def reconcile_emergency_interrupt(
         return True
 
     emergency_id = _next_emergency_request_id(
-        persistence, entities.work_order_id
+        persistence,
+        entities.work_order_id,
+        prefix=request_prefix,
     )
     if not _preemptive_request_exists(persistence, emergency_id):
         engine.preemptive_resources.request(
@@ -629,6 +713,7 @@ def reconcile_emergency_resume(
     backend: SimPyBackend,
     *,
     entities: MROEntities,
+    request_prefix: str | None = None,
 ) -> bool:
     """Release emergency capacity and reacquire the bay only for interrupted work."""
 
@@ -641,7 +726,9 @@ def reconcile_emergency_resume(
         return False
 
     emergency_id = _active_emergency_request_id(
-        persistence, entities.work_order_id
+        persistence,
+        entities.work_order_id,
+        prefix=request_prefix,
     )
     normal_id = f"bay:{entities.work_order_id}"
 
