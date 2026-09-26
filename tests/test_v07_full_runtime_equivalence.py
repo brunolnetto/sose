@@ -307,10 +307,18 @@ def run_continuous() -> tuple[MemoryPersistence, str]:
     backend.run_until(ORIGIN + timedelta(hours=1))
     scenario_state = store.scenario_state()
     assert scenario_state is not None
-    assert "runtime-marker" in scenario_state.decisions
-    assert "runtime-marker" in scenario_state.activations
-    assert scenario_state.activations["runtime-marker"].active is True
-    assert scenario_state.activations["runtime-marker"].effects["runtime.marker"] == "active"
+    assert len(scenario_state.decisions) == 1
+    decision = scenario_state.decisions[0]
+    assert decision.scenario_name == "runtime-marker"
+    assert decision.activated is True
+    assert decision.activation_id is not None
+
+    assert len(scenario_state.activations) == 1
+    activation = scenario_state.activations[0]
+    assert activation.scenario_name == "runtime-marker"
+    assert activation.activation_id == decision.activation_id
+    assert activation.expires_at == ORIGIN + timedelta(hours=9)
+    assert activation.effects == (AttributeEffect("runtime.marker", "active"),)
     complete_pending_operations(store, engine, backend)
     backend.run_until(ORIGIN + timedelta(hours=4))
     return store, work_order_id
@@ -324,10 +332,18 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
     backend1.run_until(ORIGIN + timedelta(hours=1))
     scenario_state = store.scenario_state()
     assert scenario_state is not None
-    assert "runtime-marker" in scenario_state.decisions
-    assert "runtime-marker" in scenario_state.activations
-    assert scenario_state.activations["runtime-marker"].active is True
-    assert scenario_state.activations["runtime-marker"].effects["runtime.marker"] == "active"
+    assert len(scenario_state.decisions) == 1
+    decision = scenario_state.decisions[0]
+    assert decision.scenario_name == "runtime-marker"
+    assert decision.activated is True
+    assert decision.activation_id is not None
+
+    assert len(scenario_state.activations) == 1
+    activation = scenario_state.activations[0]
+    assert activation.scenario_name == "runtime-marker"
+    assert activation.activation_id == decision.activation_id
+    assert activation.expires_at == ORIGIN + timedelta(hours=9)
+    assert activation.effects == (AttributeEffect("runtime.marker", "active"),)
 
     position = store.simulation_position()
     assert position is not None
