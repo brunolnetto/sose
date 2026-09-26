@@ -27,7 +27,9 @@ class WorkOrderChart(StateChart):
     cancelled = State(final=True)
 
     release = planned.to(released)
-    wait_for_material = released.to(waiting_material)
+    wait_for_material = released.to(waiting_material) | waiting_resource.to(
+        waiting_material
+    )
     wait_for_resource = released.to(waiting_resource)
     material_ready = waiting_material.to(released)
     resource_ready = waiting_resource.to(released)

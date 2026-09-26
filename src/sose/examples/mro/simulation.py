@@ -217,6 +217,7 @@ def _discard_granted_capacity_if_terminal(
 def reconcile_material_availability(
     persistence: MemoryPersistence,
     engine: Engine,
+    backend: SimPyBackend,
     *,
     entities: MROEntities,
     quantity: float,
@@ -248,7 +249,20 @@ def reconcile_material_availability(
         raise RuntimeError("MRO entities were not persisted")
 
     if not lot_available or available < quantity:
-        if wo.state == "released":
+        if wo.state == "waiting_resource":
+            tech_id = f"technician:{entities.work_order_id}"
+            bay_id = f"bay:{entities.work_order_id}"
+            engine.resources.cancel_pending(backend, tech_id)
+            engine.preemptive_resources.cancel_pending(backend, bay_id)
+            release_capacity(
+                persistence,
+                engine,
+                backend,
+                entities=entities,
+            )
+            wo = persistence.entity("work_order", entities.work_order_id)
+
+        if wo is not None and wo.state in {"released", "waiting_resource"}:
             engine.dispatch(
                 engine.context.commands.create(
                     "wait_for_material",
@@ -455,6 +469,7 @@ def reconcile_start(
     if not reconcile_material_availability(
         persistence,
         engine,
+        backend,
         entities=entities,
         quantity=quantity,
     ):

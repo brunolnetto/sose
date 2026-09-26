@@ -93,3 +93,58 @@ def test_cancellation_releases_capacity_and_avoids_part_consumption():
     assert {
         state.name: state.level for state in persistence.container_states()
     }["spare_parts"] == 1.0
+
+
+
+def test_material_loss_while_waiting_resource_unwinds_capacity_and_waits_material():
+    persistence, ids, engine, backend = _runtime()
+    seed_spare_parts(engine, backend, quantity=1.0)
+
+    engine.resources.request(
+        backend,
+        resource_name="technician",
+        request_id="technician-blocker-material-loss",
+        requested_at=backend.now,
+        priority=1,
+    )
+    backend.run_until(backend.now)
+
+    assert reconcile_start(
+        persistence, engine, backend, entities=ids, quantity=1.0
+    ) is False
+    assert persistence.entity("work_order", ids.work_order_id).state == "waiting_resource"
+    assert any(
+        reservation.request_id == f"bay:{ids.work_order_id}"
+        for reservation in persistence.preemptive_resource_reservations()
+    )
+
+    # Another consumer removes both durable representations before the next pass.
+    engine.stores.get(
+        backend,
+        store_name="spare_part_lots",
+        request_id="external-consume-lot",
+        requested_at=backend.now,
+    )
+    engine.containers.get(
+        backend,
+        container_name="spare_parts",
+        request_id="external-consume-qty",
+        amount=1.0,
+        requested_at=backend.now,
+    )
+    backend.run_until(backend.now)
+
+    assert reconcile_start(
+        persistence, engine, backend, entities=ids, quantity=1.0
+    ) is False
+
+    assert persistence.entity("work_order", ids.work_order_id).state == "waiting_material"
+    assert persistence.resource_demands() == ()
+    assert not any(
+        reservation.request_id == f"bay:{ids.work_order_id}"
+        for reservation in persistence.preemptive_resource_reservations()
+    )
+    assert not any(
+        demand.request_id == f"bay:{ids.work_order_id}"
+        for demand in persistence.preemptive_resource_demands()
+    )

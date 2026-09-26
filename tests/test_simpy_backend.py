@@ -427,3 +427,24 @@ def test_cancel_preemptive_request_before_lifecycle_registration_never_acquires(
     snapshot = runtime.preemptive_resource_snapshot("bay")
     assert snapshot.in_use == 0
     assert snapshot.queued == 0
+
+
+
+def test_cancel_unknown_preemptive_request_does_not_poison_future_same_id():
+    runtime = backend()
+    runtime.create_preemptive_resource("bay", capacity=1)
+
+    assert runtime.cancel_preemptive_resource_request("future") is False
+
+    acquired = []
+    runtime.request_preemptive_resource(
+        "bay",
+        request_id="future",
+        on_acquired=acquired.append,
+        on_preempted=lambda _: None,
+        preempt=False,
+    )
+    runtime.run_until(ORIGIN)
+
+    assert [lease.request_id for lease in acquired] == ["future"]
+    assert runtime.preemptive_resource_snapshot("bay").in_use == 1
