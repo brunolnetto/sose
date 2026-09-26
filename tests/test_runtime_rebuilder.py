@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sose.core.durable import DurableScheduler, RuntimeRebuilder
+from sose.core.durable import DurableScheduler, RecoveryParticipant, RuntimeRebuilder
 from sose.core.events import Command
 from sose.core.runtime import ScheduledWork, SimulationPosition
 from sose.persistence.memory import MemoryPersistence
@@ -170,7 +170,7 @@ def test_rebuilder_restores_runtime_position_scenarios_and_resources():
     rebuilt = RuntimeRebuilder(
         store,
         context=context,
-        resources=resources,
+        participants=(RecoveryParticipant("resources", resources),),
     ).rebuild(
         backend,
         on_due=lambda _: None,
@@ -205,10 +205,81 @@ def test_rebuilder_validates_all_scheduled_work_before_resource_reconstruction()
         RuntimeRebuilder(
             store,
             context=FakeContext(),
-            resources=resources,
+            participants=(RecoveryParticipant("resources", resources),),
         ).rebuild(
             backend,
             on_due=lambda _: None,
         )
 
     assert resources.backends == []
+
+
+class OrderedParticipant:
+    def __init__(self, name, observed):
+        self.name = name
+        self.observed = observed
+
+    def validate_rebuild(self):
+        self.observed.append(("validate", self.name))
+
+    def rebuild_backend(self, backend):
+        self.observed.append(("rebuild", self.name))
+        return 0
+
+
+def test_rebuilder_validates_every_participant_before_any_rebuild():
+    store = MemoryPersistence()
+    observed = []
+    first = OrderedParticipant("first", observed)
+    second = OrderedParticipant("second", observed)
+
+    RuntimeRebuilder(
+        store,
+        participants=(
+            RecoveryParticipant("first", first),
+            RecoveryParticipant("second", second),
+        ),
+    ).rebuild(RecordingBackend(now=ORIGIN), on_due=lambda _: None)
+
+    assert observed == [
+        ("validate", "first"),
+        ("validate", "second"),
+        ("rebuild", "first"),
+        ("rebuild", "second"),
+    ]
+
+
+def test_rebuilder_exposes_stable_named_recovery_order():
+    observed = []
+    rebuilder = RuntimeRebuilder(
+        MemoryPersistence(),
+        context=FakeContext(),
+        participants=(
+            RecoveryParticipant("resources", OrderedParticipant("resources", observed)),
+            RecoveryParticipant("stores", OrderedParticipant("stores", observed)),
+            RecoveryParticipant(
+                "preemptive-resources",
+                OrderedParticipant("preemptive-resources", observed),
+            ),
+            RecoveryParticipant(
+                "containers",
+                OrderedParticipant("containers", observed),
+            ),
+        ),
+    )
+
+    assert rebuilder.phase_names == (
+        "context",
+        "resources",
+        "stores",
+        "preemptive-resources",
+        "containers",
+        "scheduled-work",
+    )
+
+
+def test_recovery_participant_rejects_manager_without_rebuild_contract():
+    participant = RecoveryParticipant("invalid", object())
+
+    with pytest.raises(TypeError, match="has no rebuild_backend"):
+        participant.rebuild(RecordingBackend(now=ORIGIN))
