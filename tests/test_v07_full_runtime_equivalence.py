@@ -241,6 +241,23 @@ def complete_pending_operations(
     engine.preemptive_resources.request(
         backend,
         resource_name="crew",
+        request_id="holder-priority-probe",
+        requested_at=backend.now,
+        priority=2,
+        preempt=True,
+    )
+    backend.run_until(backend.now)
+
+    assert [r.request_id for r in store.preemptive_resource_reservations()] == [
+        "emergency-crew"
+    ]
+    assert "holder-priority-probe" in {
+        demand.request_id for demand in store.preemptive_resource_demands()
+    }
+
+    engine.preemptive_resources.request(
+        backend,
+        resource_name="crew",
         request_id="fresh-crew",
         requested_at=backend.now,
         priority=50,
@@ -291,6 +308,7 @@ def complete_pending_operations(
         "standby-crew"
     ]
     assert [d.request_id for d in store.preemptive_resource_demands()] == [
+        "holder-priority-probe",
         "fresh-crew",
         "backup-crew",
     ]
@@ -399,7 +417,7 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
         assert backend.resource_snapshot("bay").in_use == 1
         assert backend.resource_snapshot("bay").queued == 0
         assert backend.preemptive_resource_snapshot("crew").in_use == 1
-        assert backend.preemptive_resource_snapshot("crew").queued == 2
+        assert backend.preemptive_resource_snapshot("crew").queued == 3
         assert backend.store_snapshot("inbox").size == 0
         assert backend.store_snapshot("inbox").queued_puts == 0
         assert backend.store_snapshot("inbox").queued_gets == 0
@@ -433,6 +451,7 @@ def test_v07_full_durable_runtime_is_multi_restart_equivalent():
     ]
     assert len(restarted_store.resource_preemption_results()) == 1
     assert [d.request_id for d in restarted_store.preemptive_resource_demands()] == [
+        "holder-priority-probe",
         "fresh-crew",
         "backup-crew",
     ]
