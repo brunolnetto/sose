@@ -1,6 +1,6 @@
-# Durable runtime architecture — v0.6
+# Durable runtime architecture — v0.7
 
-SOSE v0.6 makes the semantic runtime durable without serializing backend-native
+SOSE v0.7 completes the durable semantic runtime without serializing backend-native
 objects such as SimPy environments, events, requests, generators, or callbacks.
 
 The core invariant is:
@@ -144,7 +144,7 @@ SOSE never persists:
 Persisting those objects would couple semantic truth to one execution backend
 and make restart portability impossible.
 
-## v0.6 boundary
+## v0.7 boundary
 
 v0.6 establishes durable discrete-event execution and restart reconstruction.
 Future milestones may extend operational abstractions or add richer persistence
