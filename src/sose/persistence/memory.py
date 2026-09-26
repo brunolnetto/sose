@@ -17,6 +17,11 @@ from sose.core.runtime import (
     StorePutIntent,
     StoreGetRequest,
     StoreGetResult,
+    PreemptiveResourceDefinition,
+    PreemptiveResourceDemand,
+    PreemptiveResourceReservation,
+    PreemptiveResourceReleaseIntent,
+    ResourcePreemptionResult,
     ScheduledWork,
     SimulationPosition,
 )
@@ -41,6 +46,11 @@ class _State:
     store_put_intents: dict[str, StorePutIntent] = field(default_factory=dict)
     store_get_requests: dict[str, StoreGetRequest] = field(default_factory=dict)
     store_get_results: dict[str, StoreGetResult] = field(default_factory=dict)
+    preemptive_resource_definitions: dict[str, PreemptiveResourceDefinition] = field(default_factory=dict)
+    preemptive_resource_demands: dict[str, PreemptiveResourceDemand] = field(default_factory=dict)
+    preemptive_resource_reservations: dict[str, PreemptiveResourceReservation] = field(default_factory=dict)
+    preemptive_resource_release_intents: dict[str, PreemptiveResourceReleaseIntent] = field(default_factory=dict)
+    resource_preemption_results: dict[str, ResourcePreemptionResult] = field(default_factory=dict)
     committed_tick: int = -1
 
 
@@ -224,6 +234,96 @@ class MemoryUnitOfWork:
             raise ValueError(f"store get result already exists: {result.request_id}")
         self._working.store_get_results[result.request_id] = deepcopy(result)
 
+
+    def get_preemptive_resource_demand(
+        self, request_id: str
+    ) -> PreemptiveResourceDemand | None:
+        value = self._working.preemptive_resource_demands.get(request_id)
+        return deepcopy(value) if value else None
+
+    def get_preemptive_resource_reservation(
+        self, reservation_id: str
+    ) -> PreemptiveResourceReservation | None:
+        value = self._working.preemptive_resource_reservations.get(reservation_id)
+        return deepcopy(value) if value else None
+
+    def get_preemptive_resource_release_intent(
+        self, intent_id: str
+    ) -> PreemptiveResourceReleaseIntent | None:
+        value = self._working.preemptive_resource_release_intents.get(intent_id)
+        return deepcopy(value) if value else None
+
+    def get_resource_preemption_result(
+        self, result_id: str
+    ) -> ResourcePreemptionResult | None:
+        value = self._working.resource_preemption_results.get(result_id)
+        return deepcopy(value) if value else None
+
+    def save_preemptive_resource_definition(
+        self, definition: PreemptiveResourceDefinition
+    ) -> None:
+        existing = self._working.preemptive_resource_definitions.get(definition.name)
+        if existing is not None and existing != definition:
+            raise ValueError(f"preemptive resource definition already exists: {definition.name}")
+        self._working.preemptive_resource_definitions[definition.name] = deepcopy(definition)
+
+    def save_preemptive_resource_demand(self, demand: PreemptiveResourceDemand) -> None:
+        if demand.resource_name not in self._working.preemptive_resource_definitions:
+            raise KeyError(f"unknown preemptive resource definition: {demand.resource_name}")
+        if any(
+            reservation.request_id == demand.request_id
+            for reservation in self._working.preemptive_resource_reservations.values()
+        ):
+            raise ValueError(f"preemptive resource request already reserved: {demand.request_id}")
+        existing = self._working.preemptive_resource_demands.get(demand.request_id)
+        if existing is not None and existing != demand:
+            raise ValueError(f"preemptive resource demand already exists: {demand.request_id}")
+        self._working.preemptive_resource_demands[demand.request_id] = deepcopy(demand)
+
+    def delete_preemptive_resource_demand(self, request_id: str) -> None:
+        self._working.preemptive_resource_demands.pop(request_id, None)
+
+    def save_preemptive_resource_reservation(
+        self, reservation: PreemptiveResourceReservation
+    ) -> None:
+        if reservation.resource_name not in self._working.preemptive_resource_definitions:
+            raise KeyError(
+                f"unknown preemptive resource definition: {reservation.resource_name}"
+            )
+        if reservation.request_id in self._working.preemptive_resource_demands:
+            raise ValueError(
+                f"preemptive resource request is still pending: {reservation.request_id}"
+            )
+        self._working.preemptive_resource_reservations[reservation.reservation_id] = deepcopy(
+            reservation
+        )
+
+    def delete_preemptive_resource_reservation(self, reservation_id: str) -> None:
+        self._working.preemptive_resource_reservations.pop(reservation_id, None)
+
+    def save_preemptive_resource_release_intent(
+        self, intent: PreemptiveResourceReleaseIntent
+    ) -> None:
+        if intent.reservation_id not in self._working.preemptive_resource_reservations:
+            raise KeyError(
+                f"unknown preemptive resource reservation: {intent.reservation_id}"
+            )
+        existing = self._working.preemptive_resource_release_intents.get(intent.intent_id)
+        if existing is not None and existing != intent:
+            raise ValueError(
+                f"preemptive resource release intent already exists: {intent.intent_id}"
+            )
+        self._working.preemptive_resource_release_intents[intent.intent_id] = deepcopy(intent)
+
+    def delete_preemptive_resource_release_intent(self, intent_id: str) -> None:
+        self._working.preemptive_resource_release_intents.pop(intent_id, None)
+
+    def save_resource_preemption_result(self, result: ResourcePreemptionResult) -> None:
+        existing = self._working.resource_preemption_results.get(result.result_id)
+        if existing is not None and existing != result:
+            raise ValueError(f"resource preemption result already exists: {result.result_id}")
+        self._working.resource_preemption_results[result.result_id] = deepcopy(result)
+
     def set_committed_tick(self, tick: int) -> None:
         self._working.committed_tick = tick
 
@@ -334,6 +434,49 @@ class MemoryPersistence:
             sorted(
                 deepcopy(tuple(self._state.store_get_results.values())),
                 key=lambda result: (result.sequence, result.request_id),
+            )
+        )
+
+
+
+    def preemptive_resource_definitions(self) -> tuple[PreemptiveResourceDefinition, ...]:
+        return tuple(
+            deepcopy(self._state.preemptive_resource_definitions[name])
+            for name in sorted(self._state.preemptive_resource_definitions)
+        )
+
+    def preemptive_resource_demands(self) -> tuple[PreemptiveResourceDemand, ...]:
+        return tuple(
+            sorted(deepcopy(tuple(self._state.preemptive_resource_demands.values())))
+        )
+
+    def preemptive_resource_reservations(
+        self,
+    ) -> tuple[PreemptiveResourceReservation, ...]:
+        return tuple(
+            sorted(
+                deepcopy(tuple(self._state.preemptive_resource_reservations.values())),
+                key=lambda reservation: (
+                    reservation.resource_name,
+                    reservation.sequence,
+                    reservation.reservation_id,
+                ),
+            )
+        )
+
+    def preemptive_resource_release_intents(
+        self,
+    ) -> tuple[PreemptiveResourceReleaseIntent, ...]:
+        return tuple(
+            deepcopy(self._state.preemptive_resource_release_intents[key])
+            for key in sorted(self._state.preemptive_resource_release_intents)
+        )
+
+    def resource_preemption_results(self) -> tuple[ResourcePreemptionResult, ...]:
+        return tuple(
+            sorted(
+                deepcopy(tuple(self._state.resource_preemption_results.values())),
+                key=lambda result: (result.sequence, result.result_id),
             )
         )
 
