@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sose"
-version = "0.6.0"
+version = "0.7.0"
 description = "Synthetic Operational System Engine"
 readme = "README.md"
 requires-python = ">=3.12"
