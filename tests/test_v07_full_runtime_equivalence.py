@@ -125,6 +125,16 @@ def start_operational_state(
     )
     backend.run_until(ORIGIN)
 
+    engine.preemptive_resources.request(
+        backend,
+        resource_name="crew",
+        request_id="standby-crew",
+        requested_at=ORIGIN,
+        priority=50,
+        preempt=False,
+    )
+    backend.run_until(ORIGIN)
+
     engine.stores.put(
         backend,
         store_name="inbox",
@@ -153,6 +163,12 @@ def start_operational_state(
 
     assert store.entity("work_order", work_order_id).state == "planned"
     assert [d.request_id for d in store.resource_demands()] == ["bay-waiter"]
+    assert [d.request_id for d in store.preemptive_resource_demands()] == [
+        "standby-crew"
+    ]
+    standby = store.preemptive_resource_demands()[0]
+    assert standby.priority == 50
+    assert standby.preempt is False
     assert [i.item_id for i in store.store_put_intents()] == ["part-2"]
     assert [i.request_id for i in store.container_operation_intents()] == [
         "consume-fuel"
@@ -164,6 +180,7 @@ def assert_rebuilt_backend_pending_state(backend: SimPyBackend) -> None:
     assert backend.resource_snapshot("bay").in_use == 1
     assert backend.resource_snapshot("bay").queued == 1
     assert backend.preemptive_resource_snapshot("crew").in_use == 1
+    assert backend.preemptive_resource_snapshot("crew").queued == 1
     assert backend.store_snapshot("inbox").size == 1
     assert backend.store_snapshot("inbox").queued_puts == 1
     assert backend.container_snapshot("fuel").level == 20.0
@@ -182,6 +199,13 @@ def complete_pending_operations(
     )
     engine.resources.release(backend, holder.reservation_id)
 
+    emergency = next(
+        reservation
+        for reservation in store.preemptive_resource_reservations()
+        if reservation.request_id == "emergency-crew"
+    )
+    engine.preemptive_resources.release(backend, emergency.reservation_id)
+
     engine.stores.get(
         backend,
         store_name="inbox",
@@ -199,6 +223,10 @@ def complete_pending_operations(
 
     assert [r.request_id for r in store.resource_reservations()] == ["bay-waiter"]
     assert store.resource_demands() == ()
+    assert [r.request_id for r in store.preemptive_resource_reservations()] == [
+        "standby-crew"
+    ]
+    assert store.preemptive_resource_demands() == ()
     assert [i.item_id for i in store.store_items()] == ["part-2"]
     assert store.store_put_intents() == ()
     assert store.container_operation_intents() == ()
@@ -272,6 +300,7 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
         assert backend.resource_snapshot("bay").in_use == 1
         assert backend.resource_snapshot("bay").queued == 0
         assert backend.preemptive_resource_snapshot("crew").in_use == 1
+        assert backend.preemptive_resource_snapshot("crew").queued == 0
         assert backend.store_snapshot("inbox").size == 1
         assert backend.store_snapshot("inbox").queued_puts == 0
         assert backend.container_snapshot("fuel").level == 10.0
@@ -295,7 +324,7 @@ def test_v07_full_durable_runtime_is_multi_restart_equivalent():
         "bay-waiter"
     ]
     assert [r.request_id for r in restarted_store.preemptive_resource_reservations()] == [
-        "emergency-crew"
+        "standby-crew"
     ]
     assert len(restarted_store.resource_preemption_results()) == 1
     assert [i.item_id for i in restarted_store.store_items()] == ["part-2"]
