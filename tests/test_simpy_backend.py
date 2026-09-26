@@ -383,3 +383,47 @@ def test_container_rejects_invalid_levels_amounts_and_duplicate_requests():
     runtime.get_container("fuel", request_id="consume", amount=1, on_completed=lambda _: None)
     with pytest.raises(ValueError, match="already exists"):
         runtime.put_container("fuel", request_id="consume", amount=1, on_completed=lambda _: None)
+
+
+
+def test_cancel_triggered_resource_request_before_grant_callback_releases_capacity():
+    runtime = backend()
+    runtime.create_resource("technicians", capacity=1)
+    acquired = []
+
+    runtime.request_resource(
+        "technicians",
+        request_id="r1",
+        on_acquired=acquired.append,
+    )
+
+    assert runtime.resource_snapshot("technicians").in_use == 1
+    assert runtime.cancel_resource_request("r1") is True
+    assert runtime.resource_snapshot("technicians").in_use == 0
+
+    runtime.run_until(ORIGIN)
+
+    assert acquired == []
+    assert runtime.resource_snapshot("technicians").in_use == 0
+
+
+def test_cancel_preemptive_request_before_lifecycle_registration_never_acquires():
+    runtime = backend()
+    runtime.create_preemptive_resource("bay", capacity=1)
+    acquired = []
+
+    runtime.request_preemptive_resource(
+        "bay",
+        request_id="r1",
+        on_acquired=acquired.append,
+        on_preempted=lambda _: None,
+        preempt=False,
+    )
+
+    assert runtime.cancel_preemptive_resource_request("r1") is True
+    runtime.run_until(ORIGIN)
+
+    assert acquired == []
+    snapshot = runtime.preemptive_resource_snapshot("bay")
+    assert snapshot.in_use == 0
+    assert snapshot.queued == 0
