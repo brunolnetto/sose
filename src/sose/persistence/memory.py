@@ -16,6 +16,7 @@ from sose.core.runtime import (
     DurableStoreItem,
     StorePutIntent,
     StoreGetRequest,
+    StoreGetResult,
     ScheduledWork,
     SimulationPosition,
 )
@@ -39,6 +40,7 @@ class _State:
     store_items: dict[str, DurableStoreItem] = field(default_factory=dict)
     store_put_intents: dict[str, StorePutIntent] = field(default_factory=dict)
     store_get_requests: dict[str, StoreGetRequest] = field(default_factory=dict)
+    store_get_results: dict[str, StoreGetResult] = field(default_factory=dict)
     committed_tick: int = -1
 
 
@@ -160,6 +162,10 @@ class MemoryUnitOfWork:
         value = self._working.store_get_requests.get(request_id)
         return deepcopy(value) if value else None
 
+    def get_store_get_result(self, request_id: str) -> StoreGetResult | None:
+        value = self._working.store_get_results.get(request_id)
+        return deepcopy(value) if value else None
+
     def save_store_definition(self, definition: StoreDefinition) -> None:
         existing = self._working.store_definitions.get(definition.name)
         if existing is not None and existing != definition:
@@ -195,6 +201,8 @@ class MemoryUnitOfWork:
     def save_store_get_request(self, request: StoreGetRequest) -> None:
         if request.store_name not in self._working.store_definitions:
             raise KeyError(f"unknown store definition: {request.store_name}")
+        if request.request_id in self._working.store_get_results:
+            raise ValueError(f"store get request already completed: {request.request_id}")
         existing = self._working.store_get_requests.get(request.request_id)
         if existing is not None and existing != request:
             raise ValueError(f"store get request already exists: {request.request_id}")
@@ -202,6 +210,19 @@ class MemoryUnitOfWork:
 
     def delete_store_get_request(self, request_id: str) -> None:
         self._working.store_get_requests.pop(request_id, None)
+
+    def save_store_get_result(self, result: StoreGetResult) -> None:
+        if result.store_name not in self._working.store_definitions:
+            raise KeyError(f"unknown store definition: {result.store_name}")
+        request = self._working.store_get_requests.get(result.request_id)
+        if request is None:
+            raise KeyError(f"unknown store get request: {result.request_id}")
+        if request.store_name != result.store_name:
+            raise ValueError(f"store get result targets wrong store: {result.request_id}")
+        existing = self._working.store_get_results.get(result.request_id)
+        if existing is not None and existing != result:
+            raise ValueError(f"store get result already exists: {result.request_id}")
+        self._working.store_get_results[result.request_id] = deepcopy(result)
 
     def set_committed_tick(self, tick: int) -> None:
         self._working.committed_tick = tick
@@ -304,6 +325,15 @@ class MemoryPersistence:
             sorted(
                 deepcopy(tuple(self._state.store_get_requests.values())),
                 key=lambda request: (request.sequence, request.request_id),
+            )
+        )
+
+
+    def store_get_results(self) -> tuple[StoreGetResult, ...]:
+        return tuple(
+            sorted(
+                deepcopy(tuple(self._state.store_get_results.values())),
+                key=lambda result: (result.sequence, result.request_id),
             )
         )
 
