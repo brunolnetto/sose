@@ -1540,14 +1540,16 @@ A domain should not be called implemented until it has, at minimum:
 3. explicit commands and domain events;
 4. deterministic identities and causal metadata;
 5. at least one time-dependent workflow;
-6. representative exception paths;
-7. tests for legal/illegal transitions;
-8. restart-equivalence coverage when durable scheduling/resources are used;
-9. at least one scenario intervention;
-10. documentation describing semantic truth versus backend execution mechanics.
+6. an executable canonical happy path;
+7. representative executable sad paths covering business exceptions and resource/capacity failures where applicable;
+8. tests for legal/illegal transitions;
+9. restart-equivalence coverage for both happy and representative sad paths when durable scheduling/resources are used;
+10. at least one scenario intervention;
+11. documentation describing semantic truth versus backend execution mechanics.
 
 A stronger reference implementation should additionally include:
 
+- explicit happy-path and sad-path documentation;
 - resource/queue contention;
 - probabilistic behavior;
 - cross-entity correlation;
