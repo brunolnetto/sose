@@ -542,18 +542,21 @@ def reconcile_scenario_emergency(
             request_prefix=prefix,
         )
 
-    committed = _committed_emergency_result(
-        persistence,
-        entities.work_order_id,
-        prefix=prefix,
-    )
     emergency_id = _active_emergency_request_id(
         persistence,
         entities.work_order_id,
         prefix=prefix,
     )
-    if committed is None and emergency_id is None:
+    # Historical preemption results remain as audit evidence after cleanup.
+    # They are not, by themselves, evidence of an unfinished scenario occurrence.
+    if emergency_id is None:
         return False
+
+    committed = _committed_emergency_result(
+        persistence,
+        entities.work_order_id,
+        prefix=prefix,
+    )
 
     work_order = persistence.entity("work_order", entities.work_order_id)
     if work_order is None:

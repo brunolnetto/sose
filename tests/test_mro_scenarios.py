@@ -137,3 +137,38 @@ def test_asset_failure_scenario_expiry_releases_emergency_and_resumes_work():
     assert [r.request_id for r in persistence.preemptive_resource_reservations()] == [
         f"bay:{ids.work_order_id}"
     ]
+
+
+
+def test_expired_asset_failure_cleanup_is_idempotent_after_resume():
+    persistence, ids, context, engine, backend = _scenario_runtime(
+        asset_failure_scenario()
+    )
+    seed_spare_parts(engine, backend, quantity=1.0)
+    assert reconcile_start(
+        persistence, engine, backend, entities=ids, quantity=1.0
+    )
+    assert reconcile_scenario_emergency(
+        persistence, engine, backend, entities=ids
+    )
+
+    for _ in range(4):
+        engine.advance_tick()
+        backend.run_until(context.clock.now)
+
+    assert reconcile_scenario_emergency(
+        persistence, engine, backend, entities=ids
+    )
+    results_before = persistence.resource_preemption_results()
+    events_before = persistence.events()
+
+    assert reconcile_scenario_emergency(
+        persistence, engine, backend, entities=ids
+    ) is False
+
+    assert persistence.entity("work_order", ids.work_order_id).state == "in_progress"
+    assert persistence.resource_preemption_results() == results_before
+    assert persistence.events() == events_before
+    assert [r.request_id for r in persistence.preemptive_resource_reservations()] == [
+        f"bay:{ids.work_order_id}"
+    ]
