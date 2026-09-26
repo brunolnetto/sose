@@ -107,13 +107,18 @@ class RecoveryParticipant:
     manager: object
 
     def validate(self) -> None:
+        rebuild = getattr(self.manager, "rebuild_backend", None)
+        if not callable(rebuild):
+            raise TypeError(
+                f"recovery participant {self.name!r} has no rebuild_backend()"
+            )
         validate = getattr(self.manager, "validate_rebuild", None)
         if callable(validate):
             validate()
 
     def rebuild(self, backend: RebuildBackend) -> int:
         rebuild = getattr(self.manager, "rebuild_backend", None)
-        if not callable(rebuild):
+        if not callable(rebuild):  # pragma: no cover - validated before reconstruction
             raise TypeError(
                 f"recovery participant {self.name!r} has no rebuild_backend()"
             )
