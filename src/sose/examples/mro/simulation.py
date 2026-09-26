@@ -226,6 +226,9 @@ def reconcile_material_availability(
     if _part_issue_complete(persistence):
         return True
 
+    lot_available = any(
+        item.item_id == "part-lot-1" for item in persistence.store_items()
+    )
     available = next(
         (s.level for s in persistence.container_states() if s.name == "spare_parts"),
         0.0,
