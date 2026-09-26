@@ -413,3 +413,126 @@ The invariant remains:
 preemptive demand/reservation/result = durable semantic truth
 simpy.PreemptiveResource / Process / Interrupt = ephemeral execution mechanics
 ```
+
+
+---
+
+## Durable Container semantics — v0.7
+
+Container quantity is semantic state and therefore must be durable. Native
+`simpy.Container` level and waiting events remain reconstructible execution state.
+
+The durable records are:
+
+- `ContainerDefinition` — name, capacity, and initial level;
+- `ContainerState` — current committed semantic level;
+- `ContainerOperationIntent` — pending put/get request;
+- `ContainerOperationResult` — terminal receipt for a completed operation.
+
+### Definition and state
+
+Creating a durable Container persists the definition and its initial state in the
+same transaction:
+
+```text
+ContainerDefinition(capacity=100, initial=25)
+ContainerState(level=25)
+```
+
+The durable level, not `simpy.Container.level`, is authoritative.
+
+### Operation lifecycle
+
+Both puts and gets follow the same protocol:
+
+```text
+request operation
+    ↓
+persist ContainerOperationIntent
+    ↓
+submit to ephemeral backend
+    ↓ backend says operation completed
+atomic transaction:
+    validate current durable level
+    compute level_after
+    persist ContainerState(level_after)
+    persist ContainerOperationResult
+    delete ContainerOperationIntent
+```
+
+For a put:
+
+```text
+level_after = level_before + amount
+```
+
+For a get:
+
+```text
+level_after = level_before - amount
+```
+
+A backend callback is accepted only when the resulting durable level remains
+within `[0, capacity]`.
+
+### Blocked operations and restart
+
+An operation that cannot yet proceed remains a durable intent:
+
+```text
+GET 10 from level 5
+    ↓
+ContainerOperationIntent(get=10)
+    ↓ crash
+fresh backend reconstructed at level 5
+    ↓
+replay GET 10
+    ↓ waits again
+```
+
+Likewise, a blocked put against insufficient free capacity survives restart.
+
+Pending operations are replayed by their durable sequence so backend queue order
+is reconstructed deterministically.
+
+### Crash after backend completion
+
+If the ephemeral backend completes an operation but the process crashes before
+the durable callback commits, persistence still contains:
+
+```text
+old ContainerState
++ ContainerOperationIntent
+```
+
+The old backend disappears. Recovery reconstructs the old committed level and
+replays the intent, producing the same semantic result exactly once.
+
+### Terminal identity
+
+`ContainerOperationResult` permanently reserves its `request_id`.
+
+A completed request ID cannot be reused for another put/get. This prevents a
+new durable intent from being written when a live backend would reject the same
+ID as already used.
+
+### Recovery validation
+
+Before any mutable runtime reconstruction, SOSE validates that:
+
+- every definition has one durable state;
+- no durable state exists without a definition;
+- levels are within capacity;
+- pending intents reference known definitions;
+- a request is not simultaneously pending and completed;
+- terminal results encode a valid level delta.
+
+Only after validation does recovery create native Containers and replay pending
+operations.
+
+The invariant remains:
+
+```text
+Container level + operation intent/result = durable semantic truth
+simpy.Container + ContainerPut/ContainerGet = ephemeral execution mechanics
+```

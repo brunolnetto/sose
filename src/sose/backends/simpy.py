@@ -363,10 +363,12 @@ class SimPyBackend:
     ) -> None:
         if not name:
             raise ValueError("container name cannot be empty")
-        if capacity <= 0:
-            raise ValueError("container capacity must be > 0")
-        if initial < 0 or initial > capacity:
-            raise ValueError("container initial level must be between 0 and capacity")
+        if not math.isfinite(capacity) or capacity <= 0:
+            raise ValueError("container capacity must be finite and > 0")
+        if not math.isfinite(initial) or initial < 0 or initial > capacity:
+            raise ValueError(
+                "container initial level must be finite and between 0 and capacity"
+            )
         if name in self._containers:
             raise ValueError(f"container already exists: {name}")
         self._containers[name] = _ContainerState(
@@ -430,8 +432,8 @@ class SimPyBackend:
             raise ValueError("request_id cannot be empty")
         if request_id in self._container_request_ids:
             raise ValueError(f"container request already exists: {request_id}")
-        if amount <= 0:
-            raise ValueError("container amount must be > 0")
+        if not math.isfinite(amount) or amount <= 0:
+            raise ValueError("container amount must be finite and > 0")
 
         request = ContainerRequest(
             request_id=request_id,

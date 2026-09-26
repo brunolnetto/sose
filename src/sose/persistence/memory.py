@@ -17,6 +17,10 @@ from sose.core.runtime import (
     StorePutIntent,
     StoreGetRequest,
     StoreGetResult,
+    ContainerDefinition,
+    ContainerState,
+    ContainerOperationIntent,
+    ContainerOperationResult,
     PreemptiveResourceDefinition,
     PreemptiveResourceDemand,
     PreemptiveResourceReservation,
@@ -46,6 +50,10 @@ class _State:
     store_put_intents: dict[str, StorePutIntent] = field(default_factory=dict)
     store_get_requests: dict[str, StoreGetRequest] = field(default_factory=dict)
     store_get_results: dict[str, StoreGetResult] = field(default_factory=dict)
+    container_definitions: dict[str, ContainerDefinition] = field(default_factory=dict)
+    container_states: dict[str, ContainerState] = field(default_factory=dict)
+    container_operation_intents: dict[str, ContainerOperationIntent] = field(default_factory=dict)
+    container_operation_results: dict[str, ContainerOperationResult] = field(default_factory=dict)
     preemptive_resource_definitions: dict[str, PreemptiveResourceDefinition] = field(default_factory=dict)
     preemptive_resource_demands: dict[str, PreemptiveResourceDemand] = field(default_factory=dict)
     preemptive_resource_reservations: dict[str, PreemptiveResourceReservation] = field(default_factory=dict)
@@ -234,6 +242,60 @@ class MemoryUnitOfWork:
             raise ValueError(f"store get result already exists: {result.request_id}")
         self._working.store_get_results[result.request_id] = deepcopy(result)
 
+
+    def get_container_state(self, name: str) -> ContainerState | None:
+        value = self._working.container_states.get(name)
+        return deepcopy(value) if value else None
+
+    def get_container_operation_intent(
+        self, request_id: str
+    ) -> ContainerOperationIntent | None:
+        value = self._working.container_operation_intents.get(request_id)
+        return deepcopy(value) if value else None
+
+    def get_container_operation_result(
+        self, request_id: str
+    ) -> ContainerOperationResult | None:
+        value = self._working.container_operation_results.get(request_id)
+        return deepcopy(value) if value else None
+
+    def save_container_definition(self, definition: ContainerDefinition) -> None:
+        existing = self._working.container_definitions.get(definition.name)
+        if existing is not None and existing != definition:
+            raise ValueError(f"container definition already exists: {definition.name}")
+        self._working.container_definitions[definition.name] = deepcopy(definition)
+
+    def save_container_state(self, state: ContainerState) -> None:
+        definition = self._working.container_definitions.get(state.name)
+        if definition is None:
+            raise KeyError(f"unknown container definition: {state.name}")
+        if state.level > definition.capacity:
+            raise ValueError(f"container level exceeds capacity: {state.name}")
+        self._working.container_states[state.name] = deepcopy(state)
+
+    def save_container_operation_intent(self, intent: ContainerOperationIntent) -> None:
+        if intent.container_name not in self._working.container_definitions:
+            raise KeyError(f"unknown container definition: {intent.container_name}")
+        if intent.request_id in self._working.container_operation_results:
+            raise ValueError(f"container request already completed: {intent.request_id}")
+        existing = self._working.container_operation_intents.get(intent.request_id)
+        if existing is not None and existing != intent:
+            raise ValueError(f"container request already exists: {intent.request_id}")
+        self._working.container_operation_intents[intent.request_id] = deepcopy(intent)
+
+    def delete_container_operation_intent(self, request_id: str) -> None:
+        self._working.container_operation_intents.pop(request_id, None)
+
+    def save_container_operation_result(self, result: ContainerOperationResult) -> None:
+        intent = self._working.container_operation_intents.get(result.request_id)
+        if intent is None:
+            raise KeyError(f"unknown container operation intent: {result.request_id}")
+        if intent.container_name != result.container_name or intent.operation != result.operation:
+            raise ValueError(f"container result does not match intent: {result.request_id}")
+        existing = self._working.container_operation_results.get(result.request_id)
+        if existing is not None and existing != result:
+            raise ValueError(f"container result already exists: {result.request_id}")
+        self._working.container_operation_results[result.request_id] = deepcopy(result)
 
     def get_preemptive_resource_demand(
         self, request_id: str
@@ -461,6 +523,34 @@ class MemoryPersistence:
         )
 
 
+
+    def container_definitions(self) -> tuple[ContainerDefinition, ...]:
+        return tuple(
+            deepcopy(self._state.container_definitions[name])
+            for name in sorted(self._state.container_definitions)
+        )
+
+    def container_states(self) -> tuple[ContainerState, ...]:
+        return tuple(
+            deepcopy(self._state.container_states[name])
+            for name in sorted(self._state.container_states)
+        )
+
+    def container_operation_intents(self) -> tuple[ContainerOperationIntent, ...]:
+        return tuple(
+            sorted(
+                deepcopy(tuple(self._state.container_operation_intents.values())),
+                key=lambda intent: (intent.sequence, intent.request_id),
+            )
+        )
+
+    def container_operation_results(self) -> tuple[ContainerOperationResult, ...]:
+        return tuple(
+            sorted(
+                deepcopy(tuple(self._state.container_operation_results.values())),
+                key=lambda result: (result.sequence, result.request_id),
+            )
+        )
 
     def preemptive_resource_definitions(self) -> tuple[PreemptiveResourceDefinition, ...]:
         return tuple(
