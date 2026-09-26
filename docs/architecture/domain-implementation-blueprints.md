@@ -1518,15 +1518,16 @@ Domain documentation should use the following status vocabulary.
 
 | Status | Meaning |
 |---|---|
-| Reference implementation | Executable example exists in the repository |
+| Reference implementation | Canonical happy path and representative sad paths are executable, documented, and restart-safe |
 | Blueprint | Formal architecture documented but no complete executable vertical slice |
-| Partial | Some reusable subflows exist through another domain |
+| Partial | Some domain lifecycle/process behavior is executable, but reference-grade evidence is incomplete |
 | Experimental | Prototype exists but is not yet part of the stable example surface |
 
 At the time of this document:
 
-- **Maintenance / MRO**: Reference implementation.
-- **Procure-to-Pay**: Reference implementation candidate for v0.8, with executable happy path, receiving contention, shortage/backorder, scenarios and multi-restart equivalence coverage.
+- **Maintenance / MRO**: Partial. WorkOrder lifecycle and durable scheduling are executable, but the domain lacks a complete happy path, representative operational sad paths, MRO-specific scenarios, and domain-level restart equivalence.
+- **Procure-to-Pay**: Reference implementation. Happy path, resource contention, shortage/backorder, partial/rejected receipt paths, scenarios, and restart coverage are executable.
+- **Manufacturing**: Reference implementation. Happy path, shortage, resource contention, breakdown/preemption, quality rework, scenarios, and restart coverage are executable.
 - All other domains in this document: Blueprint.
 
 ---
