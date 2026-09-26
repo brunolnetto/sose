@@ -9,7 +9,12 @@ from sose.scenarios.model import Scenario
 from sose.scenarios.rules import ScenarioRule
 
 from .context import SimulationContext
-from .durable import DurableScheduledItem, DurableScheduler, RuntimeRebuilder
+from .durable import (
+    DurableScheduledItem,
+    DurableScheduler,
+    RecoveryParticipant,
+    RuntimeRebuilder,
+)
 from .events import Command
 from .resources import DurableResourceManager
 from .stores import DurableStoreManager
@@ -149,10 +154,15 @@ class Engine:
         rebuilt = RuntimeRebuilder(
             self.persistence,
             context=self.context,
-            resources=self.resources,
-            stores=self.stores,
-            preemptive_resources=self.preemptive_resources,
-            containers=self.containers,
+            participants=(
+                RecoveryParticipant("resources", self.resources),
+                RecoveryParticipant("stores", self.stores),
+                RecoveryParticipant(
+                    "preemptive-resources",
+                    self.preemptive_resources,
+                ),
+                RecoveryParticipant("containers", self.containers),
+            ),
         ).rebuild(
             backend,
             on_due=self.dispatch_scheduled,
