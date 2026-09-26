@@ -165,7 +165,8 @@ The durable records are:
 - `StoreDefinition` — store name, kind, and optional capacity;
 - `DurableStoreItem` — item accepted into the semantic store;
 - `StorePutIntent` — put requested but not yet durably accepted;
-- `StoreGetRequest` — outstanding consume request.
+- `StoreGetRequest` — outstanding consume request;
+- `StoreGetResult` — terminal durable receipt containing the consumed item.
 
 The lifecycle of a put is:
 
@@ -184,11 +185,19 @@ get requested
     ↓ persist
 StoreGetRequest
     ↓ backend returns matching item
-delete DurableStoreItem / pending put
-delete StoreGetRequest
+atomic transaction:
+  delete DurableStoreItem / pending put
+  delete StoreGetRequest
+  persist StoreGetResult
 ```
 
-The consume transaction removes both the item and request atomically.
+The consume transaction removes both the item and request atomically and writes
+the terminal result in the same commit. A replayed GET can therefore complete
+after restart without a live callback and still preserve the consumed value.
+
+Completed `request_id` values remain globally reserved by their
+`StoreGetResult`. Reusing a completed ID is rejected before a new request is
+persisted or submitted to the backend.
 
 ### Restart reconstruction
 
