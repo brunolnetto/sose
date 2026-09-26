@@ -294,6 +294,14 @@ class MemoryUnitOfWork:
             raise ValueError(
                 f"preemptive resource request is still pending: {reservation.request_id}"
             )
+        if any(
+            current.request_id == reservation.request_id
+            and current.reservation_id != reservation.reservation_id
+            for current in self._working.preemptive_resource_reservations.values()
+        ):
+            raise ValueError(
+                f"preemptive resource request already reserved: {reservation.request_id}"
+            )
         self._working.preemptive_resource_reservations[reservation.reservation_id] = deepcopy(
             reservation
         )
@@ -319,6 +327,21 @@ class MemoryUnitOfWork:
         self._working.preemptive_resource_release_intents.pop(intent_id, None)
 
     def save_resource_preemption_result(self, result: ResourcePreemptionResult) -> None:
+        successor = self._working.preemptive_resource_reservations.get(
+            result.successor_reservation_id
+        )
+        if successor is None:
+            raise KeyError(
+                f"unknown successor preemptive reservation: {result.successor_reservation_id}"
+            )
+        if successor.request_id != result.preempting_request_id:
+            raise ValueError(
+                f"preemption result successor does not match request: {result.result_id}"
+            )
+        if result.displaced_reservation_id in self._working.preemptive_resource_reservations:
+            raise ValueError(
+                f"displaced reservation is still active: {result.displaced_reservation_id}"
+            )
         existing = self._working.resource_preemption_results.get(result.result_id)
         if existing is not None and existing != result:
             raise ValueError(f"resource preemption result already exists: {result.result_id}")
