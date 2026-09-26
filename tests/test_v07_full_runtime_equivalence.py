@@ -12,6 +12,7 @@ from sose.core.runtime import (
     PreemptiveResourceDefinition,
     PreemptiveResourceReleaseIntent,
     ResourceDefinition,
+    ResourceReleaseIntent,
     StoreDefinition,
 )
 from sose.core.scheduler import Scheduler
@@ -248,7 +249,7 @@ def start_operational_state(
 
 def assert_rebuilt_backend_pending_state(backend: SimPyBackend) -> None:
     assert backend.resource_snapshot("bay").in_use == 1
-    assert backend.resource_snapshot("bay").queued == 1
+    assert backend.resource_snapshot("bay").queued == 0
     assert backend.preemptive_resource_snapshot("crew").in_use == 1
     assert backend.preemptive_resource_snapshot("crew").queued == 2
     assert backend.preemptive_resource_snapshot("recovery-crew").in_use == 1
@@ -280,12 +281,16 @@ def complete_pending_operations(
     backend.run_until(backend.now)
 
     holder = next(
-        reservation
-        for reservation in store.resource_reservations()
-        if reservation.request_id == "bay-holder"
+        (
+            reservation
+            for reservation in store.resource_reservations()
+            if reservation.request_id == "bay-holder"
+        ),
+        None,
     )
-    engine.resources.release(backend, holder.reservation_id)
-    backend.run_until(backend.now)
+    if holder is not None:
+        engine.resources.release(backend, holder.reservation_id)
+        backend.run_until(backend.now)
 
     engine.preemptive_resources.request(
         backend,
@@ -460,6 +465,20 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
     assert activation.expires_at == ORIGIN + timedelta(hours=9)
     assert activation.effects == (AttributeEffect("runtime.marker", "active"),)
 
+    bay_holder = next(
+        reservation
+        for reservation in store.resource_reservations()
+        if reservation.request_id == "bay-holder"
+    )
+    interrupted_bay_release = ResourceReleaseIntent(
+        intent_id="interrupted-bay-release",
+        reservation_id=bay_holder.reservation_id,
+        resource_name=bay_holder.resource_name,
+        requested_at=ORIGIN + timedelta(hours=1),
+    )
+    with store.transaction() as uow:
+        uow.save_resource_release_intent(interrupted_bay_release)
+
     recovery_holder = next(
         reservation
         for reservation in store.preemptive_resource_reservations()
@@ -481,6 +500,15 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
     engine2.rebuild_backend(backend2)
     backend2.run_until(position.logical_time)
     assert_rebuilt_backend_pending_state(backend2)
+    assert store.resource_release_intents() == ()
+    assert all(
+        reservation.request_id != "bay-holder"
+        for reservation in store.resource_reservations()
+    )
+    assert any(
+        reservation.request_id == "bay-waiter"
+        for reservation in store.resource_reservations()
+    )
     assert store.preemptive_resource_release_intents() == ()
     assert all(
         reservation.request_id != "recovery-holder"
