@@ -147,3 +147,125 @@ def test_cancelled_waiting_resource_discards_late_grants():
     assert persistence.resource_reservations() == ()
     assert persistence.preemptive_resource_demands() == ()
     assert persistence.preemptive_resource_reservations() == ()
+
+
+
+def test_missing_lot_blocks_before_any_material_withdrawal():
+    persistence, ids, engine, backend = _released_runtime(quantity=1.0)
+
+    engine.containers.put(
+        backend,
+        container_name="spare_parts",
+        request_id="seed-spare-parts",
+        amount=1.0,
+        requested_at=backend.now,
+    )
+    backend.run_until(backend.now)
+
+    assert reconcile_start(
+        persistence,
+        engine,
+        backend,
+        entities=ids,
+        quantity=1.0,
+    ) is False
+
+    assert persistence.entity("work_order", ids.work_order_id).state == "waiting_material"
+    assert persistence.store_get_requests() == ()
+    assert not any(
+        intent.request_id == "consume-spare-part-1"
+        for intent in persistence.container_operation_intents()
+    )
+    assert {
+        state.name: state.level for state in persistence.container_states()
+    }["spare_parts"] == 1.0
+
+
+def test_cancellation_is_rejected_after_part_issue_has_started():
+    persistence, ids, engine, backend = _released_runtime(quantity=1.0)
+    seed_spare_parts(engine, backend, quantity=1.0)
+
+    from sose.examples.mro.simulation import reconcile_capacity, reconcile_part_issue
+
+    assert reconcile_capacity(persistence, engine, backend, entities=ids)
+    assert reconcile_part_issue(
+        persistence,
+        engine,
+        backend,
+        entities=ids,
+        quantity=1.0,
+    )
+
+    import pytest
+
+    with pytest.raises(
+        RuntimeError,
+        match="cannot be cancelled after spare-part issue has started",
+    ):
+        reconcile_cancel(persistence, engine, backend, entities=ids)
+
+    assert persistence.entity("work_order", ids.work_order_id).state == "released"
+    assert persistence.entity("part_demand", ids.part_demand_id).state == "consumed"
+
+
+def test_cancel_after_rebuild_removes_queued_demands_durably():
+    persistence, ids, engine, backend = _released_runtime(quantity=1.0)
+    seed_spare_parts(engine, backend, quantity=1.0)
+
+    engine.resources.request(
+        backend,
+        resource_name="technician",
+        request_id="technician-blocker-restart",
+        requested_at=backend.now,
+        priority=1,
+    )
+    engine.preemptive_resources.request(
+        backend,
+        resource_name="maintenance_bay",
+        request_id="bay-blocker-restart",
+        requested_at=backend.now,
+        priority=1,
+        preempt=False,
+    )
+    backend.run_until(backend.now)
+
+    assert reconcile_start(
+        persistence, engine, backend, entities=ids, quantity=1.0
+    ) is False
+    assert persistence.entity("work_order", ids.work_order_id).state == "waiting_resource"
+
+    _, restarted_engine = build_runtime(persistence, now=backend.now)
+    restarted_backend = SimPyBackend(origin=backend.now)
+    restarted_engine.rebuild_backend(restarted_backend)
+    restarted_backend.run_until(backend.now)
+
+    reconcile_cancel(
+        persistence,
+        restarted_engine,
+        restarted_backend,
+        entities=ids,
+    )
+
+    technician_blocker = next(
+        reservation
+        for reservation in persistence.resource_reservations()
+        if reservation.request_id == "technician-blocker-restart"
+    )
+    bay_blocker = next(
+        reservation
+        for reservation in persistence.preemptive_resource_reservations()
+        if reservation.request_id == "bay-blocker-restart"
+    )
+    restarted_engine.resources.release(
+        restarted_backend, technician_blocker.reservation_id
+    )
+    restarted_engine.preemptive_resources.release(
+        restarted_backend, bay_blocker.reservation_id
+    )
+    restarted_backend.run_until(restarted_backend.now)
+
+    assert persistence.entity("work_order", ids.work_order_id).state == "cancelled"
+    assert persistence.resource_demands() == ()
+    assert persistence.preemptive_resource_demands() == ()
+    assert persistence.resource_reservations() == ()
+    assert persistence.preemptive_resource_reservations() == ()
