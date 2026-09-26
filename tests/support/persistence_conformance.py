@@ -7,19 +7,26 @@ import pytest
 
 from sose.core.events import Command, DomainEvent
 from sose.domain.entity import Entity
+from sose.scenarios import AttributeEffect
+from sose.scenarios.model import ScenarioActivation, ScenarioRuntimeState
 from sose.core.runtime import (
     ContainerDefinition,
     ContainerOperationIntent,
+    ContainerOperationResult,
     ContainerState,
     DurableStoreItem,
     PreemptiveResourceDefinition,
     PreemptiveResourceDemand,
     ResourceDefinition,
     ResourceDemand,
+    ResourceReleaseIntent,
+    ResourceReservation,
     ScheduledWork,
+    SimulationPosition,
     StoreDefinition,
     StoreGetRequest,
     StoreGetResult,
+    StorePutIntent,
 )
 
 NOW = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
@@ -245,6 +252,247 @@ class PersistenceConformanceSuite:
 
         assert store.command(rollback_command.command_id) is None
         assert store.scheduled_work() == (earlier_work, later_work)
+
+        with pytest.raises(RuntimeError, match="abort consume"):
+            with store.transaction() as uow:
+                uow.delete_scheduled_work(earlier_work.work_id)
+                uow.delete_command(earlier_command.command_id)
+                raise RuntimeError("abort consume")
+
+        assert store.command(earlier_command.command_id) == earlier_command
+        assert store.scheduled_work() == (earlier_work, later_work)
+
+        with store.transaction() as uow:
+            uow.delete_scheduled_work(earlier_work.work_id)
+            uow.delete_command(earlier_command.command_id)
+
+        assert store.command(earlier_command.command_id) is None
+        assert store.scheduled_work() == (later_work,)
+
+    def test_recovery_checkpoints_are_atomic_and_isolated(self):
+        store = self.make_persistence()
+        effect_payload = {"nested": {"value": 1}}
+        position = SimulationPosition(
+            logical_time=NOW,
+            logical_tick=7,
+            execution_sequence=11,
+            committed_sequence=9,
+        )
+        state = ScenarioRuntimeState(
+            activations=(
+                ScenarioActivation(
+                    activation_id="activation-1",
+                    scenario_name="checkpoint",
+                    activated_at=NOW,
+                    expires_at=NOW + timedelta(hours=1),
+                    priority=100,
+                    effects=(AttributeEffect("checkpoint.value", effect_payload),),
+                    trigger_key=("tick", 7),
+                ),
+            ),
+        )
+
+        with store.transaction() as uow:
+            uow.set_simulation_position(position)
+            uow.set_scenario_state(state)
+
+        effect_payload["nested"]["value"] = 500
+        assert store.simulation_position() == position
+        persisted_state = store.scenario_state()
+        assert persisted_state is not None
+        persisted_effect = persisted_state.activations[0].effects[0]
+        assert isinstance(persisted_effect, AttributeEffect)
+        assert persisted_effect.value == {"nested": {"value": 1}}
+
+        persisted_effect.value["nested"]["value"] = 999
+        reloaded_state = store.scenario_state()
+        assert reloaded_state is not None
+        reloaded_effect = reloaded_state.activations[0].effects[0]
+        assert isinstance(reloaded_effect, AttributeEffect)
+        assert reloaded_effect.value == {"nested": {"value": 1}}
+
+        changed_position = SimulationPosition(
+            logical_time=NOW + timedelta(hours=2),
+            logical_tick=8,
+            execution_sequence=12,
+            committed_sequence=10,
+        )
+        changed_state = ScenarioRuntimeState()
+        with pytest.raises(RuntimeError, match="abort checkpoint"):
+            with store.transaction() as uow:
+                uow.set_simulation_position(changed_position)
+                uow.set_scenario_state(changed_state)
+                raise RuntimeError("abort checkpoint")
+
+        assert store.simulation_position() == position
+        assert store.scenario_state() == state
+
+    def test_store_put_intent_lifecycle_is_atomic_and_isolated(self):
+        store = self.make_persistence()
+        payload = {"nested": {"value": 1}}
+        intent = StorePutIntent(
+            item_id="pending-item",
+            store_name="inbox",
+            value=payload,
+            priority=50,
+            requested_at=NOW,
+            sequence=1,
+        )
+        item = DurableStoreItem(
+            item_id=intent.item_id,
+            store_name=intent.store_name,
+            value={"nested": {"value": 1}},
+            priority=intent.priority,
+            sequence=intent.sequence,
+        )
+
+        with store.transaction() as uow:
+            uow.save_store_definition(StoreDefinition("inbox"))
+            uow.save_store_put_intent(intent)
+            assert uow.get_store_put_intent(intent.item_id) == intent
+
+        payload["nested"]["value"] = 500
+        assert store.store_put_intents()[0].value == {"nested": {"value": 1}}
+        returned = store.store_put_intents()[0]
+        returned.value["nested"]["value"] = 999
+        assert store.store_put_intents()[0].value == {"nested": {"value": 1}}
+
+        with pytest.raises(RuntimeError, match="abort put commit"):
+            with store.transaction() as uow:
+                uow.delete_store_put_intent(intent.item_id)
+                uow.save_store_item(item)
+                raise RuntimeError("abort put commit")
+
+        assert store.store_put_intents() == (intent,)
+        assert store.store_items() == ()
+
+        with store.transaction() as uow:
+            uow.delete_store_put_intent(intent.item_id)
+            uow.save_store_item(item)
+
+        assert store.store_put_intents() == ()
+        assert store.store_items() == (item,)
+
+    def test_container_completion_transition_is_atomic_and_terminal(self):
+        store = self.make_persistence()
+        definition = ContainerDefinition("fuel", capacity=10.0, initial=5.0)
+        state = ContainerState("fuel", level=5.0)
+        intent = ContainerOperationIntent(
+            "consume",
+            "fuel",
+            "get",
+            2.0,
+            NOW,
+            sequence=1,
+        )
+        result = ContainerOperationResult(
+            request_id="consume",
+            container_name="fuel",
+            operation="get",
+            amount=2.0,
+            completed_at=NOW,
+            level_before=5.0,
+            level_after=3.0,
+            sequence=1,
+        )
+        next_state = ContainerState("fuel", level=3.0)
+
+        with store.transaction() as uow:
+            uow.save_container_definition(definition)
+            uow.save_container_state(state)
+            uow.save_container_operation_intent(intent)
+
+        with pytest.raises(RuntimeError, match="abort container completion"):
+            with store.transaction() as uow:
+                uow.save_container_state(next_state)
+                uow.save_container_operation_result(result)
+                uow.delete_container_operation_intent(intent.request_id)
+                raise RuntimeError("abort container completion")
+
+        assert store.container_states() == (state,)
+        assert store.container_operation_intents() == (intent,)
+        assert store.container_operation_results() == ()
+
+        with store.transaction() as uow:
+            uow.save_container_state(next_state)
+            uow.save_container_operation_result(result)
+            assert uow.get_container_operation_result(intent.request_id) == result
+            uow.delete_container_operation_intent(intent.request_id)
+
+        assert store.container_states() == (next_state,)
+        assert store.container_operation_intents() == ()
+        assert store.container_operation_results() == (result,)
+
+        with pytest.raises(ValueError, match="already completed"):
+            with store.transaction() as uow:
+                uow.save_container_operation_intent(intent)
+
+    def test_resource_demand_reservation_and_release_intent_lifecycle_is_atomic(self):
+        store = self.make_persistence()
+        definition = ResourceDefinition("bay", capacity=1)
+        demand = ResourceDemand("request-1", "bay", 25, NOW, sequence=1)
+        reservation = ResourceReservation(
+            reservation_id="reservation-1",
+            request_id=demand.request_id,
+            resource_name=demand.resource_name,
+            acquired_at=NOW,
+            sequence=demand.sequence,
+        )
+        release = ResourceReleaseIntent(
+            intent_id="release-1",
+            reservation_id=reservation.reservation_id,
+            resource_name=reservation.resource_name,
+            requested_at=NOW,
+        )
+
+        with store.transaction() as uow:
+            uow.save_resource_definition(definition)
+            uow.save_resource_demand(demand)
+
+        with pytest.raises(RuntimeError, match="abort grant"):
+            with store.transaction() as uow:
+                uow.delete_resource_demand(demand.request_id)
+                uow.save_resource_reservation(reservation)
+                raise RuntimeError("abort grant")
+
+        assert store.resource_demands() == (demand,)
+        assert store.resource_reservations() == ()
+
+        with store.transaction() as uow:
+            uow.delete_resource_demand(demand.request_id)
+            uow.save_resource_reservation(reservation)
+
+        assert store.resource_demands() == ()
+        assert store.resource_reservations() == (reservation,)
+
+        with pytest.raises(RuntimeError, match="abort release intent"):
+            with store.transaction() as uow:
+                uow.save_resource_release_intent(release)
+                raise RuntimeError("abort release intent")
+
+        assert store.resource_release_intents() == ()
+
+        with store.transaction() as uow:
+            uow.save_resource_release_intent(release)
+            assert uow.get_resource_release_intent(release.intent_id) == release
+
+        assert store.resource_release_intents() == (release,)
+
+        with pytest.raises(RuntimeError, match="abort release finalize"):
+            with store.transaction() as uow:
+                uow.delete_resource_reservation(reservation.reservation_id)
+                uow.delete_resource_release_intent(release.intent_id)
+                raise RuntimeError("abort release finalize")
+
+        assert store.resource_reservations() == (reservation,)
+        assert store.resource_release_intents() == (release,)
+
+        with store.transaction() as uow:
+            uow.delete_resource_reservation(reservation.reservation_id)
+            uow.delete_resource_release_intent(release.intent_id)
+
+        assert store.resource_reservations() == ()
+        assert store.resource_release_intents() == ()
 
     def test_preemptive_resource_demands_use_semantic_priority_and_sequence_order(self):
         store = self.make_persistence()
