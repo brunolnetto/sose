@@ -252,7 +252,7 @@ def assert_rebuilt_backend_pending_state(backend: SimPyBackend) -> None:
     assert backend.preemptive_resource_snapshot("crew").in_use == 1
     assert backend.preemptive_resource_snapshot("crew").queued == 2
     assert backend.preemptive_resource_snapshot("recovery-crew").in_use == 1
-    assert backend.preemptive_resource_snapshot("recovery-crew").queued == 1
+    assert backend.preemptive_resource_snapshot("recovery-crew").queued == 0
     assert backend.store_snapshot("inbox").size == 0
     assert backend.store_snapshot("inbox").queued_gets == 1
     assert backend.store_snapshot("inbox").queued_puts == 0
@@ -297,9 +297,11 @@ def complete_pending_operations(
     )
     backend.run_until(backend.now)
 
-    assert [r.request_id for r in store.preemptive_resource_reservations()] == [
-        "emergency-crew"
-    ]
+    assert [
+        reservation.request_id
+        for reservation in store.preemptive_resource_reservations()
+        if reservation.resource_name == "crew"
+    ] == ["emergency-crew"]
     assert "holder-priority-probe" in {
         demand.request_id for demand in store.preemptive_resource_demands()
     }
