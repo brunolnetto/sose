@@ -81,7 +81,13 @@ v0.7 completes the durable operational-runtime boundary. SOSE owns semantic trut
 - durable resource definitions, demands and reservations;
 - crash-safe resource release intents;
 - backend reconstruction from semantic state;
-- multi-restart equivalence across scheduling, scenarios and resources;\n- durable FIFO, priority and filter-store semantics;\n- durable quantitative Container state and operation results;\n- crash-consistent preemptive resource semantics;\n- reusable crash-injection tests for persistence/backend boundaries;\n- backend-neutral persistence conformance suite;\n- ordered runtime recovery participants with validation-before-rebuild.
+- multi-restart equivalence across scheduling, scenarios and resources;
+- durable FIFO, priority and filter-store semantics;
+- durable quantitative Container state and operation results;
+- crash-consistent preemptive resource semantics;
+- reusable crash-injection tests for persistence/backend boundaries;
+- backend-neutral persistence conformance suite;
+- ordered runtime recovery participants with validation-before-rebuild.
 
 
 ## Compatibility note
