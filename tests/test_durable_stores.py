@@ -4,7 +4,15 @@ from datetime import datetime, timezone
 
 import pytest
 
+from datetime import timedelta
+
 from sose.backends.simpy import SimPyBackend
+from sose.core.clock import SimulationClock
+from sose.core.context import SimulationContext
+from sose.core.engine import Engine
+from sose.core.randomness import RandomSource
+from sose.core.scheduler import Scheduler
+from sose.domain.registry import DomainRegistry
 from sose.core.runtime import (
     DurableStoreItem,
     StoreDefinition,
@@ -302,3 +310,78 @@ def test_store_definition_and_ids_are_validated():
             value=2,
             requested_at=NOW,
         )
+
+
+def _engine(store, *, filters=None):
+    context = SimulationContext(
+        clock=SimulationClock(now=NOW, step=timedelta(hours=1)),
+        random=RandomSource(42),
+        scheduler=Scheduler(),
+    )
+    return Engine(
+        context=context,
+        registry=DomainRegistry(),
+        persistence=store,
+        store_filters=filters,
+    )
+
+
+def test_engine_rebuild_restores_durable_store_content():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_store_definition(StoreDefinition("inbox", kind="fifo"))
+        uow.save_store_item(
+            DurableStoreItem(
+                item_id="persisted",
+                store_name="inbox",
+                value={"value": 1},
+                priority=100,
+                sequence=1,
+            )
+        )
+
+    engine = _engine(store)
+    backend = SimPyBackend(origin=NOW)
+    engine.rebuild_backend(backend)
+
+    received = []
+    engine.stores.get(
+        backend,
+        store_name="inbox",
+        request_id="get-persisted",
+        requested_at=NOW,
+        on_received=received.append,
+    )
+    backend.run_until(NOW)
+
+    assert [item.item_id for item in received] == ["persisted"]
+    assert store.store_items() == ()
+
+
+def test_invalid_store_recovery_is_rejected_before_resources_are_rebuilt():
+    from sose.core.runtime import ResourceDefinition, ResourceDemand
+
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
+        uow.save_resource_demand(ResourceDemand("waiter", "bay", 10, NOW, 1))
+        uow.save_store_definition(StoreDefinition("parts", kind="filter"))
+        uow.save_store_get_request(
+            StoreGetRequest(
+                request_id="bearing-request",
+                store_name="parts",
+                requested_at=NOW,
+                sequence=2,
+                filter_key="missing-filter",
+            )
+        )
+
+    engine = _engine(store)
+    backend = SimPyBackend(origin=NOW)
+
+    with pytest.raises(KeyError, match="unknown durable store filter"):
+        engine.rebuild_backend(backend)
+
+    with pytest.raises(KeyError, match="unknown resource"):
+        backend.resource_snapshot("bay")
+    assert [d.request_id for d in store.resource_demands()] == ["waiter"]
