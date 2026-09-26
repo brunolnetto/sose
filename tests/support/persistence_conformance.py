@@ -291,6 +291,24 @@ class PersistenceConformanceSuite:
                 ),
             ),
         )
+        expected_state = ScenarioRuntimeState(
+            activations=(
+                ScenarioActivation(
+                    activation_id="activation-1",
+                    scenario_name="checkpoint",
+                    activated_at=NOW,
+                    expires_at=NOW + timedelta(hours=1),
+                    priority=100,
+                    effects=(
+                        AttributeEffect(
+                            "checkpoint.value",
+                            {"nested": {"value": 1}},
+                        ),
+                    ),
+                    trigger_key=("tick", 7),
+                ),
+            ),
+        )
 
         with store.transaction() as uow:
             uow.set_simulation_position(position)
@@ -325,7 +343,7 @@ class PersistenceConformanceSuite:
                 raise RuntimeError("abort checkpoint")
 
         assert store.simulation_position() == position
-        assert store.scenario_state() == state
+        assert store.scenario_state() == expected_state
 
     def test_store_put_intent_lifecycle_is_atomic_and_isolated(self):
         store = self.make_persistence()
@@ -334,6 +352,14 @@ class PersistenceConformanceSuite:
             item_id="pending-item",
             store_name="inbox",
             value=payload,
+            priority=50,
+            requested_at=NOW,
+            sequence=1,
+        )
+        expected_intent = StorePutIntent(
+            item_id="pending-item",
+            store_name="inbox",
+            value={"nested": {"value": 1}},
             priority=50,
             requested_at=NOW,
             sequence=1,
@@ -363,7 +389,7 @@ class PersistenceConformanceSuite:
                 uow.save_store_item(item)
                 raise RuntimeError("abort put commit")
 
-        assert store.store_put_intents() == (intent,)
+        assert store.store_put_intents() == (expected_intent,)
         assert store.store_items() == ()
 
         with store.transaction() as uow:
