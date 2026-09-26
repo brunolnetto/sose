@@ -222,6 +222,11 @@ def test_interrupted_tick_rolls_back_durable_items_and_preserves_tick_start():
         key=("interrupted-tick-boundary", 1),
         state="planned",
     )
+    missing = context.entities.create(
+        WorkOrder,
+        key=("interrupted-tick-missing", 1),
+        state="planned",
+    )
     with store.transaction() as uow:
         uow.save_entity(work_order)
         uow.set_simulation_position(
@@ -240,26 +245,28 @@ def test_interrupted_tick_rolls_back_durable_items_and_preserves_tick_start():
         due_at=ORIGIN + timedelta(minutes=15),
         key=("interrupted-tick-boundary", work_order.id, "release"),
     )
-    invalid_complete = context.commands.create(
-        "complete",
-        target=work_order,
+    missing_release = context.commands.create(
+        "release",
+        target=missing,
         due_at=ORIGIN + timedelta(minutes=30),
-        key=("interrupted-tick-boundary", work_order.id, "complete"),
+        key=("interrupted-tick-boundary", missing.id, "release"),
     )
     scheduler.schedule(release)
-    scheduler.schedule(invalid_complete)
+    scheduler.schedule(missing_release)
 
-    with pytest.raises(Exception):
+    with pytest.raises(KeyError, match="entity not found"):
         engine.advance_tick()
 
-    position = store.simulation_position()
-    assert position is not None
-    assert position.logical_time == ORIGIN
-    assert position.logical_tick == 0
-    assert position.execution_sequence == 0
-    assert position.committed_sequence == 0
-    assert store.entity("work_order", work_order.id).state == "planned"
-    assert store.events() == ()
-    assert len(store.scheduled_work()) == 2
+    stored = store.entity("work_order", work_order.id)
+    assert stored is not None
+    assert stored.state == "planned"
     assert context.clock.now == ORIGIN
     assert context.clock.tick == 0
+    assert store.simulation_position() == SimulationPosition(
+        logical_time=ORIGIN,
+        execution_sequence=0,
+        committed_sequence=0,
+        logical_tick=0,
+    )
+    assert len(store.scheduled_work()) == 2
+    assert store.events() == ()
