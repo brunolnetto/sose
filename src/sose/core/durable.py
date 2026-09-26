@@ -99,25 +99,54 @@ class DurableScheduler:
         return tuple(items)
 
 
+@dataclass(frozen=True, slots=True)
+class RecoveryParticipant:
+    """Named durable subsystem participating in runtime reconstruction."""
+
+    name: str
+    manager: object
+
+    def validate(self) -> None:
+        rebuild = getattr(self.manager, "rebuild_backend", None)
+        if not callable(rebuild):
+            raise TypeError(
+                f"recovery participant {self.name!r} has no rebuild_backend()"
+            )
+        validate = getattr(self.manager, "validate_rebuild", None)
+        if callable(validate):
+            validate()
+
+    def rebuild(self, backend: RebuildBackend) -> int:
+        rebuild = getattr(self.manager, "rebuild_backend", None)
+        if not callable(rebuild):  # pragma: no cover - validated before reconstruction
+            raise TypeError(
+                f"recovery participant {self.name!r} has no rebuild_backend()"
+            )
+        restored = rebuild(backend)
+        return 0 if restored is None else int(restored)
+
+
 class RuntimeRebuilder:
-    """Reconstruct a fresh runtime from durable semantic state."""
+    """Reconstruct a fresh runtime through ordered recovery participants."""
 
     def __init__(
         self,
         persistence: Persistence,
         *,
         context=None,
-        resources=None,
-        stores=None,
-        preemptive_resources=None,
-        containers=None,
+        participants: tuple[RecoveryParticipant, ...] = (),
     ) -> None:
         self._persistence = persistence
         self._context = context
-        self._resources = resources
-        self._stores = stores
-        self._preemptive_resources = preemptive_resources
-        self._containers = containers
+        self._participants = tuple(participants)
+
+    @property
+    def phase_names(self) -> tuple[str, ...]:
+        return (
+            "context",
+            *(participant.name for participant in self._participants),
+            "scheduled-work",
+        )
 
     def rebuild(
         self,
@@ -133,34 +162,25 @@ class RuntimeRebuilder:
 
         boundary = position.logical_time if position is not None else backend.now
         items = DurableScheduler(self._persistence).pending()
+
+        # Validate the complete recovery plan before mutating context/backend.
         for item in items:
             if item.work.due_at < boundary:
                 raise RuntimeError(
                     f"scheduled work {item.work.work_id} is before recovery boundary"
                 )
+        for participant in self._participants:
+            participant.validate()
 
-        if self._stores is not None:
-            self._stores.validate_rebuild()
-        if self._preemptive_resources is not None:
-            self._preemptive_resources.validate_rebuild()
-        if self._containers is not None:
-            self._containers.validate_rebuild()
-
+        # Reconstruct in one explicit and stable order.
         if self._context is not None:
             if position is not None:
                 self._context.clock.now = position.logical_time
                 self._context.clock.tick = position.logical_tick
             self._context.scenarios.restore_state(self._persistence.scenario_state())
 
-        if self._resources is not None:
-            self._resources.rebuild_backend(backend)
-
-        if self._stores is not None:
-            self._stores.rebuild_backend(backend)
-        if self._preemptive_resources is not None:
-            self._preemptive_resources.rebuild_backend(backend)
-        if self._containers is not None:
-            self._containers.rebuild_backend(backend)
+        for participant in self._participants:
+            participant.rebuild(backend)
 
         for item in items:
             backend.schedule_at(
