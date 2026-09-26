@@ -76,7 +76,7 @@ restart-safe: commands/scheduled work, resources, Store/Container state, preempt
 scenario state, and events as applicable.
 
 Reuse the canonical vocabulary from
-[`docs/architecture/persistent-model.md`](../../architecture/persistent-model.md).
+[`docs/architecture/persistent-model.md`](../architecture/persistent-model.md).
 
 The ERD is semantic, not a promise of a physical SQL schema. Relationships should be
 grounded in stable identifiers, names, and ownership actually present in the runtime.
@@ -238,13 +238,14 @@ Recommended table:
 A domain is reference-grade only when all of the following hold:
 
 1. persistent entities and explicit StateCharts exist;
-2. state and command terminology in docs exactly matches code;
-3. one canonical happy path is executable;
-4. representative sad paths are executable;
-5. resource/capacity constraints gate lifecycle transitions where applicable;
-6. physical/quantitative effects are durable before business claims;
-7. scenarios are explicit and restart-safe where applicable;
-8. happy-path restart equivalence is tested;
-9. representative sad-path restart equivalence is tested;
-10. durable semantic truth is sufficient to reconstruct backend execution;
-11. the specification maps each important rule to executable evidence.
+2. the business ERD and relevant durable operational ERD are documented;
+3. state and command terminology in docs exactly matches code;
+4. one canonical happy path is executable;
+5. representative sad paths are executable;
+6. resource/capacity constraints gate lifecycle transitions where applicable;
+7. physical/quantitative effects are durable before business claims;
+8. scenarios are explicit and restart-safe where applicable;
+9. happy-path restart equivalence is tested;
+10. representative sad-path restart equivalence is tested;
+11. durable semantic truth is sufficient to reconstruct backend execution;
+12. the specification maps each important rule to executable evidence.
