@@ -1,6 +1,6 @@
-# Durable runtime architecture — v0.6
+# Durable runtime architecture — v0.7
 
-SOSE v0.6 makes the semantic runtime durable without serializing backend-native
+SOSE v0.7 completes the durable semantic runtime without serializing backend-native
 objects such as SimPy environments, events, requests, generators, or callbacks.
 
 The core invariant is:
@@ -14,16 +14,16 @@ backend execution state   = ephemeral and reconstructible
 
 The recovery boundary is represented by durable semantic objects:
 
-- `ScheduledWork` — future command execution intent.
+- `ScheduledWork` and persisted commands — future execution intent.
 - `SimulationPosition` — logical time, tick, execution sequence, and committed sequence.
 - `ScenarioRuntimeState` — scenario decisions and active effects.
-- `ResourceDefinition` — resource name and capacity.
-- `ResourceDemand` — pending resource acquisition intent.
-- `ResourceReservation` — durable ownership of acquired capacity.
-- `ResourceReleaseIntent` — crash-safe release protocol marker.
+- normal resource definitions, demands, reservations, and release intents.
+- Store definitions, durable items, put intents, get requests, and terminal get results.
+- preemptive resource definitions, demands, reservations, release intents, and terminal preemption results.
+- Container definitions, committed levels, pending operation intents, and terminal operation results.
 
-Commands referenced by `ScheduledWork` are persisted separately so the backend
-queue is never authoritative.
+These records are authoritative. Backend-native queues, requests, leases,
+callbacks, processes, and container/store internals are reconstructed from them.
 
 ## Reconstruction
 
@@ -33,19 +33,21 @@ A fresh process/backend is rebuilt from persistence:
 Persistence
     ↓
 RuntimeRebuilder
-    ├── validate recovery boundary
-    ├── validate pending scheduled work
-    ├── restore logical time and tick
-    ├── restore scenario runtime state
-    ├── rebuild resources
+    ├── validate recovery boundary + scheduled work
+    ├── validate every RecoveryParticipant
+    ├── restore logical time, tick, and scenario runtime state
+    ├── rebuild normal resources
+    ├── rebuild Stores
+    ├── rebuild preemptive resources
+    ├── rebuild Containers
     └── enqueue pending scheduled work
     ↓
 fresh ephemeral backend
 ```
 
-Recovery validation happens before mutating reconstruction phases. If the
-persisted state is inconsistent with the requested recovery boundary, rebuild
-fails without partially rebuilding resources.
+All participant validation happens before mutating reconstruction phases. If any
+persisted subsystem is inconsistent with the requested recovery boundary,
+rebuild fails before context or backend reconstruction begins.
 
 ## Durable scheduling
 
@@ -122,9 +124,17 @@ execute
 → continue
 ```
 
-Durable equivalence covers entity state, domain events, scheduled work,
-simulation position, scenario runtime state, resource definitions, demands,
-reservations, and release intents.
+Durable equivalence covers:
+
+- entity state and domain events;
+- scheduled work and simulation position;
+- scenario runtime state;
+- normal resource definitions, demands, reservations, and release intents;
+- Store definitions, items, put intents, get requests, and terminal get results;
+- preemptive resource definitions, demands, reservations, release intents, and
+  terminal preemption results;
+- Container definitions, committed levels, pending operation intents, and
+  terminal operation results.
 
 Backend-native callbacks, lease objects, request objects, and queue internals are
 not part of the equivalence contract; they are reconstructible execution
@@ -144,14 +154,24 @@ SOSE never persists:
 Persisting those objects would couple semantic truth to one execution backend
 and make restart portability impossible.
 
-## v0.6 boundary
+## v0.7 boundary
 
-v0.6 establishes durable discrete-event execution and restart reconstruction.
-Future milestones may extend operational abstractions or add richer persistence
-adapters, but they must preserve the same rule:
+v0.7 closes the durable operational-runtime milestone. Restart-safe semantic
+truth now covers scheduled work, logical position, scenario runtime state,
+normal resources, Stores, preemptive resources, and quantitative Containers.
+
+The runtime is considered ready for domain vertical slices because:
+
+- backend-native execution state remains fully reconstructible;
+- multi-restart equivalence is enforced as an architectural gate;
+- crash boundaries have reusable fault-injection coverage;
+- persistence adapters have a behavioral conformance contract;
+- recovery validates all participants before any reconstruction begins.
+
+Future work should focus on domain implementations and additional persistence
+adapters rather than persisting backend-native execution objects.
 
 > backend state is reconstructible; durable semantic state is authoritative.
-
 
 ---
 
