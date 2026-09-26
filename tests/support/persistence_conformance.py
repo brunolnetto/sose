@@ -50,12 +50,28 @@ class PersistenceConformanceSuite:
             version=1,
         )
 
+        expected = Entity(
+            id="entity-1",
+            entity_type="demo",
+            state="planned",
+            attributes={"nested": {"value": 1}},
+            created_at=NOW,
+            updated_at=NOW,
+            version=1,
+        )
+
         with store.transaction() as uow:
             uow.save_entity(entity)
 
+        entity.attributes["nested"]["value"] = 500
         with store.transaction() as uow:
             loaded = uow.get_entity("demo", "entity-1")
-            assert loaded == entity
+            assert loaded == expected
+            assert loaded is not None
+            loaded.attributes["nested"]["value"] = 999
+
+        with store.transaction() as uow:
+            assert uow.get_entity("demo", "entity-1") == expected
 
         changed = Entity(
             id="entity-1",
@@ -73,19 +89,29 @@ class PersistenceConformanceSuite:
                 raise RuntimeError("abort entity")
 
         with store.transaction() as uow:
-            assert uow.get_entity("demo", "entity-1") == entity
+            assert uow.get_entity("demo", "entity-1") == expected
 
     def test_transaction_exception_rolls_back_every_write(self):
         store = self.make_persistence()
+        event = DomainEvent(
+            event_id="event-rollback",
+            name="demo",
+            entity_type="demo",
+            entity_id="1",
+            occurred_at=NOW,
+            payload={"phase": "before-abort"},
+        )
 
         with pytest.raises(RuntimeError, match="abort"):
             with store.transaction() as uow:
                 uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
                 uow.save_store_definition(StoreDefinition("inbox"))
+                uow.append_event(event)
                 raise RuntimeError("abort")
 
         assert store.resource_definitions() == ()
         assert store.store_definitions() == ()
+        assert store.events() == ()
 
     def test_reads_do_not_alias_persisted_mutable_payloads(self):
         store = self.make_persistence()
