@@ -9,7 +9,12 @@ from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.identity import deterministic_id
 from sose.core.randomness import RandomSource
-from sose.core.runtime import ContainerDefinition, StoreDefinition
+from sose.core.runtime import (
+    ContainerDefinition,
+    PreemptiveResourceDefinition,
+    ResourceDefinition,
+    StoreDefinition,
+)
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.memory import MemoryPersistence
@@ -87,7 +92,11 @@ def seed_happy_path(
     with persistence.transaction() as uow:
         uow.save_entity(order)
         uow.save_entity(operation)
+        uow.save_resource_definition(ResourceDefinition("operator", capacity=1))
 
+    engine.preemptive_resources.define(
+        PreemptiveResourceDefinition("machine", capacity=1)
+    )
     engine.stores.define(StoreDefinition("raw_material_lots", kind="fifo", capacity=10))
     engine.stores.define(StoreDefinition("wip_buffer", kind="fifo", capacity=10))
     engine.containers.define(
@@ -101,8 +110,6 @@ def seed_happy_path(
     for entity, trigger, offset in (
         (order, "release", timedelta(hours=1)),
         (operation, "ready", timedelta(hours=1)),
-        (order, "begin_setup", timedelta(hours=2)),
-        (operation, "start", timedelta(hours=2)),
     ):
         command = context.commands.create(
             trigger,
@@ -116,6 +123,132 @@ def seed_happy_path(
         previous = command
 
     return ManufacturingEntities(order.id, operation.id)
+
+
+
+def _preemptive_request_exists(persistence: MemoryPersistence, request_id: str) -> bool:
+    return any(
+        demand.request_id == request_id
+        for demand in persistence.preemptive_resource_demands()
+    ) or any(
+        reservation.request_id == request_id
+        for reservation in persistence.preemptive_resource_reservations()
+    )
+
+
+def _normal_request_exists(persistence: MemoryPersistence, request_id: str) -> bool:
+    return any(
+        demand.request_id == request_id for demand in persistence.resource_demands()
+    ) or any(
+        reservation.request_id == request_id
+        for reservation in persistence.resource_reservations()
+    )
+
+
+def _preemptive_reservation(persistence: MemoryPersistence, request_id: str):
+    return next(
+        (
+            reservation
+            for reservation in persistence.preemptive_resource_reservations()
+            if reservation.request_id == request_id
+        ),
+        None,
+    )
+
+
+def _resource_reservation(persistence: MemoryPersistence, request_id: str):
+    return next(
+        (
+            reservation
+            for reservation in persistence.resource_reservations()
+            if reservation.request_id == request_id
+        ),
+        None,
+    )
+
+
+def reconcile_setup_resources(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: ManufacturingEntities,
+) -> bool:
+    """Advance into setup only while machine and operator are durably held."""
+
+    machine_request = f"machine:{entities.production_order_id}"
+    operator_request = f"operator:{entities.production_order_id}"
+
+    if not _preemptive_request_exists(persistence, machine_request):
+        engine.preemptive_resources.request(
+            backend,
+            resource_name="machine",
+            request_id=machine_request,
+            requested_at=backend.now,
+            priority=100,
+            preempt=False,
+        )
+    if not _normal_request_exists(persistence, operator_request):
+        engine.resources.request(
+            backend,
+            resource_name="operator",
+            request_id=operator_request,
+            requested_at=backend.now,
+            priority=100,
+        )
+    backend.run_until(backend.now)
+
+    machine = _preemptive_reservation(persistence, machine_request)
+    operator = _resource_reservation(persistence, operator_request)
+    if machine is None or operator is None:
+        return False
+
+    order = persistence.entity("production_order", entities.production_order_id)
+    operation = persistence.entity("manufacturing_operation", entities.operation_id)
+    if order is None or operation is None:
+        raise RuntimeError("manufacturing entities were not persisted")
+
+    if order.state == "released":
+        command = engine.context.commands.create(
+            "begin_setup",
+            target=order,
+            correlation_id=flow_correlation_id(),
+            key=("manufacturing-reference", order.id, "begin-setup"),
+        )
+        engine.dispatch(command)
+
+    if operation.state == "ready_state":
+        command = engine.context.commands.create(
+            "start",
+            target=operation,
+            correlation_id=flow_correlation_id(),
+            key=("manufacturing-reference", operation.id, "start"),
+        )
+        engine.dispatch(command)
+
+    return True
+
+
+def release_setup_resources(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: ManufacturingEntities,
+) -> None:
+    machine = _preemptive_reservation(
+        persistence, f"machine:{entities.production_order_id}"
+    )
+    if machine is not None:
+        engine.preemptive_resources.release(backend, machine.reservation_id)
+        backend.run_until(backend.now)
+
+    operator = _resource_reservation(
+        persistence, f"operator:{entities.production_order_id}"
+    )
+    if operator is not None:
+        engine.resources.release(backend, operator.reservation_id)
+        backend.run_until(backend.now)
 
 
 def seed_material(
@@ -285,11 +418,18 @@ def run_happy_path(
     engine.rebuild_backend(backend)
 
     seed_material(engine, backend, quantity=quantity)
-    backend.run_until(ORIGIN + timedelta(hours=2))
+    backend.run_until(ORIGIN + timedelta(hours=1))
+    if not reconcile_setup_resources(
+        persistence, engine, backend, entities=entities
+    ):
+        raise RuntimeError("manufacturing capacity is still unavailable")
     reconcile_material_issue(
         persistence, engine, backend, entities=entities, quantity=quantity
     )
     reconcile_output(
         persistence, engine, backend, entities=entities, quantity=quantity
+    )
+    release_setup_resources(
+        persistence, engine, backend, entities=entities
     )
     return persistence, entities
