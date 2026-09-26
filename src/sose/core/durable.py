@@ -135,6 +135,9 @@ class RuntimeRebuilder:
                     f"scheduled work {item.work.work_id} is before recovery boundary"
                 )
 
+        if self._stores is not None:
+            self._stores.validate_rebuild()
+
         if self._context is not None:
             if position is not None:
                 self._context.clock.now = position.logical_time
