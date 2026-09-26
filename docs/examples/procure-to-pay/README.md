@@ -1,5 +1,11 @@
 # Procure-to-Pay reference domain
 
+> **Canonical human-readable contract:** [specification.md](specification.md)
+>
+> The specification defines the executable operational P2P slice, exact StateCharts,
+> happy/sad process semantics, invariants, durable ownership and restart contract.
+> The remaining documents are supporting implementation notes.
+
 ## Status
 
 **Reference implementation candidate for v0.8.**
