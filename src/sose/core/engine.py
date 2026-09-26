@@ -13,6 +13,7 @@ from .durable import DurableScheduledItem, DurableScheduler, RuntimeRebuilder
 from .events import Command
 from .resources import DurableResourceManager
 from .stores import DurableStoreManager
+from .preemption import DurablePreemptiveResourceManager
 from .runtime import SimulationPosition
 
 
@@ -34,6 +35,7 @@ class Engine:
         self.persistence = persistence
         self.rules_for = rules_for or (lambda _: ())
         self.resources = DurableResourceManager(persistence)
+        self.preemptive_resources = DurablePreemptiveResourceManager(persistence)
         self.stores = DurableStoreManager(persistence, filters=store_filters)
         self.scheduler = DurableScheduler(persistence)
         self.context.schedules.bind_scheduler(self.scheduler)
@@ -147,6 +149,7 @@ class Engine:
             context=self.context,
             resources=self.resources,
             stores=self.stores,
+            preemptive_resources=self.preemptive_resources,
         ).rebuild(
             backend,
             on_due=self.dispatch_scheduled,
