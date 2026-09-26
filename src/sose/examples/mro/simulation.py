@@ -604,15 +604,30 @@ def _committed_emergency_result(
 ):
     normal_id = f"bay:{work_order_id}"
     prefix = prefix or f"bay-emergency:{work_order_id}:"
-    return next(
-        (
-            result
-            for result in persistence.resource_preemption_results()
-            if result.displaced_request_id == normal_id
-            and result.preempting_request_id.startswith(prefix)
-        ),
-        None,
+    matches = [
+        result
+        for result in persistence.resource_preemption_results()
+        if result.displaced_request_id == normal_id
+        and result.preempting_request_id.startswith(prefix)
+    ]
+    if not matches:
+        return None
+
+    active_request_id = _active_emergency_request_id(
+        persistence,
+        work_order_id,
+        prefix=prefix,
     )
+    if active_request_id is not None:
+        active_matches = [
+            result
+            for result in matches
+            if result.preempting_request_id == active_request_id
+        ]
+        if active_matches:
+            return max(active_matches, key=lambda result: result.sequence)
+
+    return max(matches, key=lambda result: result.sequence)
 
 
 def _next_emergency_request_id(
@@ -653,12 +668,22 @@ def reconcile_emergency_interrupt(
     normal_id = f"bay:{entities.work_order_id}"
     normal = _preemptive_reservation(persistence, normal_id)
     if normal is None:
+        active_emergency_id = _active_emergency_request_id(
+            persistence,
+            entities.work_order_id,
+            prefix=request_prefix,
+        )
+        if active_emergency_id is None:
+            return False
         committed = _committed_emergency_result(
             persistence,
             entities.work_order_id,
             prefix=request_prefix,
         )
-        if committed is None:
+        if (
+            committed is None
+            or committed.preempting_request_id != active_emergency_id
+        ):
             return False
         engine.dispatch(
             engine.context.commands.create(
