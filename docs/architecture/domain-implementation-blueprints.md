@@ -1525,7 +1525,7 @@ Domain documentation should use the following status vocabulary.
 
 At the time of this document:
 
-- **Maintenance / MRO**: Partial. WorkOrder lifecycle and durable scheduling are executable, but the domain lacks a complete happy path, representative operational sad paths, MRO-specific scenarios, and domain-level restart equivalence.
+- **Maintenance / MRO**: Reference implementation. Happy path, spare-parts shortage, resource contention, cancellation, emergency preemption, scenarios, and domain-level restart equivalence are executable.
 - **Procure-to-Pay**: Reference implementation. Happy path, resource contention, shortage/backorder, partial/rejected receipt paths, scenarios, and restart coverage are executable.
 - **Manufacturing**: Reference implementation. Happy path, shortage, resource contention, breakdown/preemption, quality rework, scenarios, and restart coverage are executable.
 - All other domains in this document: Blueprint.

@@ -1,19 +1,18 @@
 # Maintenance / MRO example
 
-> **Status: Partial implementation under the current reference-domain standard.**
+> **Status: Reference implementation.**
 
 The canonical human-readable contract and gap assessment is
 [specification.md](specification.md).
 
-The current executable example demonstrates a persistent WorkOrder StateChart and
-durable scheduled lifecycle execution. It does not yet provide the complete
-happy/sad-path vertical slice required for reference-grade status.
+The executable example now covers the canonical happy path plus representative
+material-shortage, resource-contention, cancellation, emergency-preemption and
+scenario paths, with domain-level restart-equivalence gates.
 
 See the specification for:
 
-- exact current StateChart semantics;
-- what is already executable;
-- durable scheduling guarantees already proven;
-- missing technician/resource and spare-parts behavior;
-- required happy/sad paths;
-- restart-equivalence requirements for promotion.
+- exact StateChart and process semantics;
+- durable technician/bay and spare-parts ownership;
+- happy and sad paths;
+- emergency/preemption and scenario behavior;
+- restart-equivalence guarantees and executable evidence.
