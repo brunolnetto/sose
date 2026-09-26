@@ -20,7 +20,7 @@ SOSE is intended for domains with persistent entities, explicit lifecycle rules,
 causal relationships, exceptions and time: MRO, logistics, e-commerce, banking,
 manufacturing, healthcare, telecom, insurance, construction and supply chain.
 
-## v0.6 architecture
+## v0.7 architecture
 
 ```text
 StateChart
@@ -39,9 +39,9 @@ SOSE runtime
     = deterministic execution of all of the above
 ```
 
-v0.6 makes the simulation-backend boundary durable. SOSE owns semantic truth, determinism, causality, scheduling intent, resource ownership, recovery position and persistence; SimPy remains an optional ephemeral execution backend that can be reconstructed after restart.
+v0.7 completes the durable operational-runtime boundary. SOSE owns semantic truth, determinism, causality, scheduling intent, resource ownership, queue/store state, preemption outcomes, quantitative container state, recovery position and persistence; SimPy remains an optional ephemeral execution backend reconstructed from durable semantics.
 
-## v0.6 capabilities
+## v0.7 capabilities
 
 - deterministic logical clock;
 - scoped deterministic randomness;
@@ -81,7 +81,15 @@ v0.6 makes the simulation-backend boundary durable. SOSE owns semantic truth, de
 - durable resource definitions, demands and reservations;
 - crash-safe resource release intents;
 - backend reconstruction from semantic state;
-- multi-restart equivalence across scheduling, scenarios and resources.
+- multi-restart equivalence across scheduling, scenarios and resources;\n- durable FIFO, priority and filter-store semantics;\n- durable quantitative Container state and operation results;\n- crash-consistent preemptive resource semantics;\n- reusable crash-injection tests for persistence/backend boundaries;\n- backend-neutral persistence conformance suite;\n- ordered runtime recovery participants with validation-before-rebuild.
+
+
+## Compatibility note
+
+Domain code should schedule through `context.schedules`. The lower-level
+`context.scheduler` in-memory queue remains only as a compatibility bridge for
+older callers and is not part of the durable scheduling contract. New examples
+and integrations should not depend on it.
 
 ## Behavioral boundary
 
@@ -317,7 +325,7 @@ backend.create_resource("technicians", capacity=3)
 
 Domain code does not receive `simpy.Environment`, `simpy.Event`, generators, or native resource-request objects.
 
-The backend remains intentionally ephemeral in v0.6. Scheduled work, scenario runtime state, resource ownership and the logical recovery position are persisted by SOSE and are sufficient to reconstruct a fresh backend after restart.
+The backend remains intentionally ephemeral in v0.7. Scheduled work, scenario runtime state, normal and preemptive resource ownership, Store semantics, Container state and the logical recovery position are persisted by SOSE and are sufficient to reconstruct a fresh backend after restart.
 
 ## Kernel invariants
 
@@ -337,7 +345,7 @@ The backend remains intentionally ephemeral in v0.6. Scheduled work, scenario ru
 
 ## Development direction
 
-v0.6 closes the durable discrete-event runtime milestone. Durable semantic state is authoritative; backend state is ephemeral and reconstructible. The next milestones should build richer operational modeling and persistence capabilities on top of this recovery contract rather than persisting backend-native execution objects.
+v0.7 closes the durable operational-runtime milestone. Durable semantic state is authoritative; backend state is ephemeral and reconstructible. The next milestone is to implement domain examples on top of this stable runtime, beginning with supply-chain / Procure-to-Pay flows.
 
 See:
 
