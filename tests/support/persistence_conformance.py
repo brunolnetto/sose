@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 
 import pytest
 
+from sose.core.events import DomainEvent
 from sose.core.runtime import (
     ContainerDefinition,
     ContainerOperationIntent,
@@ -71,6 +72,29 @@ class PersistenceConformanceSuite:
         returned.value["nested"]["value"] = 999
 
         assert store.store_items()[0].value == {"nested": {"value": 1}}
+
+    def test_event_payloads_are_isolated_on_write_and_read(self):
+        store = self.make_persistence()
+        payload = {"nested": {"value": 1}}
+        event = DomainEvent(
+            event_id="event-1",
+            name="demo",
+            entity_type="demo",
+            entity_id="1",
+            occurred_at=NOW,
+            payload=payload,
+        )
+
+        with store.transaction() as uow:
+            uow.append_event(event)
+
+        payload["nested"]["value"] = 500
+        assert store.events()[0].payload == {"nested": {"value": 1}}
+
+        returned = store.events()[0]
+        returned.payload["nested"]["value"] = 999
+
+        assert store.events()[0].payload == {"nested": {"value": 1}}
 
     def test_sequence_order_is_backend_independent(self):
         store = self.make_persistence()
