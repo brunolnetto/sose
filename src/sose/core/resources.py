@@ -163,15 +163,15 @@ class DurableResourceManager:
         if demand is None:
             return False
 
+        if not backend.cancel_resource_request(request_id):
+            return False
+
         with self._persistence.transaction() as uow:
             if uow.get_resource_demand(request_id) != demand:
-                return False
+                raise RuntimeError(
+                    f"resource demand changed during cancellation: {request_id}"
+                )
             uow.delete_resource_demand(request_id)
-
-        if not backend.cancel_resource_request(request_id):
-            raise RuntimeError(
-                f"backend resource request is not pending: {request_id}"
-            )
         return True
 
     def release(self, backend, reservation_id: str) -> bool:
