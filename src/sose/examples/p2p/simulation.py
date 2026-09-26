@@ -44,9 +44,11 @@ def build_runtime(
     persistence: MemoryPersistence,
     *,
     now: datetime = ORIGIN,
+    tick: int = 0,
+    scenarios=(),
 ) -> tuple[SimulationContext, Engine]:
     context = SimulationContext(
-        clock=SimulationClock(now=now, step=timedelta(hours=1)),
+        clock=SimulationClock(now=now, step=timedelta(hours=1), tick=tick),
         random=RandomSource(root_seed=42),
         scheduler=Scheduler(),
     )
@@ -59,6 +61,7 @@ def build_runtime(
         context=context,
         registry=registry,
         persistence=persistence,
+        scenarios=scenarios,
     )
 
 
