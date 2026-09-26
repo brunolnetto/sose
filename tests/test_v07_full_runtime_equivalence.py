@@ -368,8 +368,8 @@ def complete_pending_operations(
     assert [r.request_id for r in store.resource_reservations()] == ["bay-waiter"]
     assert [d.request_id for d in store.resource_demands()] == ["fresh-bay"]
     assert [r.request_id for r in store.preemptive_resource_reservations()] == [
-        "recovery-waiter",
         "standby-crew",
+        "recovery-waiter",
     ]
     assert [d.request_id for d in store.preemptive_resource_demands()] == [
         "holder-priority-probe",
@@ -537,8 +537,8 @@ def test_v07_full_durable_runtime_is_multi_restart_equivalent():
     ]
     assert [d.request_id for d in restarted_store.resource_demands()] == ["fresh-bay"]
     assert [r.request_id for r in restarted_store.preemptive_resource_reservations()] == [
-        "recovery-waiter",
         "standby-crew",
+        "recovery-waiter",
     ]
     assert len(restarted_store.resource_preemption_results()) == 1
     assert [d.request_id for d in restarted_store.preemptive_resource_demands()] == [
