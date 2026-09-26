@@ -17,6 +17,7 @@ from sose.core.runtime import (
     DurableStoreItem,
     StoreDefinition,
     StoreGetRequest,
+    StoreGetResult,
     StorePutIntent,
 )
 from sose.core.stores import DurableStoreManager
@@ -385,3 +386,116 @@ def test_invalid_store_recovery_is_rejected_before_resources_are_rebuilt():
     with pytest.raises(KeyError, match="unknown resource"):
         backend.resource_snapshot("bay")
     assert [d.request_id for d in store.resource_demands()] == ["waiter"]
+
+
+def test_replayed_get_persists_completion_result_without_live_callback():
+    store = MemoryPersistence()
+    first = DurableStoreManager(store)
+    backend1 = SimPyBackend(origin=NOW)
+    first.define(StoreDefinition("inbox", kind="fifo"))
+    first.rebuild_backend(backend1)
+
+    request = first.get(
+        backend1,
+        store_name="inbox",
+        request_id="replayed-get",
+        requested_at=NOW,
+    )
+    assert store.store_get_requests() == (request,)
+    assert store.store_get_results() == ()
+
+    backend2 = SimPyBackend(origin=NOW)
+    recovered = DurableStoreManager(store)
+    recovered.rebuild_backend(backend2)
+    recovered.put(
+        backend2,
+        store_name="inbox",
+        item_id="after-restart",
+        value={"payload": 42},
+        requested_at=NOW,
+    )
+    backend2.run_until(NOW)
+
+    assert store.store_get_requests() == ()
+    assert store.store_items() == ()
+    results = store.store_get_results()
+    assert len(results) == 1
+    assert results[0].request_id == "replayed-get"
+    assert results[0].item.item_id == "after-restart"
+    assert results[0].item.value == {"payload": 42}
+    assert recovered.result("replayed-get") == results[0]
+
+
+def test_completed_get_request_id_cannot_be_reused_or_leave_pending_state():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    backend = SimPyBackend(origin=NOW)
+    manager.define(StoreDefinition("inbox", kind="fifo"))
+    manager.rebuild_backend(backend)
+
+    manager.put(
+        backend,
+        store_name="inbox",
+        item_id="first",
+        value=1,
+        requested_at=NOW,
+    )
+    backend.run_until(NOW)
+    manager.get(
+        backend,
+        store_name="inbox",
+        request_id="stable-get-id",
+        requested_at=NOW,
+    )
+    backend.run_until(NOW)
+
+    assert [r.request_id for r in store.store_get_results()] == ["stable-get-id"]
+    assert store.store_get_requests() == ()
+
+    with pytest.raises(ValueError, match="already exists"):
+        manager.get(
+            backend,
+            store_name="inbox",
+            request_id="stable-get-id",
+            requested_at=NOW,
+        )
+
+    assert store.store_get_requests() == ()
+    assert [r.request_id for r in store.store_get_results()] == ["stable-get-id"]
+
+
+def test_store_get_result_is_terminal_identity_in_persistence():
+    store = MemoryPersistence()
+    request = StoreGetRequest(
+        request_id="terminal",
+        store_name="inbox",
+        requested_at=NOW,
+        sequence=1,
+    )
+    item = DurableStoreItem(
+        item_id="consumed",
+        store_name="inbox",
+        value=1,
+        priority=100,
+        sequence=2,
+    )
+    result = StoreGetResult(
+        request_id="terminal",
+        store_name="inbox",
+        item=item,
+        completed_at=NOW,
+        sequence=1,
+    )
+
+    with store.transaction() as uow:
+        uow.save_store_definition(StoreDefinition("inbox"))
+        uow.save_store_get_request(request)
+        uow.save_store_get_result(result)
+        uow.delete_store_get_request("terminal")
+
+    with pytest.raises(ValueError, match="already completed"):
+        with store.transaction() as uow:
+            uow.save_store_get_request(request)
+
+    assert store.store_get_requests() == ()
+    assert store.store_get_results() == (result,)
