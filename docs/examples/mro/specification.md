@@ -2,260 +2,339 @@
 
 ## Status
 
-**Partial implementation under the reference-domain standard.**
+**Reference implementation.**
 
 The repository contains a persistent `WorkOrder` entity, an explicit StateChart,
 probabilistic transition metadata, durable scheduling, transition events, and tests
 showing scheduled execution semantics.
 
-It does **not yet** contain a complete MRO reference vertical slice with technicians,
-maintenance bays, spare-parts inventory, waiting-resource behavior, emergency priority,
-full happy/sad process execution, MRO-specific scenarios, and domain-level restart
-equivalence.
+The executable reference now covers technicians, preemptible maintenance-bay
+capacity, spare-parts inventory, waiting-material and waiting-resource behavior,
+emergency priority/preemption, cancellation, MRO-specific scenarios, and
+continuous-versus-restarted equivalence across representative happy and sad paths.
 
-This specification therefore serves two purposes:
-
-1. document exactly what the current MRO example means;
-2. define the missing executable behavior required to promote it to a reference
-   implementation.
+This specification is the canonical human-readable contract for that executable
+reference.
 
 ## 1. Purpose and scope
 
-The intended MRO domain models maintenance work from planning through execution and
-closure, including material/resource constraints and exceptional maintenance behavior.
+The MRO reference domain models maintenance work from planning through execution and
+closure under material, technician, and maintenance-bay constraints.
 
-### Currently executable
+The executable slice includes:
 
-- one persistent `WorkOrder`;
-- WorkOrder StateChart;
-- durable scheduled `release`;
-- scheduled transition execution;
-- immutable transition events;
-- durable logical-time advancement;
-- stale scheduled-callback idempotence.
+- persistent `WorkOrder` and `PartDemand` entities;
+- durable scheduled release;
+- technician acquisition and contention;
+- preemptible maintenance-bay acquisition;
+- spare-parts Store/Container inventory;
+- material shortage and replenishment;
+- resource wait and recovery;
+- cancellation with cleanup/no material consumption;
+- emergency interruption and resume through durable preemption;
+- MRO-specific scenarios;
+- happy-path and representative sad-path restart equivalence.
 
-### Defined by the StateChart but not yet implemented as a complete domain process
+The original `build_demo()` remains as a compact durable-scheduler demonstration.
+`run_happy_path()` and the MRO reconcilers form the complete reference-domain
+vertical slice.
 
-- waiting for material;
-- transition into active work;
-- completion;
-- closure;
-- cancellation;
-- probabilistic branch selection across applicable transitions.
-
-### Required before reference-grade promotion
-
-- technician/resource acquisition;
-- maintenance-bay/equipment capacity where applicable;
-- spare-parts demand and inventory;
-- explicit waiting-resource behavior;
-- material shortage/replenishment;
-- emergency/priority maintenance;
-- representative cancellation/reopen or interruption path;
-- scenario intervention;
-- continuous-versus-restarted domain equivalence across happy and sad paths.
+Outside this reference slice are multi-asset planning, preventive-maintenance
+optimization, multi-operation routings, labor skills matrices, maintenance costing,
+and external procurement of missing spare parts.
 
 ## 2. Operational story
 
-The intended process begins with a planned work order.
+The process begins with a planned work order.
 
-A planned work order may be released for execution or cancelled.
+A planned work order may be released for execution or cancelled. Once released,
+the work order may proceed only when both classes of operational prerequisite are
+satisfied:
 
-Once released, the work order may start when operational prerequisites are available,
-or it may wait for material. The StateChart permits a waiting-material work order to
-start once the constraint is resolved.
+1. the required spare part is durably available and consumed exactly once;
+2. a technician and maintenance bay are durably reserved.
 
-Active work becomes completed, and completed work is then closed.
+If the spare part is unavailable, the work order enters `waiting_material` and the
+associated `PartDemand` enters `waiting_inventory`. Capacity is deliberately not
+held while the work waits for material.
 
-The current demo implements only the beginning of this story: it creates a planned
-work order, schedules `release`, and proves that durable scheduled work transitions the
-entity to `released` exactly once.
+If material is available but technician or bay capacity is unavailable, the work
+order enters `waiting_resource`. It returns to `released` only after capacity can
+be acquired.
 
-Therefore the lifecycle below is the domain contract, while only a subset currently
-has executable process orchestration.
+Once parts and capacity are durable, the work order enters `in_progress`. It may
+complete and close normally, or an emergency maintenance request may preempt the
+maintenance bay. Preemption produces durable displacement evidence and moves the
+normal work order to `interrupted`. The work may resume only after the emergency
+reservation is released and the normal work durably reacquires the bay.
 
-## 3. Domain entity
+Cancellation is terminal and releases/avoids resource and inventory side effects.
 
-### WorkOrder
+MRO-specific scenarios can make spare parts or technicians unavailable, or trigger
+emergency maintenance pressure. Scenario effects never bypass the normal durable
+business workflow.
+
+## 3. Domain entities
+
+### 3.1 WorkOrder
 
 **Responsibility**
 
 Represents a maintenance job and owns its business lifecycle.
 
-**Relevant attributes in the current demo**
+**Relevant attributes**
 
-- `priority`.
+- `priority`;
+- required `part_sku`;
+- required `quantity`.
 
 **Owns**
 
-- lifecycle state from planning through closure/cancellation.
+- planning/release state;
+- material-wait state;
+- resource-wait state;
+- active/interrupted execution state;
+- completion/closure/cancellation.
 
-**Does not currently own or model**
+**Does not own**
 
-- technician assignment;
-- bay/equipment capacity;
-- spare-parts inventory;
-- asset availability;
-- material-demand entity;
-- repair output/return-to-service state.
+- technician or bay availability;
+- spare-parts identity or quantity;
+- scenario activation state;
+- preemption evidence.
 
-Those are required components of the future full reference slice rather than hidden
-attributes of the WorkOrder.
+### 3.2 PartDemand
 
-## 4. WorkOrder StateChart
+**Responsibility**
+
+Represents the spare-part requirement associated with the work order.
+
+**Relevant attributes**
+
+- `sku`;
+- `quantity`.
+
+**Owns**
+
+- open;
+- waiting inventory;
+- allocation;
+- consumption/cancellation.
+
+**Does not own**
+
+- physical Store lot identity;
+- Container balance;
+- WorkOrder lifecycle state.
+
+## 4. StateCharts
+
+### 4.1 WorkOrder StateChart
 
 ```text
 planned
   ├──release──> released
-  │               ├──start──────────────> in_progress
-  │               ├──wait_for_material─> waiting_material
-  │               │                        │
-  │               │                        └──start──> in_progress
-  │               └──cancel─────────────> cancelled
+  │               ├──wait_for_material──> waiting_material
+  │               │                        │ material_ready
+  │               │                        └──────────────> released
+  │               ├──wait_for_resource──> waiting_resource
+  │               │                        │ resource_ready
+  │               │                        └──────────────> released
+  │               └──start──────────────> in_progress
+  │                                          │
+  │                                          ├──interrupt──> interrupted
+  │                                          │                │ resume
+  │                                          │                └──────> in_progress
+  │                                          │
+  │                                          └──complete───> completed
+  │                                                             │ close
+  │                                                             ▼
+  │                                                           closed
   │
-  └──cancel──────────────────────────────> cancelled
-
-in_progress
-  │ complete
-  ▼
-completed
-  │ close
-  ▼
-closed
+  └──cancel──────────────────────────────────────────────────> cancelled
 ```
 
-`cancel` is also legal from `waiting_material`.
+`cancel` is also legal from `released`, `waiting_material`, and
+`waiting_resource`.
 
-| Current state | Command | Domain meaning | Next state | Current executable process evidence |
+| Current state | Command | Domain meaning | Next state | Durable evidence required |
 |---|---|---|---|---|
-| `planned` | `release` | authorize maintenance execution | `released` | yes |
-| `planned` | `cancel` | cancel before release | `cancelled` | StateChart only |
-| `released` | `start` | begin active maintenance | `in_progress` | StateChart; generic scheduled test exercises transition |
-| `released` | `wait_for_material` | required spare part unavailable | `waiting_material` | StateChart only |
-| `waiting_material` | `start` | material constraint resolved | `in_progress` | StateChart only |
-| `released` / `waiting_material` | `cancel` | terminate outstanding work | `cancelled` | StateChart only |
-| `in_progress` | `complete` | maintenance work finished | `completed` | StateChart only |
-| `completed` | `close` | administratively close work | `closed` | StateChart only |
+| `planned` | `release` | authorize maintenance execution | `released` | scheduled command/event |
+| `planned` | `cancel` | cancel before release | `cancelled` | transition event |
+| `released` | `wait_for_material` | required spare part unavailable | `waiting_material` | inventory state |
+| `waiting_material` | `material_ready` | spare-part quantity available | `released` | Store/Container state |
+| `released` | `wait_for_resource` | technician or bay unavailable | `waiting_resource` | resource demand/capacity state |
+| `waiting_resource` | `resource_ready` | required capacity can be acquired | `released` | durable reservation capability |
+| `released` | `start` | parts consumed and technician + bay reserved | `in_progress` | Store/Container terminal results + reservations |
+| `in_progress` | `interrupt` | emergency preempts maintenance bay | `interrupted` | ResourcePreemptionResult |
+| `interrupted` | `resume` | normal work reacquires bay | `in_progress` | replacement reservation |
+| `in_progress` | `complete` | maintenance work finished | `completed` | transition event |
+| `completed` | `close` | administratively close work | `closed` | transition event |
+| outstanding states | `cancel` | terminate outstanding work | `cancelled` | transition event |
+
+### 4.2 PartDemand StateChart
+
+```text
+open
+  ├──wait──────> waiting_inventory
+  │                │
+  └──allocate──────┘
+        │
+        ▼
+    allocated
+        │ consume
+        ▼
+    consumed
+```
+
+`cancel` is legal from `open` and `waiting_inventory`.
+
+| Current state | Command | Domain meaning | Next state |
+|---|---|---|---|
+| `open` | `wait` | spare part unavailable | `waiting_inventory` |
+| `open` / `waiting_inventory` | `allocate` | durable part withdrawal completed | `allocated` |
+| `allocated` | `consume` | part committed to repair | `consumed` |
+| `open` / `waiting_inventory` | `cancel` | demand terminated | `cancelled` |
 
 ### Probabilistic transition metadata
 
-The current `WorkOrderChart` declares transition weights:
+The WorkOrder model retains probabilistic metadata for applicable lifecycle choices,
+including release, start, wait-for-material, wait-for-resource, cancellation,
+completion, and closure. Operational reconciler preconditions remain authoritative:
+a probabilistic choice cannot bypass missing material, capacity, or durable evidence.
 
-```text
-release           0.98
-start             0.78
-wait_for_material 0.20
-cancel            0.02
-complete          1.00
-close             1.00
-```
+## 5. Process specifications
 
-These values are part of the model metadata. The current MRO demo does not yet provide
-a complete operational experiment demonstrating these branches as a reference process.
-
-## 5. Current executable process
-
-### 5.1 Implemented demo path
-
-```text
-create WorkOrder(planned)
-    │
-    ├──persist entity
-    │
-    └──persist ScheduledWork(release)
-             │
-             ▼
-       advance simulation
-             │
-             ▼
-       release dispatched
-             │
-             ├──WorkOrder(released)
-             ├──scheduled work consumed
-             ├──transition event persisted
-             └──SimulationPosition advanced
-```
-
-This is a durable scheduling demonstration using an MRO entity. It is not yet a
-complete MRO happy path.
-
-### 5.2 Intended reference happy path
-
-The future reference-grade process should be:
+### 5.1 Canonical happy path
 
 ```text
 WorkOrder(planned)
-  │ release
+  │ durable release
   ▼
 released
   │
+  ├── verify spare-part availability
   ├── acquire technician
-  ├── acquire maintenance capacity
-  └── verify / reserve required spare parts
+  ├── acquire maintenance bay
+  └── consume spare-part Store lot + Container quantity
           │
           ▼
       in_progress
-          │
-          ├── durable parts consumption
-          └── durable repair/service effect
-                  │
-                  ▼
-              completed
-                  │ inspection / return-to-service evidence
-                  ▼
-                closed
+          │ complete
+          ▼
+       completed
+          │ close
+          ▼
+         closed
 ```
 
-## 6. Required sad-path specifications
+Parts are consumed before `in_progress` is claimed. Technician and maintenance-bay
+reservations gate active work. Capacity is released after closure.
 
-The following paths are required before MRO can be promoted back to
-**Reference implementation**.
+### 5.2 Durable scheduling path
+
+The original demo remains a useful focused path:
+
+```text
+persist WorkOrder(planned)
+→ persist ScheduledWork(release)
+→ execute due work
+→ commit WorkOrder(released)
+→ persist transition event
+→ consume scheduled work
+→ advance SimulationPosition
+```
+
+This path provides focused evidence for scheduler atomicity and stale-callback
+idempotence, while the reference happy path provides the full domain vertical slice.
+
+## 6. Sad-path specifications
 
 ### 6.1 Spare-part shortage
 
 **Trigger**
 
-Required maintenance material is unavailable.
+Required maintenance material is unavailable or a spare-parts disruption scenario is
+active.
 
-**Required behavior**
+**Expected behavior**
 
 ```text
 released
   │ wait_for_material
   ▼
 waiting_material
-  │ replenishment / allocation
+  │ replenishment / availability restored
+  │ material_ready
+  ▼
+released
+  │ normal prerequisite checks
   ▼
 in_progress
 ```
 
-**Required durable truth**
+**Durable truth**
 
-- material demand remains explicit;
-- no part is partially consumed while quantitative availability is insufficient;
-- restart preserves the wait/replenishment relationship.
+- WorkOrder remains `waiting_material`;
+- PartDemand remains `waiting_inventory`;
+- technician/bay capacity is not held while material is unavailable;
+- no Store/Container withdrawal begins until quantity is feasible.
+
+**Recovery**
+
+Replenishment restores durable inventory. The order returns to `released`, then
+capacity and part-issue gates are evaluated normally.
 
 ### 6.2 Technician or bay contention
 
 **Trigger**
 
-Required maintenance capacity is unavailable.
+Required maintenance capacity is unavailable, including technician-capacity-loss
+scenario context.
 
-**Required behavior**
+**Expected behavior**
 
-The work order remains unable to claim `in_progress` until required durable
-reservations exist.
+```text
+released
+  │ wait_for_resource
+  ▼
+waiting_resource
+  │ resource_ready
+  ▼
+released
+  │ reservations + parts terminal
+  ▼
+in_progress
+```
+
+**Durable truth**
+
+Resource demand/reservation state and WorkOrder waiting state survive restart.
 
 ### 6.3 Emergency maintenance / priority displacement
 
 **Trigger**
 
-A higher-priority work order requires constrained maintenance capacity.
+Emergency work requests the preemptible maintenance bay with higher priority.
 
-**Required behavior**
+**Expected behavior**
 
-If domain policy permits preemption, displacement must be represented by durable
-preemption evidence and the displaced work must remain business-visible.
+```text
+normal WorkOrder(in_progress)
+  │ bay preempted
+  ▼
+interrupted
+  │ emergency releases bay
+  │ normal work reacquires bay
+  │ resume
+  ▼
+in_progress
+```
+
+**Durable truth**
+
+`ResourcePreemptionResult` identifies displaced and preempting requests. The
+interrupted WorkOrder remains explicit business state.
 
 ### 6.4 Cancellation
 
@@ -263,37 +342,50 @@ preemption evidence and the displaced work must remain business-visible.
 
 Outstanding maintenance work is cancelled while planned, released, or waiting.
 
-**Required behavior**
+**Expected behavior**
 
-Cancellation must release/avoid capacity and inventory effects and become terminal.
+Cancellation is terminal only while spare-part issue has not started. It cancels the
+associated open/waiting PartDemand, cancels queued technician/bay demands, releases
+held capacity, and does not consume spare parts.
 
-### 6.5 Interruption / reopen decision
+Once either physical part-withdrawal operation has started, cancellation is rejected.
+At that point the maintenance process must reconcile the already-committed material
+effect rather than pretending that a consumed part can be undone.
 
-A production-grade MRO domain normally needs a policy for work that is interrupted,
-fails inspection, or must be reopened. The current StateChart does not model a
-`reopened` state. This must be decided explicitly rather than invented implicitly by
-orchestration code.
+### 6.5 Scenario-driven disruption
+
+Asset emergency, spare-parts disruption, and technician capacity loss alter
+operational context. They must route through the same shortage, resource-wait, or
+preemption semantics rather than assigning lifecycle state directly.
 
 ## 7. Commands and domain events
 
 | Command | Target | Meaning |
 |---|---|---|
 | `release` | WorkOrder | authorize maintenance work |
-| `wait_for_material` | WorkOrder | expose material constraint |
-| `start` | WorkOrder | begin active maintenance |
-| `complete` | WorkOrder | mark work execution complete |
+| `wait_for_material` | WorkOrder | expose a spare-part constraint |
+| `material_ready` | WorkOrder | return from material wait |
+| `wait_for_resource` | WorkOrder | expose technician/bay contention |
+| `resource_ready` | WorkOrder | return from resource wait |
+| `start` | WorkOrder | begin active maintenance after durable prerequisites |
+| `interrupt` | WorkOrder | expose emergency displacement |
+| `resume` | WorkOrder | resume after bay reacquisition |
+| `complete` | WorkOrder | mark maintenance execution complete |
 | `close` | WorkOrder | administratively close completed work |
 | `cancel` | WorkOrder | terminate outstanding work |
+| `wait` | PartDemand | expose spare-part shortage |
+| `allocate` | PartDemand | durable part withdrawal completed |
+| `consume` | PartDemand | commit part to maintenance |
+| `cancel` | PartDemand | terminate outstanding demand |
 
 Successful commands emit immutable `entity.state_transition` events.
 
-The current demo proves the release transition is durably scheduled and committed.
-A future full reference slice should use stable correlation across work order,
-resource allocation, material demand, repair effects, and inspection/return-to-service.
+The reference flow uses stable causal/correlation metadata across work-order lifecycle,
+part demand, resource acquisition, interruption/resume, and closure. `build_demo()`
+proves focused scheduler behavior; the full reference runner and reconcilers prove the
+cross-entity operational process.
 
 ## 8. Invariants
-
-### Currently evidenced
 
 **MRO-01 — Durable scheduled transition**
 
@@ -311,184 +403,226 @@ Executing scheduled work advances durable logical time to the scheduled instant.
 
 **MRO-04 — Failed scheduled dispatch rollback**
 
-A failed scheduled dispatch leaves the command/work pending and does not advance
-durable logical time.
-
-### Required for reference-grade promotion
+A failed scheduled dispatch leaves command/work pending and does not advance durable
+logical time.
 
 **MRO-05 — Resource gating**
 
-A WorkOrder cannot enter `in_progress` before required technician/capacity reservations
-exist.
+A WorkOrder cannot enter `in_progress` before technician and maintenance-bay
+reservations exist.
 
-**MRO-06 — Parts before repair**
+**MRO-06 — Parts before active repair**
 
-A WorkOrder cannot claim active/completed physical repair when required spare-parts
-effects are not durable.
+A WorkOrder cannot enter `in_progress` until the required Store lot and Container
+quantity withdrawals are terminal.
 
 **MRO-07 — Shortage visibility**
 
-Spare-part shortage must remain explicit durable semantic state.
+Spare-part shortage remains explicit in WorkOrder and PartDemand state, and constrained
+capacity is not held while the work waits for material.
 
-**MRO-08 — No duplicate repair/material effects**
+**MRO-08 — Exactly-once part effects**
 
-Restart/retry cannot duplicate parts consumption or repair completion.
+Restart/retry cannot duplicate spare-part consumption; completed withdrawal results
+take precedence over the depleted current inventory level.
 
 **MRO-09 — Priority/preemption visibility**
 
-Emergency displacement, if supported, must remain observable in durable state.
+Emergency displacement is represented by `ResourcePreemptionResult` and
+`WorkOrder(interrupted)`. Each emergency occurrence has a distinct durable request
+identity. Historical preemption results do not suppress later emergency occurrences,
+and finite scenario-owned emergencies release their capacity on expiry.
 
-**MRO-10 — Happy and sad restart equivalence**
+**MRO-10 — Cancellation safety**
 
-Continuous and restarted execution must be semantically equivalent for the canonical
-happy path and representative sad paths.
+Before part issue starts, cancellation invalidates pending scheduled release, durably
+cancels queued technician/bay demands, releases held capacity, and consumes no parts.
+After part issue starts, cancellation is rejected; committed physical consumption is
+never silently reversed.
+
+**MRO-11 — Happy and sad restart equivalence**
+
+Continuous and restarted execution are semantically equivalent across release,
+resource queue, parts-consumed, active-maintenance, shortage, emergency interruption,
+completion-before-close, and cancellation boundaries.
 
 ## 9. Durable truth and ownership
 
-### Current example
+| Concept | Durable owner | Meaning |
+|---|---|---|
+| WorkOrder lifecycle | `WorkOrder.state` | authoritative maintenance business state |
+| spare-part demand lifecycle | `PartDemand.state` | shortage/allocation/consumption truth |
+| scheduled release | Command + ScheduledWork | future lifecycle intent |
+| technician demand/ownership | ResourceDemand / ResourceReservation | constrained labor truth |
+| bay demand/ownership | PreemptiveResourceDemand / Reservation | preemptible capacity truth |
+| spare-part identity | Store item/result | discrete part-lot truth |
+| spare-part quantity | ContainerState / operation result | quantitative inventory truth |
+| emergency displacement | ResourcePreemptionResult | durable interruption evidence |
+| scenario activation | ScenarioRuntimeState | intervention truth |
+| transition audit | DomainEvent | immutable business history |
+| logical recovery position | SimulationPosition | reconstruction boundary |
 
-| Concept | Durable owner |
-|---|---|
-| WorkOrder lifecycle | `WorkOrder.state` |
-| scheduled release | Command + ScheduledWork |
-| transition audit | DomainEvent |
-| logical recovery position | SimulationPosition |
-
-### Required full reference slice
-
-| Concept | Expected durable owner |
-|---|---|
-| technician/bay demand and ownership | Resource demand/reservation |
-| spare-part identity | Store |
-| spare-part quantity | Container or explicit inventory entity |
-| material shortage | WorkOrder + MaterialDemand lifecycle |
-| emergency displacement | ResourcePreemptionResult |
-| scenario activation | ScenarioRuntimeState |
-| repair/inspection evidence | explicit durable result/event |
-
-Backend-native scheduling callbacks, queues, resource handles, and SimPy objects remain
-ephemeral and reconstructible.
+Backend-native callbacks, SimPy requests/processes, resource handles, queues, and
+generator continuation state remain ephemeral and reconstructible.
 
 ## 10. Restart semantics
 
-### Currently evidenced
+MRO restart equivalence is tested at business-significant durable boundaries:
 
-The engine tests demonstrate:
+1. after release/stock seeding before normal execution;
+2. while technician and maintenance-bay requests are queued behind blockers;
+3. after spare-part Store/Container withdrawals and PartDemand consumption but before
+   WorkOrder `start`;
+4. while maintenance is actively `in_progress` with technician and bay reservations;
+5. while `waiting_material`;
+6. while `interrupted` by emergency preemption;
+7. after `complete` and before `close`;
+8. after terminal cancellation;
+9. while resource demands are queued, followed by rebuild and cancellation before
+   blockers release.
 
-- scheduled WorkOrder release executes exactly once;
-- consumed work ignores stale callbacks;
-- rescheduled replacements cannot be consumed by stale callbacks;
-- logical time is committed with scheduled transitions.
+For each boundary, continuous execution and reconstructed execution must converge to the
+same durable semantic snapshot: entity states, events, scheduled work, inventory,
+resource demands/reservations, preemption results, terminal operation results, and
+recovery position.
 
-### Required MRO domain-level restart gates
-
-A full reference implementation must additionally compare continuous and restarted
-execution across:
-
-1. technician/resource queue;
-2. spare-part shortage;
-3. material allocation/consumption;
-4. active maintenance;
-5. emergency priority/preemption;
-6. completion before closure;
-7. at least one representative cancellation/interruption path.
+Backend-native object identity is intentionally excluded from semantic equivalence.
 
 ## 11. Scenario specification
 
-No MRO-specific scenario is currently registered by `build_demo()`.
-
-A reference-grade MRO example should include at least:
-
 ### Asset failure / emergency arrival
 
-- finite or one-shot trigger;
-- creates/activates emergency maintenance pressure;
-- must route through normal resource/preemption semantics.
+- **Trigger:** one-shot scheduled activation;
+- **Duration:** finite;
+- **Effect:** `mro.asset.emergency = True`;
+- **Domain interpretation:** orchestration invokes the same durable emergency
+  preemption workflow used by explicit emergency pressure, using a scenario-owned
+  emergency request identity;
+- **Expiry behavior:** if the scenario owns the interruption, expiry releases the
+  scenario emergency reservation, reacquires the normal maintenance bay, and resumes
+  the interrupted WorkOrder;
+- **Crash recovery:** a durable scenario preemption result is reconciled into the
+  missing `interrupted` business state before expiry cleanup proceeds;
+- **Does not:** directly mutate WorkOrder state.
 
 ### Spare-parts disruption
 
-- changes availability/lead-time context;
-- must not directly mutate WorkOrder state.
+- **Trigger:** one-shot scheduled activation;
+- **Duration:** finite;
+- **Effect:** `mro.spare_parts.available = False`;
+- **Domain interpretation:** available physical inventory is temporarily considered
+  unusable for prerequisite evaluation;
+- **Does not:** consume or delete inventory directly.
 
 ### Technician capacity loss
 
-- changes effective capacity context;
-- waiting-resource behavior remains explicit.
+- **Trigger:** one-shot scheduled activation;
+- **Duration:** finite;
+- **Effect:** `mro.technician.available = False`;
+- **Domain interpretation:** capacity reconciliation refuses to claim technician
+  capacity and routes the order into resource wait;
+- **Does not:** directly mutate WorkOrder state.
+
+Finite scenarios expire without implicit retriggering.
 
 ## 12. Example runs
 
-### A. Current executable demo
+### A. Nominal
 
 ```text
 08:00 WorkOrder(planned)
-08:00 durable release scheduled
-tick / scheduled execution
-→ WorkOrder(released)
-→ transition event
-→ scheduled work consumed
-```
-
-### B. Target nominal reference run
-
-```text
-planned
-→ released
-→ technician + bay acquired
-→ spare parts allocated
+09:00 release
+→ spare part available
+→ technician acquired
+→ maintenance bay acquired
+→ spare-part lot + quantity consumed
 → in_progress
-→ repair effect committed
 → completed
-→ inspection / return to service
 → closed
+→ capacity released
 ```
 
-### C. Target material-shortage run
+### B. Material shortage
 
 ```text
 released
 → part unavailable
-→ waiting_material
+→ WorkOrder(waiting_material)
+→ PartDemand(waiting_inventory)
 → replenishment
-→ part allocation
+→ material_ready
+→ released
+→ part allocation/consumption
 → in_progress
 → completed
 → closed
 ```
 
-### D. Target emergency-priority run
+### C. Resource contention
 
 ```text
-normal work owns constrained resource
-→ emergency work arrives
-→ durable priority/preemption decision
-→ displaced work remains explicit
-→ emergency completes/releases
-→ normal work resumes
+technician occupied
+→ normal WorkOrder requests capacity
+→ waiting_resource
+→ capacity released
+→ resource_ready
+→ released
+→ in_progress
 ```
 
-## 13. Executable evidence and gaps
+### D. Emergency priority
+
+```text
+normal work owns maintenance bay
+→ emergency request arrives
+→ durable preemption result
+→ normal WorkOrder(interrupted)
+→ emergency releases bay
+→ normal work reacquires bay
+→ resume
+→ in_progress
+```
+
+### E. Restarted sad path
+
+```text
+waiting_material or interrupted
+→ process restart
+→ backend reconstructed from durable truth
+→ replenishment / bay reacquisition
+→ normal flow resumes
+→ final semantic snapshot equals continuous execution
+```
+
+## 13. Executable evidence
 
 | Specification area | Current implementation/evidence | Status |
 |---|---|---|
 | WorkOrder entity | `entities.py` | implemented |
-| WorkOrder StateChart | `statecharts.py` | implemented |
-| durable scheduled release | `simulation.py::build_demo` | implemented |
+| PartDemand entity | `entities.py` | implemented |
+| WorkOrder / PartDemand StateCharts | `statecharts.py` | implemented |
+| durable scheduled release | `simulation.py::seed_reference` / `build_demo` | implemented |
 | scheduled transition atomicity | `test_durable_engine.py` | implemented |
 | stale callback idempotence | `test_durable_engine.py` | implemented |
 | logical-time semantics | `test_durable_engine.py` | implemented |
-| complete happy path | no MRO-specific vertical slice | missing |
-| technician/bay resources | none in MRO example | missing |
-| spare-parts inventory | none in MRO example | missing |
-| waiting-material executable process | StateChart only | missing |
-| emergency/preemption path | none in MRO example | missing |
-| MRO scenarios | none | missing |
-| happy-path restart equivalence | none at domain level | missing |
-| sad-path restart equivalence | none at domain level | missing |
+| complete happy path | `run_happy_path` | implemented |
+| technician / maintenance-bay resources | `reconcile_capacity` | implemented |
+| spare-parts inventory | Store + Container in `simulation.py` | implemented |
+| waiting-material process | `reconcile_material_availability`, `reconcile_start` | implemented |
+| waiting-resource / contention | `reconcile_capacity`, `reconcile_start` | implemented |
+| cancellation | `reconcile_cancel` | implemented |
+| emergency/preemption path | emergency interrupt/resume reconcilers | implemented |
+| MRO scenarios | `scenarios.py` | implemented |
+| happy-path restart equivalence | `test_mro_restart_equivalence.py` | implemented |
+| shortage restart equivalence | `test_mro_restart_equivalence.py` | implemented |
+| emergency restart equivalence | `test_mro_restart_equivalence.py` | implemented |
+| cancellation restart stability | `test_mro_restart_equivalence.py` | implemented |
 
 ## Promotion decision
 
-Under the repository's current reference-domain standard, MRO must remain **Partial**
-until the missing executable evidence above is added.
+Under the repository's current reference-domain standard, MRO is promoted to
+**Reference implementation**.
 
-The StateChart is a useful foundation, but a StateChart plus durable scheduling is not
-equivalent to a complete operational reference domain.
+The promotion is based on executable evidence for the canonical happy path,
+resource and material constraints, cancellation, emergency preemption, scenarios,
+and restart equivalence across representative happy and sad paths.
