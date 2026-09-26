@@ -8,6 +8,7 @@ from sose.core.runtime import (
     DurableStoreItem,
     StoreDefinition,
     StoreGetRequest,
+    StoreGetResult,
     StorePutIntent,
 )
 from sose.persistence.base import Persistence
@@ -153,6 +154,9 @@ class DurableStoreManager:
         if any(
             request.request_id == request_id
             for request in self._persistence.store_get_requests()
+        ) or any(
+            result.request_id == request_id
+            for result in self._persistence.store_get_results()
         ):
             raise ValueError(f"store get request already exists: {request_id}")
         if filter_key is not None and definition.kind != "filter":
@@ -207,7 +211,24 @@ class DurableStoreManager:
             uow.save_store_item(item)
         return item
 
-    def commit_get(self, request_id: str, backend_item: StoreItem) -> DurableStoreItem:
+    def commit_get(
+        self,
+        request_id: str,
+        backend_item: StoreItem,
+        *,
+        completed_at: datetime,
+    ) -> StoreGetResult:
+        existing_result = next(
+            (
+                result
+                for result in self._persistence.store_get_results()
+                if result.request_id == request_id
+            ),
+            None,
+        )
+        if existing_result is not None:
+            return existing_result
+
         request = next(
             (
                 request
@@ -249,10 +270,20 @@ class DurableStoreManager:
             priority=intent.priority,
             sequence=intent.sequence,
         )
+        result = StoreGetResult(
+            request_id=request.request_id,
+            store_name=request.store_name,
+            item=consumed,
+            completed_at=completed_at,
+            sequence=request.sequence,
+        )
 
         with self._persistence.transaction() as uow:
             persisted_request = uow.get_store_get_request(request_id)
             if persisted_request != request:
+                existing = uow.get_store_get_result(request_id)
+                if existing is not None:
+                    return existing
                 raise RuntimeError(f"store get request changed: {request_id}")
 
             persisted_item = uow.get_store_item(backend_item.item_id)
@@ -265,8 +296,9 @@ class DurableStoreManager:
                 uow.delete_store_item(backend_item.item_id)
             if persisted_intent is not None:
                 uow.delete_store_put_intent(backend_item.item_id)
+            uow.save_store_get_result(result)
             uow.delete_store_get_request(request_id)
-        return consumed
+        return result
 
     def _submit_put_intent(
         self,
@@ -298,15 +330,29 @@ class DurableStoreManager:
         predicate = self._filter(request.filter_key) if request.filter_key is not None else None
 
         def received(item: StoreItem) -> None:
-            consumed = self.commit_get(request.request_id, item)
+            result = self.commit_get(
+                request.request_id,
+                item,
+                completed_at=backend.now,
+            )
             if on_received is not None:
-                on_received(consumed)
+                on_received(result.item)
 
         backend.get_store(
             request.store_name,
             request_id=request.request_id,
             filter=predicate,
             on_received=received,
+        )
+
+    def result(self, request_id: str) -> StoreGetResult | None:
+        return next(
+            (
+                result
+                for result in self._persistence.store_get_results()
+                if result.request_id == request_id
+            ),
+            None,
         )
 
     def _definition(self, name: str) -> StoreDefinition:
@@ -334,6 +380,7 @@ class DurableStoreManager:
                 *(item.sequence for item in self._persistence.store_items()),
                 *(intent.sequence for intent in self._persistence.store_put_intents()),
                 *(request.sequence for request in self._persistence.store_get_requests()),
+                *(result.sequence for result in self._persistence.store_get_results()),
             ],
             default=0,
         ) + 1
