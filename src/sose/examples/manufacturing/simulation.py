@@ -283,6 +283,135 @@ def seed_material(
     backend.run_until(backend.now)
 
 
+
+def reconcile_breakdown(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: ManufacturingEntities,
+) -> bool:
+    """Preempt production capacity and make the breakdown durable in business state."""
+
+    repair_request = f"machine-repair:{entities.production_order_id}"
+    if not _preemptive_request_exists(persistence, repair_request):
+        engine.preemptive_resources.request(
+            backend,
+            resource_name="machine",
+            request_id=repair_request,
+            requested_at=backend.now,
+            priority=1,
+            preempt=True,
+        )
+    backend.run_until(backend.now)
+
+    repair = _preemptive_reservation(persistence, repair_request)
+    if repair is None:
+        return False
+
+    preempted = any(
+        result.preempting_request_id == repair_request
+        for result in persistence.resource_preemption_results()
+    )
+    if not preempted:
+        return False
+
+    order = persistence.entity("production_order", entities.production_order_id)
+    operation = persistence.entity("manufacturing_operation", entities.operation_id)
+    if order is None or operation is None:
+        raise RuntimeError("manufacturing entities were not persisted")
+
+    if order.state in {"setup", "producing"}:
+        command = engine.context.commands.create(
+            "breakdown",
+            target=order,
+            correlation_id=flow_correlation_id(),
+            key=("manufacturing-breakdown", order.id, "breakdown"),
+        )
+        engine.dispatch(command)
+
+    operation = persistence.entity("manufacturing_operation", entities.operation_id)
+    if operation is not None and operation.state in {"ready_state", "running"}:
+        command = engine.context.commands.create(
+            "block",
+            target=operation,
+            correlation_id=flow_correlation_id(),
+            key=("manufacturing-breakdown", operation.id, "block"),
+        )
+        engine.dispatch(command)
+
+    return True
+
+
+def reconcile_repair(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: ManufacturingEntities,
+) -> bool:
+    """Release emergency repair and reacquire machine before resuming production."""
+
+    repair_request = f"machine-repair:{entities.production_order_id}"
+    production_request = f"machine:{entities.production_order_id}"
+
+    repair = _preemptive_reservation(persistence, repair_request)
+    if repair is not None:
+        engine.preemptive_resources.release(backend, repair.reservation_id)
+        backend.run_until(backend.now)
+
+    if not _preemptive_request_exists(persistence, production_request):
+        engine.preemptive_resources.request(
+            backend,
+            resource_name="machine",
+            request_id=production_request,
+            requested_at=backend.now,
+            priority=100,
+            preempt=False,
+        )
+    backend.run_until(backend.now)
+
+    machine = _preemptive_reservation(persistence, production_request)
+    if machine is None:
+        return False
+
+    order = persistence.entity("production_order", entities.production_order_id)
+    operation = persistence.entity("manufacturing_operation", entities.operation_id)
+    if order is None or operation is None:
+        raise RuntimeError("manufacturing entities were not persisted")
+
+    if order.state == "machine_down":
+        command = engine.context.commands.create(
+            "repair",
+            target=order,
+            correlation_id=flow_correlation_id(),
+            key=("manufacturing-breakdown", order.id, "repair"),
+        )
+        engine.dispatch(command)
+
+    operation = persistence.entity("manufacturing_operation", entities.operation_id)
+    if operation is not None and operation.state == "blocked":
+        command = engine.context.commands.create(
+            "unblock",
+            target=operation,
+            correlation_id=flow_correlation_id(),
+            key=("manufacturing-breakdown", operation.id, "unblock"),
+        )
+        engine.dispatch(command)
+        operation = persistence.entity("manufacturing_operation", entities.operation_id)
+
+    if operation is not None and operation.state == "ready_state":
+        command = engine.context.commands.create(
+            "start",
+            target=operation,
+            correlation_id=flow_correlation_id(),
+            key=("manufacturing-breakdown", operation.id, "restart"),
+        )
+        engine.dispatch(command)
+
+    return True
+
+
 def reconcile_material_availability(
     persistence: MemoryPersistence,
     engine: Engine,
