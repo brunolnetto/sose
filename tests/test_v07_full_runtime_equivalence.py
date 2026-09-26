@@ -18,6 +18,7 @@ from sose.domain.registry import DomainRegistry, EntityType
 from sose.examples.mro.entities import WorkOrder
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
+from sose.scenarios import AttributeEffect, EventTrigger, Scenario
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 
@@ -30,7 +31,21 @@ def build(store: MemoryPersistence, *, now: datetime) -> tuple[SimulationContext
     )
     registry = DomainRegistry()
     registry.register(EntityType("work_order", WorkOrderChart))
-    return context, Engine(context=context, registry=registry, persistence=store)
+    scenario = Scenario(
+        name="runtime-marker",
+        trigger=EventTrigger(
+            event="entity.state_transition",
+            entity_type="work_order",
+        ),
+        duration=timedelta(hours=8),
+        effects=(AttributeEffect("runtime.marker", "active"),),
+    )
+    return context, Engine(
+        context=context,
+        registry=registry,
+        persistence=store,
+        scenarios=(scenario,),
+    )
 
 
 def seed(store: MemoryPersistence) -> str:
@@ -47,7 +62,7 @@ def seed(store: MemoryPersistence) -> str:
     engine.preemptive_resources.define(
         PreemptiveResourceDefinition("crew", capacity=1)
     )
-    engine.stores.define(StoreDefinition("inbox", kind="fifo", capacity=2))
+    engine.stores.define(StoreDefinition("inbox", kind="fifo", capacity=1))
     engine.containers.define(
         ContainerDefinition("fuel", capacity=100.0, initial=20.0)
     )
@@ -84,6 +99,13 @@ def start_operational_state(
         requested_at=ORIGIN,
     )
     backend.run_until(ORIGIN)
+    engine.resources.request(
+        backend,
+        resource_name="bay",
+        request_id="bay-waiter",
+        requested_at=ORIGIN,
+    )
+    backend.run_until(ORIGIN)
 
     engine.preemptive_resources.request(
         backend,
@@ -107,14 +129,15 @@ def start_operational_state(
         backend,
         store_name="inbox",
         item_id="part-1",
-        value={"sku": "bearing"},
+        value={"sku": "bearing-1"},
         requested_at=ORIGIN,
     )
     backend.run_until(ORIGIN)
-    engine.stores.get(
+    engine.stores.put(
         backend,
         store_name="inbox",
-        request_id="consume-part-1",
+        item_id="part-2",
+        value={"sku": "bearing-2"},
         requested_at=ORIGIN,
     )
     backend.run_until(ORIGIN)
@@ -123,14 +146,63 @@ def start_operational_state(
         backend,
         container_name="fuel",
         request_id="consume-fuel",
-        amount=10.0,
+        amount=30.0,
         requested_at=ORIGIN,
     )
     backend.run_until(ORIGIN)
 
     assert store.entity("work_order", work_order_id).state == "planned"
+    assert [d.request_id for d in store.resource_demands()] == ["bay-waiter"]
+    assert [i.item_id for i in store.store_put_intents()] == ["part-2"]
+    assert [i.request_id for i in store.container_operation_intents()] == [
+        "consume-fuel"
+    ]
     return engine, backend
 
+
+def assert_rebuilt_backend_pending_state(backend: SimPyBackend) -> None:
+    assert backend.resource_snapshot("bay").in_use == 1
+    assert backend.resource_snapshot("bay").queued == 1
+    assert backend.preemptive_resource_snapshot("crew").in_use == 1
+    assert backend.store_snapshot("inbox").size == 1
+    assert backend.store_snapshot("inbox").queued_puts == 1
+    assert backend.container_snapshot("fuel").level == 20.0
+    assert backend.container_snapshot("fuel").queued_gets == 1
+
+
+def complete_pending_operations(
+    store: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+) -> None:
+    holder = next(
+        reservation
+        for reservation in store.resource_reservations()
+        if reservation.request_id == "bay-holder"
+    )
+    engine.resources.release(backend, holder.reservation_id)
+
+    engine.stores.get(
+        backend,
+        store_name="inbox",
+        request_id="consume-part-1",
+        requested_at=backend.now,
+    )
+    engine.containers.put(
+        backend,
+        container_name="fuel",
+        request_id="refuel",
+        amount=20.0,
+        requested_at=backend.now,
+    )
+    backend.run_until(backend.now)
+
+    assert [r.request_id for r in store.resource_reservations()] == ["bay-waiter"]
+    assert store.resource_demands() == ()
+    assert [i.item_id for i in store.store_items()] == ["part-2"]
+    assert store.store_put_intents() == ()
+    assert store.container_operation_intents() == ()
+    assert store.container_states()[0].level == 10.0
 
 def durable_snapshot(store: MemoryPersistence, work_order_id: str) -> dict[str, object]:
     return {
@@ -163,7 +235,10 @@ def durable_snapshot(store: MemoryPersistence, work_order_id: str) -> dict[str, 
 def run_continuous() -> tuple[MemoryPersistence, str]:
     store = MemoryPersistence()
     work_order_id = seed(store)
-    _, backend = start_operational_state(store, work_order_id)
+    engine, backend = start_operational_state(store, work_order_id)
+    backend.run_until(ORIGIN + timedelta(hours=1))
+    assert store.scenario_state() is not None
+    complete_pending_operations(store, engine, backend)
     backend.run_until(ORIGIN + timedelta(hours=4))
     return store, work_order_id
 
@@ -174,17 +249,36 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
     _, backend1 = start_operational_state(store, work_order_id)
 
     backend1.run_until(ORIGIN + timedelta(hours=1))
-    for boundary in (2, 3, 4):
+    assert store.scenario_state() is not None
+
+    position = store.simulation_position()
+    assert position is not None
+    _, engine2 = build(store, now=position.logical_time)
+    backend2 = SimPyBackend(origin=position.logical_time)
+    engine2.rebuild_backend(backend2)
+    backend2.run_until(position.logical_time)
+    assert_rebuilt_backend_pending_state(backend2)
+    complete_pending_operations(store, engine2, backend2)
+
+    backend2.run_until(ORIGIN + timedelta(hours=2))
+    for boundary in (3, 4):
         position = store.simulation_position()
         assert position is not None
-        context, engine = build(store, now=position.logical_time)
+        _, engine = build(store, now=position.logical_time)
         backend = SimPyBackend(origin=position.logical_time)
         engine.rebuild_backend(backend)
-        assert context.clock.now == position.logical_time
+        backend.run_until(position.logical_time)
+
+        assert backend.resource_snapshot("bay").in_use == 1
+        assert backend.resource_snapshot("bay").queued == 0
+        assert backend.preemptive_resource_snapshot("crew").in_use == 1
+        assert backend.store_snapshot("inbox").size == 1
+        assert backend.store_snapshot("inbox").queued_puts == 0
+        assert backend.container_snapshot("fuel").level == 10.0
+
         backend.run_until(ORIGIN + timedelta(hours=boundary))
 
     return store, work_order_id
-
 
 def test_v07_full_durable_runtime_is_multi_restart_equivalent():
     continuous_store, continuous_id = run_continuous()
@@ -198,17 +292,19 @@ def test_v07_full_durable_runtime_is_multi_restart_equivalent():
     assert restarted_store.entity("work_order", restarted_id).state == "closed"
     assert restarted_store.scheduled_work() == ()
     assert [r.request_id for r in restarted_store.resource_reservations()] == [
-        "bay-holder"
+        "bay-waiter"
     ]
     assert [r.request_id for r in restarted_store.preemptive_resource_reservations()] == [
         "emergency-crew"
     ]
     assert len(restarted_store.resource_preemption_results()) == 1
-    assert restarted_store.store_items() == ()
+    assert [i.item_id for i in restarted_store.store_items()] == ["part-2"]
     assert [r.request_id for r in restarted_store.store_get_results()] == [
         "consume-part-1"
     ]
     assert restarted_store.container_states()[0].level == 10.0
     assert [r.request_id for r in restarted_store.container_operation_results()] == [
-        "consume-fuel"
+        "consume-fuel",
+        "refuel",
     ]
+    assert restarted_store.scenario_state() is not None
