@@ -523,6 +523,20 @@ class SimPyBackend:
         request.callbacks.append(granted)
         return public_request
 
+    def cancel_resource_request(self, request_id: str) -> bool:
+        if request_id in self._request_to_lease:
+            return False
+        for state in self._resources.values():
+            request = state.requests.get(request_id)
+            if request is None:
+                continue
+            if request.triggered:
+                return False
+            request.cancel()
+            state.requests.pop(request_id, None)
+            return True
+        return False
+
     def release_resource(self, lease: ResourceLease | str) -> None:
         lease_id = lease.lease_id if isinstance(lease, ResourceLease) else lease
         state = self._leases.pop(lease_id, None)
@@ -640,6 +654,20 @@ class SimPyBackend:
 
         self._env.process(lifecycle())
         return public_request
+
+    def cancel_preemptive_resource_request(self, request_id: str) -> bool:
+        if request_id in self._request_to_lease:
+            return False
+        for state in self._preemptive_resources.values():
+            request = state.requests.get(request_id)
+            if request is None:
+                continue
+            if request.triggered:
+                return False
+            request.cancel()
+            state.requests.pop(request_id, None)
+            return True
+        return False
 
     def release_preemptive_resource(self, lease: ResourceLease | str) -> None:
         lease_id = lease.lease_id if isinstance(lease, ResourceLease) else lease
