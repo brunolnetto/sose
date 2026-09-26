@@ -17,7 +17,7 @@ def test_manufacturing_happy_path_reaches_completed_output():
 
     assert persistence.entity("production_order", ids.production_order_id).state == "completed"
     assert persistence.entity("manufacturing_operation", ids.operation_id).state == "done"
-    assert persistence.store_items()[0].item_id == "wip-1"
+    assert persistence.store_items() == ()
     assert {s.name: s.level for s in persistence.container_states()} == {
         "finished_goods": 10.0,
         "raw_material": 0.0,
