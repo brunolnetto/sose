@@ -169,18 +169,19 @@ class DurablePreemptiveResourceManager:
         if demand is None:
             return False
 
+        if not backend.cancel_preemptive_resource_request(request_id):
+            return False
+
         with self._persistence.transaction() as uow:
             if uow.get_preemptive_resource_demand(request_id) != demand:
-                return False
+                raise RuntimeError(
+                    f"preemptive resource demand changed during cancellation: {request_id}"
+                )
             uow.delete_preemptive_resource_demand(request_id)
 
         self._pending_callbacks.pop(request_id, None)
         self._pending_grants.pop(request_id, None)
         self._pending_preemptions.pop(request_id, None)
-        if not backend.cancel_preemptive_resource_request(request_id):
-            raise RuntimeError(
-                f"backend preemptive resource request is not pending: {request_id}"
-            )
         return True
 
     def release(self, backend, reservation_id: str) -> bool:
