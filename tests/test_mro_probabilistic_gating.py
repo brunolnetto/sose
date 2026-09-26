@@ -1,6 +1,8 @@
 import pytest
 
 from sose.examples.mro.simulation import build_runtime, seed_reference
+from sose.examples.mro.statecharts import WorkOrderChart
+from sose.statecharts.topology import policy_from_statechart
 from sose.persistence.memory import MemoryPersistence
 from sose.probability.graph import NoProbabilisticTransition
 
@@ -28,8 +30,7 @@ def test_mro_reconciler_only_events_are_not_probabilistically_dispatchable(
     with persistence.transaction() as uow:
         uow.save_entity(work_order)
 
-    current = persistence.entity("work_order", ids.work_order_id)
-    policy = engine.context.statecharts.policy_for(current)
+    policy = policy_from_statechart(WorkOrderChart())
 
     assert policy.is_probabilistically_eligible(blocked_event) is False
 
