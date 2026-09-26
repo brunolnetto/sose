@@ -60,7 +60,38 @@ Which durable semantic truth belongs to this entity.
 
 Related truths that belong to inventory, resources, scenarios, other entities, etc.
 
-## 4. StateCharts
+## 4. Persistent data model / ERD
+
+Every reference domain must document persistence at two levels.
+
+### 4.1 Business entities ERD
+
+Show persistent domain entities and their business relationships. Use domain
+terminology and avoid runtime implementation detail.
+
+### 4.2 Durable operational ERD
+
+Show the relevant subset of SOSE durable primitives that make the process
+restart-safe: commands/scheduled work, resources, Store/Container state, preemption,
+scenario state, and events as applicable.
+
+Reuse the canonical vocabulary from
+[`docs/architecture/persistent-model.md`](../architecture/persistent-model.md).
+
+The ERD is semantic, not a promise of a physical SQL schema. Relationships should be
+grounded in stable identifiers, names, and ownership actually present in the runtime.
+
+### 4.3 Persistence ownership
+
+Include a compact table:
+
+| Business fact | Durable owner |
+|---|---|
+
+The table should make clear which fact is authoritative and which related backend
+objects are ephemeral/reconstructible.
+
+## 5. StateCharts
 
 Document every executable entity StateChart.
 
@@ -76,12 +107,12 @@ Recommended table:
 
 State names and command names must match the implementation exactly.
 
-## 5. Process specifications
+## 6. Process specifications
 
 StateCharts explain one entity at a time. Process specifications explain how entities
 and durable primitives interact.
 
-### 5.1 Happy path
+### 6.1 Happy path
 
 Describe the canonical successful end-to-end process.
 
@@ -92,7 +123,7 @@ For each step explain:
 - effects committed before the next lifecycle claim;
 - resulting state.
 
-### 5.2 Sad paths
+### 6.2 Sad paths
 
 Each representative abnormal flow is a first-class mini-spec.
 
@@ -116,7 +147,7 @@ How the flow resumes, compensates, retries, reworks, or terminates.
 
 A reference domain must not be promoted if only the happy path is executable.
 
-## 6. Commands and domain events
+## 7. Commands and domain events
 
 Document commands as explicit business intents.
 
@@ -127,7 +158,7 @@ Recommended table:
 
 Explain emitted domain events and their causal/correlation semantics.
 
-## 7. Invariants
+## 8. Invariants
 
 Assign stable IDs.
 
@@ -149,7 +180,7 @@ Invariants must cover at least:
 - business-exception semantics;
 - restart behavior.
 
-## 8. Durable truth and ownership
+## 9. Durable truth and ownership
 
 Document where the authoritative state lives.
 
@@ -160,7 +191,7 @@ Recommended table:
 
 Also state what is explicitly ephemeral/reconstructible.
 
-## 9. Restart semantics
+## 10. Restart semantics
 
 Define the restart contract in domain language.
 
@@ -173,7 +204,7 @@ List meaningful crash boundaries such as:
 
 Define semantic equivalence precisely.
 
-## 10. Scenario specification
+## 11. Scenario specification
 
 For each scenario document:
 
@@ -184,7 +215,7 @@ For each scenario document:
 - domain interpretation;
 - what the scenario does *not* directly mutate.
 
-## 11. Example runs
+## 12. Example runs
 
 Include compact narrative traces for:
 
@@ -193,7 +224,7 @@ Include compact narrative traces for:
 3. at least one business exception/rework/rejection;
 4. restart of a representative sad path.
 
-## 12. Executable evidence
+## 13. Executable evidence
 
 Map specification claims to implementation/tests.
 
@@ -207,13 +238,14 @@ Recommended table:
 A domain is reference-grade only when all of the following hold:
 
 1. persistent entities and explicit StateCharts exist;
-2. state and command terminology in docs exactly matches code;
-3. one canonical happy path is executable;
-4. representative sad paths are executable;
-5. resource/capacity constraints gate lifecycle transitions where applicable;
-6. physical/quantitative effects are durable before business claims;
-7. scenarios are explicit and restart-safe where applicable;
-8. happy-path restart equivalence is tested;
-9. representative sad-path restart equivalence is tested;
-10. durable semantic truth is sufficient to reconstruct backend execution;
-11. the specification maps each important rule to executable evidence.
+2. the business ERD and relevant durable operational ERD are documented;
+3. state and command terminology in docs exactly matches code;
+4. one canonical happy path is executable;
+5. representative sad paths are executable;
+6. resource/capacity constraints gate lifecycle transitions where applicable;
+7. physical/quantitative effects are durable before business claims;
+8. scenarios are explicit and restart-safe where applicable;
+9. happy-path restart equivalence is tested;
+10. representative sad-path restart equivalence is tested;
+11. durable semantic truth is sufficient to reconstruct backend execution;
+12. the specification maps each important rule to executable evidence.

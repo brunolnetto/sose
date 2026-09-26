@@ -158,9 +158,125 @@ Represents a need to consume procured material.
 - supplier state;
 - receipt state.
 
-## 4. StateCharts
+## 4. Persistent data model / ERD
 
-### 4.1 Requisition StateChart
+The diagrams below describe the persistent semantic model of the executable P2P
+reference slice. Requisition, PurchaseOrder, Receipt, and MaterialDemand are created
+under one deterministic process correlation, but the current entity payloads do not
+persist direct foreign-key fields between those entities.
+
+### 4.1 Business entities ERD
+
+```mermaid
+erDiagram
+    REQUISITION ||--|| PURCHASE_ORDER : "reference flow correlates"
+    PURCHASE_ORDER ||--|| RECEIPT : "reference flow correlates"
+    RECEIPT ||--|| MATERIAL_DEMAND : "inventory flow satisfies"
+
+    REQUISITION {
+        string id
+        string state
+        string sku
+        float quantity
+        int version
+    }
+
+    PURCHASE_ORDER {
+        string id
+        string state
+        string sku
+        float quantity
+        string supplier
+        int version
+    }
+
+    RECEIPT {
+        string id
+        string state
+        string sku
+        float quantity
+        int version
+    }
+
+    MATERIAL_DEMAND {
+        string id
+        string state
+        string sku
+        float quantity
+        int version
+    }
+```
+
+These relationships describe the canonical reference process, not physical
+entity-to-entity foreign keys. Cross-entity traceability is provided by deterministic
+identity and shared correlation/causation metadata.
+
+### 4.2 Durable operational ERD
+
+```mermaid
+erDiagram
+    REQUISITION ||--o{ COMMAND : "targeted by"
+    PURCHASE_ORDER ||--o{ COMMAND : "targeted by"
+    RECEIPT ||--o{ COMMAND : "targeted by"
+    MATERIAL_DEMAND ||--o{ COMMAND : "targeted by"
+
+    REQUISITION ||--o{ DOMAIN_EVENT : "emits"
+    PURCHASE_ORDER ||--o{ DOMAIN_EVENT : "emits"
+    RECEIPT ||--o{ DOMAIN_EVENT : "emits"
+    MATERIAL_DEMAND ||--o{ DOMAIN_EVENT : "emits"
+    COMMAND ||--o| SCHEDULED_WORK : "scheduled as"
+
+    RESOURCE_DEFINITION ||--o{ RESOURCE_DEMAND : "dock / inspector demand"
+    RESOURCE_DEMAND ||--o| RESOURCE_RESERVATION : "capacity grant"
+
+    STORE_DEFINITION ||--o{ DURABLE_STORE_ITEM : "received lot identity"
+    STORE_DEFINITION ||--o{ STORE_GET_REQUEST : "allocation withdrawal"
+    STORE_GET_REQUEST ||--o| STORE_GET_RESULT : "terminal lot effect"
+
+    CONTAINER_DEFINITION ||--|| CONTAINER_STATE : "inventory balance"
+    CONTAINER_DEFINITION ||--o{ CONTAINER_OPERATION_INTENT : "quantity operation"
+    CONTAINER_OPERATION_INTENT ||--o| CONTAINER_OPERATION_RESULT : "terminal quantity effect"
+
+    SCENARIO_RUNTIME_STATE ||--o{ DOMAIN_EVENT : "changes operational context"
+```
+
+Relevant named durable objects are:
+
+- Resources: `receiving_dock`, `inspector`;
+- Store: `received_lots`;
+- Container: `inventory`;
+- commands/scheduled work for the requisition, purchase-order, and receipt lifecycle;
+- durable Store/Container effects for stocking and allocation;
+- scenario state and logical simulation position.
+
+The Store preserves lot identity while the Container preserves quantity. Allocation
+must establish joint feasibility before withdrawing either representation.
+
+### 4.3 Persistence ownership
+
+| Business fact | Durable owner |
+|---|---|
+| requisition lifecycle | `Requisition.state` |
+| supplier-order lifecycle | `PurchaseOrder.state` |
+| receiving lifecycle | `Receipt.state` |
+| downstream demand lifecycle | `MaterialDemand.state` |
+| receiving-dock ownership | `ResourceDemand` / `ResourceReservation` |
+| inspector ownership | `ResourceDemand` / `ResourceReservation` |
+| received lot identity | Store `received_lots` |
+| available inventory quantity | Container `inventory` |
+| terminal lot allocation | `StoreGetResult` |
+| terminal quantity allocation | `ContainerOperationResult` |
+| lifecycle history | `DomainEvent` |
+| future lifecycle work | `Command` + `ScheduledWork` |
+| scenario intervention state | `ScenarioRuntimeState` |
+| logical recovery boundary | `SimulationPosition` |
+
+The complete runtime vocabulary is documented in
+[`docs/architecture/persistent-model.md`](../../architecture/persistent-model.md).
+
+## 5. StateCharts
+
+### 5.1 Requisition StateChart
 
 ```text
 requested
@@ -174,7 +290,7 @@ requested
 | `requested` | `reject` | requisition denied | `rejected` |
 | `approved` | `order` | supplier order may be created | `ordered` |
 
-### 4.2 PurchaseOrder StateChart
+### 5.2 PurchaseOrder StateChart
 
 ```text
 created
@@ -206,7 +322,7 @@ Cancellation is legal from `created`, `submitted`, and `confirmed`.
 | `in_transit` | `receive` | durable lead-time work reaches delivery | `received` | ScheduledWork execution |
 | `received` | `close` | PO receiving obligation satisfied | `closed` | command/event |
 
-### 4.3 Receipt StateChart
+### 5.3 Receipt StateChart
 
 ```text
 pending
@@ -231,7 +347,7 @@ inspected
 | `receiving` / `partial` / `inspected` | `reject` | receipt rejected | `rejected` | transition event |
 | `inspected` | `stock` | lot + quantity effects durable | `stocked` | Store + Container results |
 
-### 4.4 MaterialDemand StateChart
+### 5.4 MaterialDemand StateChart
 
 ```text
 open
@@ -259,9 +375,9 @@ Cancellation is legal from `open`, `waiting_inventory`, and `backordered`.
 | `open` / `waiting_inventory` / `backordered` | `allocate` | Store + Container withdrawals terminal | `allocated` | terminal inventory results |
 | `allocated` | `consume` | allocation completed | `consumed` | transition event |
 
-## 5. Process specifications
+## 6. Process specifications
 
-### 5.1 Happy path
+### 6.1 Happy path
 
 ```text
 Requisition(requested)
@@ -303,7 +419,7 @@ consumed
 The receipt is not considered stocked before both inventory representations are
 durable. Material is not considered allocated before both withdrawals are terminal.
 
-### 5.2 Sad path — receiving contention
+### 6.2 Sad path — receiving contention
 
 **Trigger**
 
@@ -322,7 +438,7 @@ Resource demand/reservation state survives restart.
 
 When capacity is released, the pending request is promoted and the lifecycle may advance.
 
-### 5.3 Sad path — shortage and backorder
+### 6.3 Sad path — shortage and backorder
 
 **Trigger**
 
@@ -355,7 +471,7 @@ restart.
 
 Replenishment makes the inventory operations satisfiable exactly once.
 
-### 5.4 Sad path — partial receipt
+### 6.4 Sad path — partial receipt
 
 **Trigger**
 
@@ -389,7 +505,7 @@ The partial lot and received quantity remain intact. Residual demand is explicit
 Shortage is detected before withdrawal. A partial Store lot must not be consumed while
 the corresponding Container withdrawal remains blocked.
 
-### 5.5 Sad path — rejected receipt
+### 6.5 Sad path — rejected receipt
 
 **Trigger**
 
@@ -411,7 +527,7 @@ rejected
 - no Container inventory quantity is added;
 - held resources are released.
 
-### 5.6 External disruptions — scenarios
+### 6.6 External disruptions — scenarios
 
 Representative finite scenarios include:
 
@@ -422,7 +538,7 @@ Representative finite scenarios include:
 Scenarios affect operational context. They do not bypass lifecycle or inventory
 invariants.
 
-## 6. Commands and domain events
+## 7. Commands and domain events
 
 | Command | Target | Meaning |
 |---|---|---|
@@ -436,7 +552,7 @@ Successful transitions emit immutable `entity.state_transition` events.
 The end-to-end flow uses one stable correlation identity so requisition, PO, receipt,
 stocking, and material consumption can be reconstructed as one causal process.
 
-## 7. Invariants
+## 8. Invariants
 
 **P2P-01 — Requisition authorization**
 
@@ -489,7 +605,7 @@ The operational flow uses stable correlation so related transitions remain one t
 Continuous and restarted executions must produce equivalent semantic outcomes across
 representative happy and sad paths.
 
-## 8. Durable truth and ownership
+## 9. Durable truth and ownership
 
 | Concept | Durable owner | Why |
 |---|---|---|
@@ -507,7 +623,7 @@ representative happy and sad paths.
 Backend-native SimPy environments, requests, events, callbacks, queues, and generators
 are ephemeral and reconstructible.
 
-## 9. Restart semantics
+## 10. Restart semantics
 
 Meaningful crash boundaries include:
 
@@ -522,7 +638,7 @@ Meaningful crash boundaries include:
 Semantic equivalence means the same durable entity states, inventory quantities and
 items, terminal request results, resource truth, scenario state, and causal event history.
 
-## 10. Scenario specification
+## 11. Scenario specification
 
 ### Supplier delay
 
@@ -542,7 +658,7 @@ items, terminal request results, resource truth, scenario state, and causal even
 - reduces effective receiving capacity context;
 - contention remains governed by resource semantics.
 
-## 11. Example runs
+## 12. Example runs
 
 ### A. Nominal
 
@@ -589,7 +705,7 @@ receipt arrives
 → inventory remains 0
 ```
 
-## 12. Executable evidence
+## 13. Executable evidence
 
 | Specification area | Implementation | Tests |
 |---|---|---|

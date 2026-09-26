@@ -127,9 +127,106 @@ Represents the spare-part requirement associated with the work order.
 - Container balance;
 - WorkOrder lifecycle state.
 
-## 4. StateCharts
+## 4. Persistent data model / ERD
 
-### 4.1 WorkOrder StateChart
+The MRO diagrams distinguish business entities from the SOSE primitives that make
+their operation durable. WorkOrder and PartDemand participate in the same deterministic
+reference flow, but the current entity payloads do not contain a direct foreign-key
+field linking them.
+
+### 4.1 Business entities ERD
+
+```mermaid
+erDiagram
+    WORK_ORDER ||--|| PART_DEMAND : "reference flow correlates"
+
+    WORK_ORDER {
+        string id
+        string state
+        string priority
+        string part_sku
+        float quantity
+        int version
+    }
+
+    PART_DEMAND {
+        string id
+        string state
+        string sku
+        float quantity
+        int version
+    }
+```
+
+The relationship is the canonical one-work-order/one-part-demand reference process.
+Its traceability comes from deterministic flow identity and shared lifecycle
+correlation rather than a persisted entity foreign key.
+
+### 4.2 Durable operational ERD
+
+```mermaid
+erDiagram
+    WORK_ORDER ||--o{ COMMAND : "targeted by"
+    WORK_ORDER ||--o{ DOMAIN_EVENT : "emits"
+    PART_DEMAND ||--o{ COMMAND : "targeted by"
+    PART_DEMAND ||--o{ DOMAIN_EVENT : "emits"
+    COMMAND ||--o| SCHEDULED_WORK : "scheduled release"
+
+    RESOURCE_DEFINITION ||--o{ RESOURCE_DEMAND : "technician demand"
+    RESOURCE_DEMAND ||--o| RESOURCE_RESERVATION : "technician grant"
+
+    PREEMPTIVE_RESOURCE_DEFINITION ||--o{ PREEMPTIVE_RESOURCE_DEMAND : "bay demand"
+    PREEMPTIVE_RESOURCE_DEMAND ||--o| PREEMPTIVE_RESOURCE_RESERVATION : "bay grant"
+    PREEMPTIVE_RESOURCE_RESERVATION ||--o{ RESOURCE_PREEMPTION_RESULT : "emergency displacement"
+
+    STORE_DEFINITION ||--o{ DURABLE_STORE_ITEM : "spare-part lot"
+    STORE_DEFINITION ||--o{ STORE_GET_REQUEST : "part withdrawal"
+    STORE_GET_REQUEST ||--o| STORE_GET_RESULT : "terminal lot effect"
+
+    CONTAINER_DEFINITION ||--|| CONTAINER_STATE : "spare-part quantity"
+    CONTAINER_DEFINITION ||--o{ CONTAINER_OPERATION_INTENT : "quantity withdrawal"
+    CONTAINER_OPERATION_INTENT ||--o| CONTAINER_OPERATION_RESULT : "terminal quantity effect"
+
+    SCENARIO_RUNTIME_STATE ||--o{ DOMAIN_EVENT : "emergency / availability context"
+```
+
+Relevant named durable objects are:
+
+- Resource: `technician`;
+- PreemptiveResource: `maintenance_bay`;
+- Store: `spare_part_lots`;
+- Container: `spare_parts`;
+- `ResourcePreemptionResult` for emergency displacement;
+- scheduled release and lifecycle commands/events;
+- scenario runtime state and simulation position.
+
+Spare-part identity and spare-part quantity are deliberately separate durable facts.
+The reconciler requires both to be feasible before beginning the physical issue.
+
+### 4.3 Persistence ownership
+
+| Business fact | Durable owner |
+|---|---|
+| maintenance lifecycle | `WorkOrder.state` |
+| part-demand lifecycle | `PartDemand.state` |
+| technician demand/ownership | `ResourceDemand` / `ResourceReservation` |
+| bay demand/ownership | `PreemptiveResourceDemand` / `PreemptiveResourceReservation` |
+| emergency displacement | `ResourcePreemptionResult` |
+| spare-part lot identity | Store `spare_part_lots` |
+| spare-part quantity | Container `spare_parts` |
+| terminal lot consumption | `StoreGetResult` |
+| terminal quantity consumption | `ContainerOperationResult` |
+| scheduled release | `Command` + `ScheduledWork` |
+| lifecycle history | `DomainEvent` |
+| scenario intervention state | `ScenarioRuntimeState` |
+| logical recovery boundary | `SimulationPosition` |
+
+The complete runtime vocabulary is documented in
+[`docs/architecture/persistent-model.md`](../../architecture/persistent-model.md).
+
+## 5. StateCharts
+
+### 5.1 WorkOrder StateChart
 
 ```text
 planned
@@ -172,7 +269,7 @@ planned
 | `completed` | `close` | administratively close work | `closed` | transition event |
 | outstanding states | `cancel` | terminate outstanding work | `cancelled` | transition event |
 
-### 4.2 PartDemand StateChart
+### 5.2 PartDemand StateChart
 
 ```text
 open
@@ -210,9 +307,9 @@ operational evidence outside the StateChart.
 The corresponding reconciler establishes that evidence first and only then dispatches
 the transition explicitly.
 
-## 5. Process specifications
+## 6. Process specifications
 
-### 5.1 Canonical happy path
+### 6.1 Canonical happy path
 
 ```text
 WorkOrder(planned)
@@ -238,7 +335,7 @@ released
 Parts are consumed before `in_progress` is claimed. Technician and maintenance-bay
 reservations gate active work. Capacity is released after closure.
 
-### 5.2 Durable scheduling path
+### 6.2 Durable scheduling path
 
 The original demo remains a useful focused path:
 
@@ -255,9 +352,9 @@ persist WorkOrder(planned)
 This path provides focused evidence for scheduler atomicity and stale-callback
 idempotence, while the reference happy path provides the full domain vertical slice.
 
-## 6. Sad-path specifications
+## 7. Sad-path specifications
 
-### 6.1 Spare-part shortage
+### 7.1 Spare-part shortage
 
 **Trigger**
 
@@ -292,7 +389,7 @@ in_progress
 Replenishment restores durable inventory. The order returns to `released`, then
 capacity and part-issue gates are evaluated normally.
 
-### 6.2 Technician or bay contention
+### 7.2 Technician or bay contention
 
 **Trigger**
 
@@ -318,7 +415,7 @@ in_progress
 
 Resource demand/reservation state and WorkOrder waiting state survive restart.
 
-### 6.3 Emergency maintenance / priority displacement
+### 7.3 Emergency maintenance / priority displacement
 
 **Trigger**
 
@@ -343,7 +440,7 @@ in_progress
 `ResourcePreemptionResult` identifies displaced and preempting requests. The
 interrupted WorkOrder remains explicit business state.
 
-### 6.4 Cancellation
+### 7.4 Cancellation
 
 **Trigger**
 
@@ -359,13 +456,13 @@ Once either physical part-withdrawal operation has started, cancellation is reje
 At that point the maintenance process must reconcile the already-committed material
 effect rather than pretending that a consumed part can be undone.
 
-### 6.5 Scenario-driven disruption
+### 7.5 Scenario-driven disruption
 
 Asset emergency, spare-parts disruption, and technician capacity loss alter
 operational context. They must route through the same shortage, resource-wait, or
 preemption semantics rather than assigning lifecycle state directly.
 
-## 7. Commands and domain events
+## 8. Commands and domain events
 
 | Command | Target | Meaning |
 |---|---|---|
@@ -392,7 +489,7 @@ part demand, resource acquisition, interruption/resume, and closure. `build_demo
 proves focused scheduler behavior; the full reference runner and reconcilers prove the
 cross-entity operational process.
 
-## 8. Invariants
+## 9. Invariants
 
 **MRO-01 — Durable scheduled transition**
 
@@ -459,7 +556,7 @@ Continuous and restarted execution are semantically equivalent across release,
 resource queue, parts-consumed, active-maintenance, shortage, emergency interruption,
 completion-before-close, and cancellation boundaries.
 
-## 9. Durable truth and ownership
+## 10. Durable truth and ownership
 
 | Concept | Durable owner | Meaning |
 |---|---|---|
@@ -478,7 +575,7 @@ completion-before-close, and cancellation boundaries.
 Backend-native callbacks, SimPy requests/processes, resource handles, queues, and
 generator continuation state remain ephemeral and reconstructible.
 
-## 10. Restart semantics
+## 11. Restart semantics
 
 MRO restart equivalence is tested at business-significant durable boundaries:
 
@@ -501,7 +598,7 @@ recovery position.
 
 Backend-native object identity is intentionally excluded from semantic equivalence.
 
-## 11. Scenario specification
+## 12. Scenario specification
 
 ### Asset failure / emergency arrival
 
@@ -538,7 +635,7 @@ Backend-native object identity is intentionally excluded from semantic equivalen
 
 Finite scenarios expire without implicit retriggering.
 
-## 12. Example runs
+## 13. Example runs
 
 ### A. Nominal
 
@@ -607,7 +704,7 @@ waiting_material or interrupted
 → final semantic snapshot equals continuous execution
 ```
 
-## 13. Executable evidence
+## 14. Executable evidence
 
 | Specification area | Current implementation/evidence | Status |
 |---|---|---|
