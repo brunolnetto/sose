@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from datetime import datetime, timedelta, timezone
 
-from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
 from sose.core.engine import Engine
@@ -21,6 +21,9 @@ from sose.persistence.memory import MemoryPersistence
 
 from .entities import PartDemand, WorkOrder
 from .statecharts import PartDemandChart, WorkOrderChart
+
+if TYPE_CHECKING:
+    from sose.backends.simpy import SimPyBackend
 
 
 ORIGIN = datetime(2026, 3, 1, 8, tzinfo=timezone.utc)
@@ -181,6 +184,93 @@ def _preemptive_reservation(persistence, request_id: str):
     )
 
 
+def _part_issue_complete(persistence: MemoryPersistence) -> bool:
+    lot_done = any(
+        result.request_id == "consume-part-lot-1"
+        for result in persistence.store_get_results()
+    )
+    qty_done = any(
+        result.request_id == "consume-spare-part-1"
+        for result in persistence.container_operation_results()
+    )
+    return lot_done and qty_done
+
+
+def _discard_granted_capacity_if_terminal(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: "SimPyBackend",
+    *,
+    work_order_id: str,
+    reservation,
+    preemptive: bool,
+) -> None:
+    work_order = persistence.entity("work_order", work_order_id)
+    if work_order is None or work_order.state not in {"cancelled", "closed"}:
+        return
+    if preemptive:
+        engine.preemptive_resources.release(backend, reservation.reservation_id)
+    else:
+        engine.resources.release(backend, reservation.reservation_id)
+
+
+def reconcile_material_availability(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: MROEntities,
+    quantity: float,
+) -> bool:
+    """Expose spare-part shortage before acquiring constrained maintenance capacity."""
+
+    if _part_issue_complete(persistence):
+        return True
+
+    lot_available = any(
+        item.item_id == "part-lot-1" for item in persistence.store_items()
+    )
+    available = next(
+        (s.level for s in persistence.container_states() if s.name == "spare_parts"),
+        0.0,
+    )
+    wo = persistence.entity("work_order", entities.work_order_id)
+    demand = persistence.entity("part_demand", entities.part_demand_id)
+    if wo is None or demand is None:
+        raise RuntimeError("MRO entities were not persisted")
+
+    if not lot_available or available < quantity:
+        if wo.state == "released":
+            engine.dispatch(
+                engine.context.commands.create(
+                    "wait_for_material",
+                    target=wo,
+                    correlation_id=flow_correlation_id(),
+                    key=("mro", wo.id, "wait-material"),
+                )
+            )
+        if demand.state == "open":
+            engine.dispatch(
+                engine.context.commands.create(
+                    "wait",
+                    target=demand,
+                    correlation_id=flow_correlation_id(),
+                    key=("mro", demand.id, "wait"),
+                )
+            )
+        return False
+
+    if wo.state == "waiting_material":
+        engine.dispatch(
+            engine.context.commands.create(
+                "material_ready",
+                target=wo,
+                correlation_id=flow_correlation_id(),
+                key=("mro", wo.id, "material-ready"),
+            )
+        )
+    return True
+
+
 def reconcile_capacity(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -198,6 +288,14 @@ def reconcile_capacity(
             request_id=tech_id,
             requested_at=backend.now,
             priority=100,
+            on_acquired=lambda reservation: _discard_granted_capacity_if_terminal(
+                persistence,
+                engine,
+                backend,
+                work_order_id=entities.work_order_id,
+                reservation=reservation,
+                preemptive=False,
+            ),
         )
     if not _preemptive_request_exists(persistence, bay_id):
         engine.preemptive_resources.request(
@@ -207,6 +305,14 @@ def reconcile_capacity(
             requested_at=backend.now,
             priority=100,
             preempt=False,
+            on_acquired=lambda reservation: _discard_granted_capacity_if_terminal(
+                persistence,
+                engine,
+                backend,
+                work_order_id=entities.work_order_id,
+                reservation=reservation,
+                preemptive=True,
+            ),
         )
     backend.run_until(backend.now)
 
@@ -224,16 +330,20 @@ def reconcile_part_issue(
     entities: MROEntities,
     quantity: float,
 ) -> bool:
-    available = next(
-        (s.level for s in persistence.container_states() if s.name == "spare_parts"),
-        0.0,
-    )
     wo = persistence.entity("work_order", entities.work_order_id)
     demand = persistence.entity("part_demand", entities.part_demand_id)
     if wo is None or demand is None:
         raise RuntimeError("MRO entities were not persisted")
 
-    if available < quantity:
+    already_issued = _part_issue_complete(persistence)
+    lot_available = any(
+        item.item_id == "part-lot-1" for item in persistence.store_items()
+    )
+    available = next(
+        (s.level for s in persistence.container_states() if s.name == "spare_parts"),
+        0.0,
+    )
+    if not already_issued and (not lot_available or available < quantity):
         if wo.state == "released":
             engine.dispatch(
                 engine.context.commands.create(
@@ -256,7 +366,12 @@ def reconcile_part_issue(
 
     lot_request = "consume-part-lot-1"
     qty_request = "consume-spare-part-1"
-    if not any(r.request_id == lot_request for r in persistence.store_get_requests()) and not any(
+    if already_issued:
+        lot_done = qty_done = True
+    else:
+        lot_done = qty_done = False
+
+    if not already_issued and not any(r.request_id == lot_request for r in persistence.store_get_requests()) and not any(
         r.request_id == lot_request for r in persistence.store_get_results()
     ):
         engine.stores.get(
@@ -265,7 +380,7 @@ def reconcile_part_issue(
             request_id=lot_request,
             requested_at=backend.now,
         )
-    if not any(i.request_id == qty_request for i in persistence.container_operation_intents()) and not any(
+    if not already_issued and not any(i.request_id == qty_request for i in persistence.container_operation_intents()) and not any(
         r.request_id == qty_request for r in persistence.container_operation_results()
     ):
         engine.containers.get(
@@ -277,8 +392,12 @@ def reconcile_part_issue(
         )
     backend.run_until(backend.now)
 
-    lot_done = any(r.request_id == lot_request for r in persistence.store_get_results())
-    qty_done = any(r.request_id == qty_request for r in persistence.container_operation_results())
+    lot_done = lot_done or any(
+        r.request_id == lot_request for r in persistence.store_get_results()
+    )
+    qty_done = qty_done or any(
+        r.request_id == qty_request for r in persistence.container_operation_results()
+    )
     if not lot_done or not qty_done:
         return False
 
@@ -316,21 +435,18 @@ def reconcile_start(
     wo = persistence.entity("work_order", entities.work_order_id)
     if wo is None:
         raise RuntimeError("work order was not persisted")
+    if wo.state == "in_progress":
+        return True
+    if wo.state in {"completed", "closed", "cancelled", "interrupted"}:
+        return False
 
-    if wo.state == "waiting_material":
-        available = next(
-            (s.level for s in persistence.container_states() if s.name == "spare_parts"),
-            0.0,
-        )
-        if available >= quantity:
-            engine.dispatch(
-                engine.context.commands.create(
-                    "material_ready",
-                    target=wo,
-                    correlation_id=flow_correlation_id(),
-                    key=("mro", wo.id, "material-ready"),
-                )
-            )
+    if not reconcile_material_availability(
+        persistence,
+        engine,
+        entities=entities,
+        quantity=quantity,
+    ):
+        return False
 
     if not reconcile_capacity(persistence, engine, backend, entities=entities):
         wo = persistence.entity("work_order", entities.work_order_id)
@@ -425,10 +541,92 @@ def release_capacity(
         backend.run_until(backend.now)
 
 
+def _part_issue_started(persistence: MemoryPersistence) -> bool:
+    return (
+        any(
+            request.request_id == "consume-part-lot-1"
+            for request in persistence.store_get_requests()
+        )
+        or any(
+            result.request_id == "consume-part-lot-1"
+            for result in persistence.store_get_results()
+        )
+        or any(
+            intent.request_id == "consume-spare-part-1"
+            for intent in persistence.container_operation_intents()
+        )
+        or any(
+            result.request_id == "consume-spare-part-1"
+            for result in persistence.container_operation_results()
+        )
+    )
+
+
+def reconcile_cancel(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: MROEntities,
+) -> None:
+    """Cancel outstanding work without leaving capacity or inventory side effects."""
+
+    wo = persistence.entity("work_order", entities.work_order_id)
+    demand = persistence.entity("part_demand", entities.part_demand_id)
+    if wo is None or demand is None:
+        raise RuntimeError("MRO entities were not persisted")
+    if _part_issue_started(persistence):
+        raise RuntimeError(
+            "work order cannot be cancelled after spare-part issue has started"
+        )
+
+    if wo.state == "planned":
+        with persistence.transaction() as uow:
+            for work in persistence.scheduled_work():
+                command = persistence.command(work.command_id)
+                if (
+                    command is not None
+                    and command.entity_type == "work_order"
+                    and command.entity_id == wo.id
+                ):
+                    uow.delete_scheduled_work(work.work_id)
+                    uow.delete_command(command.command_id)
+
+    if wo.state in {"planned", "released", "waiting_material", "waiting_resource"}:
+        engine.dispatch(
+            engine.context.commands.create(
+                "cancel",
+                target=wo,
+                correlation_id=flow_correlation_id(),
+                key=("mro", wo.id, "cancel"),
+            )
+        )
+
+    tech_request_id = f"technician:{entities.work_order_id}"
+    bay_request_id = f"bay:{entities.work_order_id}"
+    engine.resources.cancel_pending(backend, tech_request_id)
+    engine.preemptive_resources.cancel_pending(backend, bay_request_id)
+
+    demand = persistence.entity("part_demand", entities.part_demand_id)
+    if demand.state in {"open", "waiting_inventory"}:
+        engine.dispatch(
+            engine.context.commands.create(
+                "cancel",
+                target=demand,
+                correlation_id=flow_correlation_id(),
+                key=("mro", demand.id, "cancel"),
+            )
+        )
+
+    release_capacity(persistence, engine, backend, entities=entities)
+
+
 def run_happy_path(
     *,
     quantity: float = 1.0,
 ) -> tuple[MemoryPersistence, MROEntities]:
+    from sose.backends.simpy import SimPyBackend
+
     persistence = MemoryPersistence()
     ids = seed_reference(persistence, quantity=quantity)
     _, engine = build_runtime(persistence)

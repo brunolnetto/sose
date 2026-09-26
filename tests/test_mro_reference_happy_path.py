@@ -20,14 +20,18 @@ def test_mro_happy_path_reaches_closed_with_consumed_part_and_released_capacity(
 def test_mro_happy_path_commits_part_issue_before_in_progress():
     persistence, ids = run_happy_path(quantity=2.0)
     events = persistence.events()
-    start_index = next(
-        index
-        for index, event in enumerate(events)
-        if event.payload["trigger"] == "start"
+    start_event = next(
+        event for event in events if event.payload["trigger"] == "start"
     )
-    assert persistence.store_get_results()[0].request_id == "consume-part-lot-1"
-    assert any(
-        result.request_id == "consume-spare-part-1"
+    lot_result = next(
+        result
+        for result in persistence.store_get_results()
+        if result.request_id == "consume-part-lot-1"
+    )
+    quantity_result = next(
+        result
         for result in persistence.container_operation_results()
+        if result.request_id == "consume-spare-part-1"
     )
-    assert start_index >= 0
+    assert lot_result.completed_at <= start_event.occurred_at
+    assert quantity_result.completed_at <= start_event.occurred_at
