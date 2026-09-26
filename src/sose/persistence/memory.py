@@ -12,6 +12,10 @@ from sose.core.runtime import (
     ResourceDemand,
     ResourceReleaseIntent,
     ResourceReservation,
+    StoreDefinition,
+    DurableStoreItem,
+    StorePutIntent,
+    StoreGetRequest,
     ScheduledWork,
     SimulationPosition,
 )
@@ -31,6 +35,10 @@ class _State:
     resource_demands: dict[str, ResourceDemand] = field(default_factory=dict)
     resource_reservations: dict[str, ResourceReservation] = field(default_factory=dict)
     resource_release_intents: dict[str, ResourceReleaseIntent] = field(default_factory=dict)
+    store_definitions: dict[str, StoreDefinition] = field(default_factory=dict)
+    store_items: dict[str, DurableStoreItem] = field(default_factory=dict)
+    store_put_intents: dict[str, StorePutIntent] = field(default_factory=dict)
+    store_get_requests: dict[str, StoreGetRequest] = field(default_factory=dict)
     committed_tick: int = -1
 
 
@@ -139,6 +147,62 @@ class MemoryUnitOfWork:
     def delete_resource_release_intent(self, intent_id: str) -> None:
         self._working.resource_release_intents.pop(intent_id, None)
 
+
+    def get_store_item(self, item_id: str) -> DurableStoreItem | None:
+        value = self._working.store_items.get(item_id)
+        return deepcopy(value) if value else None
+
+    def get_store_put_intent(self, item_id: str) -> StorePutIntent | None:
+        value = self._working.store_put_intents.get(item_id)
+        return deepcopy(value) if value else None
+
+    def get_store_get_request(self, request_id: str) -> StoreGetRequest | None:
+        value = self._working.store_get_requests.get(request_id)
+        return deepcopy(value) if value else None
+
+    def save_store_definition(self, definition: StoreDefinition) -> None:
+        existing = self._working.store_definitions.get(definition.name)
+        if existing is not None and existing != definition:
+            raise ValueError(f"store definition already exists: {definition.name}")
+        self._working.store_definitions[definition.name] = deepcopy(definition)
+
+    def save_store_item(self, item: DurableStoreItem) -> None:
+        if item.store_name not in self._working.store_definitions:
+            raise KeyError(f"unknown store definition: {item.store_name}")
+        if item.item_id in self._working.store_put_intents:
+            raise ValueError(f"store item is still pending put: {item.item_id}")
+        existing = self._working.store_items.get(item.item_id)
+        if existing is not None and existing != item:
+            raise ValueError(f"store item already exists: {item.item_id}")
+        self._working.store_items[item.item_id] = deepcopy(item)
+
+    def delete_store_item(self, item_id: str) -> None:
+        self._working.store_items.pop(item_id, None)
+
+    def save_store_put_intent(self, intent: StorePutIntent) -> None:
+        if intent.store_name not in self._working.store_definitions:
+            raise KeyError(f"unknown store definition: {intent.store_name}")
+        if intent.item_id in self._working.store_items:
+            raise ValueError(f"store item already accepted: {intent.item_id}")
+        existing = self._working.store_put_intents.get(intent.item_id)
+        if existing is not None and existing != intent:
+            raise ValueError(f"store put intent already exists: {intent.item_id}")
+        self._working.store_put_intents[intent.item_id] = deepcopy(intent)
+
+    def delete_store_put_intent(self, item_id: str) -> None:
+        self._working.store_put_intents.pop(item_id, None)
+
+    def save_store_get_request(self, request: StoreGetRequest) -> None:
+        if request.store_name not in self._working.store_definitions:
+            raise KeyError(f"unknown store definition: {request.store_name}")
+        existing = self._working.store_get_requests.get(request.request_id)
+        if existing is not None and existing != request:
+            raise ValueError(f"store get request already exists: {request.request_id}")
+        self._working.store_get_requests[request.request_id] = deepcopy(request)
+
+    def delete_store_get_request(self, request_id: str) -> None:
+        self._working.store_get_requests.pop(request_id, None)
+
     def set_committed_tick(self, tick: int) -> None:
         self._working.committed_tick = tick
 
@@ -211,3 +275,35 @@ class MemoryPersistence:
             deepcopy(self._state.resource_release_intents[key])
             for key in sorted(self._state.resource_release_intents)
         )
+
+
+    def store_definitions(self) -> tuple[StoreDefinition, ...]:
+        return tuple(
+            deepcopy(self._state.store_definitions[name])
+            for name in sorted(self._state.store_definitions)
+        )
+
+    def store_items(self) -> tuple[DurableStoreItem, ...]:
+        return tuple(
+            sorted(
+                deepcopy(tuple(self._state.store_items.values())),
+                key=lambda item: (item.store_name, item.sequence, item.item_id),
+            )
+        )
+
+    def store_put_intents(self) -> tuple[StorePutIntent, ...]:
+        return tuple(
+            sorted(
+                deepcopy(tuple(self._state.store_put_intents.values())),
+                key=lambda intent: (intent.sequence, intent.item_id),
+            )
+        )
+
+    def store_get_requests(self) -> tuple[StoreGetRequest, ...]:
+        return tuple(
+            sorted(
+                deepcopy(tuple(self._state.store_get_requests.values())),
+                key=lambda request: (request.sequence, request.request_id),
+            )
+        )
+
