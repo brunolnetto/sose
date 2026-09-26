@@ -124,9 +124,17 @@ execute
 → continue
 ```
 
-Durable equivalence covers entity state, domain events, scheduled work,
-simulation position, scenario runtime state, resource definitions, demands,
-reservations, and release intents.
+Durable equivalence covers:
+
+- entity state and domain events;
+- scheduled work and simulation position;
+- scenario runtime state;
+- normal resource definitions, demands, reservations, and release intents;
+- Store definitions, items, put intents, get requests, and terminal get results;
+- preemptive resource definitions, demands, reservations, release intents, and
+  terminal preemption results;
+- Container definitions, committed levels, pending operation intents, and
+  terminal operation results.
 
 Backend-native callbacks, lease objects, request objects, and queue internals are
 not part of the equivalence contract; they are reconstructible execution
