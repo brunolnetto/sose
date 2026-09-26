@@ -336,11 +336,14 @@ def reconcile_part_issue(
         raise RuntimeError("MRO entities were not persisted")
 
     already_issued = _part_issue_complete(persistence)
+    lot_available = any(
+        item.item_id == "part-lot-1" for item in persistence.store_items()
+    )
     available = next(
         (s.level for s in persistence.container_states() if s.name == "spare_parts"),
         0.0,
     )
-    if not already_issued and available < quantity:
+    if not already_issued and (not lot_available or available < quantity):
         if wo.state == "released":
             engine.dispatch(
                 engine.context.commands.create(
