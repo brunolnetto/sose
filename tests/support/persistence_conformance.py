@@ -64,6 +64,9 @@ class PersistenceConformanceSuite:
                 )
             )
 
+        payload["nested"]["value"] = 500
+        assert store.store_items()[0].value == {"nested": {"value": 1}}
+
         returned = store.store_items()[0]
         returned.value["nested"]["value"] = 999
 
@@ -102,6 +105,32 @@ class PersistenceConformanceSuite:
         assert [i.request_id for i in store.container_operation_intents()] == [
             "earlier-op",
             "later-op",
+        ]
+
+        store_item_later = DurableStoreItem(
+            "result-item-later", "inbox", 2, 100, sequence=4
+        )
+        store_item_earlier = DurableStoreItem(
+            "result-item-earlier", "inbox", 1, 100, sequence=3
+        )
+        with store.transaction() as uow:
+            uow.save_store_definition(StoreDefinition("inbox"))
+            later_request = StoreGetRequest("get-later", "inbox", NOW, sequence=4)
+            earlier_request = StoreGetRequest("get-earlier", "inbox", NOW, sequence=3)
+            uow.save_store_get_request(later_request)
+            uow.save_store_get_request(earlier_request)
+            uow.save_store_get_result(
+                StoreGetResult("get-later", "inbox", store_item_later, NOW, sequence=4)
+            )
+            uow.save_store_get_result(
+                StoreGetResult("get-earlier", "inbox", store_item_earlier, NOW, sequence=3)
+            )
+            uow.delete_store_get_request("get-later")
+            uow.delete_store_get_request("get-earlier")
+
+        assert [r.request_id for r in store.store_get_results()] == [
+            "get-earlier",
+            "get-later",
         ]
 
     def test_identical_definition_save_is_idempotent(self):
@@ -161,6 +190,31 @@ class PersistenceConformanceSuite:
 
         assert store.store_get_requests() == ()
         assert store.store_get_results() == (result,)
+
+    def test_pending_to_terminal_failure_rolls_back_as_one_unit(self):
+        store = self.make_persistence()
+        item = DurableStoreItem(
+            item_id="consumed",
+            store_name="inbox",
+            value=1,
+            priority=100,
+            sequence=1,
+        )
+        request = StoreGetRequest("get-rollback", "inbox", NOW, sequence=2)
+        result = StoreGetResult("get-rollback", "inbox", item, NOW, sequence=2)
+
+        with store.transaction() as uow:
+            uow.save_store_definition(StoreDefinition("inbox"))
+            uow.save_store_get_request(request)
+
+        with pytest.raises(RuntimeError, match="abort transition"):
+            with store.transaction() as uow:
+                uow.save_store_get_result(result)
+                uow.delete_store_get_request(request.request_id)
+                raise RuntimeError("abort transition")
+
+        assert store.store_get_requests() == (request,)
+        assert store.store_get_results() == ()
 
     def test_completed_request_identity_cannot_be_reopened(self):
         store = self.make_persistence()
