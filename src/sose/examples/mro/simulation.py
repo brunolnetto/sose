@@ -555,10 +555,14 @@ def reconcile_emergency_interrupt(
     if wo.state != "in_progress":
         return wo.state == "interrupted"
 
-    committed = _committed_emergency_result(
-        persistence, entities.work_order_id
-    )
-    if committed is not None:
+    normal_id = f"bay:{entities.work_order_id}"
+    normal = _preemptive_reservation(persistence, normal_id)
+    if normal is None:
+        committed = _committed_emergency_result(
+            persistence, entities.work_order_id
+        )
+        if committed is None:
+            return False
         engine.dispatch(
             engine.context.commands.create(
                 "interrupt",
@@ -573,11 +577,6 @@ def reconcile_emergency_interrupt(
             )
         )
         return True
-
-    normal_id = f"bay:{entities.work_order_id}"
-    normal = _preemptive_reservation(persistence, normal_id)
-    if normal is None:
-        return False
 
     emergency_id = _next_emergency_request_id(
         persistence, entities.work_order_id
