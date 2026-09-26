@@ -129,6 +129,7 @@ class SimPyBackend:
         self._preemptive_resources: dict[str, _PreemptiveResourceState] = {}
         self._preemptive_leases: dict[str, _PreemptiveLeaseState] = {}
         self._preemptive_process_to_request: dict[object, str] = {}
+        self._scheduled_preemptive_requests: set[str] = set()
         self._cancelled_preemptive_requests: set[str] = set()
 
     @property
@@ -601,6 +602,7 @@ class SimPyBackend:
                 for resource_state in self._preemptive_resources.values()
             )
             or request_id in self._request_to_lease
+            or request_id in self._scheduled_preemptive_requests
         ):
             raise ValueError(f"resource request already exists: {request_id}")
 
@@ -611,6 +613,8 @@ class SimPyBackend:
             requested_at=self.now,
         )
 
+        self._scheduled_preemptive_requests.add(request_id)
+
         def lifecycle():
             process = self._env.active_process
             if process is None:  # pragma: no cover - SimPy process invariant
@@ -618,10 +622,12 @@ class SimPyBackend:
             self._preemptive_process_to_request[process] = request_id
             if request_id in self._cancelled_preemptive_requests:
                 self._cancelled_preemptive_requests.discard(request_id)
+                self._scheduled_preemptive_requests.discard(request_id)
                 self._preemptive_process_to_request.pop(process, None)
                 return
             request = state.resource.request(priority=priority, preempt=preempt)
             state.requests[request_id] = request
+            self._scheduled_preemptive_requests.discard(request_id)
             lease_id: str | None = None
             try:
                 yield request
@@ -660,6 +666,7 @@ class SimPyBackend:
                         )
                     )
             finally:
+                self._scheduled_preemptive_requests.discard(request_id)
                 state.requests.pop(request_id, None)
                 state.holds.pop(request_id, None)
                 self._preemptive_process_to_request.pop(process, None)
@@ -695,10 +702,12 @@ class SimPyBackend:
             state.requests.pop(request_id, None)
             return True
 
-        # The lifecycle process is scheduled but has not yet registered its
-        # backend request. A tombstone makes that first process step terminate.
-        self._cancelled_preemptive_requests.add(request_id)
-        return True
+        # A lifecycle can be scheduled but not yet have registered its backend
+        # request. Only known scheduled IDs may create a cancellation tombstone.
+        if request_id in self._scheduled_preemptive_requests:
+            self._cancelled_preemptive_requests.add(request_id)
+            return True
+        return False
 
     def release_preemptive_resource(self, lease: ResourceLease | str) -> None:
         lease_id = lease.lease_id if isinstance(lease, ResourceLease) else lease
