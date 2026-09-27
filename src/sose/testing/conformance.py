@@ -33,6 +33,32 @@ BASELINE_REFERENCE_CAPABILITIES = frozenset(
     }
 )
 
+CAPABILITY_REQUIREMENTS = MappingProxyType(
+    {
+        ReferenceCapability.SCENARIOS: frozenset(
+            {ReferenceCapability.SAD_PATHS}
+        ),
+        ReferenceCapability.SCHEDULED_WORK: frozenset(
+            {ReferenceCapability.RESTART_EQUIVALENCE}
+        ),
+        ReferenceCapability.STORE_SELECTION: frozenset(
+            {ReferenceCapability.RESTART_EQUIVALENCE}
+        ),
+        ReferenceCapability.PREEMPTION: frozenset(
+            {ReferenceCapability.RESOURCES}
+        ),
+        ReferenceCapability.CRASH_RECOVERY: frozenset(
+            {ReferenceCapability.RESTART_EQUIVALENCE}
+        ),
+        ReferenceCapability.ILLEGAL_PREREQUISITES: frozenset(
+            {ReferenceCapability.SAD_PATHS}
+        ),
+        ReferenceCapability.PROBABILISTIC_TRANSITIONS: frozenset(
+            {ReferenceCapability.STATECHARTS}
+        ),
+    }
+)
+
 
 @dataclass(frozen=True, slots=True)
 class ReferenceContract:
@@ -95,6 +121,22 @@ def validate_reference_contract(
                 + ", ".join(sorted(cap.value for cap in missing_baseline)),
             )
         )
+
+    for capability in sorted(contract.capabilities, key=lambda cap: cap.value):
+        missing_dependencies = CAPABILITY_REQUIREMENTS.get(
+            capability, frozenset()
+        ) - contract.capabilities
+        if missing_dependencies:
+            issues.append(
+                ReferenceConformanceIssue(
+                    contract.domain,
+                    "missing-capability-dependency",
+                    f"{capability.value} requires: "
+                    + ", ".join(
+                        sorted(dep.value for dep in missing_dependencies)
+                    ),
+                )
+            )
 
     undeclared_evidence = set(contract.evidence) - set(contract.capabilities)
     if undeclared_evidence:

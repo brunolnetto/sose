@@ -137,94 +137,15 @@ def _dispatch(
     engine.dispatch(command)
 
 
-def _resource_request_exists(
-    persistence: MemoryPersistence,
-    request_id: str,
-) -> bool:
-    return any(
-        demand.request_id == request_id for demand in persistence.resource_demands()
-    ) or any(
-        reservation.request_id == request_id
-        for reservation in persistence.resource_reservations()
-    )
-
-
-def _reservation_for(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
-    )
-
-
-def _request_resource(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    resource_name: str,
-    request_id: str,
-    priority: int = 100,
-):
-    if not _resource_request_exists(persistence, request_id):
-        engine.resources.request(
-            backend,
-            resource_name=resource_name,
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=priority,
-        )
-    backend.run_until(backend.now)
-    return _reservation_for(persistence, request_id)
-
-
-def _release(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    request_id: str,
-) -> None:
-    reservation = _reservation_for(persistence, request_id)
-    if reservation is not None:
-        engine.resources.release(backend, reservation.reservation_id)
-        backend.run_until(backend.now)
-
-
-def _sla_work_for(
-    persistence: MemoryPersistence,
-    incident_id: str,
-):
-    for work in persistence.scheduled_work():
-        command = persistence.command(work.command_id)
-        if (
-            command is not None
-            and command.entity_type == "itsm_incident"
-            and command.entity_id == incident_id
-            and command.name == "escalate"
-        ):
-            return work, command
-    return None
-
-
 def cancel_sla(
-    persistence: MemoryPersistence,
+    engine: Engine,
     incident_id: str,
 ) -> bool:
-    found = _sla_work_for(persistence, incident_id)
-    if found is None:
-        return False
-    work, command = found
-    with persistence.transaction() as uow:
-        persisted = uow.get_scheduled_work(work.work_id)
-        if persisted != work:
-            return False
-        uow.delete_scheduled_work(work.work_id)
-        uow.delete_command(command.command_id)
-    return True
+    return engine.scheduler.cancel_pending(
+        entity_type="itsm_incident",
+        entity_id=incident_id,
+        name="escalate",
+    )
 
 
 def triage_and_queue(
@@ -272,9 +193,13 @@ def triage_and_queue(
         )
         backend.run_until(backend.now)
 
-    existing = _sla_work_for(persistence, incident.id)
+    existing = engine.scheduler.find_pending(
+        entity_type="itsm_incident",
+        entity_id=incident.id,
+        name="escalate",
+    )
     if existing is not None:
-        return existing[0].due_at
+        return existing.work.due_at
 
     due_at = backend.now + sla_delay
     command = engine.context.commands.create(
@@ -299,12 +224,11 @@ def claim_next_incident(
         return None
 
     request_id = f"support-agent:{claim_id}"
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="support_agent",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return None
@@ -318,7 +242,7 @@ def claim_next_incident(
     )
 
     if result is None:
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         return None
 
     incident_id = str(result.item.value["incident_id"])
@@ -350,12 +274,7 @@ def release_incident_owner(
     *,
     claim_id: str,
 ) -> None:
-    _release(
-        persistence,
-        engine,
-        backend,
-        request_id=f"support-agent:{claim_id}",
-    )
+    engine.resources.withdraw(backend, f"support-agent:{claim_id}")
 
 
 def resolve_incident(
@@ -386,7 +305,7 @@ def resolve_incident(
             key=("itsm", incident.id, "resolve", incident.version),
             correlation_id=flow_correlation_id(incident.id),
         )
-        cancel_sla(persistence, incident.id)
+        cancel_sla(engine, incident.id)
 
     incident = _incident(persistence, incident.id)
     if close and incident.state == "resolved":
@@ -468,12 +387,11 @@ def reconcile_escalation(
         incident_id=incident.id,
     )
     request_id = f"escalation-manager:{escalation.id}"
-    manager = _request_resource(
-        persistence,
-        engine,
+    manager = engine.resources.ensure_requested(
         backend,
         resource_name="escalation_manager",
         request_id=request_id,
+        requested_at=backend.now,
         priority=1,
     )
     if manager is None:
@@ -506,7 +424,7 @@ def reconcile_escalation(
         backend,
         incident_id=incident.id,
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     if claim_id is not None:
         release_incident_owner(
             persistence,

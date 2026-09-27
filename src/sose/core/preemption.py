@@ -153,6 +153,7 @@ class DurablePreemptiveResourceManager:
         requested_at: datetime,
         priority: int = 100,
         preempt: bool = True,
+        on_acquired: Callable[[PreemptiveResourceReservation], None] | None = None,
     ) -> PreemptiveResourceReservation | None:
         """Ensure one durable preemptive request exists and reconcile acquisition."""
         if not self.has_request(request_id):
@@ -163,7 +164,13 @@ class DurablePreemptiveResourceManager:
                 requested_at=requested_at,
                 priority=priority,
                 preempt=preempt,
+                on_acquired=on_acquired,
             )
+        elif (
+            on_acquired is not None
+            and self.reservation_for(request_id) is None
+        ):
+            self._pending_callbacks[request_id] = on_acquired
         run_until = getattr(backend, "run_until", None)
         if callable(run_until):
             run_until(getattr(backend, "now", requested_at))

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import datetime
 
 from sose.core.identity import deterministic_id
@@ -18,8 +19,12 @@ class DurableResourceManager:
     def __init__(self, persistence: Persistence) -> None:
         self._persistence = persistence
         self._backend_leases: dict[str, object] = {}
+        self._pending_callbacks: dict[
+            str, Callable[[ResourceReservation], None]
+        ] = {}
 
     def rebuild_backend(self, backend) -> int:
+        self._pending_callbacks.clear()
         self._finalize_interrupted_releases()
 
         for definition in self._persistence.resource_definitions():
@@ -76,6 +81,7 @@ class DurableResourceManager:
         request_id: str,
         requested_at: datetime,
         priority: int = 100,
+        on_acquired: Callable[[ResourceReservation], None] | None = None,
     ) -> ResourceReservation | None:
         """Ensure one durable request exists and reconcile immediate acquisition.
 
@@ -90,7 +96,13 @@ class DurableResourceManager:
                 request_id=request_id,
                 requested_at=requested_at,
                 priority=priority,
+                on_acquired=on_acquired,
             )
+        elif (
+            on_acquired is not None
+            and self.reservation_for(request_id) is None
+        ):
+            self._pending_callbacks[request_id] = on_acquired
         run_until = getattr(backend, "run_until", None)
         if callable(run_until):
             run_until(getattr(backend, "now", requested_at))
@@ -152,13 +164,14 @@ class DurableResourceManager:
         with self._persistence.transaction() as uow:
             uow.save_resource_demand(demand)
 
+        if on_acquired is not None:
+            self._pending_callbacks[request_id] = on_acquired
+
         def granted(lease) -> None:
-            reservation = self._record_grant(
+            self._record_grant(
                 request_id=request_id,
                 lease=lease,
             )
-            if on_acquired is not None:
-                on_acquired(reservation)
 
         backend.request_resource(
             resource_name,
@@ -205,6 +218,9 @@ class DurableResourceManager:
             acquired_at=lease.acquired_at,
         )
         self._backend_leases[reservation.reservation_id] = lease
+        callback = self._pending_callbacks.pop(request_id, None)
+        if callback is not None:
+            callback(reservation)
         return reservation
 
     def cancel_pending(self, backend, request_id: str) -> bool:
@@ -228,6 +244,7 @@ class DurableResourceManager:
                     f"resource demand changed during cancellation: {request_id}"
                 )
             uow.delete_resource_demand(request_id)
+        self._pending_callbacks.pop(request_id, None)
         return True
 
     def release(self, backend, reservation_id: str) -> bool:

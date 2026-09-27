@@ -114,60 +114,6 @@ def _attempt(persistence: MemoryPersistence, ordinal: int) -> DeliveryAttempt | 
     return persistence.entity("delivery_attempt", delivery_attempt_id(ordinal))
 
 
-def _resource_request_exists(persistence: MemoryPersistence, request_id: str) -> bool:
-    return any(
-        demand.request_id == request_id for demand in persistence.resource_demands()
-    ) or any(
-        reservation.request_id == request_id
-        for reservation in persistence.resource_reservations()
-    )
-
-
-def _reservation_for(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
-    )
-
-
-def _request_resource(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    resource_name: str,
-    request_id: str,
-    priority: int = 100,
-):
-    if not _resource_request_exists(persistence, request_id):
-        engine.resources.request(
-            backend,
-            resource_name=resource_name,
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=priority,
-        )
-    backend.run_until(backend.now)
-    return _reservation_for(persistence, request_id)
-
-
-def _release(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    request_id: str,
-) -> None:
-    reservation = _reservation_for(persistence, request_id)
-    if reservation is not None:
-        engine.resources.release(backend, reservation.reservation_id)
-        backend.run_until(backend.now)
-
-
 def _dispatch(
     engine: Engine,
     entity,
@@ -217,12 +163,11 @@ def reconcile_pickup(
         return False
 
     request_id = f"pickup-courier:{shipment.id}"
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="pickup_courier",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -234,7 +179,7 @@ def reconcile_pickup(
         "pickup",
         key=("logistics-pickup", shipment.id, "pickup"),
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return True
 
 
@@ -252,12 +197,11 @@ def reconcile_origin_hub(
         return False
 
     request_id = f"origin-dock:{shipment.id}"
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="origin_dock",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -283,7 +227,7 @@ def reconcile_origin_hub(
         "arrive_origin_hub",
         key=("logistics-origin", shipment.id, "arrive"),
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return True
 
 
@@ -298,12 +242,11 @@ def reconcile_transfer(
     transfer_request = f"transfer-vehicle:{shipment.id}"
 
     if shipment.state == "at_origin_hub":
-        vehicle = _request_resource(
-            persistence,
-            engine,
+        vehicle = engine.resources.ensure_requested(
             backend,
             resource_name="transfer_vehicle",
             request_id=transfer_request,
+            requested_at=backend.now,
         )
         if vehicle is None:
             return False
@@ -344,12 +287,11 @@ def reconcile_transfer(
         return shipment.state == "at_destination_hub"
 
     dock_request = f"destination-dock:{shipment.id}"
-    dock = _request_resource(
-        persistence,
-        engine,
+    dock = engine.resources.ensure_requested(
         backend,
         resource_name="destination_dock",
         request_id=dock_request,
+        requested_at=backend.now,
     )
     if dock is None:
         return False
@@ -375,8 +317,8 @@ def reconcile_transfer(
         "arrive_destination_hub",
         key=("logistics-transfer", shipment.id, "arrive-destination"),
     )
-    _release(persistence, engine, backend, request_id=dock_request)
-    _release(persistence, engine, backend, request_id=transfer_request)
+    engine.resources.withdraw(backend, dock_request)
+    engine.resources.withdraw(backend, transfer_request)
     return True
 
 
@@ -444,12 +386,11 @@ def reconcile_delivery_dispatch(
         return False
 
     request_id = f"delivery-courier:{attempt.id}"
-    courier = _request_resource(
-        persistence,
-        engine,
+    courier = engine.resources.ensure_requested(
         backend,
         resource_name="delivery_courier",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if courier is None:
         return False
@@ -526,12 +467,7 @@ def reconcile_delivery_success(
         "deliver",
         key=("logistics-delivery", shipment.id, ordinal, "deliver"),
     )
-    _release(
-        persistence,
-        engine,
-        backend,
-        request_id=f"delivery-courier:{attempt.id}",
-    )
+    engine.resources.withdraw(backend, f"delivery-courier:{attempt.id}")
 
 
 def reconcile_delivery_failure(
@@ -574,12 +510,7 @@ def reconcile_delivery_failure(
         key=("logistics-delivery", shipment.id, ordinal, "retry-resume"),
     )
     engine.context.schedules.at(due_at, command=command)
-    _release(
-        persistence,
-        engine,
-        backend,
-        request_id=f"delivery-courier:{attempt.id}",
-    )
+    engine.resources.withdraw(backend, f"delivery-courier:{attempt.id}")
     return due_at
 
 

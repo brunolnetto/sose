@@ -143,58 +143,6 @@ def _dispatch(
     engine.dispatch(command)
 
 
-def _request_exists(persistence: MemoryPersistence, request_id: str) -> bool:
-    return any(
-        d.request_id == request_id for d in persistence.resource_demands()
-    ) or any(
-        r.request_id == request_id
-        for r in persistence.resource_reservations()
-    )
-
-
-def _reservation(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            r for r in persistence.resource_reservations()
-            if r.request_id == request_id
-        ),
-        None,
-    )
-
-
-def _request_resource(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    resource_name: str,
-    request_id: str,
-):
-    if not _request_exists(persistence, request_id):
-        engine.resources.request(
-            backend,
-            resource_name=resource_name,
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=100,
-        )
-    backend.run_until(backend.now)
-    return _reservation(persistence, request_id)
-
-
-def _release(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    request_id: str,
-) -> None:
-    reservation = _reservation(persistence, request_id)
-    if reservation is not None:
-        engine.resources.release(backend, reservation.reservation_id)
-        backend.run_until(backend.now)
-
-
 def reconcile_credit(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -257,22 +205,14 @@ def reconcile_fulfillment(
         engine.context.scenarios.attribute("o2c.fulfillment.available", True)
     )
     if not available:
-        engine.resources.cancel_pending(backend, request_id)
-        _release(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         return False
 
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="fulfillment_team",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -297,12 +237,7 @@ def reconcile_fulfillment(
             key=("o2c", order.id, "partial-fulfillment"),
             correlation_id=correlation_id,
         )
-        _release(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
+        engine.resources.withdraw(backend, request_id)
         return False
 
     if order.state in {"fulfilling", "partial_fulfillment"}:
@@ -314,12 +249,7 @@ def reconcile_fulfillment(
             correlation_id=correlation_id,
         )
 
-    _release(
-        persistence,
-        engine,
-        backend,
-        request_id=request_id,
-    )
+    engine.resources.withdraw(backend, request_id)
     return _order(persistence, order.id).state == "fulfilled"
 
 
@@ -496,12 +426,11 @@ def reconcile_collection(
         entities=entities,
     )
     request_id = f"collection-agent:{case.id}"
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="collection_agent",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -551,12 +480,7 @@ def reconcile_collection(
         )
         engine.context.schedules.at(due_at, command=command)
 
-    _release(
-        persistence,
-        engine,
-        backend,
-        request_id=request_id,
-    )
+    engine.resources.withdraw(backend, request_id)
     return True
 
 

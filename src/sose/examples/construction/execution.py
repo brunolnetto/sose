@@ -13,8 +13,6 @@ from .runtime import (
     inspection,
     inspection_id,
     measurement_id,
-    resource_request_exists,
-    resource_reservation,
 )
 
 
@@ -87,40 +85,6 @@ def complete_predecessor(
     )
 
 
-def _request_resource(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    resource_name: str,
-    request_id: str,
-    priority: int = 100,
-):
-    if not resource_request_exists(persistence, request_id):
-        engine.resources.request(
-            backend,
-            resource_name=resource_name,
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=priority,
-        )
-    backend.run_until(backend.now)
-    return resource_reservation(persistence, request_id)
-
-
-def _release_resource(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    request_id: str,
-) -> None:
-    reservation = resource_reservation(persistence, request_id)
-    if reservation is not None:
-        engine.resources.release(backend, reservation.reservation_id)
-        backend.run_until(backend.now)
-
-
 def request_execution_resources(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -171,46 +135,27 @@ def request_execution_resources(
         # Cancel queued demand first, then release any grant that raced with
         # the scenario change, so disrupted work cannot hoard capacity.
         for request_id in (crew_request, equipment_request):
-            engine.resources.cancel_pending(backend, request_id)
-            _release_resource(
-                persistence,
-                engine,
-                backend,
-                request_id=request_id,
-            )
-        backend.run_until(backend.now)
+            engine.resources.withdraw(backend, request_id)
         return False
 
-    crew = _request_resource(
-        persistence,
-        engine,
+    crew = engine.resources.ensure_requested(
         backend,
         resource_name="crew",
         request_id=crew_request,
+        requested_at=backend.now,
     )
-    equipment = _request_resource(
-        persistence,
-        engine,
+    equipment = engine.resources.ensure_requested(
         backend,
         resource_name="equipment",
         request_id=equipment_request,
+        requested_at=backend.now,
     )
 
     if crew is None or equipment is None:
         if crew is not None:
-            _release_resource(
-                persistence,
-                engine,
-                backend,
-                request_id=crew_request,
-            )
+            engine.resources.withdraw(backend, crew_request)
         if equipment is not None:
-            _release_resource(
-                persistence,
-                engine,
-                backend,
-                request_id=equipment_request,
-            )
+            engine.resources.withdraw(backend, equipment_request)
         return False
 
     current = activity(persistence, current.id)
@@ -252,12 +197,7 @@ def finish_execution(
         f"crew:{current.id}:{cycle}",
         f"equipment:{current.id}:{cycle}",
     ):
-        _release_resource(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
+        engine.resources.withdraw(backend, request_id)
 
 
 def ensure_inspection(
@@ -325,12 +265,7 @@ def reconcile_inspection(
         if occurrence is None or occurrence.state not in {"passed", "failed"}:
             return False
         request_id = f"inspector:{occurrence.id}"
-        _release_resource(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
+        engine.resources.withdraw(backend, request_id)
         expected_activity = "measured" if occurrence.state == "passed" else "rework"
         return current.state == expected_activity
 
@@ -341,12 +276,11 @@ def reconcile_inspection(
         ordinal=ordinal,
     )
     request_id = f"inspector:{occurrence.id}"
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="inspector",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -400,12 +334,7 @@ def reconcile_inspection(
         ),
         correlation_id=correlation_id,
     )
-    _release_resource(
-        persistence,
-        engine,
-        backend,
-        request_id=request_id,
-    )
+    engine.resources.withdraw(backend, request_id)
     return True
 
 

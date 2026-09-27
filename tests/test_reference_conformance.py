@@ -2,6 +2,7 @@ from pathlib import Path
 
 from sose.testing.conformance import (
     BASELINE_REFERENCE_CAPABILITIES,
+    CAPABILITY_REQUIREMENTS,
     ReferenceCapability,
     ReferenceContract,
     validate_reference_catalog,
@@ -69,4 +70,48 @@ def test_baseline_is_deliberately_small_and_semantic():
         ReferenceCapability.HAPPY_PATH,
         ReferenceCapability.SAD_PATHS,
         ReferenceCapability.RESTART_EQUIVALENCE,
+    }
+
+
+def test_capability_dependencies_are_enforced(tmp_path):
+    contract = ReferenceContract(
+        domain="Bad preemption",
+        package="missing.package",
+        docs_dir="docs/examples/missing",
+        capabilities=frozenset({
+            ReferenceCapability.STATECHARTS,
+            ReferenceCapability.HAPPY_PATH,
+            ReferenceCapability.SAD_PATHS,
+            ReferenceCapability.RESTART_EQUIVALENCE,
+            ReferenceCapability.PREEMPTION,
+        }),
+        evidence={
+            ReferenceCapability.STATECHARTS: ("tests/test_statecharts.py",),
+            ReferenceCapability.HAPPY_PATH: ("tests/test_happy.py",),
+            ReferenceCapability.SAD_PATHS: ("tests/test_sad.py",),
+            ReferenceCapability.RESTART_EQUIVALENCE: ("tests/test_restart.py",),
+            ReferenceCapability.PREEMPTION: ("tests/test_preemption.py",),
+        },
+    )
+
+    issues = validate_reference_contract(contract, repo_root=tmp_path)
+
+    dependency = next(
+        issue
+        for issue in issues
+        if issue.code == "missing-capability-dependency"
+    )
+    assert dependency.domain == "Bad preemption"
+    assert "preemption requires: resources" in dependency.message
+
+
+def test_capability_requirement_graph_stays_semantic():
+    assert CAPABILITY_REQUIREMENTS[ReferenceCapability.PREEMPTION] == {
+        ReferenceCapability.RESOURCES
+    }
+    assert CAPABILITY_REQUIREMENTS[ReferenceCapability.SCHEDULED_WORK] == {
+        ReferenceCapability.RESTART_EQUIVALENCE
+    }
+    assert CAPABILITY_REQUIREMENTS[ReferenceCapability.STORE_SELECTION] == {
+        ReferenceCapability.RESTART_EQUIVALENCE
     }
