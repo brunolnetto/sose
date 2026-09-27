@@ -4,8 +4,8 @@ from sose.statecharts.topology import graph_from_statechart, policy_from_statech
 
 
 def test_logistics_entities_have_stable_types():
-    assert Shipment.entity_type == "shipment"
-    assert DeliveryAttempt.entity_type == "delivery_attempt"
+    assert Shipment(id="shipment-1").entity_type == "shipment"
+    assert DeliveryAttempt(id="attempt-1").entity_type == "delivery_attempt"
 
 
 def test_shipment_chart_covers_nominal_flow_and_representative_exceptions():
