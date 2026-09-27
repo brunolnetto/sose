@@ -1537,6 +1537,7 @@ At the time of this document:
 - **Record-to-Report**: Reference implementation. Journal/reconciliation/adjustment causality, durable close ScheduledWork, posting/reconciliation/close Resources, controlled reopening, finite scenarios, post-commit cleanup recovery, illegal prerequisite checks, and restart equivalence are executable.
 - **Insurance**: Reference implementation. Coverage/documentation/assessment/fraud/reserve/payment lifecycles, severity-prioritized queueing, durable deadlines/payment dates, adjuster/fraud/payment Resources, partial payout, rejected-claim reopening, finite scenarios, post-commit crash recovery, and restart equivalence are executable.
 - **Airports**: Reference implementation. Durable arrival/slot timing, gate ownership and reallocation, ground-service/baggage prerequisites, PriorityStore departure ordering, committed StoreGetResult recovery, tug capacity, finite congestion/weather scenarios, post-commit crash recovery, and restart equivalence are executable.
+- **Aviation**: Reference implementation. Two-leg rotation causality, durable departure timing, crew/aircraft gating, inspection, AOG part flow, PriorityStore maintenance ownership, preemptive maintenance with ResourcePreemptionResult evidence, downstream delay propagation, finite scenarios, post-commit crash recovery, and restart equivalence are executable.
 - All other domains in this document: Blueprint.
 
 ---

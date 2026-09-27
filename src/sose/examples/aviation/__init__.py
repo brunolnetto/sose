@@ -1,0 +1,1 @@
+"""Aviation reference-domain example."""
