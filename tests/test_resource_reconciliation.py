@@ -124,3 +124,40 @@ def test_withdraw_handles_request_after_pending_demand_becomes_granted():
     assert resources.withdraw(backend, "racing") is True
     assert resources.has_request("racing") is False
     assert persistence.resource_reservations() == ()
+
+
+def test_ensure_requested_attaches_callback_to_existing_pending_demand():
+    persistence, resources, backend = _runtime()
+
+    holder = resources.ensure_requested(
+        backend,
+        resource_name="worker",
+        request_id="holder",
+        requested_at=backend.now,
+        priority=1,
+    )
+    assert holder is not None
+    assert resources.ensure_requested(
+        backend,
+        resource_name="worker",
+        request_id="waiter",
+        requested_at=backend.now,
+        priority=10,
+    ) is None
+
+    acquired = []
+    assert resources.ensure_requested(
+        backend,
+        resource_name="worker",
+        request_id="waiter",
+        requested_at=backend.now,
+        priority=10,
+        on_acquired=acquired.append,
+    ) is None
+
+    assert resources.withdraw(backend, "holder") is True
+    backend.run_until(backend.now)
+
+    reservation = resources.reservation_for("waiter")
+    assert reservation is not None
+    assert acquired == [reservation]
