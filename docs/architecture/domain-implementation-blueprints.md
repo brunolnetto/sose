@@ -1531,6 +1531,7 @@ At the time of this document:
 - **Logistics & transport**: Reference implementation. Durable pickup scheduling, hub queues, constrained transport capacity, failed-delivery retry with distinct attempt identity, finite disruption recovery, and restart equivalence are executable.
 - **Cards & payments**: Reference implementation. Processor-gated authorization/settlement/refund, durable settlement/retry schedules, pre-capture reversal, dispute/chargeback execution, finite outage recovery, and restart equivalence are executable.
 - **IT service management**: Reference implementation. Durable severity ordering, support/escalation resources, SLA-driven escalation, reopen history, finite shortage recovery, and restart equivalence are executable.
+- **Hospitals**: Partial. Admission/TreatmentEpisode lifecycles, scenarios, orchestration gating, and the reference specification are implemented; durable triage, bed/team capacity, procedure preemption/recovery, and restart evidence remain incomplete.
 - All other domains in this document: Blueprint.
 
 ---
