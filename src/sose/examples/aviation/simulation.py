@@ -222,37 +222,6 @@ def _scheduled_command(persistence, *, entity_id, name):
     return None
 
 
-def _preemptive_request_exists(persistence, request_id):
-    return any(
-        d.request_id == request_id
-        for d in persistence.preemptive_resource_demands()
-    ) or any(
-        r.request_id == request_id
-        for r in persistence.preemptive_resource_reservations()
-    )
-
-
-def _preemptive_reservation(persistence, request_id):
-    return next(
-        (
-            r
-            for r in persistence.preemptive_resource_reservations()
-            if r.request_id == request_id
-        ),
-        None,
-    )
-
-
-def _release_preemptive(persistence, engine, backend, *, request_id):
-    reservation = _preemptive_reservation(persistence, request_id)
-    if reservation is not None:
-        engine.preemptive_resources.release(
-            backend,
-            reservation.reservation_id,
-        )
-        backend.run_until(backend.now)
-
-
 def schedule_departure(
     persistence,
     engine,
@@ -879,17 +848,15 @@ def reconcile_aog_maintenance(
         return False
 
     request_id = f"maintenance-bay:{work.id}"
-    if not _preemptive_request_exists(persistence, request_id):
-        engine.preemptive_resources.request(
-            backend,
-            resource_name="maintenance_bay",
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=1,
-            preempt=True,
-        )
-    backend.run_until(backend.now)
-    if _preemptive_reservation(persistence, request_id) is None:
+    reservation = engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="maintenance_bay",
+        request_id=request_id,
+        requested_at=backend.now,
+        priority=1,
+        preempt=True,
+    )
+    if reservation is None:
         return False
 
     work = _entity(persistence, "aviation_maintenance_work_order", work.id)
@@ -968,11 +935,9 @@ def complete_aog_maintenance(
             key=("aviation", flight.id, "maintenance-release"),
             correlation_id=correlation_id,
         )
-    _release_preemptive(
-        persistence,
-        engine,
+    engine.preemptive_resources.withdraw(
         backend,
-        request_id=f"maintenance-bay:{work.id}",
+        f"maintenance-bay:{work.id}",
     )
     return _flight(persistence, flight_id).state == "released"
 
