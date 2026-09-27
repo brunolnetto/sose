@@ -145,7 +145,32 @@ def commit_emergency_preemption(
 
     normal_request = f"procedure:{normal.id}"
     if preemptive_reservation(persistence, normal_request) is None:
-        return preemption_result(persistence, normal.id) is not None
+        result = preemption_result(persistence, normal.id)
+        if result is None:
+            return False
+        emergency = maybe_episode(
+            persistence,
+            emergency_episode_id(normal.id),
+        )
+        emergency_reservation = preemptive_reservation(
+            persistence,
+            emergency_request_id(normal.id),
+        )
+        if (
+            emergency is not None
+            and emergency.state == "waiting_capacity"
+            and emergency_reservation is not None
+        ):
+            dispatch(
+                engine,
+                emergency,
+                "start",
+                key=("hospital-emergency", emergency.id, "start"),
+                correlation_id=flow_correlation_id(
+                    str(emergency.attributes["admission_id"])
+                ),
+            )
+        return True
 
     emergency = ensure_emergency_episode(
         persistence,
@@ -267,6 +292,20 @@ def complete_emergency_and_resume(
     correlation_id = flow_correlation_id(
         str(emergency.attributes["admission_id"])
     )
+    emergency_request = emergency_request_id(normal_episode_id)
+    if (
+        emergency.state == "waiting_capacity"
+        and preemptive_reservation(persistence, emergency_request) is not None
+    ):
+        dispatch(
+            engine,
+            emergency,
+            "start",
+            key=("hospital-emergency", emergency.id, "start"),
+            correlation_id=correlation_id,
+        )
+        emergency = episode(persistence, emergency.id)
+
     if emergency.state == "in_progress":
         dispatch(
             engine,
@@ -275,6 +314,10 @@ def complete_emergency_and_resume(
             key=("hospital-emergency", emergency.id, "complete"),
             correlation_id=correlation_id,
         )
+        emergency = episode(persistence, emergency.id)
+
+    if emergency.state != "completed":
+        return False
 
     _release_preemptive(
         persistence,
