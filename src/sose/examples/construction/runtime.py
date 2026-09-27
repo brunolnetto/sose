@@ -80,8 +80,8 @@ def seed_reference(
     predecessor = context.entities.create(
         ConstructionActivity,
         key=("construction-reference", "predecessor"),
-        state="completed" if predecessor_completed else "executing",
-        attributes={"name": "foundation"},
+        state="completed" if predecessor_completed else "measured",
+        attributes={"name": "foundation", "measurement": 1.0},
     )
     activity = context.entities.create(
         ConstructionActivity,
