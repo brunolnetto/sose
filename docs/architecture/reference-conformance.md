@@ -49,7 +49,9 @@ The conformance checker verifies structural claims only:
 - declared capabilities have evidence;
 - documentation exists and declares reference-implementation status;
 - package/entities/statecharts/runtime modules import;
-- runtime exposes `build_runtime()` and `seed_reference()`;
+- runtime exposes the entrypoints declared by its contract (modern references
+  normally use `build_runtime()` + `seed_reference()`; legacy references may
+  declare their established equivalent);
 - scenario modules import when scenario evidence is declared;
 - catalog identities do not collide.
 
