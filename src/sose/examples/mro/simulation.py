@@ -858,16 +858,10 @@ def reconcile_cancel(
         )
 
     if wo.state == "planned":
-        with persistence.transaction() as uow:
-            for work in persistence.scheduled_work():
-                command = persistence.command(work.command_id)
-                if (
-                    command is not None
-                    and command.entity_type == "work_order"
-                    and command.entity_id == wo.id
-                ):
-                    uow.delete_scheduled_work(work.work_id)
-                    uow.delete_command(command.command_id)
+        engine.scheduler.cancel_target(
+            entity_type="work_order",
+            entity_id=wo.id,
+        )
 
     if wo.state in {"planned", "released", "waiting_material", "waiting_resource"}:
         engine.dispatch(
