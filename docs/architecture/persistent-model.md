@@ -9,6 +9,16 @@ stable identifiers, names, and durable ownership rules.
 Reference-domain specifications should reuse this vocabulary rather than redefining
 runtime persistence concepts independently.
 
+## Relationship notation
+
+The Mermaid relationships in this document are **semantic references**, not SQL
+foreign-key declarations. When a durable record carries an identifier for another
+record, the edge names that role explicitly.
+
+`Command` and `DomainEvent` target entities polymorphically through the stable
+`(entity_type, entity_id)` pair. Correlation and causation are trace metadata across
+commands/events, not separate persisted entities and not business-entity foreign keys.
+
 ## 1. Core lifecycle and recovery model
 
 ```mermaid
@@ -127,8 +137,8 @@ erDiagram
     PREEMPTIVE_RESOURCE_DEFINITION ||--o{ PREEMPTIVE_RESOURCE_RESERVATION : "owns"
     PREEMPTIVE_RESOURCE_DEMAND ||--o| PREEMPTIVE_RESOURCE_RESERVATION : "becomes"
     PREEMPTIVE_RESOURCE_RESERVATION ||--o| PREEMPTIVE_RESOURCE_RELEASE_INTENT : "released by"
-    PREEMPTIVE_RESOURCE_RESERVATION ||--o{ RESOURCE_PREEMPTION_RESULT : "may be displaced"
-    PREEMPTIVE_RESOURCE_RESERVATION ||--o{ RESOURCE_PREEMPTION_RESULT : "may succeed"
+    PREEMPTIVE_RESOURCE_RESERVATION ||--o{ RESOURCE_PREEMPTION_RESULT : "referenced as displaced"
+    PREEMPTIVE_RESOURCE_RESERVATION ||--o| RESOURCE_PREEMPTION_RESULT : "referenced as successor"
 
     PREEMPTIVE_RESOURCE_DEFINITION {
         string name
@@ -203,6 +213,7 @@ erDiagram
         string item_id
         string store_name
         json value
+        int priority
         datetime requested_at
         int sequence
     }

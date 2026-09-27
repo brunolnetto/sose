@@ -174,12 +174,15 @@ erDiagram
 
     RESOURCE_DEFINITION ||--o{ RESOURCE_DEMAND : "technician demand"
     RESOURCE_DEMAND ||--o| RESOURCE_RESERVATION : "technician grant"
+    RESOURCE_RESERVATION ||--o| RESOURCE_RELEASE_INTENT : "crash-safe release"
 
     PREEMPTIVE_RESOURCE_DEFINITION ||--o{ PREEMPTIVE_RESOURCE_DEMAND : "bay demand"
     PREEMPTIVE_RESOURCE_DEMAND ||--o| PREEMPTIVE_RESOURCE_RESERVATION : "bay grant"
+    PREEMPTIVE_RESOURCE_RESERVATION ||--o| PREEMPTIVE_RESOURCE_RELEASE_INTENT : "crash-safe release"
     PREEMPTIVE_RESOURCE_RESERVATION ||--o{ RESOURCE_PREEMPTION_RESULT : "emergency displacement"
 
     STORE_DEFINITION ||--o{ DURABLE_STORE_ITEM : "spare-part lot"
+    STORE_DEFINITION ||--o{ STORE_PUT_INTENT : "durable replenishment intent"
     STORE_DEFINITION ||--o{ STORE_GET_REQUEST : "part withdrawal"
     STORE_GET_REQUEST ||--o| STORE_GET_RESULT : "terminal lot effect"
 
@@ -202,6 +205,8 @@ Relevant named durable objects are:
 
 Spare-part identity and spare-part quantity are deliberately separate durable facts.
 The reconciler requires both to be feasible before beginning the physical issue.
+`SimulationPosition` is the singleton logical recovery boundary for MRO and is
+intentionally not modeled as a business-entity foreign key.
 
 ### 4.3 Persistence ownership
 

@@ -158,12 +158,15 @@ erDiagram
 
     RESOURCE_DEFINITION ||--o{ RESOURCE_DEMAND : "operator requests"
     RESOURCE_DEMAND ||--o| RESOURCE_RESERVATION : "operator grant"
+    RESOURCE_RESERVATION ||--o| RESOURCE_RELEASE_INTENT : "crash-safe release"
 
     PREEMPTIVE_RESOURCE_DEFINITION ||--o{ PREEMPTIVE_RESOURCE_DEMAND : "machine requests"
     PREEMPTIVE_RESOURCE_DEMAND ||--o| PREEMPTIVE_RESOURCE_RESERVATION : "machine grant"
+    PREEMPTIVE_RESOURCE_RESERVATION ||--o| PREEMPTIVE_RESOURCE_RELEASE_INTENT : "crash-safe release"
     PREEMPTIVE_RESOURCE_RESERVATION ||--o{ RESOURCE_PREEMPTION_RESULT : "breakdown evidence"
 
     STORE_DEFINITION ||--o{ DURABLE_STORE_ITEM : "raw lots / WIP"
+    STORE_DEFINITION ||--o{ STORE_PUT_INTENT : "durable insertion intent"
     STORE_DEFINITION ||--o{ STORE_GET_REQUEST : "withdrawal"
     STORE_GET_REQUEST ||--o| STORE_GET_RESULT : "terminal identity effect"
 
@@ -184,7 +187,9 @@ Relevant named durable objects are:
 - commands, scheduled work, events, scenario state, and simulation position.
 
 For raw material, Store and Container are complementary representations: lot identity
-and aggregate quantity. Neither is a cache of the other.
+and aggregate quantity. Neither is a cache of the other. `SimulationPosition` is the
+singleton logical recovery boundary for this flow; it is intentionally described here
+rather than connected to a business entity by a fictitious foreign-key edge.
 
 ### 4.3 Persistence ownership
 

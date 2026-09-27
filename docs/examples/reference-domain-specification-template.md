@@ -80,6 +80,10 @@ Reuse the canonical vocabulary from
 
 The ERD is semantic, not a promise of a physical SQL schema. Relationships should be
 grounded in stable identifiers, names, and ownership actually present in the runtime.
+Do not draw a business-entity foreign key when the implementation only provides
+deterministic identity, process correlation, or causation metadata. If resource release
+is part of a restart boundary, include the corresponding release intent. If logical
+recovery position is relevant, show or explicitly annotate `SimulationPosition`.
 
 ### 4.3 Persistence ownership
 
