@@ -1528,6 +1528,7 @@ At the time of this document:
 - **Maintenance / MRO**: Reference implementation. Happy path, spare-parts shortage, resource contention, cancellation, emergency preemption, scenarios, and domain-level restart equivalence are executable.
 - **Procure-to-Pay**: Reference implementation. Happy path, resource contention, shortage/backorder, partial/rejected receipt paths, scenarios, and restart coverage are executable.
 - **Manufacturing**: Reference implementation. Happy path, shortage, resource contention, breakdown/preemption, quality rework, scenarios, and restart coverage are executable.
+- **Logistics & transport**: Partial. Durable entities, StateCharts, stochastic last-mile outcomes, scenarios, and the reference-domain specification are implemented; operational queue/capacity execution and restart evidence remain incomplete.
 - All other domains in this document: Blueprint.
 
 ---
