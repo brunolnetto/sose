@@ -126,47 +126,6 @@ def seed_happy_path(
 
 
 
-def _preemptive_request_exists(persistence: MemoryPersistence, request_id: str) -> bool:
-    return any(
-        demand.request_id == request_id
-        for demand in persistence.preemptive_resource_demands()
-    ) or any(
-        reservation.request_id == request_id
-        for reservation in persistence.preemptive_resource_reservations()
-    )
-
-
-def _normal_request_exists(persistence: MemoryPersistence, request_id: str) -> bool:
-    return any(
-        demand.request_id == request_id for demand in persistence.resource_demands()
-    ) or any(
-        reservation.request_id == request_id
-        for reservation in persistence.resource_reservations()
-    )
-
-
-def _preemptive_reservation(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.preemptive_resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
-    )
-
-
-def _resource_reservation(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
-    )
-
-
 def reconcile_setup_resources(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -179,27 +138,21 @@ def reconcile_setup_resources(
     machine_request = f"machine:{entities.production_order_id}"
     operator_request = f"operator:{entities.production_order_id}"
 
-    if not _preemptive_request_exists(persistence, machine_request):
-        engine.preemptive_resources.request(
-            backend,
-            resource_name="machine",
-            request_id=machine_request,
-            requested_at=backend.now,
-            priority=100,
-            preempt=False,
-        )
-    if not _normal_request_exists(persistence, operator_request):
-        engine.resources.request(
-            backend,
-            resource_name="operator",
-            request_id=operator_request,
-            requested_at=backend.now,
-            priority=100,
-        )
-    backend.run_until(backend.now)
-
-    machine = _preemptive_reservation(persistence, machine_request)
-    operator = _resource_reservation(persistence, operator_request)
+    machine = engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="machine",
+        request_id=machine_request,
+        requested_at=backend.now,
+        priority=100,
+        preempt=False,
+    )
+    operator = engine.resources.ensure_requested(
+        backend,
+        resource_name="operator",
+        request_id=operator_request,
+        requested_at=backend.now,
+        priority=100,
+    )
     if machine is None or operator is None:
         return False
 
@@ -236,19 +189,14 @@ def release_setup_resources(
     *,
     entities: ManufacturingEntities,
 ) -> None:
-    machine = _preemptive_reservation(
-        persistence, f"machine:{entities.production_order_id}"
+    engine.preemptive_resources.withdraw(
+        backend,
+        f"machine:{entities.production_order_id}",
     )
-    if machine is not None:
-        engine.preemptive_resources.release(backend, machine.reservation_id)
-        backend.run_until(backend.now)
-
-    operator = _resource_reservation(
-        persistence, f"operator:{entities.production_order_id}"
+    engine.resources.withdraw(
+        backend,
+        f"operator:{entities.production_order_id}",
     )
-    if operator is not None:
-        engine.resources.release(backend, operator.reservation_id)
-        backend.run_until(backend.now)
 
 
 def seed_material(
@@ -311,18 +259,14 @@ def reconcile_breakdown(
     """Preempt production capacity and make the breakdown durable in business state."""
 
     repair_request = f"machine-repair:{entities.production_order_id}"
-    if not _preemptive_request_exists(persistence, repair_request):
-        engine.preemptive_resources.request(
-            backend,
-            resource_name="machine",
-            request_id=repair_request,
-            requested_at=backend.now,
-            priority=1,
-            preempt=True,
-        )
-    backend.run_until(backend.now)
-
-    repair = _preemptive_reservation(persistence, repair_request)
+    repair = engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="machine",
+        request_id=repair_request,
+        requested_at=backend.now,
+        priority=1,
+        preempt=True,
+    )
     if repair is None:
         return False
 
@@ -372,23 +316,16 @@ def reconcile_repair(
     repair_request = f"machine-repair:{entities.production_order_id}"
     production_request = f"machine:{entities.production_order_id}"
 
-    repair = _preemptive_reservation(persistence, repair_request)
-    if repair is not None:
-        engine.preemptive_resources.release(backend, repair.reservation_id)
-        backend.run_until(backend.now)
+    engine.preemptive_resources.withdraw(backend, repair_request)
 
-    if not _preemptive_request_exists(persistence, production_request):
-        engine.preemptive_resources.request(
-            backend,
-            resource_name="machine",
-            request_id=production_request,
-            requested_at=backend.now,
-            priority=100,
-            preempt=False,
-        )
-    backend.run_until(backend.now)
-
-    machine = _preemptive_reservation(persistence, production_request)
+    machine = engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="machine",
+        request_id=production_request,
+        requested_at=backend.now,
+        priority=100,
+        preempt=False,
+    )
     if machine is None:
         return False
 
