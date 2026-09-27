@@ -112,6 +112,7 @@ def _finish_rework(persistence, entities, engine, backend):
     )
     record_measurement(
         persistence,
+        engine,
         entities=entities,
         value=10.0,
     )
