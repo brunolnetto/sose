@@ -1532,6 +1532,7 @@ At the time of this document:
 - **Cards & payments**: Reference implementation. Processor-gated authorization/settlement/refund, durable settlement/retry schedules, pre-capture reversal, dispute/chargeback execution, finite outage recovery, and restart equivalence are executable.
 - **IT service management**: Reference implementation. Durable severity ordering, support/escalation resources, SLA-driven escalation, reopen history, finite shortage recovery, and restart equivalence are executable.
 - **Hospitals**: Reference implementation. Acuity-ordered triage, scarce ward/ICU/team capacity, Admission-gated procedures, durable emergency preemption evidence/recovery, transfer cleanup, finite scenarios, and restart equivalence are executable.
+- **Construction**: Partial. Activity/Inspection lifecycles, scenarios, orchestration gating, and the reference specification are implemented; durable dependency/material/resource/rework/measurement/restart evidence remains incomplete.
 - All other domains in this document: Blueprint.
 
 ---
