@@ -199,6 +199,6 @@ Both scenarios are finite. Recovery occurs through ordinary reconciliation.
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-Promotion awaits CI and final audit of the exact branch.
+Promotion is based on executable evidence for durable arrival/slot timing, gate ownership and reallocation, ground-service and baggage prerequisites, priority-queue ownership, committed StoreGetResult recovery, tug capacity, finite congestion/weather scenarios, post-commit crash reconciliation, and restart equivalence across ScheduledWork, ResourceDemand, StoreGetResult, and pushback boundaries.
