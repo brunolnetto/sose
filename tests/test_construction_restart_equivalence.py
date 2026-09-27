@@ -16,6 +16,7 @@ from sose.examples.construction.runtime import (
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def _prepare_rework_resource_wait(persistence):
@@ -173,11 +174,14 @@ def test_failed_inspection_pending_rework_capacity_is_restart_equivalent():
     r_entities, _, r_backend_before = _prepare_rework_resource_wait(
         restarted
     )
-    restart_at = r_backend_before.now
-    _, rebuilt_engine = build_runtime(restarted, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        restarted,
+        build_runtime,
+        r_backend_before,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     assert rebuilt_backend.resource_snapshot("crew").in_use == 1
     assert rebuilt_backend.resource_snapshot("crew").queued == 1
