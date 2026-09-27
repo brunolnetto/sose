@@ -26,6 +26,7 @@ from sose.examples.insurance.simulation import (
     seed_reference as seed_insurance,
 )
 from sose.examples.order_to_cash.simulation import (
+    ORIGIN as O2C_ORIGIN,
     build_runtime as build_o2c_runtime,
     ensure_receivable,
     reconcile_credit,
@@ -34,6 +35,7 @@ from sose.examples.order_to_cash.simulation import (
     ship_invoice_and_ensure_receivable,
 )
 from sose.examples.record_to_report.simulation import (
+    ORIGIN as R2R_ORIGIN,
     build_runtime as build_r2r_runtime,
     ensure_adjustment,
     reconcile_item,
@@ -58,7 +60,7 @@ def test_o2c_preserves_currency_from_order_to_receivable():
     persistence = MemoryPersistence()
     entities = seed_o2c(persistence, amount=250.0)
     _, engine = build_o2c_runtime(persistence)
-    backend = SimPyBackend()
+    backend = SimPyBackend(origin=O2C_ORIGIN)
     engine.rebuild_backend(backend)
 
     assert reconcile_credit(persistence, engine, entities=entities)
@@ -84,7 +86,7 @@ def test_r2r_preserves_currency_across_adjustment_lineage():
     persistence = MemoryPersistence()
     entities = seed_r2r(persistence, amount=1000.0, currency="BRL")
     _, engine = build_r2r_runtime(persistence)
-    backend = SimPyBackend()
+    backend = SimPyBackend(origin=R2R_ORIGIN)
     engine.rebuild_backend(backend)
 
     assert submit_and_post_journal(
