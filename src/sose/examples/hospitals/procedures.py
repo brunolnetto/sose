@@ -11,8 +11,6 @@ from .runtime import (
     episode,
     flow_correlation_id,
     maybe_episode,
-    preemptive_request_exists,
-    preemptive_reservation,
 )
 
 
@@ -72,18 +70,15 @@ def reconcile_procedure_start(
         return False
 
     request_id = f"procedure:{current.id}"
-    if not preemptive_request_exists(persistence, request_id):
-        engine.preemptive_resources.request(
-            backend,
-            resource_name="procedure_suite",
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=100,
-            preempt=False,
-        )
-    backend.run_until(backend.now)
-
-    if preemptive_reservation(persistence, request_id) is None:
+    reservation = engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="procedure_suite",
+        request_id=request_id,
+        requested_at=backend.now,
+        priority=100,
+        preempt=False,
+    )
+    if reservation is None:
         return False
 
     current = episode(persistence, current.id)
@@ -160,7 +155,7 @@ def commit_emergency_preemption(
         return normal.state == "interrupted"
 
     normal_request = f"procedure:{normal.id}"
-    if preemptive_reservation(persistence, normal_request) is None:
+    if engine.preemptive_resources.reservation_for(normal_request) is None:
         result = preemption_result(persistence, normal.id)
         if result is None:
             return False
@@ -168,9 +163,8 @@ def commit_emergency_preemption(
             persistence,
             emergency_episode_id(normal.id),
         )
-        emergency_reservation = preemptive_reservation(
-            persistence,
-            emergency_request_id(normal.id),
+        emergency_reservation = engine.preemptive_resources.reservation_for(
+            emergency_request_id(normal.id)
         )
         if (
             emergency is not None
@@ -202,18 +196,14 @@ def commit_emergency_preemption(
         emergency = episode(persistence, emergency.id)
 
     request_id = emergency_request_id(normal.id)
-    if not preemptive_request_exists(persistence, request_id):
-        engine.preemptive_resources.request(
-            backend,
-            resource_name="procedure_suite",
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=1,
-            preempt=True,
-        )
-    backend.run_until(backend.now)
-
-    reservation = preemptive_reservation(persistence, request_id)
+    reservation = engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="procedure_suite",
+        request_id=request_id,
+        requested_at=backend.now,
+        priority=1,
+        preempt=True,
+    )
     result = preemption_result(persistence, normal.id)
     if reservation is None or result is None:
         return False
@@ -245,9 +235,8 @@ def reconcile_preemption_business(
         return False
 
     result = preemption_result(persistence, normal.id)
-    normal_reservation = preemptive_reservation(
-        persistence,
-        f"procedure:{normal.id}",
+    normal_reservation = engine.preemptive_resources.reservation_for(
+        f"procedure:{normal.id}"
     )
     if result is None or normal_reservation is not None:
         return False
@@ -267,22 +256,6 @@ def reconcile_preemption_business(
         ),
     )
     return True
-
-
-def _release_preemptive(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    request_id: str,
-) -> None:
-    reservation = preemptive_reservation(persistence, request_id)
-    if reservation is not None:
-        engine.preemptive_resources.release(
-            backend,
-            reservation.reservation_id,
-        )
-        backend.run_until(backend.now)
 
 
 def complete_emergency_and_resume(
@@ -311,7 +284,7 @@ def complete_emergency_and_resume(
     emergency_request = emergency_request_id(normal_episode_id)
     if (
         emergency.state == "waiting_capacity"
-        and preemptive_reservation(persistence, emergency_request) is not None
+        and engine.preemptive_resources.reservation_for(emergency_request) is not None
     ):
         dispatch(
             engine,
@@ -335,26 +308,21 @@ def complete_emergency_and_resume(
     if emergency.state != "completed":
         return False
 
-    _release_preemptive(
-        persistence,
-        engine,
+    engine.preemptive_resources.withdraw(
         backend,
-        request_id=emergency_request_id(normal_episode_id),
+        emergency_request_id(normal_episode_id),
     )
 
     normal_request = f"procedure:{normal_episode_id}"
-    if not preemptive_request_exists(persistence, normal_request):
-        engine.preemptive_resources.request(
-            backend,
-            resource_name="procedure_suite",
-            request_id=normal_request,
-            requested_at=backend.now,
-            priority=100,
-            preempt=False,
-        )
-    backend.run_until(backend.now)
-
-    if preemptive_reservation(persistence, normal_request) is None:
+    normal_reservation = engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="procedure_suite",
+        request_id=normal_request,
+        requested_at=backend.now,
+        priority=100,
+        preempt=False,
+    )
+    if normal_reservation is None:
         return False
 
     normal = episode(persistence, normal_episode_id)
@@ -391,11 +359,9 @@ def complete_procedure(
             str(current.attributes["admission_id"])
         ),
     )
-    _release_preemptive(
-        persistence,
-        engine,
+    engine.preemptive_resources.withdraw(
         backend,
-        request_id=f"procedure:{current.id}",
+        f"procedure:{current.id}",
     )
 
 
