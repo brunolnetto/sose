@@ -405,6 +405,31 @@ def _scheduled_command(
     return None
 
 
+def _cancel_scheduled_command(
+    persistence: MemoryPersistence,
+    *,
+    entity_type: str,
+    entity_id: str,
+    name: str,
+) -> bool:
+    found = _scheduled_command(
+        persistence,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        name=name,
+    )
+    if found is None:
+        return False
+    work, command = found
+    with persistence.transaction() as uow:
+        persisted = uow.get_scheduled_work(work.work_id)
+        if persisted != work:
+            return False
+        uow.delete_scheduled_work(work.work_id)
+        uow.delete_command(command.command_id)
+    return True
+
+
 def schedule_due(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -602,6 +627,12 @@ def collect_receivable(
         key=("o2c", receivable.id, "collect"),
         correlation_id=flow_correlation_id(entities.order_id),
     )
+    _cancel_scheduled_command(
+        persistence,
+        entity_type="receivable",
+        entity_id=receivable.id,
+        name="mark_overdue",
+    )
 
     case = _collection_case(persistence, receivable.id)
     if case is not None and case.state in {"contacted", "promised", "escalated"}:
@@ -611,5 +642,11 @@ def collect_receivable(
             "resolve",
             key=("o2c-collection", case.id, "resolve"),
             correlation_id=flow_correlation_id(entities.order_id),
+        )
+        _cancel_scheduled_command(
+            persistence,
+            entity_type="collection_case",
+            entity_id=case.id,
+            name="escalate",
         )
     return True
