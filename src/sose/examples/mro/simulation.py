@@ -641,7 +641,7 @@ def reconcile_emergency_interrupt(
         return wo.state == "interrupted"
 
     normal_id = f"bay:{entities.work_order_id}"
-    normal = _preemptive_reservation(persistence, normal_id)
+    normal = engine.preemptive_resources.reservation_for(normal_id)
     if normal is None:
         active_emergency_id = _active_emergency_request_id(
             persistence,
