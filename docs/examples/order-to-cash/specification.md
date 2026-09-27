@@ -144,16 +144,16 @@ Reference-grade recovery gates will cover:
 | CollectionCase StateChart | statecharts.py + topology test | implemented |
 | direct probabilistic gating | TransitionPolicy tests | implemented |
 | O2C scenarios | scenarios.py | implemented |
-| durable credit / fulfillment gating | — | missing |
-| invoice-to-receivable causality | — | missing |
-| due / overdue scheduling | — | missing |
-| collection assignment / follow-up | — | missing |
-| partial-fulfillment execution | — | missing |
-| finite scenario recovery | — | missing |
-| restart equivalence | — | missing |
+| durable credit / fulfillment gating | Resource-backed fulfillment reconciler + credit/fulfillment scenario tests | implemented |
+| invoice-to-receivable causality | idempotent Receivable creation after durable SalesOrder(invoiced) | implemented |
+| due / overdue scheduling | durable mark_due / mark_overdue ScheduledWork + cancellation on collection | implemented |
+| collection assignment / follow-up | CollectionCase + collection_agent Resource + promise follow-up ScheduledWork | implemented |
+| partial-fulfillment execution | explicit partial_fulfillment runtime path + tests | implemented |
+| finite scenario recovery | credit tightening / fulfillment outage tests | implemented |
+| restart equivalence | due ScheduledWork rebuild test | partial |
 
 ## Promotion decision
 
 Current status: **Partial**.
 
-Reference promotion requires executable cross-entity causality, durable due/collection schedules, fulfillment/collection capacity, representative exception paths, scenario recovery, and restart equivalence.
+Reference promotion still requires broader restart-equivalence evidence across invoice→receivable, overdue→CollectionCase, and collection follow-up boundaries, plus final end-to-end evidence review.
