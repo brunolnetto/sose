@@ -520,7 +520,7 @@ def reconcile_scenario_emergency(
         raise RuntimeError("work order was not persisted")
 
     normal_id = f"bay:{entities.work_order_id}"
-    normal_pending = _preemptive_request_exists(persistence, normal_id)
+    normal_pending = engine.preemptive_resources.has_request(normal_id)
 
     # After the emergency reservation is released, cleanup may still be
     # incomplete while the interrupted work waits to reacquire its normal bay.
