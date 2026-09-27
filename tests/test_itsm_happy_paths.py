@@ -30,3 +30,49 @@ def test_sla_escalation_is_independent_durable_case():
     assert persistence.resource_demands() == ()
     assert persistence.resource_reservations() == ()
     assert persistence.scheduled_work() == ()
+
+
+def test_escalated_incident_cannot_resolve_without_completed_escalation_evidence():
+    from sose.backends.simpy import SimPyBackend
+    from sose.examples.itsm.simulation import (
+        ORIGIN,
+        build_runtime,
+        claim_next_incident,
+        resolve_incident,
+        seed_reference,
+        triage_and_queue,
+    )
+    from sose.persistence.memory import MemoryPersistence
+
+    persistence = MemoryPersistence()
+    entities = seed_reference(persistence)
+    _, engine = build_runtime(persistence)
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    sla_at = triage_and_queue(
+        persistence,
+        engine,
+        backend,
+        incident_id=entities.incident_id,
+    )
+    assert claim_next_incident(
+        persistence,
+        engine,
+        backend,
+        claim_id="gate",
+    ) == entities.incident_id
+    backend.run_until(sla_at)
+
+    import pytest
+    with pytest.raises(
+        RuntimeError,
+        match="completed durable escalation evidence",
+    ):
+        resolve_incident(
+            persistence,
+            engine,
+            backend,
+            incident_id=entities.incident_id,
+            claim_id="gate",
+        )
