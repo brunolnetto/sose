@@ -186,7 +186,7 @@ Both scenarios are finite. Recovery occurs through ordinary reconciliation.
 | durable entities | entities.py + topology tests | implemented |
 | StateCharts | statecharts.py + tests | implemented |
 | durable arrival timing | ScheduledWork restart test | implemented |
-| gate ownership | Resource + congestion/restart tests | implemented |
+| gate ownership / reallocation | Resource + congestion/reallocation/restart tests | implemented |
 | ground service | Resource + crash-recovery tests | implemented |
 | baggage delay/recovery | happy/sad path tests | implemented |
 | departure slot timing | ScheduledWork + weather tests | implemented |
@@ -195,12 +195,6 @@ Both scenarios are finite. Recovery occurs through ordinary reconciliation.
 | slot-consume crash recovery | pushback restart test | implemented |
 | illegal prerequisites | departure-queue invariant tests | implemented |
 | finite scenarios | gate/weather tests | implemented |
-
-### Deliberate scope boundary
-
-Gate reallocation is represented in the GateAssignment StateChart topology but
-is not yet an executable reference path. The Reference promotion decision will
-not claim gate-reallocation evidence unless it is implemented and tested.
 
 ## Promotion decision
 
