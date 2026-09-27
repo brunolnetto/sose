@@ -419,6 +419,12 @@ def transfer_from_icu_wait(
         f"icu-team:{current.id}",
     ):
         engine.resources.cancel_pending(backend, request_id)
+        _release_resource(
+            persistence,
+            engine,
+            backend,
+            request_id=request_id,
+        )
     backend.run_until(backend.now)
 
     current = admission(persistence, current.id)
