@@ -22,6 +22,7 @@ from .runtime import (
     build_runtime,
     seed_reference,
 )
+from .scheduling import schedule_planned_start
 
 
 def _prepare_ready_with_material(
@@ -72,6 +73,14 @@ def run_happy_path(
         quantity=quantity,
     )
 
+    planned_start = schedule_planned_start(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    backend.run_until(planned_start)
+
     if not request_execution_resources(
         persistence,
         engine,
@@ -119,6 +128,14 @@ def run_rework_path(
         persistence,
         quantity=quantity,
     )
+
+    planned_start = schedule_planned_start(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    backend.run_until(planned_start)
 
     if not request_execution_resources(
         persistence,
