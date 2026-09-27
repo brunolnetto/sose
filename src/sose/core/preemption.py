@@ -126,6 +126,60 @@ class DurablePreemptiveResourceManager:
             restored += 1
         return restored
 
+    def reservation_for(
+        self,
+        request_id: str,
+    ) -> PreemptiveResourceReservation | None:
+        """Return the durable reservation currently owned by a request, if any."""
+        return next(
+            (
+                reservation
+                for reservation in self._persistence.preemptive_resource_reservations()
+                if reservation.request_id == request_id
+            ),
+            None,
+        )
+
+    def has_request(self, request_id: str) -> bool:
+        """Return whether a preemptive request is durably pending or reserved."""
+        return self._request_exists(request_id)
+
+    def ensure_requested(
+        self,
+        backend,
+        *,
+        resource_name: str,
+        request_id: str,
+        requested_at: datetime,
+        priority: int = 100,
+        preempt: bool = True,
+    ) -> PreemptiveResourceReservation | None:
+        """Ensure one durable preemptive request exists and reconcile acquisition."""
+        if not self.has_request(request_id):
+            self.request(
+                backend,
+                resource_name=resource_name,
+                request_id=request_id,
+                requested_at=requested_at,
+                priority=priority,
+                preempt=preempt,
+            )
+        run_until = getattr(backend, "run_until", None)
+        if callable(run_until):
+            run_until(getattr(backend, "now", requested_at))
+        return self.reservation_for(request_id)
+
+    def withdraw(self, backend, request_id: str) -> bool:
+        """Remove a preemptive request regardless of pending/granted phase."""
+        changed = self.cancel_pending(backend, request_id)
+        reservation = self.reservation_for(request_id)
+        if reservation is not None:
+            changed = self.release(backend, reservation.reservation_id) or changed
+        run_until = getattr(backend, "run_until", None)
+        if callable(run_until):
+            run_until(getattr(backend, "now"))
+        return changed
+
     def request(
         self,
         backend,
@@ -241,14 +295,7 @@ class DurablePreemptiveResourceManager:
         )
 
     def _record_acquired(self, *, request_id: str, lease: ResourceLease) -> None:
-        existing = next(
-            (
-                reservation
-                for reservation in self._persistence.preemptive_resource_reservations()
-                if reservation.request_id == request_id
-            ),
-            None,
-        )
+        existing = self.reservation_for(request_id)
         if existing is not None:
             self._backend_leases[existing.reservation_id] = lease
             return

@@ -210,60 +210,6 @@ def _dispatch(
     engine.dispatch(command)
 
 
-def _request_exists(persistence: MemoryPersistence, request_id: str) -> bool:
-    return any(
-        demand.request_id == request_id
-        for demand in persistence.resource_demands()
-    ) or any(
-        reservation.request_id == request_id
-        for reservation in persistence.resource_reservations()
-    )
-
-
-def _reservation(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
-    )
-
-
-def _request_resource(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    resource_name: str,
-    request_id: str,
-):
-    if not _request_exists(persistence, request_id):
-        engine.resources.request(
-            backend,
-            resource_name=resource_name,
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=100,
-        )
-    backend.run_until(backend.now)
-    return _reservation(persistence, request_id)
-
-
-def _release(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    request_id: str,
-) -> None:
-    reservation = _reservation(persistence, request_id)
-    if reservation is not None:
-        engine.resources.release(backend, reservation.reservation_id)
-        backend.run_until(backend.now)
-
-
 def submit_and_post_journal(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -275,36 +221,21 @@ def submit_and_post_journal(
     journal = _journal(persistence, entities)
     request_id = f"posting:{journal.id}"
     if journal.state in {"posted", "rejected"}:
-        engine.resources.cancel_pending(backend, request_id)
-        _release(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         return journal.state == "posted"
 
     available = bool(
         engine.context.scenarios.attribute("r2r.posting.available", True)
     )
     if not available:
-        engine.resources.cancel_pending(backend, request_id)
-        _release(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         return False
 
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="posting_processor",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -330,12 +261,7 @@ def submit_and_post_journal(
             correlation_id=correlation_id,
         )
 
-    _release(
-        persistence,
-        engine,
-        backend,
-        request_id=request_id,
-    )
+    engine.resources.withdraw(backend, request_id)
     return _journal(persistence, entities).state == "posted"
 
 
@@ -357,22 +283,14 @@ def reconcile_item(
     item = _reconciliation(persistence, entities)
     request_id = f"reconciliation-analyst:{item.id}"
     if item.state in {"matched", "reconciled", "rejected"}:
-        engine.resources.cancel_pending(backend, request_id)
-        _release(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         return item.state in {"matched", "reconciled"}
 
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="reconciliation_analyst",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -399,12 +317,7 @@ def reconcile_item(
             correlation_id=correlation_id,
         )
 
-    _release(
-        persistence,
-        engine,
-        backend,
-        request_id=request_id,
-    )
+    engine.resources.withdraw(backend, request_id)
     return _reconciliation(persistence, entities).state == "matched"
 
 
@@ -464,14 +377,7 @@ def post_adjustment(
     )
     request_id = f"posting-adjustment:{adjustment.id}"
     if adjustment.state in {"posted", "rejected"}:
-        engine.resources.cancel_pending(backend, request_id)
-        _release(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         if adjustment.state == "posted":
             item = _reconciliation(persistence, entities)
             if item.state == "adjustment_required":
@@ -489,22 +395,14 @@ def post_adjustment(
         engine.context.scenarios.attribute("r2r.posting.available", True)
     )
     if not available:
-        engine.resources.cancel_pending(backend, request_id)
-        _release(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         return False
 
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="posting_processor",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -547,12 +445,7 @@ def post_adjustment(
             correlation_id=correlation_id,
         )
 
-    _release(
-        persistence,
-        engine,
-        backend,
-        request_id=request_id,
-    )
+    engine.resources.withdraw(backend, request_id)
 
     adjustment = _adjustment(persistence, entities)
     if adjustment is None or adjustment.state != "posted":
@@ -640,14 +533,7 @@ def reconcile_close(
 
     request_id = f"close-accountant:{task.id}"
     if period.state == "closed" and task.state == "completed":
-        engine.resources.cancel_pending(backend, request_id)
-        _release(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         return True
     if task.state != "in_progress":
         return False
@@ -658,22 +544,14 @@ def reconcile_close(
         engine.context.scenarios.attribute("r2r.close_team.available", True)
     )
     if not available:
-        engine.resources.cancel_pending(backend, request_id)
-        _release(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         return False
 
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="close_accountant",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -709,12 +587,7 @@ def reconcile_close(
             correlation_id=correlation_id,
         )
 
-    _release(
-        persistence,
-        engine,
-        backend,
-        request_id=request_id,
-    )
+    engine.resources.withdraw(backend, request_id)
     return _period(persistence, entities).state == "closed"
 
 

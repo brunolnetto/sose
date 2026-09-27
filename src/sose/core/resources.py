@@ -50,6 +50,69 @@ class DurableResourceManager:
             restored += 1
         return restored
 
+    def reservation_for(self, request_id: str) -> ResourceReservation | None:
+        """Return the durable reservation currently owned by a request, if any."""
+        return next(
+            (
+                reservation
+                for reservation in self._persistence.resource_reservations()
+                if reservation.request_id == request_id
+            ),
+            None,
+        )
+
+    def has_request(self, request_id: str) -> bool:
+        """Return whether a request is durably pending or currently reserved."""
+        return self.reservation_for(request_id) is not None or any(
+            demand.request_id == request_id
+            for demand in self._persistence.resource_demands()
+        )
+
+    def ensure_requested(
+        self,
+        backend,
+        *,
+        resource_name: str,
+        request_id: str,
+        requested_at: datetime,
+        priority: int = 100,
+    ) -> ResourceReservation | None:
+        """Ensure one durable request exists and reconcile immediate acquisition.
+
+        This deliberately does not encode any business decision about whether the
+        request *should* exist. Callers decide eligibility first, then use this
+        method to make the durable resource intent idempotent across retries.
+        """
+        if not self.has_request(request_id):
+            self.request(
+                backend,
+                resource_name=resource_name,
+                request_id=request_id,
+                requested_at=requested_at,
+                priority=priority,
+            )
+        run_until = getattr(backend, "run_until", None)
+        if callable(run_until):
+            run_until(getattr(backend, "now", requested_at))
+        return self.reservation_for(request_id)
+
+    def withdraw(self, backend, request_id: str) -> bool:
+        """Remove a durable request regardless of pending/granted phase.
+
+        A request can race from ResourceDemand to ResourceReservation while a
+        scenario or post-state reconciliation invalidates the work. Withdrawing
+        first cancels pending demand, then releases any reservation that exists
+        after cancellation. The operation is idempotent and safe to retry.
+        """
+        changed = self.cancel_pending(backend, request_id)
+        reservation = self.reservation_for(request_id)
+        if reservation is not None:
+            changed = self.release(backend, reservation.reservation_id) or changed
+        run_until = getattr(backend, "run_until", None)
+        if callable(run_until):
+            run_until(getattr(backend, "now"))
+        return changed
+
     def request(
         self,
         backend,
@@ -106,14 +169,7 @@ class DurableResourceManager:
         return demand
 
     def commit_grant(self, *, request_id: str, acquired_at: datetime) -> ResourceReservation:
-        existing = next(
-            (
-                reservation
-                for reservation in self._persistence.resource_reservations()
-                if reservation.request_id == request_id
-            ),
-            None,
-        )
+        existing = self.reservation_for(request_id)
         if existing is not None:
             return existing
 
