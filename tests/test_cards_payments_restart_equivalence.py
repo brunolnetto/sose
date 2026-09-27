@@ -8,6 +8,7 @@ from sose.examples.cards_payments.simulation import (
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def _progress_to_retry_wait(persistence):
