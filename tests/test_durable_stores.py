@@ -499,3 +499,158 @@ def test_store_get_result_is_terminal_identity_in_persistence():
 
     assert store.store_get_requests() == ()
     assert store.store_get_results() == (result,)
+
+
+def test_ensure_selection_returns_committed_fifo_result_after_item_is_consumed():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    backend = SimPyBackend(origin=NOW)
+    manager.define(StoreDefinition("inbox", kind="fifo"))
+    manager.rebuild_backend(backend)
+
+    manager.put(
+        backend,
+        store_name="inbox",
+        item_id="item-1",
+        value={"payload": 1},
+        requested_at=NOW,
+    )
+    backend.run_until(NOW)
+
+    first = manager.ensure_selection(
+        backend,
+        store_name="inbox",
+        request_id="pick-1",
+        requested_at=NOW,
+    )
+    second = manager.ensure_selection(
+        backend,
+        store_name="inbox",
+        request_id="pick-1",
+        requested_at=NOW,
+    )
+
+    assert first is not None
+    assert second == first
+    assert first.item.item_id == "item-1"
+    assert store.store_items() == ()
+    assert store.store_get_requests() == ()
+    assert manager.selection("pick-1") == first
+
+
+def test_ensure_selection_preserves_priority_store_semantics():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    backend = SimPyBackend(origin=NOW)
+    manager.define(StoreDefinition("dispatch", kind="priority"))
+    manager.rebuild_backend(backend)
+
+    manager.put(
+        backend,
+        store_name="dispatch",
+        item_id="normal",
+        value="normal",
+        priority=100,
+        requested_at=NOW,
+    )
+    manager.put(
+        backend,
+        store_name="dispatch",
+        item_id="urgent",
+        value="urgent",
+        priority=1,
+        requested_at=NOW,
+    )
+    backend.run_until(NOW)
+
+    result = manager.ensure_selection(
+        backend,
+        store_name="dispatch",
+        request_id="dispatch-1",
+        requested_at=NOW,
+    )
+
+    assert result is not None
+    assert result.item.item_id == "urgent"
+    assert [item.item_id for item in store.store_items()] == ["normal"]
+
+
+def test_ensure_selection_preserves_filter_store_semantics_across_restart():
+    store = MemoryPersistence()
+    filters = {"bearing": lambda item: item.value["kind"] == "bearing"}
+    first = DurableStoreManager(store, filters=filters)
+    backend1 = SimPyBackend(origin=NOW)
+    first.define(StoreDefinition("parts", kind="filter"))
+    first.rebuild_backend(backend1)
+
+    pending = first.ensure_selection(
+        backend1,
+        store_name="parts",
+        request_id="bearing-pick",
+        requested_at=NOW,
+        filter_key="bearing",
+    )
+    assert pending is None
+    assert first.pending_get("bearing-pick") is not None
+
+    backend2 = SimPyBackend(origin=NOW)
+    recovered = DurableStoreManager(store, filters=filters)
+    recovered.rebuild_backend(backend2)
+    recovered.put(
+        backend2,
+        store_name="parts",
+        item_id="bolt",
+        value={"kind": "bolt"},
+        requested_at=NOW,
+    )
+    recovered.put(
+        backend2,
+        store_name="parts",
+        item_id="bearing",
+        value={"kind": "bearing"},
+        requested_at=NOW,
+    )
+    backend2.run_until(NOW)
+
+    result = recovered.ensure_selection(
+        backend2,
+        store_name="parts",
+        request_id="bearing-pick",
+        requested_at=NOW,
+        filter_key="bearing",
+    )
+    assert result is not None
+    assert result.item.item_id == "bearing"
+    assert [item.item_id for item in store.store_items()] == ["bolt"]
+
+
+def test_ensure_selection_rejects_request_identity_reuse_for_other_store():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    backend = SimPyBackend(origin=NOW)
+    manager.define(StoreDefinition("one", kind="fifo"))
+    manager.define(StoreDefinition("two", kind="fifo"))
+    manager.rebuild_backend(backend)
+
+    manager.put(
+        backend,
+        store_name="one",
+        item_id="item",
+        value=1,
+        requested_at=NOW,
+    )
+    backend.run_until(NOW)
+    assert manager.ensure_selection(
+        backend,
+        store_name="one",
+        request_id="pick",
+        requested_at=NOW,
+    ) is not None
+
+    with pytest.raises(RuntimeError, match="belongs to one"):
+        manager.ensure_selection(
+            backend,
+            store_name="two",
+            request_id="pick",
+            requested_at=NOW,
+        )
