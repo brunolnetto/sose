@@ -29,12 +29,14 @@ def test_pending_arrival_schedule_survives_restart():
         backend_before,
         entities=entities,
     )
-    restart_at = backend_before.now
-
-    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend_before,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
     assert len(persistence.scheduled_work()) == 1
 
     rebuilt_backend.run_until(due_at)
@@ -156,11 +158,14 @@ def test_pending_tug_demand_survives_restart():
         for d in persistence.resource_demands()
     )
 
-    restart_at = backend.now
-    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     snapshot = rebuilt_backend.resource_snapshot("tug")
     assert snapshot.in_use == 1
@@ -226,11 +231,14 @@ def test_consumed_slot_and_pushback_recover_after_restart():
         entities.departure_slot_id,
     ).state == "consumed"
 
-    restart_at = backend.now
-    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     assert reconcile_departure(
         persistence,
@@ -269,11 +277,14 @@ def test_committed_departure_queue_selection_survives_restart():
         entities.turnaround_id,
     ).state == "waiting_slot"
 
-    restart_at = backend.now
-    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     assert reconcile_departure(
         persistence,
