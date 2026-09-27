@@ -130,7 +130,7 @@ def test_completion_requires_durable_measurement_evidence():
     ):
         complete_activity(persistence, engine, entities=entities)
 
-    record_measurement(persistence, entities=entities, value=5.0)
+    record_measurement(persistence, engine, entities=entities, value=5.0)
     complete_activity(persistence, engine, entities=entities)
     assert persistence.entity(
         "construction_activity", entities.activity_id
