@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from sose.backends.simpy import SimPyBackend
 from sose.examples.record_to_report.scenarios import (
     close_team_shortage_scenario,
@@ -81,6 +83,7 @@ def test_close_team_shortage_preserves_in_progress_close_task_and_recovers():
         backend,
         task_id=entities.close_task_id,
         period_id=entities.period_id,
+        delay=timedelta(hours=1),
     )
     backend.run_until(due_at)
 
