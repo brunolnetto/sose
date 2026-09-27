@@ -273,13 +273,21 @@ def submit_and_post_journal(
     reject: bool = False,
 ) -> bool:
     journal = _journal(persistence, entities)
+    request_id = f"posting:{journal.id}"
     if journal.state in {"posted", "rejected"}:
+        engine.resources.cancel_pending(backend, request_id)
+        _release(
+            persistence,
+            engine,
+            backend,
+            request_id=request_id,
+        )
+        backend.run_until(backend.now)
         return journal.state == "posted"
 
     available = bool(
         engine.context.scenarios.attribute("r2r.posting.available", True)
     )
-    request_id = f"posting:{journal.id}"
     if not available:
         engine.resources.cancel_pending(backend, request_id)
         _release(
@@ -347,10 +355,18 @@ def reconcile_item(
         raise RuntimeError("reconciliation requires durable posted journal evidence")
 
     item = _reconciliation(persistence, entities)
+    request_id = f"reconciliation-analyst:{item.id}"
     if item.state in {"matched", "reconciled", "rejected"}:
+        engine.resources.cancel_pending(backend, request_id)
+        _release(
+            persistence,
+            engine,
+            backend,
+            request_id=request_id,
+        )
+        backend.run_until(backend.now)
         return item.state in {"matched", "reconciled"}
 
-    request_id = f"reconciliation-analyst:{item.id}"
     reservation = _request_resource(
         persistence,
         engine,
@@ -446,13 +462,32 @@ def post_adjustment(
         engine,
         entities=entities,
     )
+    request_id = f"posting-adjustment:{adjustment.id}"
     if adjustment.state in {"posted", "rejected"}:
-        return adjustment.state == "posted"
+        engine.resources.cancel_pending(backend, request_id)
+        _release(
+            persistence,
+            engine,
+            backend,
+            request_id=request_id,
+        )
+        backend.run_until(backend.now)
+        if adjustment.state == "posted":
+            item = _reconciliation(persistence, entities)
+            if item.state == "adjustment_required":
+                _dispatch(
+                    engine,
+                    item,
+                    "apply_adjustment",
+                    key=("r2r", item.id, adjustment.id, "apply-adjustment"),
+                    correlation_id=flow_correlation_id(entities.period_id),
+                )
+            return True
+        return False
 
     available = bool(
         engine.context.scenarios.attribute("r2r.posting.available", True)
     )
-    request_id = f"posting-adjustment:{adjustment.id}"
     if not available:
         engine.resources.cancel_pending(backend, request_id)
         _release(
@@ -603,7 +638,16 @@ def reconcile_close(
     task = _close_task(persistence, task_id)
     period = _period(persistence, entities)
 
+    request_id = f"close-accountant:{task.id}"
     if period.state == "closed" and task.state == "completed":
+        engine.resources.cancel_pending(backend, request_id)
+        _release(
+            persistence,
+            engine,
+            backend,
+            request_id=request_id,
+        )
+        backend.run_until(backend.now)
         return True
     if task.state != "in_progress":
         return False
@@ -613,7 +657,6 @@ def reconcile_close(
     available = bool(
         engine.context.scenarios.attribute("r2r.close_team.available", True)
     )
-    request_id = f"close-accountant:{task.id}"
     if not available:
         engine.resources.cancel_pending(backend, request_id)
         _release(
