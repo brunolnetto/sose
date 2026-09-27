@@ -45,7 +45,11 @@ from disappearance from an ephemeral backend queue.
 Owns the end-to-end logistics lifecycle.
 
 States: created, pickup_scheduled, picked_up, at_origin_hub, in_transfer,
-at_destination_hub, out_for_delivery, delayed, delivered, lost, damaged, returned.
+at_destination_hub, out_for_delivery, phase-specific delayed states, delivered, lost,
+damaged, returned.
+
+Delay phase is durable in the StateChart itself: each resumable source state maps to a
+distinct delayed state and `resume` returns only to that exact source phase.
 
 It does not own backend queue objects, courier handles, dock request objects, callbacks,
 or generator continuation state.
@@ -55,10 +59,11 @@ or generator continuation state.
 Represents one last-mile delivery occurrence rather than a mutable counter hidden in
 Shipment.
 
-States: pending, out_for_delivery, failed, retry_scheduled, delivered, exhausted.
+States: pending, out_for_delivery, delivered, failed.
 
-Reference-grade retry execution should preserve failed occurrences under distinct
-deterministic attempt identities connected by shipment correlation metadata.
+`failed` is terminal for that occurrence. A retry is not a transition that reuses the
+failed entity; orchestration schedules creation of a new deterministic DeliveryAttempt
+identity under the same shipment correlation.
 
 ## 4. Persistent data model / ERD
 
@@ -133,8 +138,8 @@ Nominal path:
 
 Representative exception topology:
 
-- physical transit states may enter delayed;
-- delayed may resume pickup, transfer, or delivery through explicit events;
+- each resumable phase has its own delayed state;
+- `resume` returns only to the exact pre-delay phase;
 - picked-up/transit/delivery states may terminate as lost or damaged;
 - out_for_delivery may terminate as returned.
 
@@ -144,11 +149,10 @@ Representative exception topology:
     -> out_for_delivery
        -> delivered
        -> failed
-          -> retry_scheduled -> out_for_delivery
-          -> exhausted
 
-Only deliver and fail are direct stochastic outcomes. Dispatch, scheduling retry, retry,
-and exhaustion are explicit orchestration events.
+`delivered` and `failed` are terminal for one physical attempt. Only deliver and fail are
+direct stochastic outcomes. Retry scheduling happens outside the failed attempt's
+StateChart and creates a new correlated DeliveryAttempt.
 
 ## 6. Process specifications
 
@@ -177,19 +181,20 @@ ephemeral queue from Store/resource truth.
 
 ### 6.3 Sad path — failed delivery and retry
 
-    DeliveryAttempt(pending)
+    DeliveryAttempt#1(pending)
     -> dispatch
     -> out_for_delivery
     -> fail
-    -> failed
+    -> failed (terminal)
     -> schedule retry durably
-    -> retry_scheduled
-    -> retry
+    -> create DeliveryAttempt#2(pending)
+    -> dispatch
     -> out_for_delivery
     -> deliver
     -> delivered
 
-A retry must not erase the failed occurrence.
+A retry preserves DeliveryAttempt#1 as immutable failed business evidence and creates a
+new deterministic occurrence identity for DeliveryAttempt#2.
 
 ### 6.4 Sad path — capacity loss
 
@@ -209,7 +214,9 @@ dispatch_transfer, arrive_destination_hub, dispatch_delivery, deliver, delay,
 resume_pickup, resume_transfer, resume_delivery, mark_lost, mark_damaged, and
 return_to_sender.
 
-DeliveryAttempt commands include dispatch, deliver, fail, schedule_retry, retry, exhaust.
+DeliveryAttempt transition commands include dispatch, deliver, and fail. Retry scheduling
+is an orchestration command that creates a new correlated DeliveryAttempt rather than
+mutating a failed attempt.
 
 Successful transitions should emit immutable state-transition events under a stable
 shipment correlation identity.
@@ -222,7 +229,8 @@ LOG-02 — Durable hub waiting: hub waiting must be reconstructible from durable
 
 LOG-03 — Capacity before movement: constrained capacity must exist before the corresponding physical movement is claimed.
 
-LOG-04 — Attempt identity: a failed delivery occurrence remains durable after retry.
+LOG-04 — Attempt identity: a failed delivery occurrence is terminal and remains durable;
+a retry uses a distinct deterministic DeliveryAttempt identity.
 
 LOG-05 — Outcome gating: Shipment becomes delivered only after a delivery attempt durably delivers.
 
@@ -249,7 +257,7 @@ Reference-grade restart gates will cover:
 3. transfer capacity pending;
 4. queued at destination hub;
 5. delivery courier pending;
-6. failed attempt with retry scheduled;
+6. failed terminal attempt with creation of the next retry attempt scheduled;
 7. delivered attempt before Shipment finalization.
 
 Backend-native object identity is excluded from semantic equivalence.
@@ -269,8 +277,11 @@ Nominal:
 
 Failed attempt then retry:
 
-    Shipment(out_for_delivery) + DeliveryAttempt(out_for_delivery)
-    -> fail -> retry_scheduled -> retry -> deliver -> Shipment(delivered)
+    Shipment(out_for_delivery) + DeliveryAttempt#1(out_for_delivery)
+    -> DeliveryAttempt#1(failed terminal)
+    -> durable retry schedule
+    -> DeliveryAttempt#2(pending)
+    -> dispatch -> deliver -> Shipment(delivered)
 
 ## 13. Executable evidence
 
