@@ -877,6 +877,34 @@ def reconcile_aog_maintenance(
         )
         work = _entity(persistence, "aviation_maintenance_work_order", work.id)
 
+    queue_request = f"maintenance-pick:{work.id}"
+    queue_result = engine.stores.result(queue_request)
+    if queue_result is None:
+        queue_items = sorted(
+            (
+                item
+                for item in persistence.store_items()
+                if item.store_name == "maintenance_queue"
+            ),
+            key=lambda item: (item.priority, item.sequence, item.item_id),
+        )
+        if not queue_items or str(queue_items[0].value["work_order_id"]) != work.id:
+            return False
+        if not any(
+            request.request_id == queue_request
+            for request in persistence.store_get_requests()
+        ):
+            engine.stores.get(
+                backend,
+                store_name="maintenance_queue",
+                request_id=queue_request,
+                requested_at=backend.now,
+            )
+        backend.run_until(backend.now)
+        queue_result = engine.stores.result(queue_request)
+    if queue_result is None:
+        return False
+
     request_id = f"maintenance-bay:{work.id}"
     if not _preemptive_request_exists(persistence, request_id):
         engine.preemptive_resources.request(
