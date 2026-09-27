@@ -70,7 +70,7 @@ Durable truth includes:
 - ScheduledWork for arrival and departure-slot timing;
 - ResourceDemand / ResourceReservation / ResourceReleaseIntent for gate,
   ground-team, and tug capacity;
-- PriorityStore durable items/results for departure ordering;
+- PriorityStore durable items and StoreGetResult selection evidence for departure ordering;
 - deterministic correlation across turnaround, gate assignment, service,
   baggage, and slot entities;
 - ScenarioRuntimeState;
@@ -169,7 +169,8 @@ Executable recovery boundaries:
 3. tug ResourceDemand queued behind another owner;
 4. GateAssignment(occupied) before turnaround gate transition;
 5. GroundServiceTask(completed) before turnaround service completion;
-6. DepartureSlot(consumed) + FlightTurnaround(pushback) before depart.
+6. committed departure StoreGetResult before slot_ready;
+7. DepartureSlot(consumed) + FlightTurnaround(pushback) before depart.
 
 ## 10. Scenarios
 
@@ -190,7 +191,7 @@ Both scenarios are finite. Recovery occurs through ordinary reconciliation.
 | ground service | Resource + crash-recovery tests | implemented |
 | baggage delay/recovery | happy/sad path tests | implemented |
 | departure slot timing | ScheduledWork + weather tests | implemented |
-| priority departure queue | PriorityStore + head-ownership test | implemented |
+| priority departure queue | PriorityStore + head-ownership + committed-selection restart tests | implemented |
 | tug capacity | Resource + restart test | implemented |
 | slot-consume crash recovery | pushback restart test | implemented |
 | illegal prerequisites | departure-queue invariant tests | implemented |
