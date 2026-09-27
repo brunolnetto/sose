@@ -9,6 +9,7 @@ from sose.probability import probabilistic_transitions
         "arrive",
         "assign_gate",
         "hold_gate",
+        "reallocate_gate",
         "start_deboarding",
         "start_servicing",
         "service_ready",
@@ -37,6 +38,7 @@ class FlightTurnaroundChart(StateChart):
     arrive = scheduled.to(arrived)
     assign_gate = arrived.to(gate_assigned) | gate_hold.to(gate_assigned)
     hold_gate = arrived.to(gate_hold)
+    reallocate_gate = gate_assigned.to(gate_hold)
     start_deboarding = gate_assigned.to(deboarding)
     start_servicing = deboarding.to(servicing)
     service_ready = servicing.to(boarding)
@@ -67,9 +69,9 @@ class GateAssignmentChart(StateChart):
     reserved = State()
     occupied = State()
     released = State(final=True)
-    reallocated = State(final=True)
+    reallocated = State()
 
-    reserve = planned.to(reserved)
+    reserve = planned.to(reserved) | reallocated.to(reserved)
     occupy = reserved.to(occupied)
     release = occupied.to(released)
     reallocate = reserved.to(reallocated) | occupied.to(reallocated)
