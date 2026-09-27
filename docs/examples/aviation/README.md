@@ -1,6 +1,6 @@
 # Aviation
 
-Status: **Partial**
+Status: **Reference implementation**
 
 This reference domain models aircraft rotation across two causally linked flight
 legs, including scheduled departure eligibility, crew assignment, aircraft
@@ -12,6 +12,4 @@ propagation is executable rather than described only in prose.
 
 See [specification.md](specification.md) for the authoritative contract.
 
-Executable evidence covers nominal rotation, weather and crew delays, inspection
-pass/fail, AOG part gating, maintenance-bay preemption, post-commit recovery,
-and restart boundaries. Promotion remains pending CI and final audit.
+The reference implementation covers nominal two-leg rotation, weather and crew delays, predecessor-release propagation, inspection pass/fail, AOG part gating, priority maintenance selection, maintenance-bay preemption, AOG delay propagation, post-commit recovery, and restart equivalence.
