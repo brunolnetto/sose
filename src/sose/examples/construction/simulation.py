@@ -98,6 +98,7 @@ def run_happy_path(
 
     record_measurement(
         persistence,
+        engine,
         entities=entities,
         value=quantity,
     )
@@ -169,6 +170,7 @@ def run_rework_path(
 
     record_measurement(
         persistence,
+        engine,
         entities=entities,
         value=quantity,
     )
