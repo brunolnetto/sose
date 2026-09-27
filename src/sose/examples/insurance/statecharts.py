@@ -44,11 +44,11 @@ class ClaimChart(StateChart):
     rejected = State()
     reopened = State()
 
-    request_documents = opened.to(pending_documents)
+    request_documents = opened.to(pending_documents) | reopened.to(pending_documents)
     documents_ready = pending_documents.to(ready_for_assessment)
     start_assessment = ready_for_assessment.to(assessing) | reopened.to(assessing)
     flag_fraud = assessing.to(fraud_review)
-    clear_fraud = fraud_review.to(assessing)
+    clear_fraud = fraud_review.to(ready_for_assessment)
     approve = assessing.to(approved)
     reject = assessing.to(rejected) | fraud_review.to(rejected)
     schedule_payment = approved.to(payment_scheduled)
