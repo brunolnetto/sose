@@ -672,6 +672,21 @@ def reconcile_departure(
     if tug is None:
         return False
 
+    queued_items = sorted(
+        (
+            item
+            for item in persistence.store_items()
+            if item.store_name == "departure_queue"
+        ),
+        key=lambda item: (item.priority, item.sequence, item.item_id),
+    )
+    if not queued_items:
+        _release(persistence, engine, backend, request_id=request_id)
+        return False
+    if str(queued_items[0].value["turnaround_id"]) != turnaround.id:
+        _release(persistence, engine, backend, request_id=request_id)
+        return False
+
     get_id = f"departure-pick:{dispatcher_id}"
     result = engine.stores.result(get_id)
     if result is None:
