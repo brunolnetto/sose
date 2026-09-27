@@ -1,6 +1,6 @@
 # Logistics & Transport
 
-Status: **Partial**
+Status: **Reference implementation**
 
 This example is being promoted from the architecture blueprint into a reference-grade domain.
 The first slice defines durable business entities, exact StateCharts, probabilistic
@@ -9,6 +9,6 @@ topology evidence.
 
 See [specification.md](specification.md) for the authoritative domain contract.
 
-Reference-grade promotion still requires durable operational mechanics for hub queues,
-courier/dock/vehicle capacity, scheduled pickup/SLA work, failed-delivery retry execution,
-and restart-equivalence evidence.
+The reference implementation includes durable pickup scheduling, hub Store queues,
+capacity-gated movement, distinct failed/retry attempt identities, finite courier
+capacity disruption/recovery, and restart-equivalence evidence.
