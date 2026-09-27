@@ -238,3 +238,46 @@ def test_consumed_slot_and_pushback_recover_after_restart():
         "airport_flight_turnaround",
         entities.turnaround_id,
     ).state == "departed"
+
+
+def test_committed_departure_queue_selection_survives_restart():
+    persistence = MemoryPersistence()
+    entities, engine, backend = _prepare_waiting_slot(persistence)
+
+    request_id = "departure-pick:departure"
+    engine.stores.get(
+        backend,
+        store_name="departure_queue",
+        request_id=request_id,
+        requested_at=backend.now,
+    )
+    backend.run_until(backend.now)
+
+    result = engine.stores.result(request_id)
+    assert result is not None
+    assert result.item.value["turnaround_id"] == entities.turnaround_id
+    assert not any(
+        item.store_name == "departure_queue"
+        for item in persistence.store_items()
+    )
+    assert persistence.entity(
+        "airport_flight_turnaround",
+        entities.turnaround_id,
+    ).state == "waiting_slot"
+
+    restart_at = backend.now
+    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
+    rebuilt_backend = SimPyBackend(origin=restart_at)
+    rebuilt_engine.rebuild_backend(rebuilt_backend)
+    rebuilt_backend.run_until(restart_at)
+
+    assert reconcile_departure(
+        persistence,
+        rebuilt_engine,
+        rebuilt_backend,
+        entities=entities,
+    )
+    assert persistence.entity(
+        "airport_flight_turnaround",
+        entities.turnaround_id,
+    ).state == "departed"
