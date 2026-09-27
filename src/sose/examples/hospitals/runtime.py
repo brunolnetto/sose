@@ -164,29 +164,6 @@ def dispatch(
     engine.dispatch(command)
 
 
-def resource_request_exists(
-    persistence: MemoryPersistence,
-    request_id: str,
-) -> bool:
-    return any(
-        demand.request_id == request_id for demand in persistence.resource_demands()
-    ) or any(
-        reservation.request_id == request_id
-        for reservation in persistence.resource_reservations()
-    )
-
-
-def resource_reservation(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
-    )
-
-
 def preemptive_request_exists(
     persistence: MemoryPersistence,
     request_id: str,
