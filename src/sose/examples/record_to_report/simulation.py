@@ -463,22 +463,6 @@ def post_adjustment(
     return True
 
 
-def _scheduled_close_work(
-    persistence: MemoryPersistence,
-    task_id: str,
-):
-    for work in persistence.scheduled_work():
-        command = persistence.command(work.command_id)
-        if (
-            command is not None
-            and command.entity_type == "close_task"
-            and command.entity_id == task_id
-            and command.name == "start"
-        ):
-            return work, command
-    return None
-
-
 def schedule_close(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -494,9 +478,13 @@ def schedule_close(
     if task.state != "pending":
         raise RuntimeError(f"close task cannot be scheduled from {task.state}")
 
-    existing = _scheduled_close_work(persistence, task.id)
+    existing = engine.scheduler.find_pending(
+        entity_type="close_task",
+        entity_id=task.id,
+        name="start",
+    )
     if existing is not None:
-        return existing[0].due_at
+        return existing.work.due_at
 
     due_at = backend.now + delay
     command = engine.context.commands.create(
