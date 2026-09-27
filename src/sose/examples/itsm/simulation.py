@@ -1,0 +1,568 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+from sose.backends.simpy import SimPyBackend
+from sose.core.clock import SimulationClock
+from sose.core.context import SimulationContext
+from sose.core.engine import Engine
+from sose.core.identity import deterministic_id
+from sose.core.randomness import RandomSource
+from sose.core.runtime import ResourceDefinition, StoreDefinition
+from sose.core.scheduler import Scheduler
+from sose.domain.registry import DomainRegistry, EntityType
+from sose.persistence.memory import MemoryPersistence
+
+from .entities import Escalation, Incident
+from .scenarios import ORIGIN
+from .statecharts import EscalationChart, IncidentChart
+
+
+SLA_DELAY = timedelta(hours=4)
+
+
+@dataclass(frozen=True, slots=True)
+class ITSMEntities:
+    incident_id: str
+
+
+def flow_correlation_id(incident_id: str) -> str:
+    return deterministic_id("itsm-flow", incident_id)
+
+
+def escalation_id(incident_id: str) -> str:
+    return deterministic_id(
+        "entity",
+        "itsm_escalation",
+        "itsm-reference",
+        incident_id,
+        "escalation-1",
+    )
+
+
+def build_runtime(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    tick: int = 0,
+    scenarios=(),
+) -> tuple[SimulationContext, Engine]:
+    context = SimulationContext(
+        clock=SimulationClock(now=now, step=timedelta(hours=1), tick=tick),
+        random=RandomSource(root_seed=210),
+        scheduler=Scheduler(),
+    )
+    registry = DomainRegistry()
+    registry.register(EntityType("itsm_incident", IncidentChart))
+    registry.register(EntityType("itsm_escalation", EscalationChart))
+    return context, Engine(
+        context=context,
+        registry=registry,
+        persistence=persistence,
+        scenarios=scenarios,
+    )
+
+
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    severity: int = 50,
+) -> ITSMEntities:
+    context, engine = build_runtime(persistence)
+    incident = context.entities.create(
+        Incident,
+        key=("itsm-reference", "incident-1"),
+        state="opened",
+        attributes={"severity": severity, "service": "payments-api"},
+    )
+    with persistence.transaction() as uow:
+        uow.save_entity(incident)
+        uow.save_resource_definition(ResourceDefinition("support_agent", capacity=1))
+        uow.save_resource_definition(
+            ResourceDefinition("escalation_manager", capacity=1)
+        )
+    engine.stores.define(
+        StoreDefinition("incident_queue", kind="priority", capacity=100)
+    )
+    return ITSMEntities(incident_id=incident.id)
+
+
+def create_incident(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    key: str,
+    severity: int,
+) -> Incident:
+    incident = engine.context.entities.create(
+        Incident,
+        key=("itsm-reference", key),
+        state="opened",
+        attributes={"severity": severity, "service": "payments-api"},
+    )
+    with persistence.transaction() as uow:
+        uow.save_entity(incident)
+    return incident
+
+
+def _incident(persistence: MemoryPersistence, incident_id: str) -> Incident:
+    incident = persistence.entity("itsm_incident", incident_id)
+    if incident is None:
+        raise RuntimeError(f"incident was not persisted: {incident_id}")
+    return incident
+
+
+def _escalation(
+    persistence: MemoryPersistence,
+    incident_id: str,
+) -> Escalation | None:
+    return persistence.entity("itsm_escalation", escalation_id(incident_id))
+
+
+def _dispatch(
+    engine: Engine,
+    entity,
+    event: str,
+    *,
+    key: tuple[object, ...],
+    correlation_id: str,
+) -> None:
+    command = engine.context.commands.create(
+        event,
+        target=entity,
+        correlation_id=correlation_id,
+        key=key,
+    )
+    engine.dispatch(command)
+
+
+def _resource_request_exists(
+    persistence: MemoryPersistence,
+    request_id: str,
+) -> bool:
+    return any(
+        demand.request_id == request_id for demand in persistence.resource_demands()
+    ) or any(
+        reservation.request_id == request_id
+        for reservation in persistence.resource_reservations()
+    )
+
+
+def _reservation_for(persistence: MemoryPersistence, request_id: str):
+    return next(
+        (
+            reservation
+            for reservation in persistence.resource_reservations()
+            if reservation.request_id == request_id
+        ),
+        None,
+    )
+
+
+def _request_resource(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    resource_name: str,
+    request_id: str,
+    priority: int = 100,
+):
+    if not _resource_request_exists(persistence, request_id):
+        engine.resources.request(
+            backend,
+            resource_name=resource_name,
+            request_id=request_id,
+            requested_at=backend.now,
+            priority=priority,
+        )
+    backend.run_until(backend.now)
+    return _reservation_for(persistence, request_id)
+
+
+def _release(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    request_id: str,
+) -> None:
+    reservation = _reservation_for(persistence, request_id)
+    if reservation is not None:
+        engine.resources.release(backend, reservation.reservation_id)
+        backend.run_until(backend.now)
+
+
+def _sla_work_for(
+    persistence: MemoryPersistence,
+    incident_id: str,
+):
+    for work in persistence.scheduled_work():
+        command = persistence.command(work.command_id)
+        if (
+            command is not None
+            and command.entity_type == "itsm_incident"
+            and command.entity_id == incident_id
+            and command.name == "escalate"
+        ):
+            return work, command
+    return None
+
+
+def cancel_sla(
+    persistence: MemoryPersistence,
+    incident_id: str,
+) -> bool:
+    found = _sla_work_for(persistence, incident_id)
+    if found is None:
+        return False
+    work, command = found
+    with persistence.transaction() as uow:
+        persisted = uow.get_scheduled_work(work.work_id)
+        if persisted != work:
+            return False
+        uow.delete_scheduled_work(work.work_id)
+        uow.delete_command(command.command_id)
+    return True
+
+
+def triage_and_queue(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    incident_id: str,
+    sla_delay: timedelta = SLA_DELAY,
+) -> datetime:
+    incident = _incident(persistence, incident_id)
+    correlation_id = flow_correlation_id(incident.id)
+    if incident.state == "opened":
+        _dispatch(
+            engine,
+            incident,
+            "triage",
+            key=("itsm", incident.id, "triage"),
+            correlation_id=correlation_id,
+        )
+        incident = _incident(persistence, incident.id)
+
+    if incident.state != "triaged":
+        raise RuntimeError(f"incident is not triaged: {incident.state}")
+
+    item_id = f"incident-queue:{incident.id}"
+    queued = any(
+        item.item_id == item_id for item in persistence.store_items()
+    )
+    pending = any(
+        intent.item_id == item_id for intent in persistence.store_put_intents()
+    )
+    consumed = any(
+        result.item.item_id == item_id
+        for result in persistence.store_get_results()
+    )
+    if not (queued or pending or consumed):
+        engine.stores.put(
+            backend,
+            store_name="incident_queue",
+            item_id=item_id,
+            value={"incident_id": incident.id},
+            priority=int(incident.attributes["severity"]),
+            requested_at=backend.now,
+        )
+        backend.run_until(backend.now)
+
+    existing = _sla_work_for(persistence, incident.id)
+    if existing is not None:
+        return existing[0].due_at
+
+    due_at = backend.now + sla_delay
+    command = engine.context.commands.create(
+        "escalate",
+        target=incident,
+        due_at=due_at,
+        correlation_id=correlation_id,
+        key=("itsm", incident.id, "sla-escalate"),
+    )
+    engine.context.schedules.at(due_at, command=command)
+    return due_at
+
+
+def claim_next_incident(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    claim_id: str,
+) -> str | None:
+    if not engine.context.scenarios.attribute("itsm.support.available", True):
+        return None
+
+    request_id = f"support-agent:{claim_id}"
+    reservation = _request_resource(
+        persistence,
+        engine,
+        backend,
+        resource_name="support_agent",
+        request_id=request_id,
+    )
+    if reservation is None:
+        return None
+
+    get_id = f"incident-claim:{claim_id}"
+    result = engine.stores.result(get_id)
+    if result is None:
+        if not any(
+            request.request_id == get_id
+            for request in persistence.store_get_requests()
+        ):
+            engine.stores.get(
+                backend,
+                store_name="incident_queue",
+                request_id=get_id,
+                requested_at=backend.now,
+            )
+        backend.run_until(backend.now)
+        result = engine.stores.result(get_id)
+
+    if result is None:
+        _release(persistence, engine, backend, request_id=request_id)
+        return None
+
+    incident_id = str(result.item.value["incident_id"])
+    incident = _incident(persistence, incident_id)
+    if incident.state == "triaged":
+        _dispatch(
+            engine,
+            incident,
+            "assign",
+            key=("itsm", incident.id, "assign"),
+            correlation_id=flow_correlation_id(incident.id),
+        )
+        incident = _incident(persistence, incident.id)
+    if incident.state == "assigned":
+        _dispatch(
+            engine,
+            incident,
+            "start",
+            key=("itsm", incident.id, "start"),
+            correlation_id=flow_correlation_id(incident.id),
+        )
+    return incident_id
+
+
+def release_incident_owner(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    claim_id: str,
+) -> None:
+    _release(
+        persistence,
+        engine,
+        backend,
+        request_id=f"support-agent:{claim_id}",
+    )
+
+
+def resolve_incident(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    incident_id: str,
+    claim_id: str | None = None,
+    close: bool = False,
+) -> None:
+    incident = _incident(persistence, incident_id)
+    if incident.state not in {"in_progress", "escalated", "resolved", "closed"}:
+        raise RuntimeError(f"incident is not resolvable: {incident.state}")
+
+    if incident.state in {"in_progress", "escalated"}:
+        _dispatch(
+            engine,
+            incident,
+            "resolve",
+            key=("itsm", incident.id, "resolve", incident.version),
+            correlation_id=flow_correlation_id(incident.id),
+        )
+        cancel_sla(persistence, incident.id)
+
+    incident = _incident(persistence, incident.id)
+    if close and incident.state == "resolved":
+        _dispatch(
+            engine,
+            incident,
+            "close",
+            key=("itsm", incident.id, "close", incident.version),
+            correlation_id=flow_correlation_id(incident.id),
+        )
+
+    if claim_id is not None:
+        release_incident_owner(
+            persistence,
+            engine,
+            backend,
+            claim_id=claim_id,
+        )
+
+
+def reopen_incident(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    incident_id: str,
+) -> None:
+    incident = _incident(persistence, incident_id)
+    if incident.state != "resolved":
+        raise RuntimeError(f"incident is not reopenable: {incident.state}")
+    _dispatch(
+        engine,
+        incident,
+        "reopen",
+        key=("itsm", incident.id, "reopen", incident.version),
+        correlation_id=flow_correlation_id(incident.id),
+    )
+
+
+def ensure_escalation(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    incident_id: str,
+) -> Escalation:
+    existing = _escalation(persistence, incident_id)
+    if existing is not None:
+        return existing
+
+    incident = _incident(persistence, incident_id)
+    if incident.state != "escalated":
+        raise RuntimeError("escalation requires Incident(escalated)")
+
+    escalation = engine.context.entities.create(
+        Escalation,
+        key=("itsm-reference", incident.id, "escalation-1"),
+        state="raised",
+        attributes={"incident_id": incident.id},
+    )
+    with persistence.transaction() as uow:
+        uow.save_entity(escalation)
+    return escalation
+
+
+def reconcile_escalation(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    incident_id: str,
+) -> bool:
+    incident = _incident(persistence, incident_id)
+    if incident.state != "escalated":
+        return False
+
+    escalation = ensure_escalation(
+        persistence,
+        engine,
+        incident_id=incident.id,
+    )
+    request_id = f"escalation-manager:{escalation.id}"
+    manager = _request_resource(
+        persistence,
+        engine,
+        backend,
+        resource_name="escalation_manager",
+        request_id=request_id,
+        priority=1,
+    )
+    if manager is None:
+        return False
+
+    correlation_id = flow_correlation_id(incident.id)
+    escalation = _escalation(persistence, incident.id)
+    if escalation is None:
+        raise RuntimeError("escalation disappeared")
+
+    for state, event in (
+        ("raised", "acknowledge"),
+        ("acknowledged", "take_ownership"),
+        ("owned", "mitigate"),
+        ("mitigated", "complete"),
+    ):
+        escalation = _escalation(persistence, incident.id)
+        if escalation is not None and escalation.state == state:
+            _dispatch(
+                engine,
+                escalation,
+                event,
+                key=("itsm-escalation", escalation.id, event),
+                correlation_id=correlation_id,
+            )
+
+    resolve_incident(
+        persistence,
+        engine,
+        backend,
+        incident_id=incident.id,
+    )
+    _release(persistence, engine, backend, request_id=request_id)
+    return True
+
+
+def run_happy_path() -> tuple[MemoryPersistence, ITSMEntities]:
+    persistence = MemoryPersistence()
+    entities = seed_reference(persistence)
+    _, engine = build_runtime(persistence)
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    triage_and_queue(
+        persistence,
+        engine,
+        backend,
+        incident_id=entities.incident_id,
+    )
+    claimed = claim_next_incident(
+        persistence,
+        engine,
+        backend,
+        claim_id="happy",
+    )
+    if claimed != entities.incident_id:
+        raise RuntimeError("reference incident was not claimed")
+    resolve_incident(
+        persistence,
+        engine,
+        backend,
+        incident_id=entities.incident_id,
+        claim_id="happy",
+        close=True,
+    )
+    return persistence, entities
+
+
+def run_escalation_path() -> tuple[MemoryPersistence, ITSMEntities]:
+    persistence = MemoryPersistence()
+    entities = seed_reference(persistence)
+    _, engine = build_runtime(persistence)
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    sla_at = triage_and_queue(
+        persistence,
+        engine,
+        backend,
+        incident_id=entities.incident_id,
+    )
+    backend.run_until(sla_at)
+    if _incident(persistence, entities.incident_id).state != "escalated":
+        raise RuntimeError("SLA escalation did not fire")
+    if not reconcile_escalation(
+        persistence,
+        engine,
+        backend,
+        incident_id=entities.incident_id,
+    ):
+        raise RuntimeError("escalation capacity unavailable")
+    return persistence, entities
