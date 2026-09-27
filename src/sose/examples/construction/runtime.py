@@ -94,6 +94,19 @@ def seed_reference(
         state="completed" if predecessor_completed else "measured",
         attributes={"name": "foundation", "measurement": 1.0},
     )
+    predecessor_measurement = context.entities.create(
+        ConstructionMeasurement,
+        key=(
+            "construction-reference",
+            predecessor.id,
+            "measurement",
+        ),
+        state="recorded",
+        attributes={
+            "activity_id": predecessor.id,
+            "value": 1.0,
+        },
+    )
     activity = context.entities.create(
         ConstructionActivity,
         key=("construction-reference", "activity-1"),
@@ -108,6 +121,7 @@ def seed_reference(
 
     with persistence.transaction() as uow:
         uow.save_entity(predecessor)
+        uow.save_entity(predecessor_measurement)
         uow.save_entity(activity)
         for name in ("crew", "equipment", "inspector"):
             uow.save_resource_definition(ResourceDefinition(name, capacity=1))
