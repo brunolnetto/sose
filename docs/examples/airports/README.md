@@ -12,6 +12,4 @@ readiness, queue ownership, tug capacity, and gate cleanup.
 
 See [specification.md](specification.md) for the authoritative contract.
 
-Executable evidence is present for nominal turnaround, gate hold, baggage delay,
-weather slot delay, priority queue ownership, post-commit recovery, and restart
-boundaries. Promotion remains pending CI and final review.
+Executable evidence is present for nominal turnaround, gate hold and reallocation, baggage delay, weather slot delay, priority queue ownership, post-commit recovery, and restart boundaries. Promotion remains pending CI and final review.
