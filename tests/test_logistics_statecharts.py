@@ -59,3 +59,40 @@ def test_delivery_attempt_failure_is_terminal_and_retry_requires_new_identity():
     assert policy.is_probabilistically_eligible("deliver") is True
     assert policy.is_probabilistically_eligible("fail") is True
     assert policy.is_probabilistically_eligible("dispatch") is False
+
+
+def test_shipment_chart_rejects_direct_probabilistic_dispatch():
+    policy = policy_from_statechart(ShipmentChart())
+    assert policy.events == ()
+    for event in (
+        "schedule_pickup",
+        "pickup",
+        "arrive_origin_hub",
+        "dispatch_transfer",
+        "arrive_destination_hub",
+        "dispatch_delivery",
+        "deliver",
+        "delay",
+        "resume",
+        "mark_lost",
+        "mark_damaged",
+        "return_to_sender",
+    ):
+        assert policy.is_probabilistically_eligible(event) is False
+
+
+def test_delayed_post_pickup_phases_allow_terminal_exceptions():
+    graph = graph_from_statechart(ShipmentChart())
+    edges = {(edge.source, edge.event, edge.targets) for edge in graph.edges}
+
+    for state in (
+        "delayed_after_pickup",
+        "delayed_origin_hub",
+        "delayed_transfer",
+        "delayed_destination_hub",
+        "delayed_delivery",
+    ):
+        assert (state, "mark_lost", ("lost",)) in edges
+        assert (state, "mark_damaged", ("damaged",)) in edges
+
+    assert ("delayed_delivery", "return_to_sender", ("returned",)) in edges
