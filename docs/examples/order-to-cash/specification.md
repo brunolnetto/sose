@@ -144,16 +144,16 @@ Reference-grade recovery gates will cover:
 | CollectionCase StateChart | statecharts.py + topology test | implemented |
 | direct probabilistic gating | TransitionPolicy tests | implemented |
 | O2C scenarios | scenarios.py | implemented |
-| durable credit / fulfillment gating | — | missing |
-| invoice-to-receivable causality | — | missing |
-| due / overdue scheduling | — | missing |
-| collection assignment / follow-up | — | missing |
-| partial-fulfillment execution | — | missing |
-| finite scenario recovery | — | missing |
-| restart equivalence | — | missing |
+| durable credit / fulfillment gating | Resource-backed fulfillment reconciler + credit/fulfillment scenario tests | implemented |
+| invoice-to-receivable causality | idempotent Receivable creation after durable SalesOrder(invoiced) | implemented |
+| due / overdue scheduling | durable mark_due / mark_overdue ScheduledWork + cancellation on collection | implemented |
+| collection assignment / follow-up | CollectionCase + collection_agent Resource + promise follow-up ScheduledWork | implemented |
+| partial-fulfillment execution | explicit partial_fulfillment runtime path + tests | implemented |
+| finite scenario recovery | credit tightening / fulfillment outage tests | implemented |
+| restart equivalence | due schedule, invoice→receivable, overdue→CollectionCase, collection follow-up, fulfillment/collection ResourceDemand rebuild tests | implemented |
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-Reference promotion requires executable cross-entity causality, durable due/collection schedules, fulfillment/collection capacity, representative exception paths, scenario recovery, and restart equivalence.
+Promotion is based on executable evidence for credit/fulfillment gating, explicit partial fulfillment, idempotent invoice→Receivable causality, durable due/overdue scheduling, overdue→CollectionCase creation, collection-agent ownership and follow-up scheduling, finite scenario recovery, illegal cross-entity prerequisite rejection, and restart equivalence across scheduler, causal-creation, and resource-demand boundaries.

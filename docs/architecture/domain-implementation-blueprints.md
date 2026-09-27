@@ -1533,7 +1533,7 @@ At the time of this document:
 - **IT service management**: Reference implementation. Durable severity ordering, support/escalation resources, SLA-driven escalation, reopen history, finite shortage recovery, and restart equivalence are executable.
 - **Hospitals**: Reference implementation. Acuity-ordered triage, scarce ward/ICU/team capacity, Admission-gated procedures, durable emergency preemption evidence/recovery, transfer cleanup, finite scenarios, and restart equivalence are executable.
 - **Construction**: Reference implementation. Durable predecessor/measurement gates, Store+Container material staging, planned-start ScheduledWork, crew/equipment/inspector resources, immutable inspection/rework evidence, disruption cleanup, and restart equivalence are executable.
-- **Order-to-Cash**: Partial. SalesOrder/Receivable/CollectionCase lifecycles, orchestration gating, scenarios, and the reference specification are implemented; durable fulfillment, receivable scheduling, collection, and restart evidence remain incomplete.
+- **Order-to-Cash**: Reference implementation. Durable credit/fulfillment gates, partial fulfillment, invoice→Receivable causality, due/overdue ScheduledWork, CollectionCase recovery, collection resources/follow-up, scenario recovery, illegal prerequisite checks, and restart equivalence are executable.
 - All other domains in this document: Blueprint.
 
 ---
