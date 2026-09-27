@@ -80,14 +80,14 @@ def test_planned_start_is_durable_and_restart_equivalent():
     r_entities, _, r_backend_before, r_due = _prepare_pending_start(
         restarted
     )
-    restart_at = r_backend_before.now
-    _, rebuilt_engine = build_runtime(
+    rebuilt = restart_reference_runtime(
         restarted,
-        now=restart_at,
+        build_runtime,
+        r_backend_before,
+        backend_factory=SimPyBackend,
     )
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     assert activity(
         restarted,
