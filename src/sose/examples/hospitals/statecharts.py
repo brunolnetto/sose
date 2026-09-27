@@ -37,7 +37,7 @@ class AdmissionChart(StateChart):
     allocate_icu = waiting_icu.to(icu)
     ready_discharge = treatment.to(discharge_ready) | icu.to(discharge_ready)
     discharge = discharge_ready.to(discharged)
-    transfer = waiting_bed.to(transferred) | waiting_icu.to(transferred)
+    transfer = triaged.to(transferred) | waiting_icu.to(transferred)
 
 
 @probabilistic_transitions(
