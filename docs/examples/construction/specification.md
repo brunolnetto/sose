@@ -5,14 +5,15 @@
 This example models a construction Activity from planning through dependency release, material
 readiness, crew/equipment acquisition, execution, inspection, measurement and completion.
 A separate ConstructionInspection represents each acceptance occurrence so a failed inspection
-remains immutable evidence after rework and a later reinspection succeeds.
+remains immutable evidence after rework and a later reinspection succeeds. A
+ConstructionMeasurement is immutable completion evidence rather than a silent Activity attribute.
 
 The domain is a composition reference: dependency truth, material truth, resource ownership,
 inspection evidence and measurement evidence remain separate durable facts.
 
 Initial scope:
 
-- ConstructionActivity and ConstructionInspection durable entities;
+- ConstructionActivity, ConstructionInspection and ConstructionMeasurement durable entities;
 - predecessor dependency gating;
 - material shortage/readiness;
 - crew and equipment capacity;
@@ -33,8 +34,8 @@ durable occurrence. A passed inspection permits acceptance; a failed inspection 
 evidence and routes the Activity to rework. Rework reacquires execution capacity and requires a
 new inspection occurrence.
 
-After acceptance the Activity is measured. Completion is gated by durable measurement evidence
-in the Activity attributes; measurement is not modeled as a meaningless StateChart self-loop.
+After acceptance the Activity is measured. Completion is gated by a correlated immutable
+ConstructionMeasurement entity; measurement is not modeled as a meaningless StateChart self-loop.
 
 ## 3. Domain entities
 
@@ -50,13 +51,19 @@ States: pending, inspecting, passed, failed, voided.
 `passed` and `failed` are terminal for one inspection occurrence. Reinspection after rework creates
 a new deterministic correlated inspection identity.
 
+### 3.3 ConstructionMeasurement
+
+A single immutable `recorded` evidence entity stores the measured value for the Activity.
+Completion requires a positive correlated ConstructionMeasurement; no mutable measurement flag is
+used as the authoritative completion proof.
+
 ## 4. Durable operational model
 
 Target reference-grade durable truth:
 
-- Activity / Inspection entities;
+- Activity / Inspection / Measurement entities;
 - Command + DomainEvent history;
-- ScheduledWork for milestone/dependency timing where applicable;
+- ScheduledWork for the durable planned-start milestone and other milestone/dependency timing;
 - ResourceDemand / ResourceReservation / ResourceReleaseIntent for crew/equipment/inspector;
 - Store/Container truth for material identity and quantity;
 - ScenarioRuntimeState;
@@ -132,7 +139,7 @@ CONST-04 — Inspection identity: failed inspection remains terminal evidence af
 
 CONST-05 — Acceptance gate: Activity accepts only after a correlated Inspection has passed.
 
-CONST-06 — Measurement gate: Activity completes only with durable measurement evidence.
+CONST-06 — Measurement gate: Activity completes only with a positive correlated durable ConstructionMeasurement.
 
 CONST-07 — Rework reacquisition: rework cannot resume execution without reacquiring required capacity.
 
@@ -143,15 +150,17 @@ inspection-failure/rework and measured-before-complete boundaries.
 
 ## 8. Restart semantics
 
-Reference-grade gates will cover:
+Reference-grade gates cover:
 
 1. blocked dependency;
-2. waiting material;
-3. resource demand pending;
-4. execution capacity held;
-5. failed inspection before rework;
-6. rework waiting for capacity;
-7. measured with completion still pending.
+2. waiting material / partially committed material staging;
+3. durable planned-start ScheduledWork before resource demand;
+4. resource demand pending and outage cleanup;
+5. execution capacity held with post-finish cleanup;
+6. failed inspection before rework;
+7. rework waiting for capacity;
+8. inspector cleanup after accept/reject;
+9. measured with completion still pending.
 
 ## 9. Executable evidence
 
@@ -159,21 +168,24 @@ Reference-grade gates will cover:
 |---|---|---|
 | Activity entity | entities.py | implemented |
 | Inspection entity | entities.py | implemented |
+| Measurement entity | entities.py | implemented |
 | Activity StateChart | statecharts.py + topology test | implemented |
 | Inspection StateChart | statecharts.py + topology test | implemented |
 | direct probabilistic gating | TransitionPolicy test | implemented |
 | construction scenarios | scenarios.py | implemented |
-| dependency execution | — | missing |
-| material identity / quantity | — | missing |
-| crew / equipment / inspector resources | — | missing |
-| inspection / rework execution | — | missing |
-| measurement completion gate | — | missing |
-| finite scenario recovery | — | missing |
-| restart equivalence | — | missing |
+| dependency execution | predecessor measurement/completion gate + tests | implemented |
+| material identity / quantity | Store + Container staging + crash-recovery tests | implemented |
+| crew / equipment / inspector resources | durable Resource reconcilers + contention/outage cleanup tests | implemented |
+| inspection / rework execution | immutable inspection occurrences + reinspection tests | implemented |
+| measurement completion gate | ConstructionMeasurement evidence + predecessor/activity tests | implemented |
+| finite scenario recovery | procurement/weather disruption tests | implemented |
+| restart equivalence | planned-start and failed-inspection/rework restart tests | implemented |
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-Reference promotion requires executable prerequisite/resource/inspection/rework/measurement
-evidence and restart equivalence across the stated boundaries.
+Promotion is based on executable evidence for predecessor and measurement gates, Store+Container
+material staging, durable planned-start scheduling, crew/equipment/inspector ownership,
+post-commit cleanup recovery, immutable inspection/reinspection identity, finite disruption
+recovery, and restart equivalence across planned-start and failed-inspection/rework boundaries.
