@@ -250,12 +250,12 @@ def test_due_schedule_is_restart_equivalent():
     c_backend.run_until(c_due)
 
     restarted = MemoryPersistence()
-    r_entities, _, r_backend_before, r_receivable = _prepare_invoiced(
+    r_entities, r_engine, r_backend_before, r_receivable = _prepare_invoiced(
         restarted
     )
     r_due = schedule_due(
         restarted,
-        build_runtime(restarted)[1],
+        r_engine,
         r_backend_before,
         entities=r_entities,
     )
