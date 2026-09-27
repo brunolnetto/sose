@@ -101,20 +101,22 @@ class ReserveChart(StateChart):
 
 @probabilistic_transitions(
     {},
-    excluded_events={"schedule", "record_partial", "complete", "fail", "retry"},
+    excluded_events={"schedule", "make_due", "record_partial", "complete", "fail", "retry"},
 )
 class PaymentChart(StateChart):
     planned = State(initial=True)
     scheduled = State()
+    due = State()
     partially_paid = State()
     failed = State()
     paid = State(final=True)
 
     schedule = planned.to(scheduled)
-    record_partial = scheduled.to(partially_paid)
-    complete = scheduled.to(paid) | partially_paid.to(paid)
-    fail = scheduled.to(failed) | partially_paid.to(failed)
-    retry = failed.to(scheduled)
+    make_due = scheduled.to(due)
+    record_partial = due.to(partially_paid)
+    complete = due.to(paid) | partially_paid.to(paid)
+    fail = due.to(failed) | partially_paid.to(failed)
+    retry = failed.to(due)
 
 
 @probabilistic_transitions(
