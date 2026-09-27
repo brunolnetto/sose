@@ -271,9 +271,7 @@ def reconcile_gate(
         engine.resources.withdraw(backend, request_id)
 
     if not engine.context.scenarios.attribute("airport.gate.available", True):
-        engine.resources.cancel_pending(backend, request_id)
-        _release(persistence, engine, backend, request_id=request_id)
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         if turnaround.state == "arrived":
             _dispatch(
                 engine,
@@ -390,7 +388,7 @@ def reconcile_ground_service(
     request_id = f"ground-team:{task.id}"
 
     if task.state == "completed":
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         turnaround = _turnaround(persistence, entities)
         if turnaround.state == "servicing":
             _dispatch(
@@ -633,8 +631,8 @@ def reconcile_departure(
     request_id = f"tug:{turnaround.id}"
 
     if turnaround.state == "departed":
-        _release(persistence, engine, backend, request_id=request_id)
-        _release(persistence, engine, backend, request_id=f"gate:{turnaround.id}")
+        engine.resources.withdraw(backend, request_id)
+        engine.resources.withdraw(backend, f"gate:{turnaround.id}")
         if gate.state == "occupied":
             _dispatch(
                 engine,
@@ -678,9 +676,7 @@ def reconcile_departure(
                 key=("airport-slot", slot.id, "weather-delay"),
                 correlation_id=flow_correlation_id(turnaround.id),
             )
-        engine.resources.cancel_pending(backend, request_id)
-        _release(persistence, engine, backend, request_id=request_id)
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         return False
 
     tug = engine.resources.ensure_requested(
@@ -709,10 +705,10 @@ def reconcile_departure(
             key=lambda item: (item.priority, item.sequence, item.item_id),
         )
         if not queued_items:
-            _release(persistence, engine, backend, request_id=request_id)
+            engine.resources.withdraw(backend, request_id)
             return False
         if str(queued_items[0].value["turnaround_id"]) != turnaround.id:
-            _release(persistence, engine, backend, request_id=request_id)
+            engine.resources.withdraw(backend, request_id)
             return False
 
         if not any(
@@ -727,12 +723,12 @@ def reconcile_departure(
         backend.run_until(backend.now)
         result = engine.stores.result(get_id)
     if result is None:
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         return False
 
     selected = str(result.item.value["turnaround_id"])
     if selected != turnaround.id:
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         return False
 
     correlation_id = flow_correlation_id(turnaround.id)
