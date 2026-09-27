@@ -222,47 +222,6 @@ def _scheduled_command(persistence, *, entity_id, name):
     return None
 
 
-def _resource_request_exists(persistence, request_id):
-    return any(d.request_id == request_id for d in persistence.resource_demands()) or any(
-        r.request_id == request_id for r in persistence.resource_reservations()
-    )
-
-
-def _resource_reservation(persistence, request_id):
-    return next(
-        (r for r in persistence.resource_reservations() if r.request_id == request_id),
-        None,
-    )
-
-
-def _request_resource(
-    persistence,
-    engine,
-    backend,
-    *,
-    resource_name,
-    request_id,
-    priority=100,
-):
-    if not _resource_request_exists(persistence, request_id):
-        engine.resources.request(
-            backend,
-            resource_name=resource_name,
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=priority,
-        )
-    backend.run_until(backend.now)
-    return _resource_reservation(persistence, request_id)
-
-
-def _release_resource(persistence, engine, backend, *, request_id):
-    reservation = _resource_reservation(persistence, request_id)
-    if reservation is not None:
-        engine.resources.release(backend, reservation.reservation_id)
-        backend.run_until(backend.now)
-
-
 def _preemptive_request_exists(persistence, request_id):
     return any(
         d.request_id == request_id
@@ -401,14 +360,7 @@ def reconcile_departure(
     aircraft_ready = aircraft.state in {"available", "released"}
 
     if not (predecessor_ready and departure_available and crew_available and aircraft_ready):
-        engine.resources.cancel_pending(backend, request_id)
-        _release_resource(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         if flight.state in {"due", "ready"}:
             _dispatch(
                 engine,
@@ -439,12 +391,11 @@ def reconcile_departure(
         )
         crew = _crew(persistence, crew.id)
 
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="flight_crew",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -541,12 +492,7 @@ def land_flight(
             key=("aviation-crew", crew.id, "release"),
             correlation_id=correlation_id,
         )
-    _release_resource(
-        persistence,
-        engine,
-        backend,
-        request_id=f"flight-crew:{flight.id}",
-    )
+    engine.resources.withdraw(backend, f"flight-crew:{flight.id}")
 
     flight = _flight(persistence, flight.id)
     if flight.state == "landed":
@@ -602,13 +548,12 @@ def reconcile_inspection(
     correlation_id = flow_correlation_id(aircraft.id)
 
     if inspection.state not in {"passed", "failed"}:
-        reservation = _request_resource(
-            persistence,
-            engine,
-            backend,
-            resource_name="inspection_team",
-            request_id=request_id,
-        )
+        reservation = engine.resources.ensure_requested(
+        backend,
+        resource_name="inspection_team",
+        request_id=request_id,
+        requested_at=backend.now,
+    )
         if reservation is None:
             return False
 
@@ -651,12 +596,7 @@ def reconcile_inspection(
     if inspection.state not in {"passed", "failed"}:
         return False
 
-    _release_resource(
-        persistence,
-        engine,
-        backend,
-        request_id=request_id,
-    )
+    engine.resources.withdraw(backend, request_id)
 
     aircraft = _aircraft(persistence, entities)
     flight = _flight(persistence, flight.id)
