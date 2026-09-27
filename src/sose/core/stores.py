@@ -218,25 +218,11 @@ class DurableStoreManager:
         *,
         completed_at: datetime,
     ) -> StoreGetResult:
-        existing_result = next(
-            (
-                result
-                for result in self._persistence.store_get_results()
-                if result.request_id == request_id
-            ),
-            None,
-        )
+        existing_result = self.selection(request_id)
         if existing_result is not None:
             return existing_result
 
-        request = next(
-            (
-                request
-                for request in self._persistence.store_get_requests()
-                if request.request_id == request_id
-            ),
-            None,
-        )
+        request = self.pending_get(request_id)
         if request is None:
             raise KeyError(f"unknown store get request: {request_id}")
         if backend_item.store_name != request.store_name:
@@ -345,7 +331,24 @@ class DurableStoreManager:
             on_received=received,
         )
 
-    def result(self, request_id: str) -> StoreGetResult | None:
+    def pending_get(self, request_id: str) -> StoreGetRequest | None:
+        """Return durable pending selection intent for one request."""
+        return next(
+            (
+                request
+                for request in self._persistence.store_get_requests()
+                if request.request_id == request_id
+            ),
+            None,
+        )
+
+    def selection(self, request_id: str) -> StoreGetResult | None:
+        """Return committed durable selection ownership, if any.
+
+        A committed StoreGetResult remains authoritative after the selected item
+        has disappeared from the store. Recovery should continue from this result
+        rather than attempting to rediscover or consume the original item.
+        """
         return next(
             (
                 result
@@ -354,6 +357,54 @@ class DurableStoreManager:
             ),
             None,
         )
+
+    def ensure_selection(
+        self,
+        backend,
+        *,
+        store_name: str,
+        request_id: str,
+        requested_at: datetime,
+        filter_key: str | None = None,
+    ) -> StoreGetResult | None:
+        """Ensure one durable selection request exists and return its result.
+
+        FIFO/Priority/Filter choice remains a property of the Store definition
+        and backend. Callers remain responsible for domain eligibility (for
+        example validating a priority head before beginning dispatch).
+        """
+        existing = self.selection(request_id)
+        if existing is not None:
+            if existing.store_name != store_name:
+                raise RuntimeError(
+                    f"selection {request_id} belongs to {existing.store_name}, "
+                    f"not {store_name}"
+                )
+            return existing
+
+        pending = self.pending_get(request_id)
+        if pending is not None:
+            if pending.store_name != store_name or pending.filter_key != filter_key:
+                raise RuntimeError(
+                    f"pending selection {request_id} does not match requested store/filter"
+                )
+        else:
+            self.get(
+                backend,
+                store_name=store_name,
+                request_id=request_id,
+                requested_at=requested_at,
+                filter_key=filter_key,
+            )
+
+        run_until = getattr(backend, "run_until", None)
+        if callable(run_until):
+            run_until(getattr(backend, "now", requested_at))
+        return self.selection(request_id)
+
+    def result(self, request_id: str) -> StoreGetResult | None:
+        """Backward-compatible alias for committed selection ownership."""
+        return self.selection(request_id)
 
     def _definition(self, name: str) -> StoreDefinition:
         definition = next(
