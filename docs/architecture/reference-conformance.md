@@ -79,3 +79,5 @@ This makes promotion status mechanically checkable while preserving the rule:
 
 > core/test infrastructure may validate evidence structure; domain tests own
 > semantic truth.
+
+The catalog itself is executable evidence: adding or promoting a Reference domain without a conforming contract causes the repository conformance test to fail.
