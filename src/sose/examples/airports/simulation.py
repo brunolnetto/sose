@@ -525,6 +525,18 @@ def reconcile_baggage(
         return False
     correlation_id = flow_correlation_id(turnaround.id)
 
+    # The baggage delay may commit before the turnaround wait-state. Preserve
+    # that operational fact before allowing recovery to mark baggage ready.
+    if baggage.state == "delayed" and turnaround.state == "boarding":
+        _dispatch(
+            engine,
+            turnaround,
+            "baggage_delayed",
+            key=("airport", turnaround.id, baggage.id, "baggage-delayed"),
+            correlation_id=correlation_id,
+        )
+        turnaround = _turnaround(persistence, entities)
+
     if baggage.state == "pending":
         _dispatch(
             engine,
@@ -623,22 +635,24 @@ def queue_departure(
     turnaround = _turnaround(persistence, entities)
     baggage = _baggage(persistence, entities)
     task = _service_task(persistence, entities)
-    if turnaround.state != "boarding":
+    if turnaround.state not in {"boarding", "waiting_slot"}:
         raise RuntimeError(
-            f"departure queue requires FlightTurnaround(boarding), got {turnaround.state}"
+            "departure queue requires FlightTurnaround(boarding/waiting_slot), "
+            f"got {turnaround.state}"
         )
     if baggage.state != "ready":
         raise RuntimeError("departure queue requires BaggageFlow(ready)")
     if task.state != "completed":
         raise RuntimeError("departure queue requires GroundServiceTask(completed)")
 
-    _dispatch(
-        engine,
-        turnaround,
-        "start_boarding",
-        key=("airport", turnaround.id, "boarding-complete"),
-        correlation_id=flow_correlation_id(turnaround.id),
-    )
+    if turnaround.state == "boarding":
+        _dispatch(
+            engine,
+            turnaround,
+            "start_boarding",
+            key=("airport", turnaround.id, "boarding-complete"),
+            correlation_id=flow_correlation_id(turnaround.id),
+        )
     item_id = f"departure:{turnaround.id}"
     queued = any(item.item_id == item_id for item in persistence.store_items())
     consumed = any(
