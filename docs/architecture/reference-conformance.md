@@ -47,6 +47,7 @@ The conformance checker verifies structural claims only:
 - evidence files exist and contain executable tests;
 - baseline capabilities are present;
 - declared capabilities have evidence;
+- capability dependencies are coherent (for example preemption requires resource evidence, while ScheduledWork/Store selection/crash recovery require restart-equivalence evidence);
 - documentation exists and declares reference-implementation status;
 - package/entities/statecharts/runtime modules import;
 - runtime exposes the entrypoints declared by its contract (modern references
