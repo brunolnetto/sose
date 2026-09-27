@@ -34,7 +34,8 @@ belong to Dispute while the Payment retains its own transaction history.
 
 ### 3.1 Payment
 
-States: authorization_requested, authorized, captured, settled, declined, reversed, refunded.
+States: authorization_requested, authorized, captured, settlement_pending,
+settlement_retry_wait, settled, declined, reversed, refunded.
 
 Owns the transaction lifecycle and the semantic boundary between reversal and refund.
 
@@ -94,13 +95,18 @@ and dispute resolution deadlines.
 ### 5.1 Payment StateChart
 
     authorization_requested
-      -> authorized -> captured -> settled -> refunded
+      -> authorized
+         -> captured
+            -> settlement_pending
+               -> settled -> refunded
+               -> settlement_retry_wait -> settlement_pending
       -> declined
 
     authorized -> reversed
 
 Reversal is intentionally legal only from authorized. Refund is intentionally legal
-only from settled. Capture/settle/refund/reverse remain explicit orchestrated events.
+only from settled. `settlement_due` and `retry_settlement` are durable scheduled
+transitions; actual `settle` remains processor-capacity gated.
 
 ### 5.2 Dispute StateChart
 
@@ -155,7 +161,8 @@ pretend that the original Payment never settled.
 
 ## 7. Commands and domain events
 
-Payment commands: authorize, decline, capture, reverse, settle, refund.
+Payment commands: authorize, decline, capture, reverse, settlement_due, settle,
+wait_retry, retry_settlement, refund.
 
 Dispute commands: request_evidence, submit_evidence, issue_chargeback,
 resolve_merchant, resolve_cardholder, withdraw.
@@ -237,17 +244,17 @@ Dispute:
 | Dispute StateChart | statecharts.py + topology test | implemented |
 | stochastic authorization decision | TransitionPolicy + test | implemented |
 | payment scenarios | scenarios.py | implemented |
-| durable processor resources | — | missing |
-| durable settlement scheduling | — | missing |
-| retry/backoff execution | — | missing |
-| refund end-to-end path | — | missing |
-| dispute/chargeback end-to-end path | — | missing |
-| restart equivalence | — | missing |
+| durable processor resources | authorization / settlement / dispute Resource reconcilers | implemented |
+| durable settlement scheduling | capture -> `settlement_due` ScheduledWork | implemented |
+| retry/backoff execution | `settlement_retry_wait` + durable retry ScheduledWork | implemented |
+| refund end-to-end path | `run_refund_path` + test | implemented |
+| dispute/chargeback end-to-end path | scheduled evidence + analyst-gated chargeback test | implemented |
+| restart equivalence | settlement-retry restart-equivalence test | implemented |
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-The transaction and dispute contracts are executable, but reference promotion requires
-durable processor capacity, settlement/retry schedules, complete happy/sad flows,
-scenario execution, and restart-equivalence evidence.
+Promotion is based on executable evidence for processor-gated authorization/settlement/refund,
+durable settlement and retry schedules, explicit pre-capture reversal, independent dispute
+and chargeback execution, finite processor-outage recovery, and restart equivalence.
