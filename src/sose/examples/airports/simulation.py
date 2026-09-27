@@ -733,24 +733,28 @@ def reconcile_departure(
     if tug is None:
         return False
 
-    queued_items = sorted(
-        (
-            item
-            for item in persistence.store_items()
-            if item.store_name == "departure_queue"
-        ),
-        key=lambda item: (item.priority, item.sequence, item.item_id),
-    )
-    if not queued_items:
-        _release(persistence, engine, backend, request_id=request_id)
-        return False
-    if str(queued_items[0].value["turnaround_id"]) != turnaround.id:
-        _release(persistence, engine, backend, request_id=request_id)
-        return False
-
     get_id = f"departure-pick:{dispatcher_id}"
     result = engine.stores.result(get_id)
+
+    # A queue selection is itself durable semantic evidence. After the get
+    # commits, the queue item is gone; recovery must continue from the
+    # StoreGetResult rather than requiring the item to still be present.
     if result is None:
+        queued_items = sorted(
+            (
+                item
+                for item in persistence.store_items()
+                if item.store_name == "departure_queue"
+            ),
+            key=lambda item: (item.priority, item.sequence, item.item_id),
+        )
+        if not queued_items:
+            _release(persistence, engine, backend, request_id=request_id)
+            return False
+        if str(queued_items[0].value["turnaround_id"]) != turnaround.id:
+            _release(persistence, engine, backend, request_id=request_id)
+            return False
+
         if not any(
             req.request_id == get_id for req in persistence.store_get_requests()
         ):
