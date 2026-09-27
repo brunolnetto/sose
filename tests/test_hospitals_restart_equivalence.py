@@ -101,6 +101,7 @@ def test_triage_wait_is_restart_equivalent():
     _, rebuilt_engine = build_runtime(restarted, now=restart_at)
     rebuilt_backend = SimPyBackend(origin=restart_at)
     rebuilt_engine.rebuild_backend(rebuilt_backend)
+    rebuilt_backend.run_until(restart_at)
 
     assert rebuilt_backend.store_snapshot("triage_queue").size == 1
     _finish_ward(
@@ -207,6 +208,9 @@ def test_committed_preemption_missing_interrupt_is_restart_equivalent():
     _, rebuilt_engine = build_runtime(restarted, now=restart_at)
     rebuilt_backend = SimPyBackend(origin=restart_at)
     rebuilt_engine.rebuild_backend(rebuilt_backend)
+    # Replayed durable reservations acquire their fresh backend lease at the
+    # recovery boundary, just like the canonical MRO restart helper.
+    rebuilt_backend.run_until(restart_at)
 
     assert rebuilt_backend.preemptive_resource_snapshot(
         "procedure_suite"
