@@ -186,7 +186,6 @@ Both are finite and require normal workflow reconciliation after recovery.
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-The implementation is intentionally promoted only after the complete branch
-passes CI and review.
+Promotion is based on executable evidence for coverage/documentation gating, severity-prioritized queueing, assessment/fraud/reassessment identity, reserve-before-payment, durable payment dates, partial payout, rejected-claim reopening, finite scenarios, post-commit crash reconciliation, and restart equivalence across ScheduledWork and ResourceDemand boundaries.
