@@ -115,3 +115,83 @@ def test_capability_requirement_graph_stays_semantic():
     assert CAPABILITY_REQUIREMENTS[ReferenceCapability.STORE_SELECTION] == {
         ReferenceCapability.RESTART_EQUIVALENCE
     }
+
+
+def _minimal_contract(*, docs_dir: str, evidence_path: str) -> ReferenceContract:
+    capabilities = frozenset(BASELINE_REFERENCE_CAPABILITIES)
+    return ReferenceContract(
+        domain="Fixture",
+        package="missing.package",
+        docs_dir=docs_dir,
+        capabilities=capabilities,
+        evidence={
+            capability: (evidence_path,)
+            for capability in capabilities
+        },
+    )
+
+
+def test_evidence_requires_collectable_top_level_test(tmp_path):
+    evidence = tmp_path / "tests" / "test_fake.py"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text(
+        '"""def test_in_a_string(): pass"""\n'
+        "# def test_in_a_comment(): pass\n"
+        "def helper():\n"
+        "    def test_nested():\n"
+        "        pass\n",
+        encoding="utf-8",
+    )
+    docs = tmp_path / "docs" / "fixture"
+    docs.mkdir(parents=True)
+    (docs / "README.md").write_text(
+        "Status: **Reference implementation**\n",
+        encoding="utf-8",
+    )
+    (docs / "specification.md").write_text(
+        "Current status: **Reference implementation**.\n",
+        encoding="utf-8",
+    )
+
+    issues = validate_reference_contract(
+        _minimal_contract(
+            docs_dir="docs/fixture",
+            evidence_path="tests/test_fake.py",
+        ),
+        repo_root=tmp_path,
+    )
+
+    assert any(issue.code == "empty-test-evidence" for issue in issues)
+
+
+def test_documentation_status_rejects_candidate_wording(tmp_path):
+    evidence = tmp_path / "tests" / "test_real.py"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("def test_real():\n    pass\n", encoding="utf-8")
+    docs = tmp_path / "docs" / "fixture"
+    docs.mkdir(parents=True)
+    (docs / "README.md").write_text(
+        "## Status\n\n**Reference implementation candidate.**\n",
+        encoding="utf-8",
+    )
+    (docs / "specification.md").write_text(
+        "Promote to Reference implementation when CI is green.\n",
+        encoding="utf-8",
+    )
+    contract = _minimal_contract(
+        docs_dir="docs/fixture",
+        evidence_path="tests/test_real.py",
+    )
+
+    issues = validate_reference_contract(contract, repo_root=tmp_path)
+
+    assert any(issue.code == "documentation-status-drift" for issue in issues)
+
+    (docs / "README.md").write_text(
+        "## Status\n\n**Reference implementation.**\n",
+        encoding="utf-8",
+    )
+    issues = validate_reference_contract(contract, repo_root=tmp_path)
+    assert not any(
+        issue.code == "documentation-status-drift" for issue in issues
+    )

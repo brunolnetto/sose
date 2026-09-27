@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 from dataclasses import dataclass
 from enum import Enum
 from importlib import import_module
@@ -100,7 +101,37 @@ def _test_file_has_test(path: Path) -> bool:
         content = path.read_text(encoding="utf-8")
     except UnicodeDecodeError:
         return False
-    return "def test_" in content
+
+    try:
+        module = ast.parse(content, filename=str(path))
+    except SyntaxError:
+        return False
+
+    for node in module.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name.startswith("test_"):
+                return True
+        if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
+            if any(
+                isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
+                and member.name.startswith("test_")
+                for member in node.body
+            ):
+                return True
+    return False
+
+
+def _declares_reference_status(content: str) -> bool:
+    accepted = {
+        "reference implementation",
+        "status: reference implementation",
+        "current status: reference implementation",
+    }
+    for line in content.splitlines():
+        normalized = line.strip().lower().replace("*", "").rstrip(".")
+        if normalized in accepted:
+            return True
+    return False
 
 
 def validate_reference_contract(
@@ -203,9 +234,9 @@ def validate_reference_contract(
         for path in (readme, specification)
         if path.is_file()
     ]
-    if existing_docs and "reference implementation" not in "\n".join(
-        existing_docs
-    ).lower():
+    if existing_docs and not any(
+        _declares_reference_status(content) for content in existing_docs
+    ):
         issues.append(
             ReferenceConformanceIssue(
                 contract.domain,
