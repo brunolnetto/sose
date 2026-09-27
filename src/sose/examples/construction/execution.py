@@ -13,8 +13,6 @@ from .runtime import (
     inspection,
     inspection_id,
     measurement_id,
-    resource_request_exists,
-    resource_reservation,
 )
 
 
