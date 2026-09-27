@@ -272,7 +272,7 @@ def reconcile_capacity(
     tech_id = f"technician:{entities.work_order_id}"
     bay_id = f"bay:{entities.work_order_id}"
 
-    technician = engine.resources.ensure_requested(
+    engine.resources.ensure_requested(
         backend,
         resource_name="technician",
         request_id=tech_id,
@@ -287,7 +287,7 @@ def reconcile_capacity(
             preemptive=False,
         ),
     )
-    bay = engine.preemptive_resources.ensure_requested(
+    engine.preemptive_resources.ensure_requested(
         backend,
         resource_name="maintenance_bay",
         request_id=bay_id,
@@ -304,7 +304,10 @@ def reconcile_capacity(
         ),
     )
 
-    return technician is not None and bay is not None
+    return (
+        engine.resources.reservation_for(tech_id) is not None
+        and engine.preemptive_resources.reservation_for(bay_id) is not None
+    )
 
 
 def reconcile_part_issue(
