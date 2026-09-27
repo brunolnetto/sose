@@ -169,12 +169,6 @@ def test_gate_reallocation_releases_old_capacity_and_reassigns_turnaround():
         entities=entities,
     )
 
-    old_reservation = next(
-        r
-        for r in persistence.resource_reservations()
-        if r.request_id == f"gate:{entities.turnaround_id}"
-    )
-
     assert reallocate_gate(
         persistence,
         engine,
@@ -195,9 +189,12 @@ def test_gate_reallocation_releases_old_capacity_and_reassigns_turnaround():
     assert assignment.attributes["gate"] == "G2"
     assert turnaround is not None and turnaround.state == "gate_assigned"
 
-    current = next(
+    gate_reservations = [
         r
         for r in persistence.resource_reservations()
         if r.request_id == f"gate:{entities.turnaround_id}"
-    )
-    assert current.sequence > old_reservation.sequence
+    ]
+    assert len(gate_reservations) == 1
+    snapshot = backend.resource_snapshot("gate")
+    assert snapshot.in_use == 1
+    assert snapshot.queued == 0
