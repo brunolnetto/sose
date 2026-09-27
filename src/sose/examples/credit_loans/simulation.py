@@ -187,8 +187,27 @@ def reconcile_underwriting(
     request_id = f"credit-analyst:{application.id}"
 
     if application.state in {"approved", "rejected"}:
+        expected = application.state
+        if decision is None:
+            decision = engine.context.entities.create(
+                CreditDecision,
+                key=("credit-loans-reference", application.id, "decision"),
+                state="pending",
+                attributes={"application_id": application.id},
+            )
+            with persistence.transaction() as uow:
+                uow.save_entity(decision)
+        decision = _entity(persistence, "credit_decision", decision.id)
+        if decision.state == "pending":
+            _dispatch(
+                engine,
+                decision,
+                expected,
+                key=("credit-decision", decision.id, expected),
+                correlation_id=correlation_id,
+            )
         engine.resources.withdraw(backend, request_id)
-        return application.state == "approved"
+        return expected == "approved"
 
     if not engine.context.scenarios.attribute("credit_loans.underwriting.available", True):
         engine.resources.withdraw(backend, request_id)
@@ -377,6 +396,9 @@ def post_payment(
     payment = persistence.entity("loan_payment", pid)
     correlation_id = flow_correlation_id(str(loan.attributes["application_id"]))
 
+    if installment.state not in {"due", "partially_paid", "overdue", "paid"}:
+        raise RuntimeError(f"payment requires due-like installment, got {installment.state}")
+
     if payment is None:
         remaining = float(installment.attributes["amount"]) - float(
             installment.attributes["paid_amount"]
@@ -404,6 +426,20 @@ def post_payment(
             correlation_id=correlation_id,
         )
         payment = _entity(persistence, "loan_payment", payment.id)
+    else:
+        if abs(float(payment.attributes["amount"]) - float(amount)) > 1e-9:
+            raise ValueError("payment identity already exists with a different amount")
+        if payment.state == "initiated":
+            _dispatch(
+                engine,
+                payment,
+                "post",
+                key=("credit-payment", payment.id, "post"),
+                correlation_id=correlation_id,
+            )
+            payment = _entity(persistence, "loan_payment", payment.id)
+        if payment.state != "posted":
+            raise RuntimeError(f"payment cannot be applied from {payment.state}")
 
     installment = _entity(persistence, "loan_installment", installment.id)
     loan = _entity(persistence, "loan", loan.id)
@@ -648,11 +684,13 @@ def apply_restructure(
 ):
     installment = _entity(persistence, "loan_installment", installment_id_value)
     loan = _entity(persistence, "loan", installment.attributes["loan_id"])
-    if loan.state != "delinquent":
-        raise RuntimeError("restructure requires delinquent loan")
     correlation_id = flow_correlation_id(str(loan.attributes["application_id"]))
     rid = restructure_id(loan.id, restructure_ordinal)
     restructure = persistence.entity("loan_restructure", rid)
+    if loan.state not in {"delinquent", "restructuring"} and not (
+        loan.state == "servicing" and restructure is not None
+    ):
+        raise RuntimeError("restructure requires delinquent loan or existing restructure")
     if restructure is None:
         restructure = engine.context.entities.create(
             Restructure,
@@ -691,7 +729,7 @@ def apply_restructure(
             persistence.entity("loan_installment", installment_id(loan.id, ordinal))
             for ordinal in range(1, int(loan.attributes["installment_count"]) + 1)
         )
-        if item is not None and item.state in {"due", "partially_paid", "overdue"}
+        if item is not None and item.state in {"scheduled", "due", "partially_paid", "overdue"}
     ]
     for item in active:
         _dispatch(
@@ -700,6 +738,11 @@ def apply_restructure(
             "restructure",
             key=("credit-installment", item.id, "restructure", restructure_ordinal),
             correlation_id=correlation_id,
+        )
+        engine.scheduler.cancel_pending(
+            entity_type="loan_installment",
+            entity_id=item.id,
+            name="make_due",
         )
         engine.scheduler.cancel_pending(
             entity_type="loan_installment",
