@@ -7,6 +7,7 @@ from sose.examples.construction.materials import seed_material, stage_material
 from sose.examples.construction.runtime import ORIGIN, activity, build_runtime, seed_reference
 from sose.examples.construction.scheduling import schedule_planned_start
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def _prepare_pending_start(persistence):
