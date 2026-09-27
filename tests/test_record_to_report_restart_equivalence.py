@@ -61,12 +61,14 @@ def test_pending_close_schedule_is_restart_equivalent():
         task_id=r_entities.close_task_id,
         period_id=r_entities.period_id,
     )
-    restart_at = r_backend_before.now
-
-    _, rebuilt_engine = build_runtime(restarted, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        restarted,
+        build_runtime,
+        r_backend_before,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     assert len(restarted.scheduled_work()) == 1
     rebuilt_backend.run_until(r_due)
@@ -183,11 +185,14 @@ def test_unmatched_item_recovers_missing_adjustment_after_restart():
         adjustment_id(entities.reconciliation_id),
     ) is None
 
-    restart_at = backend.now
-    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     first = ensure_adjustment(
         persistence,
