@@ -305,6 +305,17 @@ def reconcile_gate(
     if turnaround.state not in {"arrived", "gate_hold"}:
         return False
 
+    # A gate reallocation can commit its semantic state before the old gate
+    # reservation is released. Never reuse that stale reservation as ownership
+    # of the replacement gate.
+    if assignment.state == "reallocated":
+        _release(
+            persistence,
+            engine,
+            backend,
+            request_id=request_id,
+        )
+
     if not engine.context.scenarios.attribute("airport.gate.available", True):
         engine.resources.cancel_pending(backend, request_id)
         _release(persistence, engine, backend, request_id=request_id)
