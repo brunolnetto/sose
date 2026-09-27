@@ -176,38 +176,6 @@ def _dispatch(engine, entity, event, *, key, correlation_id):
     engine.dispatch(command)
 
 
-def _scheduled_command(persistence, *, entity_type, entity_id, name):
-    for work in persistence.scheduled_work():
-        command = persistence.command(work.command_id)
-        if (
-            command is not None
-            and command.entity_type == entity_type
-            and command.entity_id == entity_id
-            and command.name == name
-        ):
-            return work, command
-    return None
-
-
-def _cancel_schedule(persistence, *, entity_type, entity_id, name):
-    found = _scheduled_command(
-        persistence,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        name=name,
-    )
-    if found is None:
-        return False
-    work, command = found
-    with persistence.transaction() as uow:
-        persisted = uow.get_scheduled_work(work.work_id)
-        if persisted != work:
-            return False
-        uow.delete_scheduled_work(work.work_id)
-        uow.delete_command(command.command_id)
-    return True
-
-
 def ensure_document_request(
     persistence,
     engine,
@@ -249,8 +217,7 @@ def ensure_document_request(
         with persistence.transaction() as uow:
             uow.save_entity(request)
 
-    existing = _scheduled_command(
-        persistence,
+    existing = engine.scheduler.find_pending(
         entity_type="insurance_document_request",
         entity_id=request.id,
         name="expire",
@@ -291,8 +258,7 @@ def satisfy_documents(persistence, engine, *, entities, ordinal=1):
             request.id,
         )
     if request.state == "satisfied":
-        _cancel_schedule(
-            persistence,
+        engine.scheduler.cancel_pending(
             entity_type="insurance_document_request",
             entity_id=request.id,
             name="expire",
@@ -686,8 +652,7 @@ def schedule_payment(
             key=("insurance", claim.id, payment.id, "schedule-payment"),
             correlation_id=correlation_id,
         )
-    existing = _scheduled_command(
-        persistence,
+    existing = engine.scheduler.find_pending(
         entity_type="insurance_payment",
         entity_id=payment.id,
         name="make_due",
@@ -704,7 +669,7 @@ def schedule_payment(
         engine.context.schedules.at(due_at, command=command)
         return due_at
     if existing is not None:
-        return existing[0].due_at
+        return existing.work.due_at
     return backend.now
 
 
