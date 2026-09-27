@@ -217,14 +217,16 @@ def reconcile_receiving_resources(
     if receipt is None:  # pragma: no cover - seed invariant
         raise RuntimeError("receipt was not persisted")
 
-    dock = engine.resources.ensure_requested(
-        backend,
-        resource_name="receiving_dock",
-        request_id=dock_request_id,
-        requested_at=backend.now,
-    )
-    if receipt.state == "pending" and dock is None:
-        return False
+    dock = engine.resources.reservation_for(dock_request_id)
+    if receipt.state == "pending":
+        dock = engine.resources.ensure_requested(
+            backend,
+            resource_name="receiving_dock",
+            request_id=dock_request_id,
+            requested_at=backend.now,
+        )
+        if dock is None:
+            return False
 
     if receipt.state == "pending":
         begin = engine.context.commands.create(
@@ -258,14 +260,16 @@ def reconcile_receiving_resources(
         engine.dispatch(partial)
         receipt = persistence.entity("receipt", entities.receipt_id)
 
-    inspector = engine.resources.ensure_requested(
-        backend,
-        resource_name="inspector",
-        request_id=inspector_request_id,
-        requested_at=backend.now,
-    )
-    if receipt.state in {"receiving", "partial"} and inspector is None:
-        return False
+    inspector = engine.resources.reservation_for(inspector_request_id)
+    if receipt.state in {"receiving", "partial"}:
+        inspector = engine.resources.ensure_requested(
+            backend,
+            resource_name="inspector",
+            request_id=inspector_request_id,
+            requested_at=backend.now,
+        )
+        if inspector is None:
+            return False
 
     if receipt.state in {"receiving", "partial"}:
         inspect = engine.context.commands.create(
