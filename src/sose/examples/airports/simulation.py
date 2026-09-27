@@ -195,19 +195,6 @@ def _dispatch(engine, entity, event, *, key, correlation_id):
     engine.dispatch(command)
 
 
-def _scheduled_command(persistence, *, entity_type, entity_id, name):
-    for work in persistence.scheduled_work():
-        command = persistence.command(work.command_id)
-        if (
-            command is not None
-            and command.entity_type == entity_type
-            and command.entity_id == entity_id
-            and command.name == name
-        ):
-            return work, command
-    return None
-
-
 def schedule_arrival(
     persistence,
     engine,
@@ -219,14 +206,13 @@ def schedule_arrival(
     turnaround = _turnaround(persistence, entities)
     if turnaround.state != "scheduled":
         return backend.now
-    existing = _scheduled_command(
-        persistence,
+    existing = engine.scheduler.find_pending(
         entity_type="airport_flight_turnaround",
         entity_id=turnaround.id,
         name="arrive",
     )
     if existing is not None:
-        return existing[0].due_at
+        return existing.work.due_at
     due_at = backend.now + delay
     command = engine.context.commands.create(
         "arrive",
@@ -548,8 +534,7 @@ def schedule_departure_slot(
             correlation_id=flow_correlation_id(entities.turnaround_id),
         )
         slot = _slot(persistence, entities)
-    existing = _scheduled_command(
-        persistence,
+    existing = engine.scheduler.find_pending(
         entity_type="airport_departure_slot",
         entity_id=slot.id,
         name="make_due",
@@ -566,7 +551,7 @@ def schedule_departure_slot(
         engine.context.schedules.at(due_at, command=command)
         return due_at
     if existing is not None:
-        return existing[0].due_at
+        return existing.work.due_at
     return backend.now
 
 

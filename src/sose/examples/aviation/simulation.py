@@ -209,19 +209,6 @@ def _dispatch(engine, entity, event, *, key, correlation_id):
     engine.dispatch(command)
 
 
-def _scheduled_command(persistence, *, entity_id, name):
-    for work in persistence.scheduled_work():
-        command = persistence.command(work.command_id)
-        if (
-            command is not None
-            and command.entity_type == "aviation_flight"
-            and command.entity_id == entity_id
-            and command.name == name
-        ):
-            return work, command
-    return None
-
-
 def schedule_departure(
     persistence,
     engine,
@@ -233,13 +220,13 @@ def schedule_departure(
     flight = _flight(persistence, flight_id)
     if flight.state != "scheduled":
         return backend.now
-    existing = _scheduled_command(
-        persistence,
+    existing = engine.scheduler.find_pending(
+        entity_type="aviation_flight",
         entity_id=flight.id,
         name="make_due",
     )
     if existing is not None:
-        return existing[0].due_at
+        return existing.work.due_at
     due_at = backend.now + delay
     command = engine.context.commands.create(
         "make_due",
