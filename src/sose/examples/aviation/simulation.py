@@ -358,7 +358,16 @@ def reconcile_departure(
     request_id = f"flight-crew:{flight.id}"
 
     if flight.state == "airborne":
-        return True
+        if aircraft.state == "assigned":
+            _dispatch(
+                engine,
+                aircraft,
+                "dispatch",
+                key=("aviation-aircraft", aircraft.id, flight.id, "dispatch"),
+                correlation_id=correlation_id,
+            )
+            aircraft = _aircraft(persistence, entities)
+        return aircraft.state == "airborne"
     if flight.state not in {"due", "delayed", "ready"}:
         return False
 
@@ -955,24 +964,38 @@ def complete_aog_maintenance(
     )
     flight = _flight(persistence, flight_id)
     aircraft = _aircraft(persistence, entities)
-    if work.state != "in_progress" or aircraft.state != "maintenance":
-        raise RuntimeError("AOG maintenance is not active")
     correlation_id = flow_correlation_id(aircraft.id)
 
-    _dispatch(
-        engine,
-        work,
-        "complete",
-        key=("aviation-maintenance", work.id, "complete"),
-        correlation_id=correlation_id,
-    )
-    _dispatch(
-        engine,
-        aircraft,
-        "finish_maintenance",
-        key=("aviation-aircraft", aircraft.id, flight.id, "maintenance-complete"),
-        correlation_id=correlation_id,
-    )
+    if work.state == "in_progress":
+        _dispatch(
+            engine,
+            work,
+            "complete",
+            key=("aviation-maintenance", work.id, "complete"),
+            correlation_id=correlation_id,
+        )
+        work = _entity(
+            persistence,
+            "aviation_maintenance_work_order",
+            work.id,
+        )
+    if work.state != "completed":
+        raise RuntimeError("AOG maintenance is not complete or active")
+
+    aircraft = _aircraft(persistence, entities)
+    if aircraft.state == "maintenance":
+        _dispatch(
+            engine,
+            aircraft,
+            "finish_maintenance",
+            key=("aviation-aircraft", aircraft.id, flight.id, "maintenance-complete"),
+            correlation_id=correlation_id,
+        )
+        aircraft = _aircraft(persistence, entities)
+    if aircraft.state != "released":
+        raise RuntimeError("completed maintenance did not release aircraft")
+
+    flight = _flight(persistence, flight_id)
     if flight.state == "inspection":
         _dispatch(
             engine,
@@ -987,7 +1010,7 @@ def complete_aog_maintenance(
         backend,
         request_id=f"maintenance-bay:{work.id}",
     )
-    return True
+    return _flight(persistence, flight_id).state == "released"
 
 
 def preemption_result_for(persistence, *, preempting_request_id):
