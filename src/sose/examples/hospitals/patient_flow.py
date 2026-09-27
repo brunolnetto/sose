@@ -13,40 +13,6 @@ from .runtime import (
 )
 
 
-def _request_resource(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    resource_name: str,
-    request_id: str,
-    priority: int = 100,
-):
-    if not resource_request_exists(persistence, request_id):
-        engine.resources.request(
-            backend,
-            resource_name=resource_name,
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=priority,
-        )
-    backend.run_until(backend.now)
-    return resource_reservation(persistence, request_id)
-
-
-def _release_resource(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    request_id: str,
-) -> None:
-    reservation = resource_reservation(persistence, request_id)
-    if reservation is not None:
-        engine.resources.release(backend, reservation.reservation_id)
-        backend.run_until(backend.now)
-
-
 def triage_and_queue(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -146,35 +112,23 @@ def claim_next_ward_admission(
 
     bed_request = f"ward-bed:{claim_id}"
     team_request = f"ward-team:{claim_id}"
-    bed = _request_resource(
-        persistence,
-        engine,
+    bed = engine.resources.ensure_requested(
         backend,
         resource_name="ward_bed",
         request_id=bed_request,
+        requested_at=backend.now,
     )
-    team = _request_resource(
-        persistence,
-        engine,
+    team = engine.resources.ensure_requested(
         backend,
         resource_name="clinical_team",
         request_id=team_request,
+        requested_at=backend.now,
     )
     if bed is None or team is None:
         if bed is not None:
-            _release_resource(
-                persistence,
-                engine,
-                backend,
-                request_id=bed_request,
-            )
+            engine.resources.withdraw(backend, bed_request)
         if team is not None:
-            _release_resource(
-                persistence,
-                engine,
-                backend,
-                request_id=team_request,
-            )
+            engine.resources.withdraw(backend, team_request)
         return None
 
     get_id = f"ward-claim:{claim_id}"
@@ -186,18 +140,8 @@ def claim_next_ward_admission(
     )
 
     if result is None:
-        _release_resource(
-            persistence,
-            engine,
-            backend,
-            request_id=bed_request,
-        )
-        _release_resource(
-            persistence,
-            engine,
-            backend,
-            request_id=team_request,
-        )
+        engine.resources.withdraw(backend, bed_request)
+        engine.resources.withdraw(backend, team_request)
         return None
 
     admission_id = str(result.item.value["admission_id"])
@@ -230,12 +174,7 @@ def release_ward_capacity(
     claim_id: str,
 ) -> None:
     for request_id in (f"ward-bed:{claim_id}", f"ward-team:{claim_id}"):
-        _release_resource(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
+        engine.resources.withdraw(backend, request_id)
 
 
 def discharge_from_ward(
@@ -322,37 +261,25 @@ def reconcile_icu_allocation(
     acuity = int(current.attributes["acuity"])
     bed_request = f"icu-bed:{current.id}"
     team_request = f"icu-team:{current.id}"
-    bed = _request_resource(
-        persistence,
-        engine,
+    bed = engine.resources.ensure_requested(
         backend,
         resource_name="icu_bed",
         request_id=bed_request,
+        requested_at=backend.now,
         priority=acuity,
     )
-    team = _request_resource(
-        persistence,
-        engine,
+    team = engine.resources.ensure_requested(
         backend,
         resource_name="clinical_team",
         request_id=team_request,
+        requested_at=backend.now,
         priority=acuity,
     )
     if bed is None or team is None:
         if bed is not None:
-            _release_resource(
-                persistence,
-                engine,
-                backend,
-                request_id=bed_request,
-            )
+            engine.resources.withdraw(backend, bed_request)
         if team is not None:
-            _release_resource(
-                persistence,
-                engine,
-                backend,
-                request_id=team_request,
-            )
+            engine.resources.withdraw(backend, team_request)
         return False
 
     current = admission(persistence, current.id)
@@ -377,12 +304,7 @@ def release_icu_capacity(
         f"icu-bed:{admission_id}",
         f"icu-team:{admission_id}",
     ):
-        _release_resource(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
+        engine.resources.withdraw(backend, request_id)
 
 
 def discharge_from_icu(
@@ -438,14 +360,7 @@ def transfer_from_icu_wait(
         f"icu-bed:{current.id}",
         f"icu-team:{current.id}",
     ):
-        engine.resources.cancel_pending(backend, request_id)
-        _release_resource(
-            persistence,
-            engine,
-            backend,
-            request_id=request_id,
-        )
-    backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
 
     current = admission(persistence, current.id)
     dispatch(
