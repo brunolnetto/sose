@@ -187,7 +187,8 @@ def reconcile_underwriting(
     request_id = f"credit-analyst:{application.id}"
 
     if application.state in {"approved", "rejected"}:
-        expected = application.state
+        expected_state = application.state
+        expected_event = "approve" if expected_state == "approved" else "reject"
         if decision is None:
             decision = engine.context.entities.create(
                 CreditDecision,
@@ -202,12 +203,12 @@ def reconcile_underwriting(
             _dispatch(
                 engine,
                 decision,
-                expected,
-                key=("credit-decision", decision.id, expected),
+                expected_event,
+                key=("credit-decision", decision.id, expected_event),
                 correlation_id=correlation_id,
             )
         engine.resources.withdraw(backend, request_id)
-        return expected == "approved"
+        return expected_state == "approved"
 
     if not engine.context.scenarios.attribute("credit_loans.underwriting.available", True):
         engine.resources.withdraw(backend, request_id)
