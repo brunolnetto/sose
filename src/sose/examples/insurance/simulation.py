@@ -269,7 +269,7 @@ def ensure_document_request(
     )
     correlation_id = flow_correlation_id(claim.id)
     if request is None:
-        if claim.state == "opened":
+        if claim.state in {"opened", "reopened"}:
             _dispatch(
                 engine,
                 claim,
@@ -277,7 +277,7 @@ def ensure_document_request(
                 key=("insurance", claim.id, "request-documents", ordinal),
                 correlation_id=correlation_id,
             )
-        elif claim.state not in {"pending_documents", "reopened"}:
+        elif claim.state != "pending_documents":
             raise RuntimeError(
                 f"document request requires opened/reopened claim, got {claim.state}"
             )
@@ -808,8 +808,8 @@ def reconcile_payment(
 
 def reopen_claim(persistence, engine, *, entities):
     claim = _claim(persistence, entities)
-    if claim.state not in {"paid", "rejected"}:
-        raise RuntimeError("only paid or rejected claims can be reopened")
+    if claim.state != "rejected":
+        raise RuntimeError("only rejected claims can be reopened")
     _dispatch(
         engine,
         claim,
