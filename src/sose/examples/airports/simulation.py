@@ -340,7 +340,7 @@ def reconcile_gate(
 
     correlation_id = flow_correlation_id(turnaround.id)
     assignment = _gate_assignment(persistence, entities)
-    if assignment.state == "planned":
+    if assignment.state in {"planned", "reallocated"}:
         _dispatch(
             engine,
             assignment,
@@ -367,6 +367,56 @@ def reconcile_gate(
             correlation_id=correlation_id,
         )
     return True
+
+
+def reallocate_gate(
+    persistence,
+    engine,
+    backend,
+    *,
+    entities,
+    new_gate: str,
+) -> bool:
+    turnaround = _turnaround(persistence, entities)
+    assignment = _gate_assignment(persistence, entities)
+    if turnaround.state != "gate_assigned" or assignment.state != "occupied":
+        raise RuntimeError(
+            "gate reallocation requires assigned turnaround and occupied gate"
+        )
+
+    correlation_id = flow_correlation_id(turnaround.id)
+    _dispatch(
+        engine,
+        turnaround,
+        "reallocate_gate",
+        key=("airport", turnaround.id, assignment.id, "reallocate-gate"),
+        correlation_id=correlation_id,
+    )
+    _dispatch(
+        engine,
+        assignment,
+        "reallocate",
+        key=("airport-gate", assignment.id, "reallocate"),
+        correlation_id=correlation_id,
+    )
+    _release(
+        persistence,
+        engine,
+        backend,
+        request_id=f"gate:{turnaround.id}",
+    )
+
+    assignment = _gate_assignment(persistence, entities)
+    assignment.attributes["gate"] = new_gate
+    with persistence.transaction() as uow:
+        uow.save_entity(assignment)
+
+    return reconcile_gate(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
 
 
 def reconcile_ground_service(
