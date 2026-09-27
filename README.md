@@ -361,3 +361,4 @@ See:
 - [`docs/architecture/scenario-engine.md`](docs/architecture/scenario-engine.md)
 - [`docs/architecture/simpy-backend.md`](docs/architecture/simpy-backend.md)
 - [`docs/architecture/durable-runtime.md`](docs/architecture/durable-runtime.md)
+- [`docs/architecture/persistent-model.md`](docs/architecture/persistent-model.md)
