@@ -310,20 +310,12 @@ def claim_next_incident(
         return None
 
     get_id = f"incident-claim:{claim_id}"
-    result = engine.stores.result(get_id)
-    if result is None:
-        if not any(
-            request.request_id == get_id
-            for request in persistence.store_get_requests()
-        ):
-            engine.stores.get(
-                backend,
-                store_name="incident_queue",
-                request_id=get_id,
-                requested_at=backend.now,
-            )
-        backend.run_until(backend.now)
-        result = engine.stores.result(get_id)
+    result = engine.stores.ensure_selection(
+        backend,
+        store_name="incident_queue",
+        request_id=get_id,
+        requested_at=backend.now,
+    )
 
     if result is None:
         _release(persistence, engine, backend, request_id=request_id)
