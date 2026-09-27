@@ -38,16 +38,17 @@ class ReferenceRuntime:
 def restart_reference_runtime(
     persistence,
     build_runtime: RuntimeBuilder,
-    backend_before,
+    backend_before=None,
     *,
     backend_factory: BackendFactory,
     tick: int | None = None,
     runtime_kwargs: Mapping[str, object] | None = None,
     drain_boundary: bool = True,
 ) -> ReferenceRuntime:
-    """Rebuild a reference runtime from the durable state at backend_before.now.
+    """Rebuild a reference runtime from one durable recovery boundary.
 
-    The helper standardizes only restart mechanics:
+    The boundary comes from backend_before.now when supplied, otherwise from the
+    persisted SimulationPosition. The helper standardizes only restart mechanics:
     - resolve the logical recovery boundary;
     - recreate context/engine against the same persistence;
     - reconstruct a fresh backend;
@@ -56,8 +57,16 @@ def restart_reference_runtime(
     Domain-specific continuation and equality assertions remain in the caller.
     """
 
-    restarted_at = backend_before.now
     position = persistence.simulation_position()
+    if backend_before is not None:
+        restarted_at = backend_before.now
+    elif position is not None:
+        restarted_at = position.logical_time
+    else:
+        raise ValueError(
+            "restart requires backend_before or a persisted simulation position"
+        )
+
     if tick is None:
         tick = (
             position.logical_tick
