@@ -2,6 +2,7 @@
 
 from .conformance import (
     BASELINE_REFERENCE_CAPABILITIES,
+    CAPABILITY_REQUIREMENTS,
     ReferenceCapability,
     ReferenceConformanceIssue,
     ReferenceContract,
@@ -12,6 +13,7 @@ from .restart import ReferenceRuntime, restart_reference_runtime
 
 __all__ = [
     "BASELINE_REFERENCE_CAPABILITIES",
+    "CAPABILITY_REQUIREMENTS",
     "ReferenceCapability",
     "ReferenceConformanceIssue",
     "ReferenceContract",
