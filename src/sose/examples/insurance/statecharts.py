@@ -40,7 +40,7 @@ class ClaimChart(StateChart):
     fraud_review = State()
     approved = State()
     payment_scheduled = State()
-    paid = State()
+    paid = State(final=True)
     rejected = State()
     reopened = State()
 
@@ -53,7 +53,7 @@ class ClaimChart(StateChart):
     reject = assessing.to(rejected) | fraud_review.to(rejected)
     schedule_payment = approved.to(payment_scheduled)
     record_payment = payment_scheduled.to(paid)
-    reopen = paid.to(reopened) | rejected.to(reopened)
+    reopen = rejected.to(reopened)
 
 
 @probabilistic_transitions(
