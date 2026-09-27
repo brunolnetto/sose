@@ -1535,7 +1535,7 @@ At the time of this document:
 - **Construction**: Reference implementation. Durable predecessor/measurement gates, Store+Container material staging, planned-start ScheduledWork, crew/equipment/inspector resources, immutable inspection/rework evidence, disruption cleanup, and restart equivalence are executable.
 - **Order-to-Cash**: Reference implementation. Durable credit/fulfillment gates, partial fulfillment, invoice→Receivable causality, due/overdue ScheduledWork, CollectionCase recovery, collection resources/follow-up, scenario recovery, illegal prerequisite checks, and restart equivalence are executable.
 - **Record-to-Report**: Reference implementation. Journal/reconciliation/adjustment causality, durable close ScheduledWork, posting/reconciliation/close Resources, controlled reopening, finite scenarios, post-commit cleanup recovery, illegal prerequisite checks, and restart equivalence are executable.
-- **Insurance**: Partial. Coverage/documentation/assessment/fraud/reserve/payment lifecycles, priority queueing, deadlines, resources, scenarios, partial payout, reopen, and restart evidence are implemented; promotion awaits CI/review validation.
+- **Insurance**: Reference implementation. Coverage/documentation/assessment/fraud/reserve/payment lifecycles, severity-prioritized queueing, durable deadlines/payment dates, adjuster/fraud/payment Resources, partial payout, rejected-claim reopening, finite scenarios, post-commit crash recovery, and restart equivalence are executable.
 - All other domains in this document: Blueprint.
 
 ---
