@@ -4,7 +4,7 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.engine import Engine
 from sose.persistence.memory import MemoryPersistence
 
-from .entities import ConstructionInspection
+from .entities import ConstructionInspection, ConstructionMeasurement
 from .runtime import (
     ConstructionEntities,
     activity,
@@ -12,9 +12,9 @@ from .runtime import (
     flow_correlation_id,
     inspection,
     inspection_id,
+    measurement_id,
     resource_request_exists,
     resource_reservation,
-    save_activity_attributes,
 )
 
 
@@ -364,10 +364,11 @@ def reconcile_inspection(
 
 def record_measurement(
     persistence: MemoryPersistence,
+    engine: Engine,
     *,
     entities: ConstructionEntities,
     value: float,
-) -> None:
+) -> ConstructionMeasurement:
     if value <= 0:
         raise ValueError("measurement must be positive")
     current = activity(persistence, entities.activity_id)
@@ -375,11 +376,30 @@ def record_measurement(
         raise RuntimeError(
             f"measurement requires Activity(measured), got {current.state}"
         )
-    save_activity_attributes(
-        persistence,
-        current,
-        measurement=value,
+
+    existing = persistence.entity(
+        "construction_measurement",
+        measurement_id(current.id),
     )
+    if existing is not None:
+        return existing
+
+    measurement = engine.context.entities.create(
+        ConstructionMeasurement,
+        key=(
+            "construction-reference",
+            current.id,
+            "measurement",
+        ),
+        state="recorded",
+        attributes={
+            "activity_id": current.id,
+            "value": float(value),
+        },
+    )
+    with persistence.transaction() as uow:
+        uow.save_entity(measurement)
+    return measurement
 
 
 def complete_activity(
@@ -395,7 +415,15 @@ def complete_activity(
         raise RuntimeError(
             f"activity is not at completion boundary: {current.state}"
         )
-    if float(current.attributes.get("measurement", 0.0)) <= 0:
+    measurement = persistence.entity(
+        "construction_measurement",
+        measurement_id(current.id),
+    )
+    if (
+        measurement is None
+        or measurement.state != "recorded"
+        or float(measurement.attributes.get("value", 0.0)) <= 0
+    ):
         raise RuntimeError(
             "activity completion requires durable measurement evidence"
         )
