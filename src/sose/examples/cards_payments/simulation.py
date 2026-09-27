@@ -147,7 +147,7 @@ def reconcile_authorization(
         outcome,
         key=("cards-authorization", payment.id, outcome),
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return True
 
 
@@ -242,7 +242,7 @@ def reconcile_settlement(
             "settle",
             key=("cards-settlement", payment.id, "settle"),
         )
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         return None
 
     _dispatch(
@@ -261,7 +261,7 @@ def reconcile_settlement(
         key=("cards-settlement", payment.id, "retry"),
     )
     engine.context.schedules.at(due_at, command=command)
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return due_at
 
 
@@ -295,7 +295,7 @@ def reconcile_refund(
         "refund",
         key=("cards-refund", payment.id),
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return True
 
 
@@ -400,7 +400,7 @@ def reconcile_dispute(
         event,
         key=("cards-dispute", dispute.id, event),
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return True
 
 
