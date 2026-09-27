@@ -13,7 +13,7 @@ from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.memory import MemoryPersistence
 
-from .entities import ConstructionActivity, ConstructionInspection
+from .entities import ConstructionActivity, ConstructionInspection, ConstructionMeasurement
 from .scenarios import ORIGIN
 from .statecharts import ActivityChart, InspectionChart
 
@@ -43,6 +43,17 @@ def inspection_id(activity_id: str, ordinal: int) -> str:
         ordinal,
     )
 
+
+
+
+def measurement_id(activity_id: str) -> str:
+    return deterministic_id(
+        "entity",
+        "construction_measurement",
+        "construction-reference",
+        activity_id,
+        "measurement",
+    )
 
 def build_runtime(
     persistence: MemoryPersistence,
