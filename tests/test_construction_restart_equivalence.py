@@ -12,6 +12,7 @@ from sose.examples.construction.runtime import (
     ORIGIN,
     build_runtime,
     inspection_id,
+    measurement_id,
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
@@ -138,6 +139,10 @@ def _snapshot(persistence, entities):
         "inspection2": persistence.entity(
             "construction_inspection",
             inspection_id(entities.activity_id, 2),
+        ),
+        "measurement": persistence.entity(
+            "construction_measurement",
+            measurement_id(entities.activity_id),
         ),
         "events": persistence.events(),
         "resource_demands": persistence.resource_demands(),
