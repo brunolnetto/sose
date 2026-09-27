@@ -200,4 +200,4 @@ def test_gate_reallocation_releases_old_capacity_and_reassigns_turnaround():
         for r in persistence.resource_reservations()
         if r.request_id == f"gate:{entities.turnaround_id}"
     )
-    assert current.reservation_id != old_reservation.reservation_id
+    assert current.sequence > old_reservation.sequence
