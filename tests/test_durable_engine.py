@@ -342,3 +342,76 @@ def test_advance_tick_executes_multiple_between_tick_items_in_time_order():
     ]
     assert context.clock.now == now + timedelta(hours=1)
     assert context.clock.tick == 1
+
+
+def test_durable_scheduler_finds_unique_pending_command_by_target_and_name():
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now + timedelta(hours=2),
+        key=("find-pending", work_order.id),
+    )
+    engine.scheduler.schedule(command)
+
+    item = engine.scheduler.find_pending(
+        entity_type="work_order",
+        entity_id=work_order.id,
+        name="release",
+    )
+
+    assert item is not None
+    assert item.command == command
+    assert item.work.command_id == command.command_id
+
+
+def test_cancel_pending_removes_work_and_command_atomically():
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now + timedelta(hours=2),
+        key=("cancel-pending", work_order.id),
+    )
+    work = engine.scheduler.schedule(command)
+
+    assert engine.scheduler.cancel_pending(
+        entity_type="work_order",
+        entity_id=work_order.id,
+        name="release",
+    ) is True
+    assert persistence.command(command.command_id) is None
+    assert work not in persistence.scheduled_work()
+    assert engine.scheduler.cancel_pending(
+        entity_type="work_order",
+        entity_id=work_order.id,
+        name="release",
+    ) is False
+
+
+def test_backend_callback_after_schedule_cancellation_is_stale_and_harmless():
+    now, context, persistence, engine, work_order = build_runtime()
+    backend = RecordingTemporalBackend(now)
+    engine.rebuild_backend(backend)
+
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now + timedelta(hours=2),
+        key=("cancel-stale-callback", work_order.id),
+    )
+    context.schedules.at(command.due_at, command=command)
+    assert len(backend.calls) == 1
+    callback = backend.calls[0][3]
+
+    assert engine.scheduler.cancel_pending(
+        entity_type="work_order",
+        entity_id=work_order.id,
+        name="release",
+    ) is True
+
+    backend.now = command.due_at
+    assert callback() is False
+    stored = persistence.entity("work_order", work_order.id)
+    assert stored is not None and stored.state == "planned"
+    assert persistence.events() == ()
