@@ -29,6 +29,7 @@ def test_turnaround_topology_separates_gate_baggage_and_slot_waiting():
     assert ("scheduled", "arrive", ("arrived",)) in edges
     assert ("arrived", "hold_gate", ("gate_hold",)) in edges
     assert ("gate_hold", "assign_gate", ("gate_assigned",)) in edges
+    assert ("gate_assigned", "reallocate_gate", ("gate_hold",)) in edges
     assert ("servicing", "service_ready", ("boarding",)) in edges
     assert ("boarding", "baggage_delayed", ("waiting_baggage",)) in edges
     assert ("waiting_baggage", "baggage_ready", ("boarding",)) in edges
