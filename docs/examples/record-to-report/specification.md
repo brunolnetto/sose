@@ -168,6 +168,6 @@ Neither scenario mutates business state directly.
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-The implementation meets the reference evidence target in code and tests; status promotion is intentionally deferred until CI and review validate the branch.
+Promotion is based on executable evidence for journal posting, reconciliation and adjustment causality, durable close scheduling, posting/reconciliation/close capacity, controlled reopening, finite scenario recovery, illegal prerequisite rejection, post-commit cleanup recovery, and restart equivalence across ScheduledWork, ResourceDemand, and missing-adjustment boundaries.
