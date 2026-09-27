@@ -58,3 +58,4 @@ def test_delivery_attempt_failure_is_terminal_and_retry_requires_new_identity():
     assert set(policy.events) == {"deliver", "fail"}
     assert policy.is_probabilistically_eligible("deliver") is True
     assert policy.is_probabilistically_eligible("fail") is True
+    assert policy.is_probabilistically_eligible("dispatch") is False
