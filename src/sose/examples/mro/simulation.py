@@ -176,9 +176,9 @@ def _discard_granted_capacity_if_terminal(
     if work_order is None or work_order.state not in {"cancelled", "closed"}:
         return
     if preemptive:
-        engine.preemptive_resources.release(backend, reservation.reservation_id)
+        engine.preemptive_resources.withdraw(backend, reservation.request_id)
     else:
-        engine.resources.release(backend, reservation.reservation_id)
+        engine.resources.withdraw(backend, reservation.request_id)
 
 
 def reconcile_material_availability(
