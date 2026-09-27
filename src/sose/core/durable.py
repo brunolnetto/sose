@@ -84,6 +84,48 @@ class DurableScheduler:
 
         return work
 
+    def pending_for_target(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+    ) -> tuple[DurableScheduledItem, ...]:
+        """Return all pending work owned by one durable entity target."""
+        return tuple(
+            item
+            for item in self.pending()
+            if item.command.entity_type == entity_type
+            and item.command.entity_id == entity_id
+        )
+
+    def cancel_target(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+    ) -> int:
+        """Atomically cancel every pending command for one entity target."""
+        items = self.pending_for_target(
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+        if not items:
+            return 0
+
+        with self._persistence.transaction() as uow:
+            for item in items:
+                persisted_work = uow.get_scheduled_work(item.work.work_id)
+                persisted_command = uow.get_command(item.command.command_id)
+                if (
+                    persisted_work != item.work
+                    or persisted_command != item.command
+                ):
+                    return 0
+            for item in items:
+                uow.delete_scheduled_work(item.work.work_id)
+                uow.delete_command(item.command.command_id)
+        return len(items)
+
     def find_pending(
         self,
         *,
