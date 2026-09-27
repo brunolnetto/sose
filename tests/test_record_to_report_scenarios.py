@@ -77,6 +77,14 @@ def test_close_team_shortage_preserves_in_progress_close_task_and_recovers():
         entities=entities,
     )
 
+    # Scheduled scenarios are activated by advancing the engine clock.
+    engine.advance_tick()
+    backend.run_until(context.clock.now)
+    assert context.scenarios.attribute(
+        "r2r.close_team.available",
+        True,
+    ) is False
+
     due_at = schedule_close(
         persistence,
         engine,
