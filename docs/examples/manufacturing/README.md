@@ -6,6 +6,10 @@
 > invariants, durable ownership and restart semantics. The remaining documents are
 > supporting implementation notes.
 
+## Status
+
+**Reference implementation.**
+
 This reference domain validates SOSE against a capacity-constrained production flow.
 
 ## Canonical flow
