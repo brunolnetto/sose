@@ -208,17 +208,21 @@ def finish_execution(
     cycle: str = "initial",
 ) -> None:
     current = activity(persistence, entities.activity_id)
-    if current.state != "executing":
-        raise RuntimeError(f"activity is not executing: {current.state}")
+    if current.state == "executing":
+        dispatch(
+            engine,
+            current,
+            "finish_work",
+            key=("construction", current.id, cycle, "finish-work"),
+            correlation_id=flow_correlation_id(current.id),
+        )
+        current = activity(persistence, current.id)
+    elif current.state != "inspection":
+        raise RuntimeError(f"activity is not at finish boundary: {current.state}")
 
-    dispatch(
-        engine,
-        current,
-        "finish_work",
-        key=("construction", current.id, cycle, "finish-work"),
-        correlation_id=flow_correlation_id(current.id),
-    )
-
+    # Cleanup is deliberately post-state idempotent. If finish_work committed
+    # before a crash, restart sees Activity(inspection) plus durable resource
+    # reservations and can still finish releasing them.
     for request_id in (
         f"crew:{current.id}:{cycle}",
         f"equipment:{current.id}:{cycle}",
@@ -284,8 +288,26 @@ def reconcile_inspection(
         raise ValueError(f"unsupported inspection outcome: {outcome}")
 
     current = activity(persistence, entities.activity_id)
+    occurrence = inspection(
+        persistence,
+        current.id,
+        ordinal,
+    )
+
+    # Acceptance/rejection may commit before inspector release. Reconciliation
+    # must still complete cleanup from the advanced Activity state.
     if current.state != "inspection":
-        return False
+        if occurrence is None or occurrence.state not in {"passed", "failed"}:
+            return False
+        request_id = f"inspector:{occurrence.id}"
+        _release_resource(
+            persistence,
+            engine,
+            backend,
+            request_id=request_id,
+        )
+        expected_activity = "measured" if occurrence.state == "passed" else "rework"
+        return current.state == expected_activity
 
     occurrence = ensure_inspection(
         persistence,
