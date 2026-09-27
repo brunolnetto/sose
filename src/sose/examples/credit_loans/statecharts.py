@@ -86,7 +86,8 @@ class InstallmentChart(StateChart):
         | overdue.to(paid)
     )
     restructure = (
-        due.to(restructured)
+        scheduled.to(restructured)
+        | due.to(restructured)
         | partially_paid.to(restructured)
         | overdue.to(restructured)
     )
