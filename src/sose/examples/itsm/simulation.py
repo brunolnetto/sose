@@ -260,7 +260,7 @@ def claim_next_incident(
     )
 
     if result is None:
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         return None
 
     incident_id = str(result.item.value["incident_id"])
@@ -442,7 +442,7 @@ def reconcile_escalation(
         backend,
         incident_id=incident.id,
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     if claim_id is not None:
         release_incident_owner(
             persistence,
