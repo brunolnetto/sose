@@ -55,20 +55,33 @@ def flow_correlation_id(aircraft_id: str) -> str:
 
 
 def inspection_id(flight_id: str) -> str:
-    return deterministic_id("entity", "aviation_inspection", flight_id, "inspection")
+    return deterministic_id(
+        "entity",
+        "aviation_inspection",
+        "aviation-reference",
+        flight_id,
+        "inspection",
+    )
 
 
 def maintenance_work_order_id(flight_id: str) -> str:
     return deterministic_id(
         "entity",
         "aviation_maintenance_work_order",
+        "aviation-reference",
         flight_id,
-        "aog-maintenance",
+        "maintenance",
     )
 
 
 def part_demand_id(flight_id: str) -> str:
-    return deterministic_id("entity", "aviation_part_demand", flight_id, "part-demand")
+    return deterministic_id(
+        "entity",
+        "aviation_part_demand",
+        "aviation-reference",
+        flight_id,
+        "part-demand",
+    )
 
 
 def build_runtime(
@@ -588,97 +601,101 @@ def reconcile_inspection(
     request_id = f"inspection-team:{inspection.id}"
     correlation_id = flow_correlation_id(aircraft.id)
 
-    if inspection.state in {"passed", "failed"}:
-        _release_resource(
+    if inspection.state not in {"passed", "failed"}:
+        reservation = _request_resource(
             persistence,
             engine,
             backend,
+            resource_name="inspection_team",
             request_id=request_id,
         )
-        if inspection.state == "passed":
-            if aircraft.state == "inspection":
-                _dispatch(
-                    engine,
-                    aircraft,
-                    "release",
-                    key=("aviation-aircraft", aircraft.id, flight.id, "release"),
-                    correlation_id=correlation_id,
-                )
-            flight = _flight(persistence, flight.id)
-            if flight.state == "inspection":
-                _dispatch(
-                    engine,
-                    flight,
-                    "release",
-                    key=("aviation", flight.id, "release"),
-                    correlation_id=correlation_id,
-                )
-            return True
-        if aircraft.state == "inspection":
-            _dispatch(
-                engine,
-                aircraft,
-                "mark_aog",
-                key=("aviation-aircraft", aircraft.id, flight.id, "aog"),
-                correlation_id=correlation_id,
-            )
-        ensure_maintenance(
-            persistence,
-            engine,
-            backend,
-            entities=entities,
-            flight_id=flight.id,
-        )
-        return False
+        if reservation is None:
+            return False
 
-    reservation = _request_resource(
-        persistence,
-        engine,
-        backend,
-        resource_name="inspection_team",
-        request_id=request_id,
-    )
-    if reservation is None:
-        return False
-    inspection = ensure_inspection(
-        persistence,
-        engine,
-        flight_id=flight.id,
-    )
-    if inspection.state == "pending":
-        _dispatch(
-            engine,
-            inspection,
-            "begin",
-            key=("aviation-inspection", inspection.id, "begin"),
-            correlation_id=correlation_id,
-        )
         inspection = _entity(
             persistence,
             "aviation_inspection",
             inspection.id,
         )
-    if inspection.state == "inspecting":
+        if inspection.state == "pending":
+            _dispatch(
+                engine,
+                inspection,
+                "begin",
+                key=("aviation-inspection", inspection.id, "begin"),
+                correlation_id=correlation_id,
+            )
+            inspection = _entity(
+                persistence,
+                "aviation_inspection",
+                inspection.id,
+            )
+        if inspection.state == "inspecting":
+            _dispatch(
+                engine,
+                inspection,
+                "fail_inspection" if fail else "pass_inspection",
+                key=(
+                    "aviation-inspection",
+                    inspection.id,
+                    "fail" if fail else "pass",
+                ),
+                correlation_id=correlation_id,
+            )
+            inspection = _entity(
+                persistence,
+                "aviation_inspection",
+                inspection.id,
+            )
+
+    if inspection.state not in {"passed", "failed"}:
+        return False
+
+    _release_resource(
+        persistence,
+        engine,
+        backend,
+        request_id=request_id,
+    )
+
+    aircraft = _aircraft(persistence, entities)
+    flight = _flight(persistence, flight.id)
+    if inspection.state == "passed":
+        if aircraft.state == "inspection":
+            _dispatch(
+                engine,
+                aircraft,
+                "release",
+                key=("aviation-aircraft", aircraft.id, flight.id, "release"),
+                correlation_id=correlation_id,
+            )
+        flight = _flight(persistence, flight.id)
+        if flight.state == "inspection":
+            _dispatch(
+                engine,
+                flight,
+                "release",
+                key=("aviation", flight.id, "release"),
+                correlation_id=correlation_id,
+            )
+        return True
+
+    if aircraft.state == "inspection":
         _dispatch(
             engine,
-            inspection,
-            "fail_inspection" if fail else "pass_inspection",
-            key=(
-                "aviation-inspection",
-                inspection.id,
-                "fail" if fail else "pass",
-            ),
+            aircraft,
+            "mark_aog",
+            key=("aviation-aircraft", aircraft.id, flight.id, "aog"),
             correlation_id=correlation_id,
         )
-    return reconcile_inspection(
+    ensure_maintenance(
         persistence,
         engine,
         backend,
         entities=entities,
         flight_id=flight.id,
-        fail=fail,
     )
-
+    return False
 
 def ensure_maintenance(
     persistence,
