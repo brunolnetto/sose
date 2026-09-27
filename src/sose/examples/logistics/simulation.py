@@ -179,7 +179,7 @@ def reconcile_pickup(
         "pickup",
         key=("logistics-pickup", shipment.id, "pickup"),
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return True
 
 
@@ -227,7 +227,7 @@ def reconcile_origin_hub(
         "arrive_origin_hub",
         key=("logistics-origin", shipment.id, "arrive"),
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return True
 
 
@@ -248,8 +248,8 @@ def reconcile_transfer(
         request_id=transfer_request,
         requested_at=backend.now,
     )
-        if vehicle is None:
-            return False
+    if vehicle is None:
+        return False
 
         dequeue_id = f"origin-dequeue:{shipment.id}"
         if not any(
@@ -317,8 +317,8 @@ def reconcile_transfer(
         "arrive_destination_hub",
         key=("logistics-transfer", shipment.id, "arrive-destination"),
     )
-    _release(persistence, engine, backend, request_id=dock_request)
-    _release(persistence, engine, backend, request_id=transfer_request)
+    engine.resources.withdraw(backend, dock_request)
+    engine.resources.withdraw(backend, transfer_request)
     return True
 
 
