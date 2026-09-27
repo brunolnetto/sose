@@ -16,6 +16,7 @@ from sose.examples.aviation.simulation import (
     seed_spare_part,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def test_departure_schedule_survives_restart():
@@ -83,11 +84,14 @@ def test_pending_crew_demand_survives_restart():
         for demand in persistence.resource_demands()
     )
 
-    restart_at = backend.now
-    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     snapshot = rebuilt_backend.resource_snapshot("flight_crew")
     assert snapshot.in_use == 1
