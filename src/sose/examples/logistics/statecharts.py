@@ -3,6 +3,23 @@ from statemachine import State, StateChart
 from sose.probability import probabilistic_transitions
 
 
+@probabilistic_transitions(
+    {},
+    excluded_events={
+        "schedule_pickup",
+        "pickup",
+        "arrive_origin_hub",
+        "dispatch_transfer",
+        "arrive_destination_hub",
+        "dispatch_delivery",
+        "deliver",
+        "delay",
+        "resume",
+        "mark_lost",
+        "mark_damaged",
+        "return_to_sender",
+    },
+)
 class ShipmentChart(StateChart):
     created = State(initial=True)
     pickup_scheduled = State()
@@ -51,19 +68,32 @@ class ShipmentChart(StateChart):
 
     mark_lost = (
         picked_up.to(lost)
+        | delayed_after_pickup.to(lost)
         | at_origin_hub.to(lost)
+        | delayed_origin_hub.to(lost)
         | in_transfer.to(lost)
+        | delayed_transfer.to(lost)
         | at_destination_hub.to(lost)
+        | delayed_destination_hub.to(lost)
         | out_for_delivery.to(lost)
+        | delayed_delivery.to(lost)
     )
     mark_damaged = (
         picked_up.to(damaged)
+        | delayed_after_pickup.to(damaged)
         | at_origin_hub.to(damaged)
+        | delayed_origin_hub.to(damaged)
         | in_transfer.to(damaged)
+        | delayed_transfer.to(damaged)
         | at_destination_hub.to(damaged)
+        | delayed_destination_hub.to(damaged)
         | out_for_delivery.to(damaged)
+        | delayed_delivery.to(damaged)
     )
-    return_to_sender = out_for_delivery.to(returned)
+    return_to_sender = (
+        out_for_delivery.to(returned)
+        | delayed_delivery.to(returned)
+    )
 
 
 @probabilistic_transitions(
