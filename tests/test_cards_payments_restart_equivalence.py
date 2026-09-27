@@ -68,13 +68,13 @@ def test_settlement_retry_is_restart_equivalent():
     position = restarted.simulation_position()
     assert position is not None
 
-    _, rebuilt_engine = build_runtime(
+    rebuilt = restart_reference_runtime(
         restarted,
-        now=position.logical_time,
-        tick=position.logical_tick,
+        build_runtime,
+        backend_factory=SimPyBackend,
     )
-    rebuilt_backend = SimPyBackend(origin=position.logical_time)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
     _finish(
         restarted,
         r_entities,
