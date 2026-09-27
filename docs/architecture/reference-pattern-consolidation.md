@@ -2,9 +2,9 @@
 
 ## Purpose
 
-SOSE now has thirteen Reference implementations spanning physical flow,
-financial operations, case management, accounting close, insurance, airport
-turnaround, and aviation rotation/AOG maintenance.
+SOSE now has fourteen Reference implementations spanning physical flow,
+financial operations and lending, case management, accounting close, insurance,
+airport turnaround, and aviation rotation/AOG maintenance.
 
 This document records the first consolidation pass across those references.
 The goal is not to move domain orchestration into the core. The goal is to
