@@ -1529,6 +1529,7 @@ At the time of this document:
 - **Procure-to-Pay**: Reference implementation. Happy path, resource contention, shortage/backorder, partial/rejected receipt paths, scenarios, and restart coverage are executable.
 - **Manufacturing**: Reference implementation. Happy path, shortage, resource contention, breakdown/preemption, quality rework, scenarios, and restart coverage are executable.
 - **Logistics & transport**: Reference implementation. Durable pickup scheduling, hub queues, constrained transport capacity, failed-delivery retry with distinct attempt identity, finite disruption recovery, and restart equivalence are executable.
+- **Cards & payments**: Partial. Payment/dispute entities, reversal/refund boundaries, authorization stochastic semantics, scenarios, and the reference-domain specification are implemented; durable processor/scheduling/retry/restart evidence remains incomplete.
 - All other domains in this document: Blueprint.
 
 ---
