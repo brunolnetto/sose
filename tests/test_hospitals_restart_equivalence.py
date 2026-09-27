@@ -102,7 +102,7 @@ def test_triage_wait_is_restart_equivalent():
     rebuilt_backend = SimPyBackend(origin=restart_at)
     rebuilt_engine.rebuild_backend(rebuilt_backend)
 
-    assert rebuilt_backend.store_snapshot("triage_queue").items == 1
+    assert rebuilt_backend.store_snapshot("triage_queue").size == 1
     _finish_ward(
         restarted,
         r_entities,
