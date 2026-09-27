@@ -17,7 +17,6 @@ from sose.probability import probabilistic_transitions
         "accept",
         "reject",
         "schedule_rework",
-        "measure",
         "complete",
         "cancel",
     },
@@ -46,7 +45,6 @@ class ActivityChart(StateChart):
     accept = inspection.to(measured)
     reject = inspection.to(rework)
     schedule_rework = rework.to(waiting_resource)
-    measure = measured.to(measured, internal=True)
     complete = measured.to(completed)
     cancel = (
         planned.to(cancelled)
