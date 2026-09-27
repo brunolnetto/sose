@@ -184,12 +184,3 @@ def save_activity_attributes(
     return activity(persistence, entity.id)
 
 
-def resource_reservation(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
-    )
