@@ -163,3 +163,57 @@ def test_aog_maintenance_preempts_noncritical_bay_owner():
         r.request_id == request_id
         for r in persistence.preemptive_resource_reservations()
     )
+
+
+def test_aog_on_first_leg_delays_next_leg_until_maintenance_release():
+    persistence, entities, engine, backend = _prepare_failed_inspection()
+
+    leg2_work = next(
+        work
+        for work in persistence.scheduled_work()
+        if persistence.command(work.command_id).entity_id == entities.leg2_id
+    )
+    backend.run_until(leg2_work.due_at)
+
+    assert reconcile_departure(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        flight_id=entities.leg2_id,
+    ) is False
+    leg2 = persistence.entity("aviation_flight", entities.leg2_id)
+    assert leg2 is not None and leg2.state == "delayed"
+
+    seed_spare_part(persistence, engine, backend)
+    assert reconcile_part_issue(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        flight_id=entities.leg1_id,
+    )
+    assert reconcile_aog_maintenance(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        flight_id=entities.leg1_id,
+    )
+    assert complete_aog_maintenance(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        flight_id=entities.leg1_id,
+    )
+
+    assert reconcile_departure(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        flight_id=entities.leg2_id,
+    )
+    leg2 = persistence.entity("aviation_flight", entities.leg2_id)
+    assert leg2 is not None and leg2.state == "airborne"
