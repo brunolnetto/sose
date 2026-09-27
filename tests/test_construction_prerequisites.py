@@ -135,3 +135,38 @@ def test_completion_requires_durable_measurement_evidence():
     assert persistence.entity(
         "construction_activity", entities.activity_id
     ).state == "completed"
+
+
+def test_predecessor_completion_requires_measurement_entity_evidence():
+    from sose.examples.construction.runtime import measurement_id
+
+    persistence = MemoryPersistence()
+    entities = seed_reference(
+        persistence,
+        predecessor_completed=False,
+    )
+    _, engine = build_runtime(persistence)
+
+    measurement = persistence.entity(
+        "construction_measurement",
+        measurement_id(entities.predecessor_id),
+    )
+    assert measurement is not None
+    measurement.attributes["value"] = 0.0
+    with persistence.transaction() as uow:
+        uow.save_entity(measurement)
+
+    with pytest.raises(
+        RuntimeError,
+        match="predecessor completion requires durable measurement evidence",
+    ):
+        complete_predecessor(
+            persistence,
+            engine,
+            entities=entities,
+        )
+
+    assert persistence.entity(
+        "construction_activity",
+        entities.predecessor_id,
+    ).state == "measured"
