@@ -581,7 +581,7 @@ def collect_receivable(
         key=("o2c", receivable.id, "collect"),
         correlation_id=flow_correlation_id(entities.order_id),
     )
-    _cancelengine.scheduler.find_pending(
+    engine.scheduler.cancel_pending(
         entity_type="receivable",
         entity_id=receivable.id,
         name="mark_overdue",
@@ -596,9 +596,9 @@ def collect_receivable(
             key=("o2c-collection", case.id, "resolve"),
             correlation_id=flow_correlation_id(entities.order_id),
         )
-        _cancelengine.scheduler.find_pending(
-        entity_type="collection_case",
-        entity_id=case.id,
-        name="escalate",
-    )
+        engine.scheduler.cancel_pending(
+            entity_type="collection_case",
+            entity_id=case.id,
+            name="escalate",
+        )
     return True
