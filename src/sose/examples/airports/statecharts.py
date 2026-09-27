@@ -15,9 +15,7 @@ from sose.probability import probabilistic_transitions
         "start_boarding",
         "baggage_delayed",
         "baggage_ready",
-        "slot_delayed",
         "slot_ready",
-        "pushback",
         "depart",
         "cancel",
     },
@@ -45,9 +43,7 @@ class FlightTurnaroundChart(StateChart):
     baggage_delayed = boarding.to(waiting_baggage)
     baggage_ready = waiting_baggage.to(boarding)
     start_boarding = boarding.to(waiting_slot)
-    slot_delayed = waiting_slot.to(waiting_slot)
     slot_ready = waiting_slot.to(pushback)
-    pushback = pushback.to(pushback)
     depart = pushback.to(departed)
     cancel = (
         scheduled.to(cancelled)
