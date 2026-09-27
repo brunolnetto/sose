@@ -4,6 +4,7 @@ from sose.examples.credit_loans.simulation import (
     ORIGIN,
     build_runtime,
     collection_case_id,
+    credit_decision_id,
     delinquency_case_id,
     disburse_and_schedule,
     ensure_delinquency,
@@ -230,10 +231,7 @@ def test_approved_application_reconciles_missing_credit_decision_after_restart()
     assert persistence.entity("loan_application", entities.application_id).state == "approved"
     assert persistence.entity(
         "credit_decision",
-        __import__(
-            "sose.examples.credit_loans.simulation",
-            fromlist=["credit_decision_id"],
-        ).credit_decision_id(entities.application_id),
+        credit_decision_id(entities.application_id),
     ) is None
 
     rebuilt = restart_reference_runtime(
@@ -249,10 +247,7 @@ def test_approved_application_reconciles_missing_credit_decision_after_restart()
         entities=entities,
         approve=True,
     )
-    decision_id = __import__(
-        "sose.examples.credit_loans.simulation",
-        fromlist=["credit_decision_id"],
-    ).credit_decision_id(entities.application_id)
+    decision_id = credit_decision_id(entities.application_id)
     assert persistence.entity("credit_decision", decision_id).state == "approved"
 
 
