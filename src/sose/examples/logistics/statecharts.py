@@ -66,7 +66,10 @@ class ShipmentChart(StateChart):
     return_to_sender = out_for_delivery.to(returned)
 
 
-@probabilistic_transitions({"deliver": 0.85, "fail": 0.15})
+@probabilistic_transitions(
+    {"deliver": 0.85, "fail": 0.15},
+    excluded_events={"dispatch"},
+)
 class DeliveryAttemptChart(StateChart):
     pending = State(initial=True)
     out_for_delivery = State()
