@@ -119,16 +119,22 @@ but the helpers should not be replaced by one opaque generic ID factory.
 
 ### Money representation
 
-Cards & payments, Order-to-Cash, Record-to-Report, Insurance, Procure-to-Pay,
-and Credit & Loans all contain monetary semantics.
+Cards & payments, Order-to-Cash, Record-to-Report, Insurance, and Credit &
+Loans currently contain executable monetary semantics.
+
+The current Procure-to-Pay Reference does not: its numeric Store/Container
+amounts are inventory quantities, while invoice/matching/payment remain outside
+the executable slice. The dedicated money audit documents this distinction in
+`reference-money-semantics.md`.
 
 Credit & Loans already allocates installment amounts in integer cents before
 projecting values into attributes, but the framework does not yet expose a
 Money primitive.
 
-This audit does not introduce one. A Money abstraction should be a separate
-design change with explicit currency, rounding, serialization, and arithmetic
-contracts.
+The money audit fixes missing currency provenance across R2R, Insurance, and
+Credit & Loans, but deliberately does not introduce a Money primitive. Such an
+abstraction still requires explicit currency-scale, rounding, serialization,
+allocation, and arithmetic contracts.
 
 ## Outcome
 
