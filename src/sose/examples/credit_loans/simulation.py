@@ -286,6 +286,7 @@ def ensure_loan(persistence, engine, *, entities):
             "currency": application.attributes["currency"],
             "installment_count": int(application.attributes["installment_count"]),
             "applied_payment_ids": [],
+            "delinquency_case_ids": [],
         },
     )
     with persistence.transaction() as uow:
@@ -315,9 +316,16 @@ def disburse_and_schedule(persistence, engine, backend, *, entities):
         )
 
     count = int(loan.attributes["installment_count"])
-    amount = round(float(loan.attributes["principal"]) / count, 2)
+    principal_cents = round(float(loan.attributes["principal"]) * 100)
+    base_cents = principal_cents // count
     due_dates = []
     for ordinal in range(1, count + 1):
+        amount_cents = (
+            base_cents
+            if ordinal < count
+            else principal_cents - base_cents * (count - 1)
+        )
+        amount = amount_cents / 100
         iid = installment_id(loan.id, ordinal)
         installment = persistence.entity("loan_installment", iid)
         if installment is None:
@@ -397,8 +405,15 @@ def post_payment(
     payment = persistence.entity("loan_payment", pid)
     correlation_id = flow_correlation_id(str(loan.attributes["application_id"]))
 
-    if installment.state not in {"due", "partially_paid", "overdue", "paid"}:
-        raise RuntimeError(f"payment requires due-like installment, got {installment.state}")
+    payable_states = {"due", "partially_paid", "overdue"}
+    if payment is None and installment.state not in payable_states:
+        raise RuntimeError(
+            f"new payment requires payable installment, got {installment.state}"
+        )
+    if payment is not None and payment.state == "initiated" and installment.state not in payable_states:
+        raise RuntimeError(
+            f"initiated payment cannot post against {installment.state} installment"
+        )
 
     if payment is None:
         remaining = float(installment.attributes["amount"]) - float(
@@ -464,9 +479,39 @@ def post_payment(
             )
             loan_applied.append(payment.id)
             loan.attributes["applied_payment_ids"] = loan_applied
+        replacement = None
+        if installment.state == "restructured":
+            restructure_id_value = installment.attributes.get(
+                "superseded_by_restructure_id"
+            )
+            if restructure_id_value is not None:
+                restructure = _entity(
+                    persistence,
+                    "loan_restructure",
+                    str(restructure_id_value),
+                )
+                replacement_id = restructure.attributes.get(
+                    "replacement_installment_id"
+                )
+                if replacement_id is not None:
+                    replacement = _entity(
+                        persistence,
+                        "loan_installment",
+                        str(replacement_id),
+                    )
+                    replacement.attributes["amount"] = round(
+                        max(
+                            0.0,
+                            float(replacement.attributes["amount"])
+                            - float(payment.attributes["amount"]),
+                        ),
+                        2,
+                    )
         with persistence.transaction() as uow:
             uow.save_entity(installment)
             uow.save_entity(loan)
+            if replacement is not None:
+                uow.save_entity(replacement)
 
     installment = _entity(persistence, "loan_installment", installment.id)
     paid = float(installment.attributes["paid_amount"])
@@ -524,6 +569,14 @@ def ensure_delinquency(persistence, engine, *, installment_id_value):
             state="opened",
             attributes={"loan_id": loan.id, "installment_id": installment.id},
         )
+    case_ids = list(loan.attributes.get("delinquency_case_ids", []))
+    if case.id not in case_ids:
+        case_ids.append(case.id)
+        loan.attributes["delinquency_case_ids"] = case_ids
+        with persistence.transaction() as uow:
+            uow.save_entity(case)
+            uow.save_entity(loan)
+    elif persistence.entity("delinquency_case", case.id) is None:
         with persistence.transaction() as uow:
             uow.save_entity(case)
     loan = _entity(persistence, "loan", loan.id)
@@ -664,7 +717,14 @@ def cure_delinquency(persistence, engine, *, installment_id_value):
             name="escalate",
         )
     loan = _entity(persistence, "loan", loan.id)
-    if loan.state == "delinquent":
+    active_delinquencies = [
+        _entity(persistence, "delinquency_case", case_id)
+        for case_id in loan.attributes.get("delinquency_case_ids", [])
+        if persistence.entity("delinquency_case", case_id) is not None
+        and persistence.entity("delinquency_case", case_id).state
+        in {"opened", "collection"}
+    ]
+    if loan.state == "delinquent" and not active_delinquencies:
         _dispatch(
             engine,
             loan,
@@ -733,6 +793,9 @@ def apply_restructure(
         if item is not None and item.state in {"scheduled", "due", "partially_paid", "overdue"}
     ]
     for item in active:
+        item.attributes["superseded_by_restructure_id"] = restructure.id
+        with persistence.transaction() as uow:
+            uow.save_entity(item)
         _dispatch(
             engine,
             item,
@@ -779,6 +842,11 @@ def apply_restructure(
         )
         with persistence.transaction() as uow:
             uow.save_entity(replacement)
+    restructure = _entity(persistence, "loan_restructure", restructure.id)
+    if restructure.attributes.get("replacement_installment_id") != replacement.id:
+        restructure.attributes["replacement_installment_id"] = replacement.id
+        with persistence.transaction() as uow:
+            uow.save_entity(restructure)
     if engine.scheduler.find_pending(
         entity_type="loan_installment",
         entity_id=replacement.id,
