@@ -18,6 +18,7 @@ from sose.examples.order_to_cash.simulation import (
     ship_invoice_and_ensure_receivable,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def _prepare_invoiced(persistence):
@@ -261,15 +262,14 @@ def test_due_schedule_is_restart_equivalent():
         r_backend_before,
         entities=r_entities,
     )
-    restart_at = r_backend_before.now
-
-    _, rebuilt_engine = build_runtime(
+    rebuilt = restart_reference_runtime(
         restarted,
-        now=restart_at,
+        build_runtime,
+        r_backend_before,
+        backend_factory=SimPyBackend,
     )
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     assert len(restarted.scheduled_work()) == 1
     rebuilt_backend.run_until(r_due)

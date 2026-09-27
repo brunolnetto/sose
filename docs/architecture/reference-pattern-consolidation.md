@@ -84,49 +84,61 @@ The migration is intentionally not repository-wide in one patch. These four
 references exercise enough lifecycle variation to validate the abstraction
 without obscuring review with mechanical churn.
 
-## Candidates for the next consolidation PR
+## Additional promoted patterns
 
 ### ScheduledWork lookup / cancellation
 
-At least four references contain local helpers that search ScheduledWork by
-target entity + command name and then delete both work and command.
+`DurableScheduler` now owns the lifecycle mechanics for unique pending work:
 
-This is a strong next candidate because cancellation has durable transactional
-semantics. It should likely live in the scheduler/manager rather than examples.
+- `find_pending(entity_type, entity_id, name)`;
+- `cancel(work_id)`;
+- `cancel_pending(entity_type, entity_id, name)`.
 
-Do not extract it in this patch because the correct API must distinguish:
+Cancellation atomically removes both `ScheduledWork` and its persisted
+`Command`. A backend callback already queued before cancellation is permitted
+to fire later, but becomes stale because `Engine.dispatch_scheduled()`
+revalidates durable ownership before execution.
 
-- lookup only;
-- cancel pending work;
-- already-fired command;
-- cancellation racing execution.
+Insurance, Order-to-Cash, Airports, and Aviation use this API instead of local
+scheduled-work search/delete helpers.
 
 ### Durable StoreGetResult selection ownership
 
-Airports, Aviation, Insurance, ITSM, and Hospitals depend on a committed
-`StoreGetResult` after the selected item is no longer present in the Store.
+`DurableStoreManager` now exposes:
 
-This is a real cross-domain invariant:
+- `pending_get(request_id)`;
+- `selection(request_id)`;
+- `ensure_selection(...)`.
 
-> once selection commits, recovery continues from the result, not from the
-> original queue item.
+A committed `StoreGetResult` is authoritative even after the selected item has
+left the store. `ensure_selection` first honors an existing result, then an
+existing pending get, and creates a new get only when neither exists.
 
-However, selection differs across FIFO, PriorityStore, and FilterStore. A common
-helper should wait until those ownership semantics can be expressed without
-erasing queue-specific rules.
+The abstraction deliberately does not erase store policy:
+
+- FIFO ordering remains backend/store behavior;
+- PriorityStore users may still validate the durable head before selection;
+- FilterStore selection retains its durable `filter_key`.
+
+Airports, Aviation, Insurance, ITSM, and Hospitals use the consolidated
+selection lifecycle.
 
 ### Reference restart-test toolkit
 
-The references repeat test structure for:
+`sose.testing.restart.restart_reference_runtime` standardizes only the
+mechanical recovery boundary:
 
-- continuous execution;
-- persistence checkpoint;
-- backend rebuild;
-- continuation;
-- durable-state comparison.
+1. resolve logical restart time from the previous backend or persisted
+   `SimulationPosition`;
+2. rebuild context/engine over the same persistence;
+3. construct a fresh backend;
+4. reconstruct durable runtime state;
+5. drain callbacks at the exact recovery boundary.
 
-A testing-only toolkit is a good candidate for a separate PR. It should reduce
-boilerplate without replacing domain-specific assertions.
+The toolkit does not compare domain state or decide equivalence. Reference tests
+still own their continuation steps and semantic assertions. This keeps restart
+evidence explicit while removing repeated setup boilerplate across the reference
+test suites.
 
 ## Deliberately kept domain-local
 

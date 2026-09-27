@@ -15,6 +15,7 @@ from sose.examples.insurance.simulation import (
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def test_document_deadline_survives_restart():
@@ -44,12 +45,14 @@ def test_document_deadline_survives_restart():
         entities=r_entities,
     )
     r_due = restarted.scheduled_work()[0].due_at
-    restart_at = r_backend_before.now
-
-    _, rebuilt_engine = build_runtime(restarted, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        restarted,
+        build_runtime,
+        r_backend_before,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
     rebuilt_backend.run_until(r_due)
 
     c_value = continuous.entity(
@@ -96,11 +99,14 @@ def test_pending_adjuster_demand_survives_restart():
         for d in persistence.resource_demands()
     )
 
-    restart_at = backend.now
-    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     snapshot = rebuilt_backend.resource_snapshot("claims_adjuster")
     assert snapshot.in_use == 1
@@ -173,11 +179,14 @@ def test_payment_date_is_restart_equivalent():
     r_entities, _, r_backend_before, r_due = _prepare_scheduled_payment(
         restarted
     )
-    restart_at = r_backend_before.now
-    _, rebuilt_engine = build_runtime(restarted, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        restarted,
+        build_runtime,
+        r_backend_before,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
     assert len(restarted.scheduled_work()) == 1
 
     rebuilt_backend.run_until(r_due)

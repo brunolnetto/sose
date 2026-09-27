@@ -17,6 +17,7 @@ from sose.examples.hospitals.runtime import (
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def _snapshot(persistence, entities):
@@ -97,11 +98,14 @@ def test_triage_wait_is_restart_equivalent():
 
     restarted = MemoryPersistence()
     r_entities, _, r_backend_before = _prepare_triage_wait(restarted)
-    restart_at = r_backend_before.now
-    _, rebuilt_engine = build_runtime(restarted, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        restarted,
+        build_runtime,
+        r_backend_before,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     assert rebuilt_backend.store_snapshot("triage_queue").size == 1
     _finish_ward(
@@ -204,13 +208,14 @@ def test_committed_preemption_missing_interrupt_is_restart_equivalent():
     r_entities, _, r_backend_before = _prepare_committed_preemption(
         restarted
     )
-    restart_at = r_backend_before.now
-    _, rebuilt_engine = build_runtime(restarted, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    # Replayed durable reservations acquire their fresh backend lease at the
-    # recovery boundary, just like the canonical MRO restart helper.
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        restarted,
+        build_runtime,
+        r_backend_before,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     assert rebuilt_backend.preemptive_resource_snapshot(
         "procedure_suite"
