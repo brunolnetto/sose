@@ -379,6 +379,13 @@ def resolve_incident(
     if incident.state not in {"in_progress", "escalated", "resolved", "closed"}:
         raise RuntimeError(f"incident is not resolvable: {incident.state}")
 
+    if incident.state == "escalated":
+        escalation = _escalation(persistence, incident.id)
+        if escalation is None or escalation.state != "completed":
+            raise RuntimeError(
+                "escalated incident requires completed durable escalation evidence"
+            )
+
     if incident.state in {"in_progress", "escalated"}:
         _dispatch(
             engine,
