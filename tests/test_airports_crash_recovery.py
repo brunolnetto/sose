@@ -150,7 +150,7 @@ def test_departure_queue_rejects_missing_operational_evidence():
     persistence, entities, engine, backend = _arrived_at_gate()
     assert reconcile_gate(persistence, engine, backend, entities=entities)
 
-    with pytest.raises(RuntimeError, match="FlightTurnaround\(boarding\)"):
+    with pytest.raises(RuntimeError, match=r"FlightTurnaround\(boarding/waiting_slot\)"):
         queue_departure(
             persistence,
             engine,
@@ -161,7 +161,7 @@ def test_departure_queue_rejects_missing_operational_evidence():
     assert reconcile_ground_service(
         persistence, engine, backend, entities=entities
     )
-    with pytest.raises(RuntimeError, match="BaggageFlow\(ready\)"):
+    with pytest.raises(RuntimeError, match=r"BaggageFlow\(ready\)"):
         queue_departure(
             persistence,
             engine,
@@ -288,24 +288,63 @@ def test_reallocated_gate_releases_stale_reservation_after_crash():
         for r in persistence.resource_reservations()
     )
 
+    engine.resources.request(
+        backend,
+        resource_name="gate",
+        request_id="replacement-gate-blocker",
+        requested_at=backend.now,
+        priority=1,
+    )
+    backend.run_until(backend.now)
+    assert any(
+        d.request_id == "replacement-gate-blocker"
+        for d in persistence.resource_demands()
+    )
+
+    # Reconciliation must release the stale turnaround reservation first.
+    # That grants the blocker and leaves the replacement gate request queued.
+    assert reconcile_gate(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ) is False
+    assert any(
+        r.request_id == "replacement-gate-blocker"
+        for r in persistence.resource_reservations()
+    )
+    assert any(
+        d.request_id == f"gate:{entities.turnaround_id}"
+        for d in persistence.resource_demands()
+    )
+    assert not any(
+        r.request_id == f"gate:{entities.turnaround_id}"
+        for r in persistence.resource_reservations()
+    )
+
+    blocker = next(
+        r
+        for r in persistence.resource_reservations()
+        if r.request_id == "replacement-gate-blocker"
+    )
+    engine.resources.release(backend, blocker.reservation_id)
+    backend.run_until(backend.now)
+
     assert reconcile_gate(
         persistence,
         engine,
         backend,
         entities=entities,
     )
-
     assignment = persistence.entity(
         "airport_gate_assignment",
         entities.gate_assignment_id,
     )
-    current = next(
-        r
-        for r in persistence.resource_reservations()
-        if r.request_id == f"gate:{entities.turnaround_id}"
-    )
     assert assignment is not None and assignment.state == "occupied"
-    assert current.sequence > old_reservation.sequence
+    assert any(
+        r.request_id == f"gate:{entities.turnaround_id}"
+        for r in persistence.resource_reservations()
+    )
 
 
 def test_waiting_slot_recovers_missing_departure_queue_item():
@@ -402,10 +441,11 @@ def test_baggage_delay_reconciles_turnaround_wait_state_after_crash():
     assert baggage is not None and baggage.state == "ready"
     assert turnaround is not None and turnaround.state == "boarding"
 
-    events = [
-        event.name
+    triggers = [
+        event.payload.get("trigger")
         for event in persistence.events()
         if event.entity_id == entities.turnaround_id
+        and event.name == "entity.state_transition"
     ]
-    assert "baggage_delayed" in events
-    assert "baggage_ready" in events
+    assert "baggage_delayed" in triggers
+    assert "baggage_ready" in triggers
