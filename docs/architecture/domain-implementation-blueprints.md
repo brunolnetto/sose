@@ -1530,6 +1530,7 @@ At the time of this document:
 - **Manufacturing**: Reference implementation. Happy path, shortage, resource contention, breakdown/preemption, quality rework, scenarios, and restart coverage are executable.
 - **Logistics & transport**: Reference implementation. Durable pickup scheduling, hub queues, constrained transport capacity, failed-delivery retry with distinct attempt identity, finite disruption recovery, and restart equivalence are executable.
 - **Cards & payments**: Reference implementation. Processor-gated authorization/settlement/refund, durable settlement/retry schedules, pre-capture reversal, dispute/chargeback execution, finite outage recovery, and restart equivalence are executable.
+- **IT service management**: Partial. Incident/escalation entities, explicit lifecycle topology, scenarios, and reference specification are implemented; durable priority queue, SLA, resource, and restart evidence remain incomplete.
 - All other domains in this document: Blueprint.
 
 ---
