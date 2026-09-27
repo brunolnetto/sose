@@ -60,3 +60,27 @@ def test_restart_reference_runtime_allows_explicit_tick_without_assertion_policy
 
     assert rebuilt.logical_tick == 7
     assert rebuilt.context.clock.tick == 7
+
+
+def test_restart_reference_runtime_can_use_persisted_position_without_live_backend():
+    persistence = MemoryPersistence()
+    seed_reference(persistence)
+    _, engine = build_runtime(persistence)
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    engine.advance_tick()
+    backend.run_until(engine.context.clock.now)
+    position = persistence.simulation_position()
+    assert position is not None
+
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend_factory=SimPyBackend,
+    )
+
+    assert rebuilt.restarted_at == position.logical_time
+    assert rebuilt.logical_tick == position.logical_tick
+    assert rebuilt.context.clock.now == position.logical_time
+    assert rebuilt.context.clock.tick == position.logical_tick
