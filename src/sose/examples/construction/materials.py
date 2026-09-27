@@ -142,7 +142,28 @@ def stage_material(
         return True
     if current.state != "ready":
         return False
-    if not material_feasible(
+
+    quantity = float(current.attributes["quantity"])
+    lot_request = f"stage-lot:{current.id}"
+    qty_request = f"stage-quantity:{current.id}"
+
+    lot_result = next(
+        (
+            result
+            for result in persistence.store_get_results()
+            if result.request_id == lot_request
+        ),
+        None,
+    )
+    qty_done = any(
+        result.request_id == qty_request
+        for result in persistence.container_operation_results()
+    )
+
+    # Once either durable staging operation has committed, recovery must
+    # continue from that committed result rather than re-evaluating fresh
+    # supply. A crash may already have consumed one side of the pair.
+    if lot_result is None and not qty_done and not material_feasible(
         persistence,
         engine,
         entities=entities,
@@ -154,14 +175,7 @@ def stage_material(
         )
         return False
 
-    quantity = float(current.attributes["quantity"])
-    lot_request = f"stage-lot:{current.id}"
-    qty_request = f"stage-quantity:{current.id}"
-
-    if not any(
-        result.request_id == lot_request
-        for result in persistence.store_get_results()
-    ):
+    if lot_result is None:
         if not any(
             request.request_id == lot_request
             for request in persistence.store_get_requests()
