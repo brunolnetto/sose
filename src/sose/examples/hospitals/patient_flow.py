@@ -8,8 +8,6 @@ from .runtime import (
     admission,
     dispatch,
     flow_correlation_id,
-    resource_request_exists,
-    resource_reservation,
 )
 
 
