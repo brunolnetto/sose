@@ -20,6 +20,10 @@ FORBIDDEN_HELPER_NAMES = {
     "_preemptive_reservation",
     "_release_resource",
     "_release_preemptive",
+    "resource_request_exists",
+    "resource_reservation",
+    "preemptive_request_exists",
+    "preemptive_reservation",
 }
 
 FORBIDDEN_MANAGER_METHODS = {
