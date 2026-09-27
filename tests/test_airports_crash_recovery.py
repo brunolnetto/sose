@@ -180,3 +180,60 @@ def test_departure_queue_rejects_missing_operational_evidence():
         backend,
         entities=entities,
     )
+
+
+def test_departure_reconciler_never_consumes_another_flights_priority_item():
+    from sose.examples.airports.simulation import (
+        queue_departure,
+        reconcile_baggage,
+        reconcile_departure,
+        reconcile_ground_service,
+        schedule_departure_slot,
+    )
+
+    persistence, entities, engine, backend = _arrived_at_gate()
+    assert reconcile_gate(persistence, engine, backend, entities=entities)
+    assert reconcile_ground_service(
+        persistence, engine, backend, entities=entities
+    )
+    assert reconcile_baggage(
+        persistence, engine, entities=entities
+    )
+    queue_departure(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    slot_at = schedule_departure_slot(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    backend.run_until(slot_at)
+
+    engine.stores.put(
+        backend,
+        store_name="departure_queue",
+        item_id="departure:other-flight",
+        value={"turnaround_id": "other-flight"},
+        priority=1,
+        requested_at=backend.now,
+    )
+    backend.run_until(backend.now)
+
+    assert reconcile_departure(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ) is False
+
+    items = {
+        item.item_id: item
+        for item in persistence.store_items()
+        if item.store_name == "departure_queue"
+    }
+    assert "departure:other-flight" in items
+    assert f"departure:{entities.turnaround_id}" in items
