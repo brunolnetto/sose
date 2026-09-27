@@ -72,7 +72,16 @@ def material_feasible(
         return False
 
     quantity = float(current.attributes["quantity"])
-    has_lot = bool(persistence.store_items())
+    lots = [
+        item
+        for item in persistence.store_items()
+        if item.store_name == "material_lots"
+    ]
+    next_lot = lots[0] if lots else None
+    has_usable_lot = (
+        next_lot is not None
+        and float(next_lot.value.get("quantity", 0.0)) >= quantity
+    )
     level = next(
         (
             state.level
@@ -81,7 +90,7 @@ def material_feasible(
         ),
         0.0,
     )
-    return has_lot and level >= quantity
+    return has_usable_lot and level >= quantity
 
 
 def reconcile_material_availability(
