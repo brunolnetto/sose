@@ -95,7 +95,7 @@ class GroundServiceTaskChart(StateChart):
 
 @probabilistic_transitions(
     {},
-    excluded_events={"start", "ready", "delay"},
+    excluded_events={"start", "mark_ready", "delay"},
 )
 class BaggageFlowChart(StateChart):
     pending = State(initial=True)
@@ -104,7 +104,7 @@ class BaggageFlowChart(StateChart):
     ready = State(final=True)
 
     start = pending.to(transferring)
-    ready = transferring.to(ready) | delayed.to(ready)
+    mark_ready = transferring.to(ready) | delayed.to(ready)
     delay = transferring.to(delayed)
 
 
