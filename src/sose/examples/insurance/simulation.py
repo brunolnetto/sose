@@ -344,13 +344,13 @@ def satisfy_documents(persistence, engine, *, entities, ordinal=1):
     return True
 
 
-def queue_claim(persistence, engine, backend, *, entities):
+def queue_claim(persistence, engine, backend, *, entities, ordinal=1):
     claim = _claim(persistence, entities)
-    if claim.state != "ready_for_assessment":
+    if claim.state not in {"ready_for_assessment", "reopened"}:
         raise RuntimeError(
-            f"claim queue requires ready_for_assessment, got {claim.state}"
+            f"claim queue requires ready/reopened claim, got {claim.state}"
         )
-    item_id = f"claim-queue:{claim.id}"
+    item_id = f"claim-queue:{claim.id}:{ordinal}"
     queued = any(i.item_id == item_id for i in persistence.store_items())
     consumed = any(
         result.item.item_id == item_id for result in persistence.store_get_results()
@@ -390,7 +390,7 @@ def claim_next_for_assessment(
     if reservation is None:
         return None
 
-    get_id = f"claim-pick:{worker_id}"
+    get_id = f"claim-pick:{worker_id}:{assessment_ordinal}"
     result = engine.stores.result(get_id)
     if result is None:
         if not any(
@@ -597,11 +597,21 @@ def ensure_reserve(persistence, engine, *, entities, amount=None):
     existing = persistence.entity("insurance_reserve", reserve_id(claim.id))
     if existing is not None:
         return existing
-    assessment = persistence.entity(
-        "insurance_assessment",
-        assessment_id(claim.id, 1),
+    approved_assessment = next(
+        (
+            candidate
+            for ordinal in (3, 2, 1)
+            for candidate in (
+                persistence.entity(
+                    "insurance_assessment",
+                    assessment_id(claim.id, ordinal),
+                ),
+            )
+            if candidate is not None and candidate.state == "approved"
+        ),
+        None,
     )
-    if claim.state != "approved" or assessment is None or assessment.state != "approved":
+    if claim.state != "approved" or approved_assessment is None:
         raise RuntimeError("reserve requires approved claim and assessment evidence")
     reserve_amount = float(amount if amount is not None else claim.attributes["amount"])
     if reserve_amount <= 0:
