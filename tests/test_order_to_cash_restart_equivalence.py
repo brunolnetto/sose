@@ -171,3 +171,123 @@ def test_collection_followup_is_restart_equivalent():
     assert c_value is not None and r_value is not None
     assert c_value.state == r_value.state == "escalated"
     assert continuous.scheduled_work() == restarted.scheduled_work() == ()
+
+
+def test_pending_fulfillment_capacity_survives_restart():
+    persistence = MemoryPersistence()
+    entities = seed_reference(persistence)
+    _, engine = build_runtime(persistence)
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    assert reconcile_credit(persistence, engine, entities=entities)
+
+    engine.resources.request(
+        backend,
+        resource_name="fulfillment_team",
+        request_id="fulfillment-blocker",
+        requested_at=backend.now,
+        priority=1,
+    )
+    backend.run_until(backend.now)
+
+    assert reconcile_fulfillment(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ) is False
+    assert any(
+        demand.request_id == f"fulfillment-team:{entities.order_id}"
+        for demand in persistence.resource_demands()
+    )
+
+    restart_at = backend.now
+    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
+    rebuilt_backend = SimPyBackend(origin=restart_at)
+    rebuilt_engine.rebuild_backend(rebuilt_backend)
+    rebuilt_backend.run_until(restart_at)
+
+    snapshot = rebuilt_backend.resource_snapshot("fulfillment_team")
+    assert snapshot.in_use == 1
+    assert snapshot.queued == 1
+
+    blocker = next(
+        reservation
+        for reservation in persistence.resource_reservations()
+        if reservation.request_id == "fulfillment-blocker"
+    )
+    rebuilt_engine.resources.release(
+        rebuilt_backend,
+        blocker.reservation_id,
+    )
+    rebuilt_backend.run_until(rebuilt_backend.now)
+
+    assert reconcile_fulfillment(
+        persistence,
+        rebuilt_engine,
+        rebuilt_backend,
+        entities=entities,
+    )
+    order = persistence.entity("sales_order", entities.order_id)
+    assert order is not None and order.state == "fulfilled"
+
+
+def test_pending_collection_capacity_survives_restart():
+    persistence = MemoryPersistence()
+    entities, engine, backend, receivable = _prepare_overdue(persistence)
+    case = ensure_collection_case(
+        persistence,
+        engine,
+        entities=entities,
+    )
+
+    engine.resources.request(
+        backend,
+        resource_name="collection_agent",
+        request_id="collection-blocker",
+        requested_at=backend.now,
+        priority=1,
+    )
+    backend.run_until(backend.now)
+
+    assert reconcile_collection(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ) is False
+    assert any(
+        demand.request_id == f"collection-agent:{case.id}"
+        for demand in persistence.resource_demands()
+    )
+
+    restart_at = backend.now
+    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
+    rebuilt_backend = SimPyBackend(origin=restart_at)
+    rebuilt_engine.rebuild_backend(rebuilt_backend)
+    rebuilt_backend.run_until(restart_at)
+
+    snapshot = rebuilt_backend.resource_snapshot("collection_agent")
+    assert snapshot.in_use == 1
+    assert snapshot.queued == 1
+
+    blocker = next(
+        reservation
+        for reservation in persistence.resource_reservations()
+        if reservation.request_id == "collection-blocker"
+    )
+    rebuilt_engine.resources.release(
+        rebuilt_backend,
+        blocker.reservation_id,
+    )
+    rebuilt_backend.run_until(rebuilt_backend.now)
+
+    assert reconcile_collection(
+        persistence,
+        rebuilt_engine,
+        rebuilt_backend,
+        entities=entities,
+    )
+    case = persistence.entity("collection_case", case.id)
+    assert case is not None and case.state == "contacted"
