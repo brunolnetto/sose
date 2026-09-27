@@ -11,7 +11,14 @@ class ShipmentChart(StateChart):
     in_transfer = State()
     at_destination_hub = State()
     out_for_delivery = State()
-    delayed = State()
+
+    delayed_pickup = State()
+    delayed_after_pickup = State()
+    delayed_origin_hub = State()
+    delayed_transfer = State()
+    delayed_destination_hub = State()
+    delayed_delivery = State()
+
     delivered = State(final=True)
     lost = State(final=True)
     damaged = State(final=True)
@@ -26,16 +33,21 @@ class ShipmentChart(StateChart):
     deliver = out_for_delivery.to(delivered)
 
     delay = (
-        pickup_scheduled.to(delayed)
-        | picked_up.to(delayed)
-        | at_origin_hub.to(delayed)
-        | in_transfer.to(delayed)
-        | at_destination_hub.to(delayed)
-        | out_for_delivery.to(delayed)
+        pickup_scheduled.to(delayed_pickup)
+        | picked_up.to(delayed_after_pickup)
+        | at_origin_hub.to(delayed_origin_hub)
+        | in_transfer.to(delayed_transfer)
+        | at_destination_hub.to(delayed_destination_hub)
+        | out_for_delivery.to(delayed_delivery)
     )
-    resume_pickup = delayed.to(pickup_scheduled)
-    resume_transfer = delayed.to(in_transfer)
-    resume_delivery = delayed.to(out_for_delivery)
+    resume = (
+        delayed_pickup.to(pickup_scheduled)
+        | delayed_after_pickup.to(picked_up)
+        | delayed_origin_hub.to(at_origin_hub)
+        | delayed_transfer.to(in_transfer)
+        | delayed_destination_hub.to(at_destination_hub)
+        | delayed_delivery.to(out_for_delivery)
+    )
 
     mark_lost = (
         picked_up.to(lost)
@@ -54,21 +66,13 @@ class ShipmentChart(StateChart):
     return_to_sender = out_for_delivery.to(returned)
 
 
-@probabilistic_transitions(
-    {"deliver": 0.85, "fail": 0.15},
-    excluded_events={"dispatch", "schedule_retry", "retry", "exhaust"},
-)
+@probabilistic_transitions({"deliver": 0.85, "fail": 0.15})
 class DeliveryAttemptChart(StateChart):
     pending = State(initial=True)
     out_for_delivery = State()
-    failed = State()
-    retry_scheduled = State()
     delivered = State(final=True)
-    exhausted = State(final=True)
+    failed = State(final=True)
 
     dispatch = pending.to(out_for_delivery)
     deliver = out_for_delivery.to(delivered)
     fail = out_for_delivery.to(failed)
-    schedule_retry = failed.to(retry_scheduled)
-    retry = retry_scheduled.to(out_for_delivery)
-    exhaust = failed.to(exhausted)
