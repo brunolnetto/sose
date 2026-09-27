@@ -305,4 +305,4 @@ def test_reallocated_gate_releases_stale_reservation_after_crash():
         if r.request_id == f"gate:{entities.turnaround_id}"
     )
     assert assignment is not None and assignment.state == "occupied"
-    assert current.reservation_id != old_reservation.reservation_id
+    assert current.sequence > old_reservation.sequence
