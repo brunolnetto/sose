@@ -638,7 +638,7 @@ def reconcile_emergency_interrupt(
         return wo.state == "interrupted"
 
     normal_id = f"bay:{entities.work_order_id}"
-    normal = _preemptive_reservation(persistence, normal_id)
+    normal = engine.preemptive_resources.reservation_for(normal_id)
     if normal is None:
         active_emergency_id = _active_emergency_request_id(
             persistence,
@@ -677,18 +677,14 @@ def reconcile_emergency_interrupt(
         entities.work_order_id,
         prefix=request_prefix,
     )
-    if not _preemptive_request_exists(persistence, emergency_id):
-        engine.preemptive_resources.request(
-            backend,
-            resource_name="maintenance_bay",
-            request_id=emergency_id,
-            requested_at=backend.now,
-            priority=1,
-            preempt=True,
-        )
-    backend.run_until(backend.now)
-
-    emergency = _preemptive_reservation(persistence, emergency_id)
+    emergency = engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="maintenance_bay",
+        request_id=emergency_id,
+        requested_at=backend.now,
+        priority=1,
+        preempt=True,
+    )
     if emergency is None:
         return False
 
@@ -702,8 +698,7 @@ def reconcile_emergency_interrupt(
         None,
     )
     if displaced is None:
-        engine.preemptive_resources.release(backend, emergency.reservation_id)
-        backend.run_until(backend.now)
+        engine.preemptive_resources.withdraw(backend, emergency_id)
         return False
 
     wo = persistence.entity("work_order", entities.work_order_id)
@@ -745,23 +740,17 @@ def reconcile_emergency_resume(
     normal_id = f"bay:{entities.work_order_id}"
 
     if emergency_id is not None:
-        emergency = _preemptive_reservation(persistence, emergency_id)
-        if emergency is not None:
-            engine.preemptive_resources.release(backend, emergency.reservation_id)
-            backend.run_until(backend.now)
+        engine.preemptive_resources.withdraw(backend, emergency_id)
 
-    if not _preemptive_request_exists(persistence, normal_id):
-        engine.preemptive_resources.request(
-            backend,
-            resource_name="maintenance_bay",
-            request_id=normal_id,
-            requested_at=backend.now,
-            priority=100,
-            preempt=False,
-        )
-    backend.run_until(backend.now)
-
-    if _preemptive_reservation(persistence, normal_id) is None:
+    normal = engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="maintenance_bay",
+        request_id=normal_id,
+        requested_at=backend.now,
+        priority=100,
+        preempt=False,
+    )
+    if normal is None:
         return False
 
     wo = persistence.entity("work_order", entities.work_order_id)
