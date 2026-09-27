@@ -15,6 +15,7 @@ from sose.examples.order_to_cash.simulation import (
     ship_invoice_and_ensure_receivable,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def _prepare_fulfilled(persistence):
@@ -82,11 +83,14 @@ def test_invoiced_order_recovers_missing_receivable_after_restart():
         receivable_id(entities.order_id),
     ) is None
 
-    restart_at = backend.now
-    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     receivable = ship_invoice_and_ensure_receivable(
         persistence,
@@ -157,11 +161,14 @@ def test_collection_followup_is_restart_equivalent():
     r_entities, _, r_backend_before, r_case, r_due = _prepare_promised_followup(
         restarted
     )
-    restart_at = r_backend_before.now
-    _, rebuilt_engine = build_runtime(restarted, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        restarted,
+        build_runtime,
+        r_backend_before,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     assert len(restarted.scheduled_work()) == 1
     rebuilt_backend.run_until(r_due)
