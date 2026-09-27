@@ -1,0 +1,1 @@
+"""Construction reference-domain example."""
