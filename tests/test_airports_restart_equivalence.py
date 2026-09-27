@@ -13,6 +13,7 @@ from sose.examples.airports.simulation import (
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def test_pending_arrival_schedule_survives_restart():
@@ -74,11 +75,14 @@ def test_pending_gate_demand_survives_restart():
         for d in persistence.resource_demands()
     )
 
-    restart_at = backend.now
-    _, rebuilt_engine = build_runtime(persistence, now=restart_at)
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
-    rebuilt_backend.run_until(restart_at)
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend,
+        backend_factory=SimPyBackend,
+    )
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
 
     snapshot = rebuilt_backend.resource_snapshot("gate")
     assert snapshot.in_use == 1
