@@ -164,12 +164,3 @@ def dispatch(
     engine.dispatch(command)
 
 
-def preemptive_reservation(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.preemptive_resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
-    )
