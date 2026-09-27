@@ -9,7 +9,6 @@ from sose.probability import probabilistic_transitions
         "assign",
         "dispatch",
         "land",
-        "send_to_inspection",
         "release",
         "mark_aog",
         "start_maintenance",
@@ -28,7 +27,6 @@ class AircraftChart(StateChart):
     assign = available.to(assigned) | released.to(assigned)
     dispatch = assigned.to(airborne)
     land = airborne.to(inspection)
-    send_to_inspection = inspection.to(inspection)
     release = inspection.to(released)
     mark_aog = inspection.to(aog)
     start_maintenance = aog.to(maintenance)
