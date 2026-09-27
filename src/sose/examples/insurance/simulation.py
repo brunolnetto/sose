@@ -343,9 +343,7 @@ def claim_next_for_assessment(
 ):
     request_id = f"claims-adjuster:{worker_id}"
     if not engine.context.scenarios.attribute("insurance.adjuster.available", True):
-        engine.resources.cancel_pending(backend, request_id)
-        _release(persistence, engine, backend, request_id=request_id)
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         return None
 
     reservation = engine.resources.ensure_requested(
@@ -373,7 +371,7 @@ def claim_next_for_assessment(
         backend.run_until(backend.now)
         result = engine.stores.result(get_id)
     if result is None:
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         return None
 
     claim_id = str(result.item.value["claim_id"])
@@ -445,7 +443,7 @@ def complete_assessment(
                 key=("insurance", claim.id, assessment.id, "reconcile-terminal"),
                 correlation_id=correlation_id,
             )
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         return assessment.state
 
     if claim.state != "assessing" or assessment.state != "in_progress":
@@ -472,7 +470,7 @@ def complete_assessment(
         key=("insurance", claim.id, event, ordinal),
         correlation_id=correlation_id,
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return _entity(
         persistence,
         "insurance_assessment",
@@ -526,7 +524,7 @@ def reconcile_fraud(
                 key=("insurance", claim.id, investigation.id, "reconcile-terminal"),
                 correlation_id=flow_correlation_id(claim.id),
             )
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         return investigation.state == "cleared"
 
     reservation = engine.resources.ensure_requested(
@@ -577,7 +575,7 @@ def reconcile_fraud(
             key=("insurance", claim.id, investigation.id, "fraud-clear"),
             correlation_id=correlation_id,
         )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return not confirm
 
 
@@ -732,7 +730,7 @@ def reconcile_payment(
     request_id = f"payment-processor:{payment.id}"
 
     if payment.state == "paid":
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         if claim.state == "payment_scheduled":
             _dispatch(
                 engine,
@@ -756,9 +754,7 @@ def reconcile_payment(
     if reserve.state != "established":
         raise RuntimeError("payout requires established reserve")
     if not engine.context.scenarios.attribute("insurance.payment.available", True):
-        engine.resources.cancel_pending(backend, request_id)
-        _release(persistence, engine, backend, request_id=request_id)
-        backend.run_until(backend.now)
+        engine.resources.withdraw(backend, request_id)
         return False
 
     reservation = engine.resources.ensure_requested(
@@ -783,7 +779,7 @@ def reconcile_payment(
             key=("insurance-payment", payment.id, "partial"),
             correlation_id=correlation_id,
         )
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         return False
 
     if payment.state in {"due", "partially_paid"}:
@@ -798,7 +794,7 @@ def reconcile_payment(
             correlation_id=correlation_id,
         )
 
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     return reconcile_payment(
         persistence,
         engine,
