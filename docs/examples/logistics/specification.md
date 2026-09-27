@@ -211,12 +211,13 @@ entity state plus immutable event history, never by absence from a queue.
 
 Shipment command vocabulary includes schedule_pickup, pickup, arrive_origin_hub,
 dispatch_transfer, arrive_destination_hub, dispatch_delivery, deliver, delay,
-resume_pickup, resume_transfer, resume_delivery, mark_lost, mark_damaged, and
-return_to_sender.
+resume, mark_lost, mark_damaged, and return_to_sender. The phase-specific delayed
+state determines where `resume` returns.
 
-DeliveryAttempt transition commands include dispatch, deliver, and fail. Retry scheduling
-is an orchestration command that creates a new correlated DeliveryAttempt rather than
-mutating a failed attempt.
+DeliveryAttempt transition commands include dispatch, deliver, and fail. `dispatch` is
+legal but excluded from direct probabilistic selection so courier-capacity orchestration
+must authorize it. Retry scheduling is orchestration that creates a new correlated
+DeliveryAttempt rather than mutating a failed attempt.
 
 Successful transitions should emit immutable state-transition events under a stable
 shipment correlation identity.
@@ -236,7 +237,7 @@ LOG-05 — Outcome gating: Shipment becomes delivered only after a delivery atte
 
 LOG-06 — Scenario discipline: scenarios alter context; they do not assign Shipment state directly.
 
-LOG-07 — Terminal exception truth: lost, damaged, returned, and exhausted are explicit durable outcomes.
+LOG-07 — Terminal exception truth: lost, damaged, and returned are explicit durable outcomes.
 
 LOG-08 — Restart equivalence: continuous and reconstructed executions converge at pickup wait, hub queue, transfer wait, failed-attempt/retry, and final-delivery boundaries.
 
