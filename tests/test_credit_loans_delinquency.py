@@ -95,6 +95,12 @@ def test_restructure_preserves_old_delinquency_and_creates_new_obligation():
     )
 
     assert persistence.entity("loan_installment", iid).state == "restructured"
+    assert persistence.entity(
+        "loan_installment", installment_id(lid, 2)
+    ).state == "restructured"
+    assert persistence.entity(
+        "loan_installment", installment_id(lid, 3)
+    ).state == "restructured"
     assert persistence.entity("loan", lid).state == "servicing"
     assert persistence.entity(
         "delinquency_case", delinquency.id
