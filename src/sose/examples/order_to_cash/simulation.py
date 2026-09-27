@@ -386,50 +386,6 @@ def ship_invoice_and_ensure_receivable(
     )
 
 
-def _scheduled_command(
-    persistence: MemoryPersistence,
-    *,
-    entity_type: str,
-    entity_id: str,
-    name: str,
-):
-    for work in persistence.scheduled_work():
-        command = persistence.command(work.command_id)
-        if (
-            command is not None
-            and command.entity_type == entity_type
-            and command.entity_id == entity_id
-            and command.name == name
-        ):
-            return work, command
-    return None
-
-
-def _cancel_scheduled_command(
-    persistence: MemoryPersistence,
-    *,
-    entity_type: str,
-    entity_id: str,
-    name: str,
-) -> bool:
-    found = _scheduled_command(
-        persistence,
-        entity_type=entity_type,
-        entity_id=entity_id,
-        name=name,
-    )
-    if found is None:
-        return False
-    work, command = found
-    with persistence.transaction() as uow:
-        persisted = uow.get_scheduled_work(work.work_id)
-        if persisted != work:
-            return False
-        uow.delete_scheduled_work(work.work_id)
-        uow.delete_command(command.command_id)
-    return True
-
-
 def schedule_due(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -445,14 +401,13 @@ def schedule_due(
     )
     if receivable.state != "open":
         return backend.now
-    existing = _scheduled_command(
-        persistence,
+    existing = engine.scheduler.find_pending(
         entity_type="receivable",
         entity_id=receivable.id,
         name="mark_due",
     )
     if existing is not None:
-        return existing[0].due_at
+        return existing.work.due_at
 
     due_at = backend.now + delay
     command = engine.context.commands.create(
@@ -479,14 +434,13 @@ def schedule_overdue(
         raise RuntimeError("receivable was not persisted")
     if receivable.state != "due":
         raise RuntimeError(f"overdue scheduling requires due, got {receivable.state}")
-    existing = _scheduled_command(
-        persistence,
+    existing = engine.scheduler.find_pending(
         entity_type="receivable",
         entity_id=receivable.id,
         name="mark_overdue",
     )
     if existing is not None:
-        return existing[0].due_at
+        return existing.work.due_at
 
     due_at = backend.now + delay
     command = engine.context.commands.create(
@@ -627,8 +581,7 @@ def collect_receivable(
         key=("o2c", receivable.id, "collect"),
         correlation_id=flow_correlation_id(entities.order_id),
     )
-    _cancel_scheduled_command(
-        persistence,
+    _cancelengine.scheduler.find_pending(
         entity_type="receivable",
         entity_id=receivable.id,
         name="mark_overdue",
@@ -643,10 +596,9 @@ def collect_receivable(
             key=("o2c-collection", case.id, "resolve"),
             correlation_id=flow_correlation_id(entities.order_id),
         )
-        _cancel_scheduled_command(
-            persistence,
-            entity_type="collection_case",
-            entity_id=case.id,
-            name="escalate",
-        )
+        _cancelengine.scheduler.find_pending(
+        entity_type="collection_case",
+        entity_id=case.id,
+        name="escalate",
+    )
     return True
