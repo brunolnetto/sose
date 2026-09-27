@@ -1,0 +1,1 @@
+"""Insurance reference-domain example."""
