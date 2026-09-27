@@ -156,21 +156,16 @@ def validate_reference_contract(
                 )
             )
 
-    existing_docs = [
-        path.read_text(encoding="utf-8")
-        for path in (readme, specification)
-        if path.is_file()
-    ]
-    if existing_docs and "reference implementation" not in "\n".join(
-        existing_docs
-    ).lower():
-        issues.append(
-            ReferenceConformanceIssue(
-                contract.domain,
-                "documentation-status-drift",
-                "README/specification do not declare reference implementation status",
+    if readme.is_file():
+        readme_text = readme.read_text(encoding="utf-8").lower()
+        if "reference implementation" not in readme_text:
+            issues.append(
+                ReferenceConformanceIssue(
+                    contract.domain,
+                    "documentation-status-drift",
+                    "README does not declare reference implementation status",
+                )
             )
-        )
 
     for module_name in (
         contract.package,
