@@ -96,60 +96,6 @@ def _dispute(persistence: MemoryPersistence) -> Dispute | None:
     return persistence.entity("payment_dispute", dispute_entity_id())
 
 
-def _resource_request_exists(persistence: MemoryPersistence, request_id: str) -> bool:
-    return any(
-        demand.request_id == request_id for demand in persistence.resource_demands()
-    ) or any(
-        reservation.request_id == request_id
-        for reservation in persistence.resource_reservations()
-    )
-
-
-def _reservation_for(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
-    )
-
-
-def _request_resource(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    resource_name: str,
-    request_id: str,
-    priority: int = 100,
-):
-    if not _resource_request_exists(persistence, request_id):
-        engine.resources.request(
-            backend,
-            resource_name=resource_name,
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=priority,
-        )
-    backend.run_until(backend.now)
-    return _reservation_for(persistence, request_id)
-
-
-def _release(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    request_id: str,
-) -> None:
-    reservation = _reservation_for(persistence, request_id)
-    if reservation is not None:
-        engine.resources.release(backend, reservation.reservation_id)
-        backend.run_until(backend.now)
-
-
 def _dispatch(engine: Engine, entity, event: str, *, key: tuple[object, ...]) -> None:
     command = engine.context.commands.create(
         event,
@@ -185,12 +131,11 @@ def reconcile_authorization(
         return False
 
     request_id = f"authorization-processor:{payment.id}"
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="authorization_processor",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -280,12 +225,11 @@ def reconcile_settlement(
         return None
 
     request_id = f"settlement-processor:{payment.id}"
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="settlement_processor",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return None
@@ -335,12 +279,11 @@ def reconcile_refund(
         return False
 
     request_id = f"refund-processor:{payment.id}"
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="settlement_processor",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
@@ -429,12 +372,11 @@ def reconcile_dispute(
         return False
 
     request_id = f"dispute-analyst:{dispute.id}"
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="dispute_analyst",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
