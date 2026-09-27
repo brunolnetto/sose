@@ -326,6 +326,12 @@ def satisfy_documents(persistence, engine, *, entities, ordinal=1):
             key=("insurance", request.id, "satisfy"),
             correlation_id=flow_correlation_id(claim.id),
         )
+        request = _entity(
+            persistence,
+            "insurance_document_request",
+            request.id,
+        )
+    if request.state == "satisfied":
         _cancel_schedule(
             persistence,
             entity_type="insurance_document_request",
@@ -376,10 +382,13 @@ def claim_next_for_assessment(
     worker_id,
     assessment_ordinal=1,
 ):
+    request_id = f"claims-adjuster:{worker_id}"
     if not engine.context.scenarios.attribute("insurance.adjuster.available", True):
+        engine.resources.cancel_pending(backend, request_id)
+        _release(persistence, engine, backend, request_id=request_id)
+        backend.run_until(backend.now)
         return None
 
-    request_id = f"claims-adjuster:{worker_id}"
     reservation = _request_resource(
         persistence,
         engine,
@@ -464,6 +473,20 @@ def complete_assessment(
     request_id = f"claims-adjuster:{worker_id}"
 
     if assessment.state in {"approved", "rejected", "fraud_flagged"}:
+        correlation_id = flow_correlation_id(claim.id)
+        if claim.state == "assessing":
+            claim_event = {
+                "approved": "approve",
+                "rejected": "reject",
+                "fraud_flagged": "flag_fraud",
+            }[assessment.state]
+            _dispatch(
+                engine,
+                claim,
+                claim_event,
+                key=("insurance", claim.id, assessment.id, "reconcile-terminal"),
+                correlation_id=correlation_id,
+            )
         _release(persistence, engine, backend, request_id=request_id)
         return assessment.state
 
@@ -536,6 +559,15 @@ def reconcile_fraud(
     )
     request_id = f"fraud-investigator:{investigation.id}"
     if investigation.state in {"cleared", "confirmed"}:
+        if claim.state == "fraud_review":
+            event = "clear_fraud" if investigation.state == "cleared" else "reject"
+            _dispatch(
+                engine,
+                claim,
+                event,
+                key=("insurance", claim.id, investigation.id, "reconcile-terminal"),
+                correlation_id=flow_correlation_id(claim.id),
+            )
         _release(persistence, engine, backend, request_id=request_id)
         return investigation.state == "cleared"
 
@@ -596,6 +628,19 @@ def ensure_reserve(persistence, engine, *, entities, amount=None):
     claim = _claim(persistence, entities)
     existing = persistence.entity("insurance_reserve", reserve_id(claim.id))
     if existing is not None:
+        if existing.state == "proposed":
+            _dispatch(
+                engine,
+                existing,
+                "establish",
+                key=("insurance-reserve", existing.id, "establish"),
+                correlation_id=flow_correlation_id(claim.id),
+            )
+            existing = _entity(
+                persistence,
+                "insurance_reserve",
+                existing.id,
+            )
         return existing
     approved_assessment = next(
         (
