@@ -150,10 +150,10 @@ Reference-grade recovery gates will cover:
 | collection assignment / follow-up | CollectionCase + collection_agent Resource + promise follow-up ScheduledWork | implemented |
 | partial-fulfillment execution | explicit partial_fulfillment runtime path + tests | implemented |
 | finite scenario recovery | credit tightening / fulfillment outage tests | implemented |
-| restart equivalence | due ScheduledWork rebuild test | partial |
+| restart equivalence | due schedule, invoice→receivable, overdue→CollectionCase, collection follow-up, fulfillment/collection ResourceDemand rebuild tests | implemented |
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-Reference promotion still requires broader restart-equivalence evidence across invoice→receivable, overdue→CollectionCase, and collection follow-up boundaries, plus final end-to-end evidence review.
+Promotion is based on executable evidence for credit/fulfillment gating, explicit partial fulfillment, idempotent invoice→Receivable causality, durable due/overdue scheduling, overdue→CollectionCase creation, collection-agent ownership and follow-up scheduling, finite scenario recovery, illegal cross-entity prerequisite rejection, and restart equivalence across scheduler, causal-creation, and resource-demand boundaries.
