@@ -723,28 +723,20 @@ def reconcile_part_issue(
         )
 
     result_id = f"part-issue:{demand.id}"
-    result = engine.stores.result(result_id)
+    result = engine.stores.selection(result_id)
     if result is None:
-        if not persistence.store_items():
-            return False
         part_items = sorted(
             (i for i in persistence.store_items() if i.store_name == "part_lots"),
             key=lambda item: (item.priority, item.sequence, item.item_id),
         )
         if not part_items:
             return False
-        if not any(
-            req.request_id == result_id
-            for req in persistence.store_get_requests()
-        ):
-            engine.stores.get(
-                backend,
-                store_name="part_lots",
-                request_id=result_id,
-                requested_at=backend.now,
-            )
-        backend.run_until(backend.now)
-        result = engine.stores.result(result_id)
+        result = engine.stores.ensure_selection(
+            backend,
+            store_name="part_lots",
+            request_id=result_id,
+            requested_at=backend.now,
+        )
     if result is None:
         return False
 
@@ -807,7 +799,7 @@ def reconcile_aog_maintenance(
         work = _entity(persistence, "aviation_maintenance_work_order", work.id)
 
     queue_request = f"maintenance-pick:{work.id}"
-    queue_result = engine.stores.result(queue_request)
+    queue_result = engine.stores.selection(queue_request)
     if queue_result is None:
         queue_items = sorted(
             (
@@ -819,18 +811,12 @@ def reconcile_aog_maintenance(
         )
         if not queue_items or str(queue_items[0].value["work_order_id"]) != work.id:
             return False
-        if not any(
-            request.request_id == queue_request
-            for request in persistence.store_get_requests()
-        ):
-            engine.stores.get(
-                backend,
-                store_name="maintenance_queue",
-                request_id=queue_request,
-                requested_at=backend.now,
-            )
-        backend.run_until(backend.now)
-        queue_result = engine.stores.result(queue_request)
+        queue_result = engine.stores.ensure_selection(
+            backend,
+            store_name="maintenance_queue",
+            request_id=queue_request,
+            requested_at=backend.now,
+        )
     if queue_result is None:
         return False
 
