@@ -162,6 +162,6 @@ Executable evidence covers:
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-Promotion awaits CI and final crash-boundary audit.
+Promotion is based on executable evidence for underwriting/decision causality, recurring installment scheduling, partial repayment, immutable Payment occurrences, idempotent posted-payment application, delinquency/collection/default, restructure without historical rewriting, finite macro stress, and restart equivalence across schedule, ledger, delinquency, and collection-follow-up boundaries.
