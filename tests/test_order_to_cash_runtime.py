@@ -1,3 +1,5 @@
+import pytest
+
 from sose.backends.simpy import SimPyBackend
 from sose.examples.order_to_cash.simulation import (
     ORIGIN,
@@ -277,3 +279,47 @@ def test_due_schedule_is_restart_equivalent():
     assert c_value is not None and r_value is not None
     assert c_value.state == r_value.state == "due"
     assert restarted.scheduled_work() == continuous.scheduled_work() == ()
+
+
+def test_illegal_cross_entity_transitions_are_rejected():
+    persistence = MemoryPersistence()
+    entities = seed_reference(persistence)
+    _, engine = build_runtime(persistence)
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    with pytest.raises(RuntimeError, match="requires SalesOrder\(invoiced\)"):
+        from sose.examples.order_to_cash.simulation import ensure_receivable
+        ensure_receivable(
+            persistence,
+            engine,
+            entities=entities,
+        )
+
+    assert reconcile_credit(persistence, engine, entities=entities)
+    assert reconcile_fulfillment(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    ship_invoice_and_ensure_receivable(
+        persistence,
+        engine,
+        entities=entities,
+    )
+
+    with pytest.raises(RuntimeError, match="overdue scheduling requires due"):
+        schedule_overdue(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+        )
+
+    with pytest.raises(RuntimeError, match="requires Receivable\(overdue\)"):
+        ensure_collection_case(
+            persistence,
+            engine,
+            entities=entities,
+        )
