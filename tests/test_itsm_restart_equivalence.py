@@ -9,6 +9,7 @@ from sose.examples.itsm.simulation import (
     triage_and_queue,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def _progress_to_owned_sla_wait(persistence):
