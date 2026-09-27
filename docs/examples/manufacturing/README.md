@@ -6,6 +6,10 @@
 > invariants, durable ownership and restart semantics. The remaining documents are
 > supporting implementation notes.
 
+## Status
+
+**Reference implementation.**
+
 This reference domain validates SOSE against a capacity-constrained production flow.
 
 ## Canonical flow
@@ -43,7 +47,7 @@ Exception paths introduced incrementally:
 
 ## Reference-domain gates
 
-Manufacturing is promoted to a reference implementation only when:
+Manufacturing is reference-grade because the following gates are executable:
 
 1. lifecycle state is explicit and durable;
 2. machine/operator possession gates production transitions;
