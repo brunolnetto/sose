@@ -404,7 +404,7 @@ def test_baggage_delay_reconciles_turnaround_wait_state_after_crash():
 
     events = [
         event.name
-        for event in persistence.domain_events()
+        for event in persistence.events()
         if event.entity_id == entities.turnaround_id
     ]
     assert "baggage_delayed" in events
