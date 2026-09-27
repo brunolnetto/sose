@@ -33,6 +33,7 @@ REFERENCE_CATALOG = (
         domain="Procure-to-Pay",
         package="sose.examples.p2p",
         docs_dir="docs/examples/procure-to-pay",
+        runtime_entrypoints=("build_runtime", "seed_happy_path"),
         capabilities=frozenset({
             C.STATECHARTS, C.HAPPY_PATH, C.SAD_PATHS, C.RESTART_EQUIVALENCE,
             C.SCENARIOS, C.RESOURCES, C.SCHEDULED_WORK,
@@ -51,6 +52,7 @@ REFERENCE_CATALOG = (
         domain="Manufacturing",
         package="sose.examples.manufacturing",
         docs_dir="docs/examples/manufacturing",
+        runtime_entrypoints=("build_runtime", "seed_happy_path"),
         capabilities=frozenset({
             C.STATECHARTS, C.HAPPY_PATH, C.SAD_PATHS, C.RESTART_EQUIVALENCE,
             C.SCENARIOS, C.RESOURCES, C.PREEMPTION, C.PROBABILISTIC_TRANSITIONS,
