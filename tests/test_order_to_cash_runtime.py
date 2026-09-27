@@ -18,6 +18,7 @@ from sose.examples.order_to_cash.simulation import (
     ship_invoice_and_ensure_receivable,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.testing.restart import restart_reference_runtime
 
 
 def _prepare_invoiced(persistence):
