@@ -66,6 +66,18 @@ def complete_predecessor(
         raise RuntimeError(
             f"predecessor is not at completion boundary: {predecessor.state}"
         )
+    measurement = persistence.entity(
+        "construction_measurement",
+        measurement_id(predecessor.id),
+    )
+    if (
+        measurement is None
+        or measurement.state != "recorded"
+        or float(measurement.attributes.get("value", 0.0)) <= 0
+    ):
+        raise RuntimeError(
+            "predecessor completion requires durable measurement evidence"
+        )
     dispatch(
         engine,
         predecessor,
@@ -148,14 +160,27 @@ def request_execution_resources(
     if current.state != "waiting_resource":
         return False
 
+    crew_request = f"crew:{current.id}:{cycle}"
+    equipment_request = f"equipment:{current.id}:{cycle}"
+
     if not engine.context.scenarios.attribute(
         "construction.site.available",
         True,
     ):
+        # Capacity requests can outlive the context that made them legal.
+        # Cancel queued demand first, then release any grant that raced with
+        # the scenario change, so disrupted work cannot hoard capacity.
+        for request_id in (crew_request, equipment_request):
+            engine.resources.cancel_pending(backend, request_id)
+            _release_resource(
+                persistence,
+                engine,
+                backend,
+                request_id=request_id,
+            )
+        backend.run_until(backend.now)
         return False
 
-    crew_request = f"crew:{current.id}:{cycle}"
-    equipment_request = f"equipment:{current.id}:{cycle}"
     crew = _request_resource(
         persistence,
         engine,
