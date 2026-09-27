@@ -1538,6 +1538,7 @@ At the time of this document:
 - **Insurance**: Reference implementation. Coverage/documentation/assessment/fraud/reserve/payment lifecycles, severity-prioritized queueing, durable deadlines/payment dates, adjuster/fraud/payment Resources, partial payout, rejected-claim reopening, finite scenarios, post-commit crash recovery, and restart equivalence are executable.
 - **Airports**: Reference implementation. Durable arrival/slot timing, gate ownership and reallocation, ground-service/baggage prerequisites, PriorityStore departure ordering, committed StoreGetResult recovery, tug capacity, finite congestion/weather scenarios, post-commit crash recovery, and restart equivalence are executable.
 - **Aviation**: Reference implementation. Two-leg rotation causality, durable departure timing, crew/aircraft gating, inspection, AOG part flow, PriorityStore maintenance ownership, preemptive maintenance with ResourcePreemptionResult evidence, downstream delay propagation, finite scenarios, post-commit crash recovery, and restart equivalence are executable.
+- **Credit and loans**: Partial. Underwriting/decision, loan origination, recurring installment schedules, immutable payments, partial repayment, delinquency/collection, default, restructure, macro stress, and restart evidence are implemented; promotion awaits CI/final audit.
 - All other domains in this document: Blueprint.
 
 ---
