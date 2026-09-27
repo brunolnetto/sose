@@ -151,39 +151,6 @@ def seed_spare_parts(
     backend.run_until(backend.now)
 
 
-def _resource_request_exists(persistence, request_id: str) -> bool:
-    return any(d.request_id == request_id for d in persistence.resource_demands()) or any(
-        r.request_id == request_id for r in persistence.resource_reservations()
-    )
-
-
-def _preemptive_request_exists(persistence, request_id: str) -> bool:
-    return any(
-        d.request_id == request_id for d in persistence.preemptive_resource_demands()
-    ) or any(
-        r.request_id == request_id
-        for r in persistence.preemptive_resource_reservations()
-    )
-
-
-def _resource_reservation(persistence, request_id: str):
-    return next(
-        (r for r in persistence.resource_reservations() if r.request_id == request_id),
-        None,
-    )
-
-
-def _preemptive_reservation(persistence, request_id: str):
-    return next(
-        (
-            r
-            for r in persistence.preemptive_resource_reservations()
-            if r.request_id == request_id
-        ),
-        None,
-    )
-
-
 def _part_issue_complete(persistence: MemoryPersistence) -> bool:
     lot_done = any(
         result.request_id == "consume-part-lot-1"
@@ -252,8 +219,6 @@ def reconcile_material_availability(
         if wo.state == "waiting_resource":
             tech_id = f"technician:{entities.work_order_id}"
             bay_id = f"bay:{entities.work_order_id}"
-            engine.resources.cancel_pending(backend, tech_id)
-            engine.preemptive_resources.cancel_pending(backend, bay_id)
             release_capacity(
                 persistence,
                 engine,
@@ -307,45 +272,39 @@ def reconcile_capacity(
     tech_id = f"technician:{entities.work_order_id}"
     bay_id = f"bay:{entities.work_order_id}"
 
-    if not _resource_request_exists(persistence, tech_id):
-        engine.resources.request(
+    technician = engine.resources.ensure_requested(
+        backend,
+        resource_name="technician",
+        request_id=tech_id,
+        requested_at=backend.now,
+        priority=100,
+        on_acquired=lambda reservation: _discard_granted_capacity_if_terminal(
+            persistence,
+            engine,
             backend,
-            resource_name="technician",
-            request_id=tech_id,
-            requested_at=backend.now,
-            priority=100,
-            on_acquired=lambda reservation: _discard_granted_capacity_if_terminal(
-                persistence,
-                engine,
-                backend,
-                work_order_id=entities.work_order_id,
-                reservation=reservation,
-                preemptive=False,
-            ),
-        )
-    if not _preemptive_request_exists(persistence, bay_id):
-        engine.preemptive_resources.request(
-            backend,
-            resource_name="maintenance_bay",
-            request_id=bay_id,
-            requested_at=backend.now,
-            priority=100,
-            preempt=False,
-            on_acquired=lambda reservation: _discard_granted_capacity_if_terminal(
-                persistence,
-                engine,
-                backend,
-                work_order_id=entities.work_order_id,
-                reservation=reservation,
-                preemptive=True,
-            ),
-        )
-    backend.run_until(backend.now)
-
-    return (
-        _resource_reservation(persistence, tech_id) is not None
-        and _preemptive_reservation(persistence, bay_id) is not None
+            work_order_id=entities.work_order_id,
+            reservation=reservation,
+            preemptive=False,
+        ),
     )
+    bay = engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="maintenance_bay",
+        request_id=bay_id,
+        requested_at=backend.now,
+        priority=100,
+        preempt=False,
+        on_acquired=lambda reservation: _discard_granted_capacity_if_terminal(
+            persistence,
+            engine,
+            backend,
+            work_order_id=entities.work_order_id,
+            reservation=reservation,
+            preemptive=True,
+        ),
+    )
+
+    return technician is not None and bay is not None
 
 
 def reconcile_part_issue(
@@ -852,14 +811,14 @@ def release_capacity(
     *,
     entities: MROEntities,
 ) -> None:
-    tech = _resource_reservation(persistence, f"technician:{entities.work_order_id}")
-    if tech is not None:
-        engine.resources.release(backend, tech.reservation_id)
-        backend.run_until(backend.now)
-    bay = _preemptive_reservation(persistence, f"bay:{entities.work_order_id}")
-    if bay is not None:
-        engine.preemptive_resources.release(backend, bay.reservation_id)
-        backend.run_until(backend.now)
+    engine.resources.withdraw(
+        backend,
+        f"technician:{entities.work_order_id}",
+    )
+    engine.preemptive_resources.withdraw(
+        backend,
+        f"bay:{entities.work_order_id}",
+    )
 
 
 def _part_issue_started(persistence: MemoryPersistence) -> bool:
@@ -902,16 +861,11 @@ def reconcile_cancel(
         )
 
     if wo.state == "planned":
-        with persistence.transaction() as uow:
-            for work in persistence.scheduled_work():
-                command = persistence.command(work.command_id)
-                if (
-                    command is not None
-                    and command.entity_type == "work_order"
-                    and command.entity_id == wo.id
-                ):
-                    uow.delete_scheduled_work(work.work_id)
-                    uow.delete_command(command.command_id)
+        engine.scheduler.cancel_pending(
+            entity_type="work_order",
+            entity_id=wo.id,
+            name="release",
+        )
 
     if wo.state in {"planned", "released", "waiting_material", "waiting_resource"}:
         engine.dispatch(
@@ -925,9 +879,6 @@ def reconcile_cancel(
 
     tech_request_id = f"technician:{entities.work_order_id}"
     bay_request_id = f"bay:{entities.work_order_id}"
-    engine.resources.cancel_pending(backend, tech_request_id)
-    engine.preemptive_resources.cancel_pending(backend, bay_request_id)
-
     demand = persistence.entity("part_demand", entities.part_demand_id)
     if demand.state in {"open", "waiting_inventory"}:
         engine.dispatch(
