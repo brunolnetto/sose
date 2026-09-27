@@ -13,3 +13,8 @@ class ConstructionActivity(Entity):
 @dataclass(slots=True)
 class ConstructionInspection(Entity):
     entity_type: str = "construction_inspection"
+
+
+@dataclass(slots=True)
+class ConstructionMeasurement(Entity):
+    entity_type: str = "construction_measurement"
