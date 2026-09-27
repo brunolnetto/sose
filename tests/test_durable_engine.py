@@ -415,3 +415,49 @@ def test_backend_callback_after_schedule_cancellation_is_stale_and_harmless():
     stored = persistence.entity("work_order", work_order.id)
     assert stored is not None and stored.state == "planned"
     assert persistence.events() == ()
+
+
+def test_cancel_target_removes_all_pending_work_for_entity_only():
+    now, context, persistence, engine, work_order = build_runtime()
+    for offset, key in ((1, "release"), (2, "start")):
+        command = context.commands.create(
+            "release",
+            target=work_order,
+            due_at=now + timedelta(hours=offset),
+            key=("target-wide-cancel", work_order.id, key),
+        )
+        engine.scheduler.schedule(command)
+
+    other = context.entities.create(
+        WorkOrder,
+        key=("target-wide-cancel", "other"),
+        state="planned",
+    )
+    with persistence.transaction() as uow:
+        uow.save_entity(other)
+    other_command = context.commands.create(
+        "release",
+        target=other,
+        due_at=now + timedelta(hours=3),
+        key=("target-wide-cancel", other.id),
+    )
+    engine.scheduler.schedule(other_command)
+
+    pending = engine.scheduler.pending_for_target(
+        entity_type="work_order",
+        entity_id=work_order.id,
+    )
+    assert len(pending) == 2
+
+    assert engine.scheduler.cancel_target(
+        entity_type="work_order",
+        entity_id=work_order.id,
+    ) == 2
+    assert engine.scheduler.pending_for_target(
+        entity_type="work_order",
+        entity_id=work_order.id,
+    ) == ()
+    assert engine.scheduler.pending_for_target(
+        entity_type="work_order",
+        entity_id=other.id,
+    )[0].command == other_command
