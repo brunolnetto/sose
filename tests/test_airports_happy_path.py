@@ -144,3 +144,60 @@ def test_baggage_delay_blocks_departure_queue_until_recovered():
         "airport_flight_turnaround",
         entities.turnaround_id,
     ).state == "waiting_slot"
+
+
+def test_gate_reallocation_releases_old_capacity_and_reassigns_turnaround():
+    from sose.examples.airports.simulation import reallocate_gate
+
+    persistence = MemoryPersistence()
+    entities = seed_reference(persistence)
+    _, engine = build_runtime(persistence)
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    arrival_at = schedule_arrival(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    backend.run_until(arrival_at)
+    assert reconcile_gate(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+
+    old_reservation = next(
+        r
+        for r in persistence.resource_reservations()
+        if r.request_id == f"gate:{entities.turnaround_id}"
+    )
+
+    assert reallocate_gate(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        new_gate="G2",
+    )
+
+    assignment = persistence.entity(
+        "airport_gate_assignment",
+        entities.gate_assignment_id,
+    )
+    turnaround = persistence.entity(
+        "airport_flight_turnaround",
+        entities.turnaround_id,
+    )
+    assert assignment is not None and assignment.state == "occupied"
+    assert assignment.attributes["gate"] == "G2"
+    assert turnaround is not None and turnaround.state == "gate_assigned"
+
+    current = next(
+        r
+        for r in persistence.resource_reservations()
+        if r.request_id == f"gate:{entities.turnaround_id}"
+    )
+    assert current.reservation_id != old_reservation.reservation_id
