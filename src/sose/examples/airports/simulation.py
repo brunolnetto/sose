@@ -675,11 +675,11 @@ def reconcile_departure(
         return False
 
     get_id = f"departure-pick:{dispatcher_id}"
-    result = engine.stores.result(get_id)
+    result = engine.stores.selection(get_id)
 
-    # A queue selection is itself durable semantic evidence. After the get
-    # commits, the queue item is gone; recovery must continue from the
-    # StoreGetResult rather than requiring the item to still be present.
+    # Priority ownership remains domain-visible: only the current durable head
+    # may initiate selection. Once StoreGetResult commits, recovery continues
+    # from that result even though the queue item is gone.
     if result is None:
         queued_items = sorted(
             (
@@ -696,17 +696,12 @@ def reconcile_departure(
             engine.resources.withdraw(backend, request_id)
             return False
 
-        if not any(
-            req.request_id == get_id for req in persistence.store_get_requests()
-        ):
-            engine.stores.get(
-                backend,
-                store_name="departure_queue",
-                request_id=get_id,
-                requested_at=backend.now,
-            )
-        backend.run_until(backend.now)
-        result = engine.stores.result(get_id)
+        result = engine.stores.ensure_selection(
+            backend,
+            store_name="departure_queue",
+            request_id=get_id,
+            requested_at=backend.now,
+        )
     if result is None:
         engine.resources.withdraw(backend, request_id)
         return False
