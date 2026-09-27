@@ -1,6 +1,7 @@
 from sose.examples.construction.entities import (
     ConstructionActivity,
     ConstructionInspection,
+    ConstructionMeasurement,
 )
 from sose.examples.construction.statecharts import ActivityChart, InspectionChart
 from sose.statecharts.topology import graph_from_statechart, policy_from_statechart
@@ -9,6 +10,7 @@ from sose.statecharts.topology import graph_from_statechart, policy_from_statech
 def test_construction_entities_have_stable_types():
     assert ConstructionActivity(id="a").entity_type == "construction_activity"
     assert ConstructionInspection(id="i").entity_type == "construction_inspection"
+    assert ConstructionMeasurement(id="m").entity_type == "construction_measurement"
 
 
 def test_activity_chart_covers_dependency_material_execution_and_rework():
