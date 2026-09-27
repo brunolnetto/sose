@@ -42,6 +42,7 @@ class ReferenceContract:
     capabilities: frozenset[ReferenceCapability]
     evidence: Mapping[ReferenceCapability, tuple[str, ...]]
     runtime_module: str | None = None
+    runtime_entrypoints: tuple[str, ...] = ("build_runtime", "seed_reference")
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "capabilities", frozenset(self.capabilities))
@@ -189,7 +190,7 @@ def validate_reference_contract(
             )
             continue
         if module_name == contract.resolved_runtime_module:
-            for required in ("build_runtime", "seed_reference"):
+            for required in contract.runtime_entrypoints:
                 if not callable(getattr(module, required, None)):
                     issues.append(
                         ReferenceConformanceIssue(
