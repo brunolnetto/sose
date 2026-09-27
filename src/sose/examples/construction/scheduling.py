@@ -16,22 +16,6 @@ from .runtime import (
 PLANNED_START_DELAY = timedelta(hours=1)
 
 
-def _planned_start_work(
-    persistence: MemoryPersistence,
-    activity_id: str,
-):
-    for work in persistence.scheduled_work():
-        command = persistence.command(work.command_id)
-        if (
-            command is not None
-            and command.entity_type == "construction_activity"
-            and command.entity_id == activity_id
-            and command.name == "request_resources"
-        ):
-            return work, command
-    return None
-
-
 def schedule_planned_start(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -52,9 +36,13 @@ def schedule_planned_start(
             "planned start requires durable material staging evidence"
         )
 
-    existing = _planned_start_work(persistence, current.id)
+    existing = engine.scheduler.find_pending(
+        entity_type="construction_activity",
+        entity_id=current.id,
+        name="request_resources",
+    )
     if existing is not None:
-        return existing[0].due_at
+        return existing.work.due_at
 
     due_at = backend.now + delay
     command = engine.context.commands.create(
