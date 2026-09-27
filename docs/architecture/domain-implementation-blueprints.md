@@ -1534,7 +1534,7 @@ At the time of this document:
 - **Hospitals**: Reference implementation. Acuity-ordered triage, scarce ward/ICU/team capacity, Admission-gated procedures, durable emergency preemption evidence/recovery, transfer cleanup, finite scenarios, and restart equivalence are executable.
 - **Construction**: Reference implementation. Durable predecessor/measurement gates, Store+Container material staging, planned-start ScheduledWork, crew/equipment/inspector resources, immutable inspection/rework evidence, disruption cleanup, and restart equivalence are executable.
 - **Order-to-Cash**: Reference implementation. Durable credit/fulfillment gates, partial fulfillment, invoice→Receivable causality, due/overdue ScheduledWork, CollectionCase recovery, collection resources/follow-up, scenario recovery, illegal prerequisite checks, and restart equivalence are executable.
-- **Record-to-Report**: Partial. Journal/reconciliation/adjustment/close-period lifecycles, durable close scheduling, capacity, scenarios, controlled reopening, and restart evidence are implemented; promotion awaits CI/review validation.
+- **Record-to-Report**: Reference implementation. Journal/reconciliation/adjustment causality, durable close ScheduledWork, posting/reconciliation/close Resources, controlled reopening, finite scenarios, post-commit cleanup recovery, illegal prerequisite checks, and restart equivalence are executable.
 - All other domains in this document: Blueprint.
 
 ---
