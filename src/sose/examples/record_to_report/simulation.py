@@ -98,9 +98,12 @@ def seed_reference(
     persistence: MemoryPersistence,
     *,
     amount: float = 1000.0,
+    currency: str = "USD",
 ) -> R2REntities:
     if amount <= 0:
         raise ValueError("amount must be positive")
+    if not currency:
+        raise ValueError("currency must be non-empty")
     context, _ = build_runtime(persistence)
     period = context.entities.create(
         AccountingPeriod,
@@ -112,7 +115,11 @@ def seed_reference(
         JournalEntry,
         key=("r2r-reference", period.id, "journal-1"),
         state="drafted",
-        attributes={"period_id": period.id, "amount": float(amount)},
+        attributes={
+            "period_id": period.id,
+            "amount": float(amount),
+            "currency": currency,
+        },
     )
     reconciliation = context.entities.create(
         ReconciliationItem,
@@ -122,6 +129,7 @@ def seed_reference(
             "period_id": period.id,
             "journal_id": journal.id,
             "amount": float(amount),
+            "currency": currency,
         },
     )
     close_task = context.entities.create(
@@ -355,6 +363,7 @@ def ensure_adjustment(
             "period_id": entities.period_id,
             "reconciliation_id": item.id,
             "amount": float(item.attributes["amount"]),
+            "currency": item.attributes["currency"],
         },
     )
     with persistence.transaction() as uow:

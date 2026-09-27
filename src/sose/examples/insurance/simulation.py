@@ -120,15 +120,22 @@ def seed_reference(
     severity: int = 50,
     amount: float = 5000.0,
     claim_type: str = "property",
+    currency: str = "USD",
 ) -> InsuranceEntities:
     if amount <= 0:
         raise ValueError("amount must be positive")
+    if not currency:
+        raise ValueError("currency must be non-empty")
     context, engine = build_runtime(persistence)
     policy = context.entities.create(
         Policy,
         key=("insurance-reference", "policy-1"),
         state="active",
-        attributes={"coverage_limit": 10000.0, "claim_type": claim_type},
+        attributes={
+            "coverage_limit": 10000.0,
+            "currency": currency,
+            "claim_type": claim_type,
+        },
     )
     claim = context.entities.create(
         Claim,
@@ -138,6 +145,7 @@ def seed_reference(
             "policy_id": policy.id,
             "severity": int(severity),
             "amount": float(amount),
+            "currency": currency,
             "claim_type": claim_type,
         },
     )
@@ -578,7 +586,11 @@ def ensure_reserve(persistence, engine, *, entities, amount=None):
         Reserve,
         key=("insurance-reference", claim.id, "reserve"),
         state="proposed",
-        attributes={"claim_id": claim.id, "amount": reserve_amount},
+        attributes={
+            "claim_id": claim.id,
+            "amount": reserve_amount,
+            "currency": claim.attributes["currency"],
+        },
     )
     with persistence.transaction() as uow:
         uow.save_entity(value)
@@ -608,6 +620,7 @@ def ensure_payment(persistence, engine, *, entities):
             "claim_id": claim.id,
             "amount": float(reserve.attributes["amount"]),
             "paid_amount": 0.0,
+            "currency": reserve.attributes["currency"],
         },
     )
     with persistence.transaction() as uow:

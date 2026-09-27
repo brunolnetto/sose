@@ -338,6 +338,7 @@ def disburse_and_schedule(persistence, engine, backend, *, entities):
                     "ordinal": ordinal,
                     "amount": amount,
                     "paid_amount": 0.0,
+                    "currency": loan.attributes["currency"],
                     "applied_payment_ids": [],
                 },
             )
@@ -430,6 +431,7 @@ def post_payment(
                 "installment_id": installment.id,
                 "ordinal": payment_ordinal,
                 "amount": float(amount),
+                "currency": loan.attributes["currency"],
             },
         )
         with persistence.transaction() as uow:
@@ -761,6 +763,7 @@ def apply_restructure(
                 "loan_id": loan.id,
                 "ordinal": restructure_ordinal,
                 "amount": float(loan.attributes["outstanding_balance"]),
+                "currency": loan.attributes["currency"],
             },
         )
         with persistence.transaction() as uow:
@@ -836,6 +839,7 @@ def apply_restructure(
                 "ordinal": new_ordinal,
                 "amount": float(loan.attributes["outstanding_balance"]),
                 "paid_amount": 0.0,
+                "currency": loan.attributes["currency"],
                 "applied_payment_ids": [],
                 "restructure_id": restructure.id,
             },
