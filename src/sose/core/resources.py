@@ -91,7 +91,9 @@ class DurableResourceManager:
                 requested_at=requested_at,
                 priority=priority,
             )
-        backend.run_until(getattr(backend, "now", requested_at))
+        run_until = getattr(backend, "run_until", None)
+        if callable(run_until):
+            run_until(getattr(backend, "now", requested_at))
         return self.reservation_for(request_id)
 
     def withdraw(self, backend, request_id: str) -> bool:
@@ -106,7 +108,9 @@ class DurableResourceManager:
         reservation = self.reservation_for(request_id)
         if reservation is not None:
             changed = self.release(backend, reservation.reservation_id) or changed
-        backend.run_until(getattr(backend, "now", None))
+        run_until = getattr(backend, "run_until", None)
+        if callable(run_until):
+            run_until(getattr(backend, "now"))
         return changed
 
     def request(
