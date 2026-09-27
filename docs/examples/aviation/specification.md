@@ -197,6 +197,6 @@ Both are finite; recovery occurs through the ordinary reconciliation path.
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-Promotion awaits CI and final audit of the exact branch.
+Promotion is based on executable evidence for two-leg causal rotation, durable departure timing, crew/aircraft ownership, inspection pass/fail, AOG part gating, priority maintenance selection, committed preemption evidence, downstream AOG delay propagation, post-commit dispatch/landing/inspection/maintenance reconciliation, and restart equivalence across ScheduledWork, ResourceDemand, StoreGetResult, PreemptiveResourceReservation, and maintenance-completion boundaries.
