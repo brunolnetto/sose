@@ -322,20 +322,12 @@ def claim_next_for_assessment(
         return None
 
     get_id = f"claim-pick:{worker_id}:{assessment_ordinal}"
-    result = engine.stores.result(get_id)
-    if result is None:
-        if not any(
-            request.request_id == get_id
-            for request in persistence.store_get_requests()
-        ):
-            engine.stores.get(
-                backend,
-                store_name="claim_queue",
-                request_id=get_id,
-                requested_at=backend.now,
-            )
-        backend.run_until(backend.now)
-        result = engine.stores.result(get_id)
+    result = engine.stores.ensure_selection(
+        backend,
+        store_name="claim_queue",
+        request_id=get_id,
+        requested_at=backend.now,
+    )
     if result is None:
         engine.resources.withdraw(backend, request_id)
         return None
