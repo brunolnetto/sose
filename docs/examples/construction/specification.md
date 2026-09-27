@@ -63,7 +63,7 @@ Target reference-grade durable truth:
 
 - Activity / Inspection / Measurement entities;
 - Command + DomainEvent history;
-- ScheduledWork for milestone/dependency timing where applicable;
+- ScheduledWork for the durable planned-start milestone and other milestone/dependency timing;
 - ResourceDemand / ResourceReservation / ResourceReleaseIntent for crew/equipment/inspector;
 - Store/Container truth for material identity and quantity;
 - ScenarioRuntimeState;
@@ -150,15 +150,17 @@ inspection-failure/rework and measured-before-complete boundaries.
 
 ## 8. Restart semantics
 
-Reference-grade gates will cover:
+Reference-grade gates cover:
 
 1. blocked dependency;
-2. waiting material;
-3. resource demand pending;
-4. execution capacity held;
-5. failed inspection before rework;
-6. rework waiting for capacity;
-7. measured with completion still pending.
+2. waiting material / partially committed material staging;
+3. durable planned-start ScheduledWork before resource demand;
+4. resource demand pending and outage cleanup;
+5. execution capacity held with post-finish cleanup;
+6. failed inspection before rework;
+7. rework waiting for capacity;
+8. inspector cleanup after accept/reject;
+9. measured with completion still pending.
 
 ## 9. Executable evidence
 
@@ -171,17 +173,19 @@ Reference-grade gates will cover:
 | Inspection StateChart | statecharts.py + topology test | implemented |
 | direct probabilistic gating | TransitionPolicy test | implemented |
 | construction scenarios | scenarios.py | implemented |
-| dependency execution | — | missing |
-| material identity / quantity | — | missing |
-| crew / equipment / inspector resources | — | missing |
-| inspection / rework execution | — | missing |
-| measurement completion gate | — | missing |
-| finite scenario recovery | — | missing |
-| restart equivalence | — | missing |
+| dependency execution | predecessor measurement/completion gate + tests | implemented |
+| material identity / quantity | Store + Container staging + crash-recovery tests | implemented |
+| crew / equipment / inspector resources | durable Resource reconcilers + contention/outage cleanup tests | implemented |
+| inspection / rework execution | immutable inspection occurrences + reinspection tests | implemented |
+| measurement completion gate | ConstructionMeasurement evidence + predecessor/activity tests | implemented |
+| finite scenario recovery | procurement/weather disruption tests | implemented |
+| restart equivalence | planned-start and failed-inspection/rework restart tests | implemented |
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-Reference promotion requires executable prerequisite/resource/inspection/rework/measurement
-evidence and restart equivalence across the stated boundaries.
+Promotion is based on executable evidence for predecessor and measurement gates, Store+Container
+material staging, durable planned-start scheduling, crew/equipment/inspector ownership,
+post-commit cleanup recovery, immutable inspection/reinspection identity, finite disruption
+recovery, and restart equivalence across planned-start and failed-inspection/rework boundaries.
