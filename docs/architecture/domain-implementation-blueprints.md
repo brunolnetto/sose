@@ -1536,7 +1536,7 @@ At the time of this document:
 - **Order-to-Cash**: Reference implementation. Durable credit/fulfillment gates, partial fulfillment, invoice→Receivable causality, due/overdue ScheduledWork, CollectionCase recovery, collection resources/follow-up, scenario recovery, illegal prerequisite checks, and restart equivalence are executable.
 - **Record-to-Report**: Reference implementation. Journal/reconciliation/adjustment causality, durable close ScheduledWork, posting/reconciliation/close Resources, controlled reopening, finite scenarios, post-commit cleanup recovery, illegal prerequisite checks, and restart equivalence are executable.
 - **Insurance**: Reference implementation. Coverage/documentation/assessment/fraud/reserve/payment lifecycles, severity-prioritized queueing, durable deadlines/payment dates, adjuster/fraud/payment Resources, partial payout, rejected-claim reopening, finite scenarios, post-commit crash recovery, and restart equivalence are executable.
-- **Airports**: Partial. Turnaround/gate/service/baggage/slot lifecycles, durable arrival/slot timing, gate/ground/tug capacity, priority departure queueing, disruptions, crash recovery, and restart evidence are implemented; promotion awaits CI/final audit.
+- **Airports**: Reference implementation. Durable arrival/slot timing, gate ownership and reallocation, ground-service/baggage prerequisites, PriorityStore departure ordering, committed StoreGetResult recovery, tug capacity, finite congestion/weather scenarios, post-commit crash recovery, and restart equivalence are executable.
 - All other domains in this document: Blueprint.
 
 ---
