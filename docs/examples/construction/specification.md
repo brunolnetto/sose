@@ -5,14 +5,15 @@
 This example models a construction Activity from planning through dependency release, material
 readiness, crew/equipment acquisition, execution, inspection, measurement and completion.
 A separate ConstructionInspection represents each acceptance occurrence so a failed inspection
-remains immutable evidence after rework and a later reinspection succeeds.
+remains immutable evidence after rework and a later reinspection succeeds. A
+ConstructionMeasurement is immutable completion evidence rather than a silent Activity attribute.
 
 The domain is a composition reference: dependency truth, material truth, resource ownership,
 inspection evidence and measurement evidence remain separate durable facts.
 
 Initial scope:
 
-- ConstructionActivity and ConstructionInspection durable entities;
+- ConstructionActivity, ConstructionInspection and ConstructionMeasurement durable entities;
 - predecessor dependency gating;
 - material shortage/readiness;
 - crew and equipment capacity;
@@ -33,8 +34,8 @@ durable occurrence. A passed inspection permits acceptance; a failed inspection 
 evidence and routes the Activity to rework. Rework reacquires execution capacity and requires a
 new inspection occurrence.
 
-After acceptance the Activity is measured. Completion is gated by durable measurement evidence
-in the Activity attributes; measurement is not modeled as a meaningless StateChart self-loop.
+After acceptance the Activity is measured. Completion is gated by a correlated immutable
+ConstructionMeasurement entity; measurement is not modeled as a meaningless StateChart self-loop.
 
 ## 3. Domain entities
 
@@ -50,11 +51,17 @@ States: pending, inspecting, passed, failed, voided.
 `passed` and `failed` are terminal for one inspection occurrence. Reinspection after rework creates
 a new deterministic correlated inspection identity.
 
+### 3.3 ConstructionMeasurement
+
+A single immutable `recorded` evidence entity stores the measured value for the Activity.
+Completion requires a positive correlated ConstructionMeasurement; no mutable measurement flag is
+used as the authoritative completion proof.
+
 ## 4. Durable operational model
 
 Target reference-grade durable truth:
 
-- Activity / Inspection entities;
+- Activity / Inspection / Measurement entities;
 - Command + DomainEvent history;
 - ScheduledWork for milestone/dependency timing where applicable;
 - ResourceDemand / ResourceReservation / ResourceReleaseIntent for crew/equipment/inspector;
@@ -132,7 +139,7 @@ CONST-04 — Inspection identity: failed inspection remains terminal evidence af
 
 CONST-05 — Acceptance gate: Activity accepts only after a correlated Inspection has passed.
 
-CONST-06 — Measurement gate: Activity completes only with durable measurement evidence.
+CONST-06 — Measurement gate: Activity completes only with a positive correlated durable ConstructionMeasurement.
 
 CONST-07 — Rework reacquisition: rework cannot resume execution without reacquiring required capacity.
 
@@ -159,6 +166,7 @@ Reference-grade gates will cover:
 |---|---|---|
 | Activity entity | entities.py | implemented |
 | Inspection entity | entities.py | implemented |
+| Measurement entity | entities.py | implemented |
 | Activity StateChart | statecharts.py + topology test | implemented |
 | Inspection StateChart | statecharts.py + topology test | implemented |
 | direct probabilistic gating | TransitionPolicy test | implemented |
