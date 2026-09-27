@@ -228,8 +228,10 @@ erDiagram
 
     RESOURCE_DEFINITION ||--o{ RESOURCE_DEMAND : "dock / inspector demand"
     RESOURCE_DEMAND ||--o| RESOURCE_RESERVATION : "capacity grant"
+    RESOURCE_RESERVATION ||--o| RESOURCE_RELEASE_INTENT : "crash-safe release"
 
     STORE_DEFINITION ||--o{ DURABLE_STORE_ITEM : "received lot identity"
+    STORE_DEFINITION ||--o{ STORE_PUT_INTENT : "durable stocking intent"
     STORE_DEFINITION ||--o{ STORE_GET_REQUEST : "allocation withdrawal"
     STORE_GET_REQUEST ||--o| STORE_GET_RESULT : "terminal lot effect"
 
@@ -251,6 +253,8 @@ Relevant named durable objects are:
 
 The Store preserves lot identity while the Container preserves quantity. Allocation
 must establish joint feasibility before withdrawing either representation.
+`SimulationPosition` is the singleton logical recovery boundary for this process and
+is not given a fabricated entity relationship merely to make it visible in the ERD.
 
 ### 4.3 Persistence ownership
 
