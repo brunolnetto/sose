@@ -243,13 +243,13 @@ def reconcile_transfer(
 
     if shipment.state == "at_origin_hub":
         vehicle = engine.resources.ensure_requested(
-        backend,
-        resource_name="transfer_vehicle",
-        request_id=transfer_request,
-        requested_at=backend.now,
-    )
-    if vehicle is None:
-        return False
+            backend,
+            resource_name="transfer_vehicle",
+            request_id=transfer_request,
+            requested_at=backend.now,
+        )
+        if vehicle is None:
+            return False
 
         dequeue_id = f"origin-dequeue:{shipment.id}"
         if not any(
