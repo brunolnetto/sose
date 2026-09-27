@@ -623,6 +623,25 @@ def reconcile_departure(
             )
         return True
 
+    # slot_ready / slot consumption may commit before the final departure
+    # transition. Recovery must finish pushback without requiring a fresh slot
+    # or a second departure-queue item.
+    if turnaround.state == "pushback":
+        _dispatch(
+            engine,
+            turnaround,
+            "depart",
+            key=("airport", turnaround.id, "depart"),
+            correlation_id=flow_correlation_id(turnaround.id),
+        )
+        return reconcile_departure(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            dispatcher_id=dispatcher_id,
+        )
+
     if turnaround.state != "waiting_slot":
         return False
     if slot.state not in {"due", "delayed"}:
