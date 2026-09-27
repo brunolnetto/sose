@@ -157,13 +157,17 @@ The business interrupt must never precede durable preemption evidence.
 
 ### 6.5 Sad path — transfer
 
-Transfer is explicit terminal Admission state from waiting_bed or waiting_icu. It is never
-represented by silent removal from a wait queue.
+Transfer is explicit terminal Admission state either before ward-queue commitment from
+`triaged`, or from `waiting_icu`. This reference intentionally does not transfer an Admission
+already committed as a live ward PriorityStore item because SOSE does not expose targeted
+removal of an arbitrary accepted Store item; avoiding that unsupported mutation prevents stale
+queue truth.
 
 ## 7. Commands and domain events
 
 Admission commands: triage, wait_bed, allocate_bed, start_treatment, deteriorate,
-allocate_icu, ready_discharge, discharge, transfer.
+allocate_icu, ready_discharge, discharge, transfer. Early transfer is legal only from
+`triaged`; post-deterioration transfer is legal from `waiting_icu`.
 
 TreatmentEpisode commands: queue, start, interrupt, resume, complete, cancel.
 
@@ -221,17 +225,19 @@ surge introduces emergency pressure on the procedure suite. Scenarios do not ass
 | TreatmentEpisode StateChart | statecharts.py + topology test | implemented |
 | direct probabilistic gating | TransitionPolicy test | implemented |
 | hospital scenarios | scenarios.py | implemented |
-| durable triage queue | — | missing |
-| ward / ICU / clinical-team resources | — | missing |
-| preemptive procedure execution | — | missing |
-| preemption recovery | — | missing |
-| happy / contention / transfer paths | — | missing |
-| scenario recovery | — | missing |
-| restart equivalence | — | missing |
+| durable triage queue | PriorityStore + acuity-order and restart tests | implemented |
+| ward / ICU / clinical-team resources | durable Resource reconcilers + cleanup tests | implemented |
+| preemptive procedure execution | procedure-suite PreemptiveResource + path tests | implemented |
+| preemption recovery | committed-preemption crash-boundary restart test | implemented |
+| happy / contention / transfer paths | ward/ICU/priority/transfer tests | implemented |
+| scenario recovery | occupancy and emergency-procedure finite-scenario tests | implemented |
+| restart equivalence | triage-wait and preemption restart-equivalence tests | implemented |
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-Reference promotion requires executable queue/resource/preemption/recovery behavior and restart
-evidence for the stated boundaries.
+Promotion is based on executable evidence for acuity-ordered triage, scarce ward/ICU/team
+capacity, transfer cleanup, Admission-gated procedures, committed preemption evidence,
+interrupt/reacquisition/resume recovery, finite occupancy/emergency scenarios, and restart
+equivalence across triage and preemption boundaries.
