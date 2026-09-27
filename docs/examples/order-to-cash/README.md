@@ -8,4 +8,4 @@ It separates commercial commitment (`SalesOrder`), financial obligation (`Receiv
 
 See [specification.md](specification.md) for the authoritative contract.
 
-Reference-grade promotion still requires durable credit/fulfillment resources, invoice-to-receivable creation, due/overdue ScheduledWork, collection assignment, scenario recovery, end-to-end paths, and restart equivalence.
+Implemented operational evidence now covers credit/fulfillment gating, invoice-to-receivable causality, durable due/overdue scheduling, collection assignment/follow-up, partial fulfillment, and finite scenario recovery. Reference promotion still requires broader restart-equivalence coverage across the remaining cross-entity boundaries.
