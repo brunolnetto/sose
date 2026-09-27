@@ -84,13 +84,14 @@ def test_pending_sla_escalation_is_restart_equivalent():
     r_entities, _, r_backend_before, r_sla = _progress_to_owned_sla_wait(
         restarted
     )
-    restart_at = r_backend_before.now
-    _, rebuilt_engine = build_runtime(
+    rebuilt = restart_reference_runtime(
         restarted,
-        now=restart_at,
+        build_runtime,
+        r_backend_before,
+        backend_factory=SimPyBackend,
     )
-    rebuilt_backend = SimPyBackend(origin=restart_at)
-    rebuilt_engine.rebuild_backend(rebuilt_backend)
+    rebuilt_engine = rebuilt.engine
+    rebuilt_backend = rebuilt.backend
     _finish(
         restarted,
         r_entities,
