@@ -237,3 +237,72 @@ def test_departure_reconciler_never_consumes_another_flights_priority_item():
     }
     assert "departure:other-flight" in items
     assert f"departure:{entities.turnaround_id}" in items
+
+
+def test_reallocated_gate_releases_stale_reservation_after_crash():
+    persistence, entities, engine, backend = _arrived_at_gate()
+    assert reconcile_gate(persistence, engine, backend, entities=entities)
+
+    turnaround = persistence.entity(
+        "airport_flight_turnaround",
+        entities.turnaround_id,
+    )
+    assignment = persistence.entity(
+        "airport_gate_assignment",
+        entities.gate_assignment_id,
+    )
+    assert turnaround is not None and assignment is not None
+
+    old_reservation = next(
+        r
+        for r in persistence.resource_reservations()
+        if r.request_id == f"gate:{entities.turnaround_id}"
+    )
+    correlation_id = flow_correlation_id(turnaround.id)
+
+    command = engine.context.commands.create(
+        "reallocate_gate",
+        target=turnaround,
+        correlation_id=correlation_id,
+        key=("airport-crash-reallocation", turnaround.id, "turnaround"),
+    )
+    engine.dispatch(command)
+    command = engine.context.commands.create(
+        "reallocate",
+        target=assignment,
+        correlation_id=correlation_id,
+        key=("airport-crash-reallocation", assignment.id, "assignment"),
+    )
+    engine.dispatch(command)
+
+    assert persistence.entity(
+        "airport_flight_turnaround",
+        entities.turnaround_id,
+    ).state == "gate_hold"
+    assert persistence.entity(
+        "airport_gate_assignment",
+        entities.gate_assignment_id,
+    ).state == "reallocated"
+    assert any(
+        r.reservation_id == old_reservation.reservation_id
+        for r in persistence.resource_reservations()
+    )
+
+    assert reconcile_gate(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+
+    assignment = persistence.entity(
+        "airport_gate_assignment",
+        entities.gate_assignment_id,
+    )
+    current = next(
+        r
+        for r in persistence.resource_reservations()
+        if r.request_id == f"gate:{entities.turnaround_id}"
+    )
+    assert assignment is not None and assignment.state == "occupied"
+    assert current.reservation_id != old_reservation.reservation_id
