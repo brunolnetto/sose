@@ -495,24 +495,30 @@ def land_flight(
     flight = _flight(persistence, flight_id)
     aircraft = _aircraft(persistence, entities)
     crew = _crew(persistence, _crew_for_flight(entities, flight_id))
-    if flight.state != "airborne" or aircraft.state != "airborne":
-        raise RuntimeError("landing requires airborne flight and aircraft")
+    if flight.state not in {"airborne", "landed", "inspection"}:
+        raise RuntimeError(f"flight cannot reconcile landing from {flight.state}")
+    if aircraft.state not in {"airborne", "inspection"}:
+        raise RuntimeError(f"aircraft cannot reconcile landing from {aircraft.state}")
     correlation_id = flow_correlation_id(aircraft.id)
 
-    _dispatch(
-        engine,
-        flight,
-        "land",
-        key=("aviation", flight.id, "land"),
-        correlation_id=correlation_id,
-    )
-    _dispatch(
-        engine,
-        aircraft,
-        "land",
-        key=("aviation-aircraft", aircraft.id, flight.id, "land"),
-        correlation_id=correlation_id,
-    )
+    if flight.state == "airborne":
+        _dispatch(
+            engine,
+            flight,
+            "land",
+            key=("aviation", flight.id, "land"),
+            correlation_id=correlation_id,
+        )
+    aircraft = _aircraft(persistence, entities)
+    if aircraft.state == "airborne":
+        _dispatch(
+            engine,
+            aircraft,
+            "land",
+            key=("aviation-aircraft", aircraft.id, flight.id, "land"),
+            correlation_id=correlation_id,
+        )
+
     crew = _crew(persistence, crew.id)
     if crew.state == "active":
         _dispatch(
@@ -530,13 +536,14 @@ def land_flight(
     )
 
     flight = _flight(persistence, flight.id)
-    _dispatch(
-        engine,
-        flight,
-        "inspect",
-        key=("aviation", flight.id, "inspect"),
-        correlation_id=correlation_id,
-    )
+    if flight.state == "landed":
+        _dispatch(
+            engine,
+            flight,
+            "inspect",
+            key=("aviation", flight.id, "inspect"),
+            correlation_id=correlation_id,
+        )
     return ensure_inspection(
         persistence,
         engine,
