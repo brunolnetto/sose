@@ -18,14 +18,13 @@ This document defines **implementation blueprints** for applying SOSE to common
 operational domains. It is architectural documentation, not a claim that every
 domain below already has production code in the repository.
 
-The current reference implementation is MRO under:
+The repository currently contains fourteen promoted Reference implementations.
+Their executable status is declared in `tests/support/reference_catalog.py` and
+validated by the reference-conformance suite.
 
-```text
-src/sose/examples/mro/
-```
-
-The remaining domains describe how an implementation should map domain concepts
-onto the same SOSE kernel.
+The blueprints below include both promoted references and future domains. The
+status section near the end of this document is authoritative for promotion
+state; blueprint prose alone is not a claim of executable coverage.
 
 ---
 
