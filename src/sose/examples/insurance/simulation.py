@@ -176,47 +176,6 @@ def _dispatch(engine, entity, event, *, key, correlation_id):
     engine.dispatch(command)
 
 
-def _request_exists(persistence, request_id):
-    return any(d.request_id == request_id for d in persistence.resource_demands()) or any(
-        r.request_id == request_id for r in persistence.resource_reservations()
-    )
-
-
-def _reservation(persistence, request_id):
-    return next(
-        (r for r in persistence.resource_reservations() if r.request_id == request_id),
-        None,
-    )
-
-
-def _request_resource(
-    persistence,
-    engine,
-    backend,
-    *,
-    resource_name,
-    request_id,
-    priority=100,
-):
-    if not _request_exists(persistence, request_id):
-        engine.resources.request(
-            backend,
-            resource_name=resource_name,
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=priority,
-        )
-    backend.run_until(backend.now)
-    return _reservation(persistence, request_id)
-
-
-def _release(persistence, engine, backend, *, request_id):
-    reservation = _reservation(persistence, request_id)
-    if reservation is not None:
-        engine.resources.release(backend, reservation.reservation_id)
-        backend.run_until(backend.now)
-
-
 def _scheduled_command(persistence, *, entity_type, entity_id, name):
     for work in persistence.scheduled_work():
         command = persistence.command(work.command_id)
@@ -389,12 +348,11 @@ def claim_next_for_assessment(
         backend.run_until(backend.now)
         return None
 
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="claims_adjuster",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return None
@@ -571,12 +529,11 @@ def reconcile_fraud(
         _release(persistence, engine, backend, request_id=request_id)
         return investigation.state == "cleared"
 
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="fraud_investigator",
         request_id=request_id,
+        requested_at=backend.now,
         priority=1,
     )
     if reservation is None:
@@ -804,12 +761,11 @@ def reconcile_payment(
         backend.run_until(backend.now)
         return False
 
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="payment_processor",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return False
