@@ -164,7 +164,7 @@ def request_receiving_slot(
     requested_at: datetime,
     priority: int = 100,
 ):
-    return engine.resources.request(
+    return engine.resources.ensure_requested(
         backend,
         resource_name="receiving_dock",
         request_id=f"receiving-dock:{receipt_id}",
@@ -181,32 +181,12 @@ def request_inspector(
     requested_at: datetime,
     priority: int = 100,
 ):
-    return engine.resources.request(
+    return engine.resources.ensure_requested(
         backend,
         resource_name="inspector",
         request_id=f"inspector:{receipt_id}",
         requested_at=requested_at,
         priority=priority,
-    )
-
-
-def _resource_request_exists(persistence: MemoryPersistence, request_id: str) -> bool:
-    return any(
-        demand.request_id == request_id for demand in persistence.resource_demands()
-    ) or any(
-        reservation.request_id == request_id
-        for reservation in persistence.resource_reservations()
-    )
-
-
-def _reservation_for(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
     )
 
 
@@ -237,18 +217,14 @@ def reconcile_receiving_resources(
     if receipt is None:  # pragma: no cover - seed invariant
         raise RuntimeError("receipt was not persisted")
 
-    if receipt.state == "pending" and not _resource_request_exists(
-        persistence, dock_request_id
-    ):
-        request_receiving_slot(
+    dock = None
+    if receipt.state == "pending":
+        dock = request_receiving_slot(
             engine,
             backend,
             receipt_id=entities.receipt_id,
             requested_at=backend.now,
         )
-    backend.run_until(backend.now)
-
-    dock = _reservation_for(persistence, dock_request_id)
     if receipt.state == "pending" and dock is None:
         return False
 
@@ -271,10 +247,7 @@ def reconcile_receiving_resources(
         )
         engine.dispatch(reject)
         receipt = persistence.entity("receipt", entities.receipt_id)
-        dock = _reservation_for(persistence, dock_request_id)
-        if dock is not None:
-            engine.resources.release(backend, dock.reservation_id)
-            backend.run_until(backend.now)
+        engine.resources.withdraw(backend, dock_request_id)
         return True
 
     if receipt.state == "receiving" and outcome == "partial":
@@ -287,18 +260,14 @@ def reconcile_receiving_resources(
         engine.dispatch(partial)
         receipt = persistence.entity("receipt", entities.receipt_id)
 
-    if receipt.state in {"receiving", "partial"} and not _resource_request_exists(
-        persistence, inspector_request_id
-    ):
-        request_inspector(
+    inspector = None
+    if receipt.state in {"receiving", "partial"}:
+        inspector = request_inspector(
             engine,
             backend,
             receipt_id=entities.receipt_id,
             requested_at=backend.now,
         )
-    backend.run_until(backend.now)
-
-    inspector = _reservation_for(persistence, inspector_request_id)
     if receipt.state in {"receiving", "partial"} and inspector is None:
         return False
 
@@ -314,10 +283,7 @@ def reconcile_receiving_resources(
 
     if receipt.state == "inspected":
         for request_id in (inspector_request_id, dock_request_id):
-            reservation = _reservation_for(persistence, request_id)
-            if reservation is not None:
-                engine.resources.release(backend, reservation.reservation_id)
-                backend.run_until(backend.now)
+            engine.resources.withdraw(backend, request_id)
         return True
 
     return receipt.state == "stocked"
