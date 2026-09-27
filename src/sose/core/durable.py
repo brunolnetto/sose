@@ -84,6 +84,82 @@ class DurableScheduler:
 
         return work
 
+    def find_pending(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        name: str,
+    ) -> DurableScheduledItem | None:
+        """Return the unique pending work matching one target command.
+
+        A missing match means the work is already absent or consumed. Multiple
+        matches are rejected because callers that expect one lifecycle should not
+        silently pick an arbitrary duplicate.
+        """
+        matches = tuple(
+            item
+            for item in self.pending()
+            if item.command.entity_type == entity_type
+            and item.command.entity_id == entity_id
+            and item.command.name == name
+        )
+        if len(matches) > 1:
+            raise RuntimeError(
+                "multiple pending scheduled commands match "
+                f"{entity_type}/{entity_id}:{name}"
+            )
+        return None if not matches else matches[0]
+
+    def cancel(self, work_id: str) -> bool:
+        """Atomically remove pending work and its persisted command.
+
+        Backend callbacks already queued for this work may still fire. They are
+        intentionally harmless: Engine.dispatch_scheduled() rechecks durable
+        ownership and returns False for a cancelled/consumed item.
+        """
+        work = next(
+            (
+                candidate
+                for candidate in self._persistence.scheduled_work()
+                if candidate.work_id == work_id
+            ),
+            None,
+        )
+        if work is None:
+            return False
+        command = self._persistence.command(work.command_id)
+        if command is None:
+            raise RuntimeError(
+                f"scheduled work references missing command: {work.work_id}/{work.command_id}"
+            )
+
+        with self._persistence.transaction() as uow:
+            persisted_work = uow.get_scheduled_work(work.work_id)
+            persisted_command = uow.get_command(command.command_id)
+            if persisted_work != work or persisted_command != command:
+                return False
+            uow.delete_scheduled_work(work.work_id)
+            uow.delete_command(command.command_id)
+        return True
+
+    def cancel_pending(
+        self,
+        *,
+        entity_type: str,
+        entity_id: str,
+        name: str,
+    ) -> bool:
+        """Cancel the unique pending command matching one semantic lifecycle."""
+        item = self.find_pending(
+            entity_type=entity_type,
+            entity_id=entity_id,
+            name=name,
+        )
+        if item is None:
+            return False
+        return self.cancel(item.work.work_id)
+
     def due(self, at) -> tuple[DurableScheduledItem, ...]:
         return tuple(item for item in self.pending() if item.work.due_at <= at)
 
