@@ -306,3 +306,106 @@ def test_reallocated_gate_releases_stale_reservation_after_crash():
     )
     assert assignment is not None and assignment.state == "occupied"
     assert current.sequence > old_reservation.sequence
+
+
+def test_waiting_slot_recovers_missing_departure_queue_item():
+    persistence, entities, engine, backend = _arrived_at_gate()
+    assert reconcile_gate(persistence, engine, backend, entities=entities)
+    assert reconcile_ground_service(
+        persistence, engine, backend, entities=entities
+    )
+    assert reconcile_baggage(
+        persistence, engine, entities=entities
+    )
+
+    turnaround = persistence.entity(
+        "airport_flight_turnaround",
+        entities.turnaround_id,
+    )
+    assert turnaround is not None and turnaround.state == "boarding"
+    command = engine.context.commands.create(
+        "start_boarding",
+        target=turnaround,
+        correlation_id=flow_correlation_id(turnaround.id),
+        key=("airport-crash-queue", turnaround.id, "start-boarding"),
+    )
+    engine.dispatch(command)
+
+    assert persistence.entity(
+        "airport_flight_turnaround",
+        entities.turnaround_id,
+    ).state == "waiting_slot"
+    assert not any(
+        item.store_name == "departure_queue"
+        for item in persistence.store_items()
+    )
+
+    queue_departure(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    assert any(
+        item.item_id == f"departure:{entities.turnaround_id}"
+        for item in persistence.store_items()
+    )
+
+
+def test_baggage_delay_reconciles_turnaround_wait_state_after_crash():
+    persistence, entities, engine, backend = _arrived_at_gate()
+    assert reconcile_gate(persistence, engine, backend, entities=entities)
+    assert reconcile_ground_service(
+        persistence, engine, backend, entities=entities
+    )
+
+    baggage = persistence.entity(
+        "airport_baggage_flow",
+        entities.baggage_flow_id,
+    )
+    turnaround = persistence.entity(
+        "airport_flight_turnaround",
+        entities.turnaround_id,
+    )
+    assert baggage is not None and turnaround is not None
+
+    for event in ("start", "delay"):
+        command = engine.context.commands.create(
+            event,
+            target=baggage,
+            correlation_id=flow_correlation_id(turnaround.id),
+            key=("airport-crash-baggage", baggage.id, event),
+        )
+        engine.dispatch(command)
+        baggage = persistence.entity(
+            "airport_baggage_flow",
+            entities.baggage_flow_id,
+        )
+        assert baggage is not None
+
+    assert baggage.state == "delayed"
+    assert turnaround.state == "boarding"
+
+    assert reconcile_baggage(
+        persistence,
+        engine,
+        entities=entities,
+    )
+    baggage = persistence.entity(
+        "airport_baggage_flow",
+        entities.baggage_flow_id,
+    )
+    turnaround = persistence.entity(
+        "airport_flight_turnaround",
+        entities.turnaround_id,
+    )
+    assert baggage is not None and baggage.state == "ready"
+    assert turnaround is not None and turnaround.state == "boarding"
+
+    events = [
+        event.name
+        for event in persistence.domain_events()
+        if event.entity_id == entities.turnaround_id
+    ]
+    assert "baggage_delayed" in events
+    assert "baggage_ready" in events
