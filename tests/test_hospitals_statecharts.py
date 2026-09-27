@@ -20,7 +20,9 @@ def test_admission_chart_covers_bed_icu_discharge_and_transfer():
     assert ("waiting_icu", "allocate_icu", ("icu",)) in edges
     assert ("icu", "ready_discharge", ("discharge_ready",)) in edges
     assert ("discharge_ready", "discharge", ("discharged",)) in edges
+    assert ("triaged", "transfer", ("transferred",)) in edges
     assert ("waiting_icu", "transfer", ("transferred",)) in edges
+    assert ("waiting_bed", "transfer", ("transferred",)) not in edges
 
 
 def test_treatment_episode_models_preemption_explicitly():
