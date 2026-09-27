@@ -557,8 +557,8 @@ def reconcile_baggage(
         _dispatch(
             engine,
             baggage,
-            "ready",
-            key=("airport-baggage", baggage.id, "ready"),
+            "mark_ready",
+            key=("airport-baggage", baggage.id, "mark-ready"),
             correlation_id=correlation_id,
         )
     turnaround = _turnaround(persistence, entities)
