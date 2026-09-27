@@ -294,18 +294,18 @@ Failed attempt then retry:
 | DeliveryAttempt StateChart | statecharts.py + topology test | implemented |
 | stochastic delivery outcome | TransitionPolicy + test | implemented |
 | logistics scenarios | scenarios.py | implemented |
-| durable pickup scheduling | — | missing |
-| hub Store queues | — | missing |
-| constrained courier/dock/vehicle resources | — | missing |
-| failed-attempt durable retry execution | — | missing |
-| end-to-end happy path | — | missing |
-| hub congestion sad path | — | missing |
-| restart equivalence | — | missing |
+| durable pickup scheduling | `seed_reference` + scheduler execution | implemented |
+| hub Store queues | `reconcile_origin_hub` / `reconcile_transfer` | implemented |
+| constrained courier/dock/vehicle resources | durable Resource reconcilers + contention test | implemented |
+| failed-attempt durable retry execution | `reconcile_delivery_failure` + distinct retry attempt | implemented |
+| end-to-end happy path | `run_happy_path` + test | implemented |
+| hub congestion sad path | durable transfer contention test | implemented |
+| restart equivalence | failed-attempt/retry restart-equivalence test | implemented |
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-The lifecycle contract is executable, but the domain must not be promoted to Reference
-implementation until queue/capacity mechanics, durable scheduling, end-to-end happy/sad
-flows, and restart-equivalence evidence are implemented.
+Promotion is based on executable evidence for durable pickup scheduling, hub queues,
+capacity-gated movement, immutable failed-attempt history with durable retry, finite
+scenario disruption/recovery, happy-path execution, contention, and restart equivalence.
