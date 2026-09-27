@@ -232,17 +232,18 @@ Reopen:
 | Escalation StateChart | statecharts.py + topology test | implemented |
 | direct probabilistic gating | TransitionPolicy tests | implemented |
 | ITSM scenarios | scenarios.py | implemented |
-| durable priority incident queue | — | missing |
-| support / escalation resources | — | missing |
-| SLA / escalation scheduling | — | missing |
-| happy path | — | missing |
-| contention / escalation sad paths | — | missing |
-| reopen execution | — | missing |
-| restart equivalence | — | missing |
+| durable priority incident queue | PriorityStore + severity-order test | implemented |
+| support / escalation resources | durable Resource reconcilers + tests | implemented |
+| SLA / escalation scheduling | durable `ScheduledWork` + escalation flow | implemented |
+| happy path | `run_happy_path` + test | implemented |
+| contention / escalation sad paths | priority queue + SLA escalation tests | implemented |
+| reopen execution | resolution/reopen regression test | implemented |
+| restart equivalence | pending-SLA restart-equivalence test | implemented |
 
 ## Promotion decision
 
-Current status: **Partial**.
+Current status: **Reference implementation**.
 
-Reference promotion requires durable queue/capacity/SLA mechanics, complete happy and sad
-execution, finite scenario recovery, and restart-equivalence evidence.
+Promotion is based on executable evidence for durable severity ordering, support ownership,
+SLA-triggered escalation, independent Escalation identity, finite staff-shortage recovery,
+resolve/reopen history, and restart equivalence across a pending SLA.
