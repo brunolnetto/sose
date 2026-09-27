@@ -1,6 +1,6 @@
 # Record-to-Report
 
-Status: **Partial**
+Status: **Reference implementation**
 
 This domain is being promoted from Blueprint into a reference-grade accounting-close example.
 
@@ -8,4 +8,4 @@ It separates journal posting, reconciliation, adjustment, close-task execution, 
 
 See [specification.md](specification.md) for the authoritative contract.
 
-Operational evidence is implemented for posting, reconciliation, adjustment, scheduled close, close-team capacity, controlled reopening, scenarios, illegal prerequisites, and restart equivalence. Promotion remains pending CI and review.
+The reference implementation includes posting, reconciliation, adjustment causality, durable close scheduling, posting/reconciliation/close capacity, controlled reopening, finite scenarios, illegal prerequisite rejection, post-commit cleanup recovery, and restart equivalence.
