@@ -137,63 +137,6 @@ def _dispatch(
     engine.dispatch(command)
 
 
-def _resource_request_exists(
-    persistence: MemoryPersistence,
-    request_id: str,
-) -> bool:
-    return any(
-        demand.request_id == request_id for demand in persistence.resource_demands()
-    ) or any(
-        reservation.request_id == request_id
-        for reservation in persistence.resource_reservations()
-    )
-
-
-def _reservation_for(persistence: MemoryPersistence, request_id: str):
-    return next(
-        (
-            reservation
-            for reservation in persistence.resource_reservations()
-            if reservation.request_id == request_id
-        ),
-        None,
-    )
-
-
-def _request_resource(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    resource_name: str,
-    request_id: str,
-    priority: int = 100,
-):
-    if not _resource_request_exists(persistence, request_id):
-        engine.resources.request(
-            backend,
-            resource_name=resource_name,
-            request_id=request_id,
-            requested_at=backend.now,
-            priority=priority,
-        )
-    backend.run_until(backend.now)
-    return _reservation_for(persistence, request_id)
-
-
-def _release(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    request_id: str,
-) -> None:
-    reservation = _reservation_for(persistence, request_id)
-    if reservation is not None:
-        engine.resources.release(backend, reservation.reservation_id)
-        backend.run_until(backend.now)
-
-
 def _sla_work_for(
     persistence: MemoryPersistence,
     incident_id: str,
@@ -299,12 +242,11 @@ def claim_next_incident(
         return None
 
     request_id = f"support-agent:{claim_id}"
-    reservation = _request_resource(
-        persistence,
-        engine,
+    reservation = engine.resources.ensure_requested(
         backend,
         resource_name="support_agent",
         request_id=request_id,
+        requested_at=backend.now,
     )
     if reservation is None:
         return None
@@ -318,7 +260,7 @@ def claim_next_incident(
     )
 
     if result is None:
-        _release(persistence, engine, backend, request_id=request_id)
+        engine.resources.withdraw(backend, request_id)
         return None
 
     incident_id = str(result.item.value["incident_id"])
@@ -350,12 +292,7 @@ def release_incident_owner(
     *,
     claim_id: str,
 ) -> None:
-    _release(
-        persistence,
-        engine,
-        backend,
-        request_id=f"support-agent:{claim_id}",
-    )
+    engine.resources.withdraw(backend, f"support-agent:{claim_id}")
 
 
 def resolve_incident(
@@ -468,12 +405,11 @@ def reconcile_escalation(
         incident_id=incident.id,
     )
     request_id = f"escalation-manager:{escalation.id}"
-    manager = _request_resource(
-        persistence,
-        engine,
+    manager = engine.resources.ensure_requested(
         backend,
         resource_name="escalation_manager",
         request_id=request_id,
+        requested_at=backend.now,
         priority=1,
     )
     if manager is None:
@@ -506,7 +442,7 @@ def reconcile_escalation(
         backend,
         incident_id=incident.id,
     )
-    _release(persistence, engine, backend, request_id=request_id)
+    engine.resources.withdraw(backend, request_id)
     if claim_id is not None:
         release_incident_owner(
             persistence,
