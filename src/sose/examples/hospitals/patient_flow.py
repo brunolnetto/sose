@@ -161,6 +161,20 @@ def claim_next_ward_admission(
         request_id=team_request,
     )
     if bed is None or team is None:
+        if bed is not None:
+            _release_resource(
+                persistence,
+                engine,
+                backend,
+                request_id=bed_request,
+            )
+        if team is not None:
+            _release_resource(
+                persistence,
+                engine,
+                backend,
+                request_id=team_request,
+            )
         return None
 
     get_id = f"ward-claim:{claim_id}"
@@ -333,6 +347,20 @@ def reconcile_icu_allocation(
         priority=acuity,
     )
     if bed is None or team is None:
+        if bed is not None:
+            _release_resource(
+                persistence,
+                engine,
+                backend,
+                request_id=bed_request,
+            )
+        if team is not None:
+            _release_resource(
+                persistence,
+                engine,
+                backend,
+                request_id=team_request,
+            )
         return False
 
     current = admission(persistence, current.id)
