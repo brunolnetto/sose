@@ -457,6 +457,7 @@ def reconcile_escalation(
     backend: SimPyBackend,
     *,
     incident_id: str,
+    claim_id: str | None = None,
 ) -> bool:
     incident = _incident(persistence, incident_id)
     if incident.state != "escalated":
@@ -507,6 +508,13 @@ def reconcile_escalation(
         incident_id=incident.id,
     )
     _release(persistence, engine, backend, request_id=request_id)
+    if claim_id is not None:
+        release_incident_owner(
+            persistence,
+            engine,
+            backend,
+            claim_id=claim_id,
+        )
     return True
 
 
@@ -555,6 +563,14 @@ def run_escalation_path() -> tuple[MemoryPersistence, ITSMEntities]:
         backend,
         incident_id=entities.incident_id,
     )
+    claimed = claim_next_incident(
+        persistence,
+        engine,
+        backend,
+        claim_id="escalation",
+    )
+    if claimed != entities.incident_id:
+        raise RuntimeError("reference incident was not claimed")
     backend.run_until(sla_at)
     if _incident(persistence, entities.incident_id).state != "escalated":
         raise RuntimeError("SLA escalation did not fire")
@@ -563,6 +579,7 @@ def run_escalation_path() -> tuple[MemoryPersistence, ITSMEntities]:
         engine,
         backend,
         incident_id=entities.incident_id,
+        claim_id="escalation",
     ):
         raise RuntimeError("escalation capacity unavailable")
     return persistence, entities
