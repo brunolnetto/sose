@@ -5,6 +5,7 @@ from sose.core.engine import Engine
 from sose.persistence.memory import MemoryPersistence
 
 from .runtime import (
+    admission,
     dispatch,
     emergency_episode_id,
     episode,
@@ -22,6 +23,14 @@ def queue_treatment_episode(
     episode_id: str,
 ) -> None:
     current = episode(persistence, episode_id)
+    parent = admission(
+        persistence,
+        str(current.attributes["admission_id"]),
+    )
+    if parent.state not in {"treatment", "icu"}:
+        raise RuntimeError(
+            f"procedure requires Admission(treatment|icu), got {parent.state}"
+        )
     if current.state == "planned":
         dispatch(
             engine,
@@ -42,6 +51,13 @@ def reconcile_procedure_start(
     episode_id: str,
 ) -> bool:
     current = episode(persistence, episode_id)
+    parent = admission(
+        persistence,
+        str(current.attributes["admission_id"]),
+    )
+    if parent.state not in {"treatment", "icu"}:
+        return False
+
     if current.state == "planned":
         queue_treatment_episode(
             persistence,
