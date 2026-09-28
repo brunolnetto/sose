@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal, ROUND_HALF_EVEN
+import math
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
@@ -41,15 +41,19 @@ PAYMENT_DELAY = timedelta(hours=2)
 
 
 def _reference_minor_units(value: float) -> int:
-    decimal_value = Decimal(str(value))
-    if not decimal_value.is_finite():
-        raise ValueError("Reference payout amount must not contain fractional minor units")
-    scaled = decimal_value * 100
-    nearest = scaled.to_integral_value(rounding=ROUND_HALF_EVEN)
-    # Accept only ordinary binary-float noise around a cent-aligned decimal.
-    # The fixed Decimal tolerance never grows with magnitude, so a true
-    # fractional cent cannot become valid merely because the float is large.
-    if abs(scaled - nearest) > Decimal("1e-7"):
+    scaled = float(value) * 100
+    if not math.isfinite(scaled):
+        raise ValueError("Reference payout amount must be finite")
+
+    # Float inputs are accepted only while their representation is precise
+    # enough to distinguish a cent from a true sub-cent amount. Within that
+    # envelope, tolerate ordinary binary noise around the nearest cent.
+    ulp = math.ulp(scaled)
+    if ulp > 1e-4:
+        raise ValueError("Reference payout amount exceeds cent-safe float precision")
+    nearest = round(scaled)
+    tolerance = max(1e-7, 2 * ulp)
+    if abs(scaled - nearest) > tolerance:
         raise ValueError("Reference payout amount must not contain fractional minor units")
     return int(nearest)
 
