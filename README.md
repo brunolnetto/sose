@@ -20,7 +20,7 @@ SOSE is intended for domains with persistent entities, explicit lifecycle rules,
 causal relationships, exceptions and time: MRO, logistics, e-commerce, banking,
 manufacturing, healthcare, telecom, insurance, construction and supply chain.
 
-## v0.7 architecture
+## v0.8 architecture
 
 ```text
 StateChart
@@ -39,9 +39,15 @@ SOSE runtime
     = deterministic execution of all of the above
 ```
 
-v0.7 completes the durable operational-runtime boundary. SOSE owns semantic truth, determinism, causality, scheduling intent, resource ownership, queue/store state, preemption outcomes, quantitative container state, recovery position and persistence; SimPy remains an optional ephemeral execution backend reconstructed from durable semantics.
+v0.8 builds on the durable operational-runtime boundary with a stabilized public
+API, SQLite persistence portability, built-artifact release validation, a
+minimal adoption path, and repeated-restart/contention hardening. SOSE owns
+semantic truth, determinism, causality, scheduling intent, resource ownership,
+queue/store state, preemption outcomes, quantitative container state, recovery
+position and persistence; execution backends remain ephemeral and
+reconstructible.
 
-## v0.7 capabilities
+## v0.8 capabilities
 
 - deterministic logical clock;
 - scoped deterministic randomness;
@@ -60,7 +66,7 @@ v0.7 completes the durable operational-runtime boundary. SOSE owns semantic trut
 - causal metadata (`causation_id`, `correlation_id`) propagated by construction;
 - standardized state-transition events suitable for process mining;
 - state persisted independently from immutable event history;
-- persistence protocol with an in-memory adapter;
+- persistence protocol with in-memory and SQLite adapters;
 - MRO vertical slice;
 - deterministic Scenario Engine;
 - tick, event and scheduled scenario triggers;
@@ -87,7 +93,10 @@ v0.7 completes the durable operational-runtime boundary. SOSE owns semantic trut
 - crash-consistent preemptive resource semantics;
 - reusable crash-injection tests for persistence/backend boundaries;
 - backend-neutral persistence conformance suite;
-- ordered runtime recovery participants with validation-before-rebuild.
+- ordered runtime recovery participants with validation-before-rebuild;
+- explicit `sose.api` public facade with anti-drift tests;
+- built wheel/sdist installation validation in CI;
+- repeated-restart and contention hardening gates.
 
 
 ## Compatibility note
@@ -331,7 +340,7 @@ backend.create_resource("technicians", capacity=3)
 
 Domain code does not receive `simpy.Environment`, `simpy.Event`, generators, or native resource-request objects.
 
-The backend remains intentionally ephemeral in v0.7. Scheduled work, scenario runtime state, normal and preemptive resource ownership, Store semantics, Container state and the logical recovery position are persisted by SOSE and are sufficient to reconstruct a fresh backend after restart.
+The backend remains intentionally ephemeral in v0.8. Scheduled work, scenario runtime state, normal and preemptive resource ownership, Store semantics, Container state and the logical recovery position are persisted by SOSE and are sufficient to reconstruct a fresh backend after restart.
 
 ## Kernel invariants
 
@@ -351,23 +360,21 @@ The backend remains intentionally ephemeral in v0.7. Scheduled work, scenario ru
 
 ## Development direction
 
-v0.7 closed the durable operational-runtime milestone. Since then, the Reference
-suite has exercised the runtime across materially different domains including
-procurement, manufacturing, finance, insurance, telecom, utilities, transit,
-field service, hospitality, warehouse fulfillment, and subscription lifecycles.
+v0.8 closes the library-stabilization milestone: public API stability, SQLite
+persistence portability, built-artifact validation, release discipline, a
+minimal authoring path, and repeated-restart hardening are now executable gates.
 
-The next milestone is **v0.8 stabilization**: make the validated architecture a
-dependable library for other engineers. The focus is public API stability,
-external persistence portability, built-artifact validation, release discipline,
-a minimal authoring path, and repeated-restart hardening rather than adding more
-industry References.
+The next phase should be driven by adoption evidence, persistence migration
+needs, measured performance, diagnostics/observability, and eventual 1.0
+compatibility criteria rather than automatic expansion of the domain catalog.
 
-Release planning and policy live under `docs/releases/`.
+Release closure and policy live under `docs/releases/`.
 
 See:
 
 - [`docs/getting-started/first-domain.md`](docs/getting-started/first-domain.md)
 - [`docs/releases/README.md`](docs/releases/README.md)
+- [`docs/releases/v0.8.0.md`](docs/releases/v0.8.0.md)
 - [`docs/releases/v0.8.0-plan.md`](docs/releases/v0.8.0-plan.md)
 - [`docs/architecture/domain-implementation-blueprints.md`](docs/architecture/domain-implementation-blueprints.md)
 - [`docs/factories.md`](docs/factories.md)

@@ -48,3 +48,9 @@ def test_tagged_candidate_rejects_missing_completed_release_note(tmp_path):
     root = _fixture(tmp_path)
     with pytest.raises(SystemExit, match="missing completed release note"):
         validate(root, tag="v1.2.3")
+
+
+def test_repository_is_self_consistent_release_candidate():
+    root = Path(__file__).resolve().parents[1]
+    version = project_version(root)
+    validate(root, tag=f"v{version}")
