@@ -18,14 +18,11 @@ This document defines **implementation blueprints** for applying SOSE to common
 operational domains. It is architectural documentation, not a claim that every
 domain below already has production code in the repository.
 
-The current reference implementation is MRO under:
-
-```text
-src/sose/examples/mro/
-```
-
-The remaining domains describe how an implementation should map domain concepts
-onto the same SOSE kernel.
+Promoted Reference implementations are tracked by the executable Reference
+catalog in `tests/support/reference_catalog.py`. Blueprint sections in this
+document describe how additional domain concepts may map onto the same SOSE
+kernel; a blueprint becomes Reference only when its executable evidence is
+promoted into that catalog.
 
 ---
 
@@ -626,41 +623,58 @@ exception branches:
 
 ## 13. Telecom
 
-### Core entities
+Status: **Reference implementation**.
+
+### Executable core entities
 
 ```text
-Customer
-Subscription
-Activation
-UsageSession
-Invoice
-Payment
-NetworkIncident
+ProductOrder
+ServiceOrder
+SubscriptionService
+UsageRecord
+NetworkAlarm
+TroubleTicket
 ```
 
-### Canonical lifecycle
+### Executable lifecycle slice
 
 ```text
-ordered
-→ activated
-→ active
-→ billed
-→ paid
-→ renewed
+ProductOrder:
+captured → acknowledged → in_progress → completed
 
-exception branches:
-→ activation_failed
-→ delinquent
-→ suspended
-→ churned
+ServiceOrder:
+pending → accepted → provisioning → completed
+
+SubscriptionService:
+designed → provisioning → activation_ready → active
+                                           ↔ suspended
+                                            → terminated
+
+UsageRecord:
+captured → committed
+
+NetworkAlarm:
+raised → acknowledged → cleared
+
+TroubleTicket:
+open → acknowledged → resolved → closed
 ```
 
 ### SOSE mechanics
 
-- Billing cycles through DurableScheduler.
-- Probabilistic churn.
-- Scenarios for network failure or billing disruption.
-- Causal correlation between incidents, usage impact and support cases.
+- ProductOrder and ServiceOrder remain separate commercial/technical facts.
+- SubscriptionService is long-lived service-inventory truth independent from
+  terminal fulfillment orders.
+- ScheduledWork makes asynchronous activation eligible; provisioning Resource
+  ownership still gates activation.
+- UsageRecord is deterministic, immutable, replay-safe, and deliberately
+  non-rated.
+- NetworkAlarm and TroubleTicket are distinct assurance facts.
+- Durable open-incident ownership prevents premature service restoration.
+- Finite provisioning-outage scenarios affect prerequisites rather than forcing
+  business state.
+- Billing/rating remain outside the Reference until they introduce genuinely new
+  semantic pressure.
 
 ---
 
@@ -1539,6 +1553,7 @@ At the time of this document:
 - **Airports**: Reference implementation. Durable arrival/slot timing, gate ownership and reallocation, ground-service/baggage prerequisites, PriorityStore departure ordering, committed StoreGetResult recovery, tug capacity, finite congestion/weather scenarios, post-commit crash recovery, and restart equivalence are executable.
 - **Aviation**: Reference implementation. Two-leg rotation causality, durable departure timing, crew/aircraft gating, inspection, AOG part flow, PriorityStore maintenance ownership, preemptive maintenance with ResourcePreemptionResult evidence, downstream delay propagation, finite scenarios, post-commit crash recovery, and restart equivalence are executable.
 - **Credit and loans**: Reference implementation. Underwriting/decision causality, loan origination, recurring installment ScheduledWork, immutable Payment evidence, partial repayment, idempotent ledger projection, delinquency/collection/default, restructure, finite macro stress, and restart equivalence are executable.
+- **Telecommunications**: Reference implementation. ProductOrder/ServiceOrder decomposition, asynchronous resource-gated activation, long-lived SubscriptionService inventory, immutable non-rated UsageRecord evidence, Alarm/TroubleTicket assurance separation, multi-incident restoration ownership, finite provisioning outage recovery, and restart equivalence are executable.
 - All other domains in this document: Blueprint.
 
 ---
