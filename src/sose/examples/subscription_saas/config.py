@@ -18,3 +18,8 @@ class SubscriptionSaaSConfig(DomainConfig):
         default=timedelta(days=30),
         gt=timedelta(0),
     )
+    target_plan: str | None = "pro"
+    plan_change_after: timedelta = Field(
+        default=timedelta(days=5),
+        gt=timedelta(0),
+    )
