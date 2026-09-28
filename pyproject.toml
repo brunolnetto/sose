@@ -18,8 +18,12 @@ dependencies = [
 simpy = [
   "simpy>=4.1.1,<5",
 ]
+duckdb = [
+  "duckdb>=1.5.5,<2",
+]
 dev = [
   "simpy>=4.1.1,<5",
+  "duckdb>=1.5.5,<2",
   "pytest>=8,<10",
   "pytest-cov>=6,<8",
   "ruff>=0.11,<1",
