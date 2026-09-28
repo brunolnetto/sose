@@ -39,6 +39,14 @@ DOCUMENT_DEADLINE = timedelta(hours=4)
 PAYMENT_DELAY = timedelta(hours=2)
 
 
+def _reference_minor_units(value: float) -> int:
+    scaled = float(value) * 100
+    nearest = round(scaled)
+    if abs(scaled - nearest) > 1e-7:
+        raise ValueError("Reference payout amount must not contain fractional minor units")
+    return int(nearest)
+
+
 @dataclass(frozen=True, slots=True)
 class InsuranceEntities:
     policy_id: str
@@ -122,8 +130,10 @@ def seed_reference(
     claim_type: str = "property",
     currency: str = "USD",
 ) -> InsuranceEntities:
-    if amount <= 0:
+    amount_units = _reference_minor_units(amount)
+    if amount_units <= 0:
         raise ValueError("amount must be positive")
+    amount = amount_units / 100
     if not currency:
         raise ValueError("currency must be non-empty")
     context, engine = build_runtime(persistence)
@@ -580,8 +590,10 @@ def ensure_reserve(persistence, engine, *, entities, amount=None):
     if claim.state != "approved" or approved_assessment is None:
         raise RuntimeError("reserve requires approved claim and assessment evidence")
     reserve_amount = float(amount if amount is not None else claim.attributes["amount"])
-    if reserve_amount <= 0:
+    reserve_units = _reference_minor_units(reserve_amount)
+    if reserve_units <= 0:
         raise ValueError("reserve amount must be positive")
+    reserve_amount = reserve_units / 100
     value = engine.context.entities.create(
         Reserve,
         key=("insurance-reference", claim.id, "reserve"),
@@ -739,7 +751,8 @@ def reconcile_payment(
     correlation_id = flow_correlation_id(claim.id)
     payment = _entity(persistence, "insurance_payment", payment.id)
     if partial and payment.state == "due":
-        payment.attributes["paid_amount"] = float(payment.attributes["amount"]) / 2
+        total_units = _reference_minor_units(float(payment.attributes["amount"]))
+        payment.attributes["paid_amount"] = (total_units // 2) / 100
         with persistence.transaction() as uow:
             uow.save_entity(payment)
         _dispatch(

@@ -43,6 +43,14 @@ OVERDUE_GRACE = timedelta(hours=1)
 COLLECTION_FOLLOWUP = timedelta(hours=1)
 
 
+def _usd_cents(value: float) -> int:
+    scaled = float(value) * 100
+    nearest = round(scaled)
+    if abs(scaled - nearest) > 1e-7:
+        raise ValueError("USD amount must not contain fractional cents")
+    return int(nearest)
+
+
 @dataclass(frozen=True, slots=True)
 class CreditLoanEntities:
     application_id: str
@@ -134,7 +142,8 @@ def seed_reference(
     principal: float = 1200.0,
     installment_count: int = 3,
 ) -> CreditLoanEntities:
-    if principal <= 0:
+    principal_cents = _usd_cents(principal)
+    if principal_cents <= 0:
         raise ValueError("principal must be positive")
     if installment_count <= 0:
         raise ValueError("installment_count must be positive")
@@ -144,7 +153,7 @@ def seed_reference(
         key=("credit-loans-reference", "application-1"),
         state="submitted",
         attributes={
-            "principal": float(principal),
+            "principal": principal_cents / 100,
             "currency": "USD",
             "installment_count": installment_count,
         },
@@ -316,7 +325,7 @@ def disburse_and_schedule(persistence, engine, backend, *, entities):
         )
 
     count = int(loan.attributes["installment_count"])
-    principal_cents = round(float(loan.attributes["principal"]) * 100)
+    principal_cents = _usd_cents(float(loan.attributes["principal"]))
     base_cents = principal_cents // count
     due_dates = []
     for ordinal in range(1, count + 1):
@@ -398,8 +407,10 @@ def post_payment(
     payment_ordinal: int,
     amount: float,
 ):
-    if amount <= 0:
+    amount_cents = _usd_cents(amount)
+    if amount_cents <= 0:
         raise ValueError("payment amount must be positive")
+    amount = amount_cents / 100
     installment = _entity(persistence, "loan_installment", installment_id_value)
     loan = _entity(persistence, "loan", installment.attributes["loan_id"])
     pid = payment_id(installment.id, payment_ordinal)
