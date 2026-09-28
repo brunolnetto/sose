@@ -11,11 +11,10 @@ The selection rule is:
 
 > prefer domains that can falsify current architecture assumptions.
 
-This document records the next domain frontier after the first sixteen
-References, the Money audit, the Telecommunications promotion, and the
-Energy / Utilities metering-outage-demand-response promotion. The remaining
-frontier is ordered by the new semantic pressure each domain can place on the
-architecture.
+This document records the next domain frontier after the first seventeen
+References, the Money audit, and the Telecommunications, Energy / Utilities,
+and Public Transit / Rail promotions. The remaining frontier is ordered by the
+new semantic pressure each domain can place on the architecture.
 
 ## Current coverage
 
@@ -45,6 +44,15 @@ The Telecommunications Reference adds another important dimension:
 - immutable non-rated usage;
 - network Alarm distinct from TroubleTicket;
 - service suspension/restoration.
+
+The Public Transit / Rail Reference adds:
+
+- static schedule distinct from durable operational projection;
+- one persistent vehicle serving ordered trips in a block;
+- layover-aware downstream delay propagation;
+- immutable TripUpdate and VehiclePosition occurrence history;
+- freshness/staleness in an externally useful realtime view;
+- bounded ServiceAlert disruption windows.
 
 ## Selection principles
 
@@ -135,7 +143,7 @@ requires it.
 
 ---
 
-## Frontier 2 — Public Transit / Rail
+## Promoted — Public Transit / Rail
 
 ### Why it is high value
 
@@ -381,15 +389,18 @@ measurements with correction lineage, overlapping outage ownership/restoration,
 and service-point-targeted participation in bounded demand-response windows.
 Generation/dispatch and billing remain blueprint extensions.
 
-### Public Transit / Rail — next
+### Public Transit / Rail — promoted
 
-This is the next strongest falsification target. It adds
-schedule-versus-realtime projection, ordered delay propagation, freshness,
-persistent vehicle/block identity, and repeated observational occurrences.
+Public Transit / Rail is now a Reference implementation for ordered vehicle
+blocks, schedule-versus-realtime projection, layover-aware delay propagation,
+immutable vehicle-position observations, freshness, and bounded ServiceAlert
+windows.
 
-### Field Service
+### Field Service — next
 
-Adds multi-dimensional resource eligibility, location, and appointment windows.
+This is now the strongest falsification target. It adds multi-dimensional
+resource eligibility, location, customer appointment windows, travel/setup
+constraints, part availability, and reschedule history.
 
 ### Hospitality / Reservations
 
