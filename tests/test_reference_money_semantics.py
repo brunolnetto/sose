@@ -470,8 +470,8 @@ def test_insurance_rejects_zero_value_partial_payout():
     assert persistence.resource_demands() == ()
     assert persistence.resource_reservations() == ()
 
-def test_credit_rejects_extreme_fractional_cent_even_when_float_ulp_is_large():
-    with pytest.raises(ValueError, match="fractional cents"):
+def test_credit_rejects_amount_beyond_cent_safe_float_precision():
+    with pytest.raises(ValueError, match="cent-safe float precision"):
         seed_credit(
             MemoryPersistence(),
             principal=11258999068426.244,
@@ -479,11 +479,38 @@ def test_credit_rejects_extreme_fractional_cent_even_when_float_ulp_is_large():
         )
 
 
-def test_insurance_rejects_extreme_fractional_minor_unit():
-    with pytest.raises(ValueError, match="fractional minor units"):
+def test_insurance_rejects_amount_beyond_cent_safe_float_precision():
+    with pytest.raises(ValueError, match="cent-safe float precision"):
         seed_insurance(
             MemoryPersistence(),
             amount=11258999068426.244,
             currency="USD",
         )
+
+def test_credit_accepts_large_computed_cent_aligned_float():
+    principal = 50_000_000.0 + 50_000_000.01
+    persistence = MemoryPersistence()
+    entities = seed_credit(
+        persistence,
+        principal=principal,
+        installment_count=1,
+    )
+    application = persistence.entity("loan_application", entities.application_id)
+
+    assert application is not None
+    assert application.attributes["principal"] == 100_000_000.01
+
+
+def test_insurance_accepts_large_computed_minor_unit_aligned_float():
+    amount = 50_000_000.0 + 50_000_000.01
+    persistence = MemoryPersistence()
+    entities = seed_insurance(
+        persistence,
+        amount=amount,
+        currency="USD",
+    )
+    claim = persistence.entity("insurance_claim", entities.claim_id)
+
+    assert claim is not None
+    assert claim.attributes["amount"] == 100_000_000.01
 
