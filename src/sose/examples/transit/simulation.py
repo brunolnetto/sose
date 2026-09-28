@@ -88,10 +88,12 @@ def build_runtime(
     now: datetime = ORIGIN,
     tick: int = 0,
     scenarios=(),
+    step: timedelta = timedelta(hours=1),
+    random_seed: int = 1117,
 ) -> tuple[SimulationContext, Engine]:
     context = SimulationContext(
-        clock=SimulationClock(now=now, step=timedelta(hours=1), tick=tick),
-        random=RandomSource(root_seed=1117),
+        clock=SimulationClock(now=now, step=step, tick=tick),
+        random=RandomSource(root_seed=random_seed),
         scheduler=Scheduler(),
     )
     registry = DomainRegistry()
