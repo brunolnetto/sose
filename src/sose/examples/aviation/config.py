@@ -24,3 +24,4 @@ class AviationConfig(DomainConfig):
     leg2_departure_delay: timedelta = Field(default=timedelta(hours=5), gt=timedelta(0))
     auto_land: bool = True
     inspection_fail: bool = False
+    auto_seed_aog_part: bool = True
