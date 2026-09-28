@@ -4,6 +4,8 @@
 
 ### Added
 
+- v0.9 adoption/operations roadmap, persistence adapter decision criteria, and
+  explicit SOSE 1.0 readiness checklist;
 - reproducible runtime benchmark harness with JSON output, CI smoke execution,
   and weekly/manual full benchmark workflow;
 - read-only runtime diagnostics with durable counts, recovery position, and
