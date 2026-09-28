@@ -374,6 +374,7 @@ Release closure and policy live under `docs/releases/`.
 See:
 
 - [`docs/getting-started/first-domain.md`](docs/getting-started/first-domain.md)
+- [`docs/getting-started/recurring-job.md`](docs/getting-started/recurring-job.md)
 - [`docs/releases/README.md`](docs/releases/README.md)
 - [`docs/releases/v0.8.0.md`](docs/releases/v0.8.0.md)
 - [`docs/releases/v0.9.0-plan.md`](docs/releases/v0.9.0-plan.md)
