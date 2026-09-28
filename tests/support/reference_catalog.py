@@ -318,4 +318,27 @@ REFERENCE_CATALOG = (
             immutable_occurrences=("tests/test_telecom_restart_equivalence.py",),
         ),
     ),
+    ReferenceContract(
+        domain="Energy / Utilities",
+        package="sose.examples.energy_utilities",
+        docs_dir="docs/examples/energy-utilities",
+        capabilities=frozenset({
+            C.STATECHARTS, C.HAPPY_PATH, C.SAD_PATHS, C.RESTART_EQUIVALENCE,
+            C.SCENARIOS, C.SCHEDULED_WORK, C.ILLEGAL_PREREQUISITES,
+            C.IMMUTABLE_OCCURRENCES,
+        }),
+        evidence=_evidence(
+            statecharts=("tests/test_energy_utilities_statecharts.py",),
+            happy_path=("tests/test_energy_utilities_happy_path.py",),
+            sad_paths=("tests/test_energy_utilities_sad_paths.py",),
+            restart_equivalence=("tests/test_energy_utilities_restart_equivalence.py",),
+            scenarios=("tests/test_energy_utilities_scenarios.py",),
+            scheduled_work=("tests/test_energy_utilities_restart_equivalence.py",),
+            illegal_prerequisites=("tests/test_energy_utilities_sad_paths.py",),
+            immutable_occurrences=(
+                "tests/test_energy_utilities_sad_paths.py",
+                "tests/test_energy_utilities_restart_equivalence.py",
+            ),
+        ),
+    ),
 )
