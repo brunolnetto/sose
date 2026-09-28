@@ -4,6 +4,8 @@
 
 ### Added
 
+- `sose` command-line interface for config validation, one-tick execution,
+  durable inspection, domain discovery, and persistence-adapter discovery;
 - declarative sose.toml job configuration with domain parameters, persistence
   adapter selection, runtime backend, and durable job identity;
 - persistence adapter registry for memory, SQLite, incremental SQLite, JSONL,
