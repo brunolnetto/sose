@@ -21,6 +21,7 @@ unrealistic domain boundaries.
 
 Tariffs, billing, settlement, market clearing, and power-flow simulation are out
 of scope. The point of this slice is to stress immutable measurements,
-corrections, outage ownership, timed event windows, and restart semantics.
+corrections, outage ownership, population-scoped timed event windows, and
+restart semantics.
 
 See [specification.md](specification.md) for the executable contract.
