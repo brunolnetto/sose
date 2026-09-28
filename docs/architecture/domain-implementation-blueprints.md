@@ -891,39 +891,48 @@ exception branches:
 
 ## 19. Rail / public transport
 
-### Core entities
+Status: **Reference implementation** for the schedule-versus-realtime slice.
+
+### Executable core entities
 
 ```text
 Vehicle
-Trip
-Route
-StationCall
-Incident
-MaintenanceWork
+ScheduledTrip
+TripUpdateOccurrence
+VehiclePositionOccurrence
+ServiceAlert
 ```
 
-### Canonical lifecycle
+### Executable lifecycle slice
 
 ```text
-scheduled
-→ dispatched
-→ en_route
-→ station_call
-→ completed
+ScheduledTrip:
+planned → running → completed
+       \→ cancelled
 
-exception branches:
-→ delayed
-→ short_turned
-→ failed
-→ maintenance
+TripUpdateOccurrence:
+captured → committed
+
+VehiclePositionOccurrence:
+captured → committed
+
+ServiceAlert:
+scheduled → active → cleared
+        \→ cancelled
 ```
 
 ### SOSE mechanics
 
-- Durable timetable scheduling.
-- Resource contention for tracks/platforms.
-- Scenarios for incidents and congestion.
-- Headway measured from immutable events.
+- Durable planned timetable remains distinct from current realtime projection.
+- Immutable TripUpdate occurrences advance projection without rewriting plan.
+- One physical Vehicle identity serves two ordered trips in one block.
+- Unabsorbed upstream delay propagates into the downstream trip.
+- Immutable VehiclePosition evidence uses observation time for staleness.
+- ScheduledWork owns trip and ServiceAlert boundaries.
+- Finite realtime outage changes evidence availability rather than trip state.
+
+Track/platform capacity, maintenance, detours, fares, and full stop-level
+prediction lists remain blueprint extensions.
 
 ---
 
@@ -1571,6 +1580,7 @@ At the time of this document:
 - **Credit and loans**: Reference implementation. Underwriting/decision causality, loan origination, recurring installment ScheduledWork, immutable Payment evidence, partial repayment, idempotent ledger projection, delinquency/collection/default, restructure, finite macro stress, and restart equivalence are executable.
 - **Telecommunications**: Reference implementation. ProductOrder/ServiceOrder decomposition, asynchronous resource-gated activation, long-lived SubscriptionService inventory, immutable non-rated UsageRecord evidence, Alarm/TroubleTicket assurance separation, multi-incident restoration ownership, finite provisioning outage recovery, and restart equivalence are executable.
 - **Energy / Utilities**: Reference implementation. Immutable interval MeterReading/correction lineage, durable overlapping-outage ownership and restoration, bounded demand-response ScheduledWork, finite communications recovery, illegal-correction prerequisites, captured-reading crash recovery, and restart equivalence are executable.
+- **Public Transit / Rail**: Reference implementation. Planned schedule versus realtime projection, immutable TripUpdate/VehiclePosition occurrences, block-delay propagation, bounded ServiceAlert windows, finite realtime outage recovery, and restart equivalence are executable.
 - All other domains in this document: Blueprint.
 
 ---

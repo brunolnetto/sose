@@ -11,9 +11,9 @@ The selection rule is:
 
 > prefer domains that can falsify current architecture assumptions.
 
-This document records the next domain frontier after the first sixteen
-References, the Money audit, the Telecommunications promotion, and the
-Energy / Utilities metering-outage-demand-response promotion. The remaining
+This document records the next domain frontier after the first seventeen
+References, the Money audit, and the Telecommunications, Energy / Utilities,
+and Public Transit / Rail promotions. The remaining
 frontier is ordered by the new semantic pressure each domain can place on the
 architecture.
 
@@ -37,7 +37,10 @@ The Reference suite already exercises:
 - construction prerequisites;
 - assurance-style incident recovery.
 
-The Telecommunications Reference adds another important dimension:
+The Telecommunications, Energy / Utilities, and Public Transit / Rail
+References add additional dimensions:
+
+**Telecommunications:**
 
 - commercial ProductOrder distinct from technical ServiceOrder;
 - long-lived service inventory distinct from fulfillment orders;
@@ -45,6 +48,19 @@ The Telecommunications Reference adds another important dimension:
 - immutable non-rated usage;
 - network Alarm distinct from TroubleTicket;
 - service suspension/restoration.
+
+**Energy / Utilities:**
+
+- immutable interval measurements with correction lineage;
+- population-scoped demand-response windows;
+- overlapping outage ownership and aggregate restoration.
+
+**Public Transit / Rail:**
+
+- planned schedule distinct from realtime projection;
+- immutable TripUpdate and VehiclePosition evidence;
+- observation-time staleness semantics;
+- delay propagation across one physical vehicle block.
 
 ## Selection principles
 
@@ -135,7 +151,7 @@ requires it.
 
 ---
 
-## Frontier 2 — Public Transit / Rail
+## Promoted — Public Transit / Rail
 
 ### Why it is high value
 
@@ -381,13 +397,14 @@ measurements with correction lineage, overlapping outage ownership/restoration,
 and service-point-targeted participation in bounded demand-response windows.
 Generation/dispatch and billing remain blueprint extensions.
 
-### Public Transit / Rail — next
+### Public Transit / Rail — promoted
 
-This is the next strongest falsification target. It adds
-schedule-versus-realtime projection, ordered delay propagation, freshness,
-persistent vehicle/block identity, and repeated observational occurrences.
+Public Transit / Rail is now a Reference implementation for immutable realtime
+occurrences, schedule-versus-projection separation, vehicle-block delay
+propagation, stale observation handling, bounded ServiceAlert windows, finite
+realtime outages, and restart equivalence.
 
-### Field Service
+### Field Service — next
 
 Adds multi-dimensional resource eligibility, location, and appointment windows.
 
