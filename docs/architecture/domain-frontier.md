@@ -12,7 +12,9 @@ The selection rule is:
 > prefer domains that can falsify current architecture assumptions.
 
 This document records the next domain frontier after the first fourteen
-References, the Money audit, and the Telecommunications expansion.
+References and the Money audit. Telecommunications is the immediate in-flight
+expansion; the remaining frontier is ordered from the semantic pressure expected
+after Telecom is promoted.
 
 ## Current coverage
 
@@ -34,7 +36,8 @@ The Reference suite already exercises:
 - construction prerequisites;
 - assurance-style incident recovery.
 
-Telecommunications adds another important dimension:
+The in-flight Telecommunications Reference is intended to add another important
+dimension:
 
 - commercial ProductOrder distinct from technical ServiceOrder;
 - long-lived service inventory distinct from fulfillment orders;
@@ -360,10 +363,11 @@ demonstrates a repeated arithmetic contract.
 
 ## Recommended sequence
 
-### Telecommunications
+### Telecommunications — in flight
 
-Use as the immediate next Reference because it introduces service inventory,
-usage, and assurance separation.
+Telecommunications is the immediate promotion target because it introduces
+service inventory, usage, and assurance separation. It should be treated as
+promoted only after its conformance, CI, and review gates are green.
 
 ### Energy / Utilities
 
