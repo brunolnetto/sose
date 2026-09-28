@@ -36,6 +36,7 @@ def test_reference_catalog_has_all_promoted_domains():
         "Field Service / Workforce",
         "Hospitality / Reservations",
         "Warehouse / Fulfillment",
+        "Subscription / SaaS",
     }
     assert len(REFERENCE_CATALOG) == len(expected_domains)
     assert {contract.domain for contract in REFERENCE_CATALOG} == expected_domains

@@ -436,4 +436,31 @@ REFERENCE_CATALOG = (
             ),
         ),
     ),
+    ReferenceContract(
+        domain="Subscription / SaaS",
+        package="sose.examples.subscription_saas",
+        docs_dir="docs/examples/subscription-saas",
+        runtime_entrypoints=("build_runtime", "seed_reference"),
+        capabilities=frozenset({
+            C.STATECHARTS, C.HAPPY_PATH, C.SAD_PATHS, C.RESTART_EQUIVALENCE,
+            C.SCHEDULED_WORK, C.ILLEGAL_PREREQUISITES, C.IMMUTABLE_OCCURRENCES,
+        }),
+        evidence=_evidence(
+            statecharts=("tests/test_subscription_saas_statecharts.py",),
+            happy_path=("tests/test_subscription_saas_happy_path.py",),
+            sad_paths=("tests/test_subscription_saas_sad_paths.py",),
+            restart_equivalence=(
+                "tests/test_subscription_saas_restart_equivalence.py",
+            ),
+            scheduled_work=(
+                "tests/test_subscription_saas_sad_paths.py",
+                "tests/test_subscription_saas_restart_equivalence.py",
+            ),
+            illegal_prerequisites=("tests/test_subscription_saas_sad_paths.py",),
+            immutable_occurrences=(
+                "tests/test_subscription_saas_happy_path.py",
+                "tests/test_subscription_saas_restart_equivalence.py",
+            ),
+        ),
+    ),
 )
