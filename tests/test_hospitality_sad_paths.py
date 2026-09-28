@@ -232,3 +232,30 @@ def test_check_in_requires_confirmed_reservation():
             engine,
             reservation_id_value=reservation.id,
         )
+
+
+def test_check_in_rejects_time_outside_reserved_interval():
+    persistence, entities, engine, backend = _runtime()
+    arrival, departure = _stay(1)
+    reservation = create_hold(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=1,
+        arrival_at=arrival,
+        departure_at=departure,
+    )
+    confirm_reservation(
+        persistence,
+        engine,
+        reservation_id_value=reservation.id,
+    )
+
+    with pytest.raises(ValueError, match="booked stay interval"):
+        check_in(
+            persistence,
+            engine,
+            reservation_id_value=reservation.id,
+            at=arrival - timedelta(minutes=1),
+        )
