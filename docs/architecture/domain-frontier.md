@@ -11,8 +11,9 @@ The selection rule is:
 
 > prefer domains that can falsify current architecture assumptions.
 
-This document records the next domain frontier after the first fifteen
-References, the Money audit, and the Telecommunications promotion. The remaining
+This document records the next domain frontier after the first sixteen
+References, the Money audit, the Telecommunications promotion, and the
+Energy / Utilities metering-outage-demand-response promotion. The remaining
 frontier is ordered by the new semantic pressure each domain can place on the
 architecture.
 
@@ -72,7 +73,7 @@ when they introduce new semantic pressure.
 
 ---
 
-## Frontier 1 — Energy / Utilities
+## Promoted — Energy / Utilities
 
 ### Why it is high value
 
@@ -113,11 +114,10 @@ boundaries without requiring vendor-specific grid commands.
 
 ### What would count as a strong first slice
 
-At least two ServicePoints with immutable interval MeterReading occurrences
-**and explicit correction lineage**, an outage or demand-response event whose
-target population spans both ServicePoints, overlapping outage
-ownership/restoration, and durable Participation records inside a finite event
-window.
+A ServicePoint with immutable interval MeterReading occurrences **and explicit
+correction lineage**, overlapping outage ownership/restoration, and a
+demand-response event whose Participation explicitly targets that ServicePoint
+inside a finite event window.
 
 That is the minimum useful slice: ordinary readings plus one timer are not enough
 to justify Energy as a new Reference because those mechanics are already covered
@@ -374,15 +374,18 @@ Telecommunications is now a Reference implementation covering service inventory,
 non-rated usage, and assurance separation. Further Telecom breadth should be
 added only when it introduces new semantic pressure.
 
-### Energy / Utilities
+### Energy / Utilities — promoted
 
-Next strongest candidate. It adds immutable measurements, event windows,
-population targeting, and outage/restoration semantics.
+Energy / Utilities is now a Reference implementation for immutable interval
+measurements with correction lineage, overlapping outage ownership/restoration,
+and service-point-targeted participation in bounded demand-response windows.
+Generation/dispatch and billing remain blueprint extensions.
 
-### Public Transit / Rail
+### Public Transit / Rail — next
 
-Adds schedule-versus-realtime projection, ordered delay propagation, freshness,
-and repeated observational occurrences.
+This is the next strongest falsification target. It adds
+schedule-versus-realtime projection, ordered delay propagation, freshness,
+persistent vehicle/block identity, and repeated observational occurrences.
 
 ### Field Service
 
