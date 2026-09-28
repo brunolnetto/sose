@@ -237,8 +237,9 @@ def test_overlapping_trigger_is_rejected_while_job_is_claimed():
     assert result.logical_tick == 1
     assert result.trigger_id == "overlap-A"
     assert overlap_errors
-    assert "already running" in overlap_errors[0]
+    assert "unresolved trigger" in overlap_errors[0]
     assert "overlap-A" in overlap_errors[0]
+    assert "phase='advance'" in overlap_errors[0]
 
 
 def test_trigger_identity_survives_sqlite_reopen(tmp_path):
