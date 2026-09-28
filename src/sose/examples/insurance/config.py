@@ -1,3 +1,4 @@
+from typing import Literal
 from datetime import datetime, timedelta
 from pydantic import Field
 from sose.domain.config import DomainConfig
@@ -11,3 +12,8 @@ class InsuranceConfig(DomainConfig):
     amount: float = Field(default=5000.0, gt=0)
     claim_type: str = "property"
     currency: str = "USD"
+    document_deadline: timedelta = Field(default=timedelta(hours=4), gt=timedelta(0))
+    auto_satisfy_documents: bool = True
+    assessment_outcome: Literal["approve", "reject", "fraud"] = "approve"
+    payment_delay: timedelta = Field(default=timedelta(hours=2), gt=timedelta(0))
+    partial_payment: bool = False
