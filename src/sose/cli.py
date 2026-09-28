@@ -70,6 +70,31 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_apply(args: argparse.Namespace) -> int:
+    config, _ = load_sose_config(args.config)
+    job = build_job_from_file(args.config)
+    try:
+        before = job.state()
+        applied = job.apply_config(config.domain.parameters)
+        print(
+            _json(
+                {
+                    "job_id": applied.job_id,
+                    "domain": applied.domain_name,
+                    "config_revision": applied.config_revision,
+                    "changed": (
+                        before is None
+                        or applied.config_revision != before.config_revision
+                    ),
+                    "config": json.loads(applied.config_json),
+                }
+            )
+        )
+        return 0
+    finally:
+        _close_persistence(job.persistence)
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     job = build_job_from_file(args.config)
     try:
@@ -171,6 +196,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate.add_argument("--config", default="sose.toml")
     validate.set_defaults(handler=_cmd_validate)
+
+    apply = subparsers.add_parser(
+        "apply",
+        help="Explicitly apply sose.toml domain parameters to a durable job.",
+    )
+    apply.add_argument("--config", default="sose.toml")
+    apply.set_defaults(handler=_cmd_apply)
 
     run = subparsers.add_parser(
         "run",
