@@ -14,8 +14,9 @@ The slice proves a distinction SOSE did not previously exercise strongly:
 
 - future appointment ownership is domain semantics;
 - technician eligibility is multi-dimensional domain logic;
-- actual technician execution capacity remains a core Resource lifecycle;
-- a required physical part uses durable Store selection ownership;
+- technician Resource capacity is a start-time concurrency gate after semantic selection;
+- the durable booking, not a held Resource reservation, owns the appointment interval;
+- a required physical part uses filtered durable Store selection ownership;
 - a no-access visit is immutable evidence and causes a new appointment rather
   than rewriting the failed appointment.
 
@@ -32,8 +33,9 @@ Two technicians are seeded. Only one has the required skill/territory. The
 qualified technician is booked into the appointment window. An overlapping
 appointment cannot silently reuse that technician.
 
-The happy path confirms the appointment, reserves the required part, acquires
-the selected technician when the appointment starts, records one immutable
+The happy path confirms the appointment, selects the required part, acquires
+the selected technician as a start-time concurrency gate, commits the Technician
+assignment, releases that transient Resource capacity, records one immutable
 successful VisitOccurrence, and completes the WorkOrder.
 
 The sad/recovery path records a no-access visit, closes the first appointment,
@@ -63,9 +65,11 @@ The Reference stops once tests prove:
 - skill + territory + window technician eligibility;
 - durable appointment-window ownership;
 - resource acquisition only after domain selection;
-- part selection ownership;
+- no Resource-capacity leak across appointment expiry;
+- exactly one active appointment even when proposals race;
+- SKU eligibility before durable part ownership;
 - immutable visit outcome;
-- no-access rescheduling with lineage;
+- no-access/expiry rescheduling with lineage;
 - restart equivalence across the replacement appointment.
 
 Routing optimization, travel-time matrices, workforce rostering, SLA
