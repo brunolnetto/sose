@@ -8,6 +8,7 @@ from .simulation import (
     build_runtime,
     collect_receivable,
     reconcile_collection,
+    receivable_id,
     reconcile_credit,
     reconcile_fulfillment,
     schedule_due,
@@ -77,25 +78,14 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
 
     receivable = persistence.entity(
         "receivable",
-        next(
-            (
-                item.id
-                for item in [
-                    persistence.entity("receivable", value)
-                    for value in ()
-                ]
-                if item is not None
-            ),
-            "",
-        ),
+        receivable_id(entities.order_id),
     )
-    # Receivable identity is deterministic but intentionally hidden behind the
-    # domain helper; creating/reading through schedule_due is idempotent.
-    receivable = ship_invoice_and_ensure_receivable(
-        persistence,
-        engine,
-        entities=entities,
-    )
+    if receivable is None:
+        receivable = ship_invoice_and_ensure_receivable(
+            persistence,
+            engine,
+            entities=entities,
+        )
 
     if receivable.state == "open":
         schedule_due(
