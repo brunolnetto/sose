@@ -17,7 +17,7 @@ class WorkOrderChart(StateChart):
 
     schedule = ready.to(scheduled)
     start = scheduled.to(in_progress)
-    require_reschedule = in_progress.to(reschedule_required)
+    require_reschedule = scheduled.to(reschedule_required) | in_progress.to(reschedule_required)
     reschedule = reschedule_required.to(scheduled)
     complete = in_progress.to(completed)
     cancel = ready.to(cancelled) | scheduled.to(cancelled) | reschedule_required.to(cancelled)
