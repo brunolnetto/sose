@@ -130,23 +130,32 @@ def build_runtime(
     )
 
 
-def seed_reference(persistence: MemoryPersistence) -> TelecomEntities:
-    context, _ = build_runtime(persistence)
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    customer_id: str = "customer-1",
+    product_offering: str = "postpaid-mobile",
+    access_technology: str = "5G",
+    sim_type: str = "eSIM",
+    provisioning_capacity: int = 1,
+) -> TelecomEntities:
+    context, _ = build_runtime(persistence, now=now)
     order = context.entities.create(
         ProductOrder,
         key=("telecom-reference", "postpaid-mobile-order-1"),
         state="captured",
         attributes={
-            "customer_id": "customer-1",
-            "product_offering": "postpaid-mobile",
-            "access_technology": "5G",
-            "sim_type": "eSIM",
+            "customer_id": customer_id,
+            "product_offering": product_offering,
+            "access_technology": access_technology,
+            "sim_type": sim_type,
         },
     )
     with persistence.transaction() as uow:
         uow.save_entity(order)
         uow.save_resource_definition(
-            ResourceDefinition("provisioning_worker", capacity=1)
+            ResourceDefinition("provisioning_worker", capacity=provisioning_capacity)
         )
     return TelecomEntities(product_order_id=order.id)
 
