@@ -7,6 +7,8 @@ from sose.examples.transit.scenarios import ORIGIN
 from sose.examples.transit.simulation import (
     TRIP_A_START,
     build_runtime,
+    cancel_service_alert,
+    cancel_trip,
     ensure_trip_boundaries,
     record_trip_update,
     record_vehicle_position,
@@ -30,12 +32,13 @@ def _runtime():
 
 
 def test_upstream_delay_propagates_only_unabsorbed_delay_to_next_block_trip():
-    persistence, entities, engine, _ = _runtime()
+    persistence, entities, engine, backend = _runtime()
     schedule_reference_block(persistence, engine, entities=entities)
 
     update = record_trip_update(
         persistence,
         engine,
+        backend,
         _,
         entities=entities,
         trip_id=entities.trip_a_id,
@@ -117,10 +120,11 @@ def test_stale_position_is_kept_as_evidence_but_not_current_projection():
 
 
 def test_trip_update_identity_is_idempotent_but_conflict_is_rejected():
-    persistence, entities, engine, _ = _runtime()
+    persistence, entities, engine, backend = _runtime()
     first = record_trip_update(
         persistence,
         engine,
+        backend,
         _,
         entities=entities,
         trip_id=entities.trip_a_id,
@@ -143,6 +147,7 @@ def test_trip_update_identity_is_idempotent_but_conflict_is_rejected():
         record_trip_update(
             persistence,
             engine,
+            backend,
             entities=entities,
             trip_id=entities.trip_a_id,
             sequence=7,
@@ -195,12 +200,13 @@ def test_service_alert_owns_time_range_and_affected_trip_scope():
     assert persistence.entity("transit_service_alert", alert.id).state == "cleared"
 
 def test_direct_downstream_delay_is_not_erased_by_upstream_block_update():
-    persistence, entities, engine, _ = _runtime()
+    persistence, entities, engine, backend = _runtime()
     schedule_reference_block(persistence, engine, entities=entities)
 
     direct = record_trip_update(
         persistence,
         engine,
+        backend,
         _,
         entities=entities,
         trip_id=entities.trip_b_id,
@@ -386,3 +392,156 @@ def test_reduced_running_projection_in_past_completes_immediately():
     assert trip is not None and trip.state == "completed"
     assert vehicle is not None and vehicle.state == "available"
     assert backend.now < delayed_end
+
+def test_equal_observation_time_uses_sequence_as_stable_tie_breaker():
+    persistence, entities, engine, backend = _runtime()
+    ensure_trip_boundaries(
+        persistence,
+        engine,
+        trip_id=entities.trip_a_id,
+    )
+    backend.run_until(TRIP_A_START)
+    assert reconcile_vehicle_for_trip(
+        persistence,
+        engine,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+    )
+
+    observed_at = TRIP_A_START + timedelta(minutes=10)
+    first = record_vehicle_position(
+        persistence,
+        engine,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+        sequence=1,
+        observed_at=observed_at,
+        stop_sequence=2,
+        latitude=-16.68,
+        longitude=-49.25,
+    )
+    second = record_vehicle_position(
+        persistence,
+        engine,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+        sequence=2,
+        observed_at=observed_at,
+        stop_sequence=3,
+        latitude=-16.681,
+        longitude=-49.251,
+    )
+    assert first is not None and second is not None
+
+    vehicle = persistence.entity("transit_vehicle", entities.vehicle_id)
+    assert vehicle is not None
+    assert vehicle.attributes["latest_position_id"] == second.id
+    assert vehicle.attributes["latest_position_sequence"] == 2
+    assert vehicle.attributes["current_stop_sequence"] == 3
+
+
+def test_trip_cancellation_drains_boundaries_and_releases_vehicle():
+    persistence, entities, engine, backend = _runtime()
+    schedule_reference_block(persistence, engine, entities=entities)
+    backend.run_until(TRIP_A_START)
+    assert reconcile_vehicle_for_trip(
+        persistence,
+        engine,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+    )
+
+    assert cancel_trip(
+        persistence,
+        engine,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+    )
+
+    trip = persistence.entity("transit_scheduled_trip", entities.trip_a_id)
+    vehicle = persistence.entity("transit_vehicle", entities.vehicle_id)
+    assert trip is not None and trip.state == "cancelled"
+    assert vehicle is not None and vehicle.state == "available"
+    assert vehicle.attributes["active_trip_id"] is None
+    assert engine.scheduler.find_pending(
+        entity_type="transit_scheduled_trip",
+        entity_id=trip.id,
+        name="complete",
+    ) is None
+
+
+def test_alert_cancellation_drains_pending_boundaries():
+    persistence, entities, engine, backend = _runtime()
+    start_at = ORIGIN + timedelta(minutes=30)
+    end_at = ORIGIN + timedelta(hours=2)
+    alert = schedule_service_alert(
+        persistence,
+        engine,
+        alert_key="cancelled-alert",
+        affected_trip_ids=(entities.trip_a_id,),
+        start_at=start_at,
+        end_at=end_at,
+    )
+    assert len(persistence.scheduled_work()) == 2
+
+    assert cancel_service_alert(
+        persistence,
+        engine,
+        alert_key="cancelled-alert",
+    )
+    assert persistence.entity("transit_service_alert", alert.id).state == "cancelled"
+    assert engine.scheduler.find_pending(
+        entity_type="transit_service_alert",
+        entity_id=alert.id,
+        name="activate",
+    ) is None
+    assert engine.scheduler.find_pending(
+        entity_type="transit_service_alert",
+        entity_id=alert.id,
+        name="clear",
+    ) is None
+
+    backend.run_until(end_at)
+    assert persistence.entity("transit_service_alert", alert.id).state == "cancelled"
+
+
+def test_reduced_running_projection_completes_trip_when_new_end_is_past():
+    persistence, entities, engine, backend = _runtime()
+    schedule_reference_block(persistence, engine, entities=entities)
+    backend.run_until(TRIP_A_START)
+    assert reconcile_vehicle_for_trip(
+        persistence,
+        engine,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+    )
+
+    first = record_trip_update(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+        sequence=1,
+        delay_seconds=60 * 60,
+    )
+    assert first is not None
+    backend.run_until(ORIGIN + timedelta(hours=2, minutes=30))
+
+    second = record_trip_update(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+        sequence=2,
+        delay_seconds=0,
+    )
+    assert second is not None
+
+    trip_a = persistence.entity("transit_scheduled_trip", entities.trip_a_id)
+    vehicle = persistence.entity("transit_vehicle", entities.vehicle_id)
+    assert trip_a is not None and trip_a.state == "completed"
+    assert vehicle is not None and vehicle.state == "available"
+    assert vehicle.attributes["active_trip_id"] is None
+
