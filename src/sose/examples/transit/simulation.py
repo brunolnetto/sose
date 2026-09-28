@@ -76,6 +76,7 @@ def service_alert_id(alert_key: str) -> str:
         "entity",
         "transit_service_alert",
         "transit-reference",
+        "alert",
         alert_key,
     )
 
@@ -367,24 +368,31 @@ def _apply_trip_projection(
     effective = max(direct, block)
     scheduled_start = _at(trip.attributes["scheduled_start_at"])
     scheduled_end = _at(trip.attributes["scheduled_end_at"])
+    projected_start = scheduled_start + timedelta(seconds=effective)
+    projected_end = scheduled_end + timedelta(seconds=effective)
+    previous_projected_start = _at(trip.attributes["projected_start_at"])
+    previous_projected_end = _at(trip.attributes["projected_end_at"])
+    projection_changed = (
+        previous_projected_start != projected_start
+        or previous_projected_end != projected_end
+    )
+
     trip.attributes["direct_delay_seconds"] = direct
     trip.attributes["block_delay_seconds"] = block
     trip.attributes["current_delay_seconds"] = effective
-    trip.attributes["projected_start_at"] = (
-        scheduled_start + timedelta(seconds=effective)
-    ).isoformat()
-    trip.attributes["projected_end_at"] = (
-        scheduled_end + timedelta(seconds=effective)
-    ).isoformat()
+    trip.attributes["projected_start_at"] = projected_start.isoformat()
+    trip.attributes["projected_end_at"] = projected_end.isoformat()
     if latest_update_sequence is not None:
         trip.attributes["latest_update_sequence"] = int(latest_update_sequence)
     with persistence.transaction() as uow:
         uow.save_entity(trip)
-    _reschedule_trip_boundaries(
-        persistence,
-        engine,
-        trip_id=trip.id,
-    )
+
+    if projection_changed:
+        _reschedule_trip_boundaries(
+            persistence,
+            engine,
+            trip_id=trip.id,
+        )
     return _trip(persistence, trip.id)
 
 
