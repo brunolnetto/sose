@@ -79,10 +79,16 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    now: datetime = ORIGIN,
     flight_number: str = "SOSE101",
     departure_priority: int = 50,
+    gate: str = "G1",
+    gate_capacity: int = 1,
+    ground_team_capacity: int = 1,
+    tug_capacity: int = 1,
+    departure_queue_capacity: int = 100,
 ) -> AirportEntities:
-    context, engine = build_runtime(persistence)
+    context, engine = build_runtime(persistence, now=now)
     turnaround = context.entities.create(
         FlightTurnaround,
         key=("airport-reference", flight_number, "turnaround"),
@@ -96,7 +102,7 @@ def seed_reference(
         GateAssignment,
         key=("airport-reference", turnaround.id, "gate"),
         state="planned",
-        attributes={"turnaround_id": turnaround.id, "gate": "G1"},
+        attributes={"turnaround_id": turnaround.id, "gate": gate},
     )
     service_task = context.entities.create(
         GroundServiceTask,
@@ -125,11 +131,11 @@ def seed_reference(
             departure_slot,
         ):
             uow.save_entity(entity)
-        uow.save_resource_definition(ResourceDefinition("gate", capacity=1))
-        uow.save_resource_definition(ResourceDefinition("ground_team", capacity=1))
-        uow.save_resource_definition(ResourceDefinition("tug", capacity=1))
+        uow.save_resource_definition(ResourceDefinition("gate", capacity=gate_capacity))
+        uow.save_resource_definition(ResourceDefinition("ground_team", capacity=ground_team_capacity))
+        uow.save_resource_definition(ResourceDefinition("tug", capacity=tug_capacity))
     engine.stores.define(
-        StoreDefinition("departure_queue", kind="priority", capacity=100)
+        StoreDefinition("departure_queue", kind="priority", capacity=departure_queue_capacity)
     )
     return AirportEntities(
         turnaround_id=turnaround.id,

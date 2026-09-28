@@ -287,6 +287,11 @@ The first operational rollout covers:
 - Telecommunications;
 - Warehouse / Fulfillment;
 - Subscription / SaaS;
+- ITSM;
+- Hospitals;
+- Field Service / Workforce;
+- Hospitality / Reservations;
+- Airports;
 - the minimal tutorial domain.
 
 Examples of behavior:
@@ -302,3 +307,23 @@ Examples of behavior:
 A promoted Reference should receive a recurring reconciliation hook when its
 business flow has a clear idempotent operational interpretation. The hook is
 not a wrapper around `run_happy_path()`.
+
+
+### Capacity and interval domains
+
+The second recurring rollout covers domains where progress depends on durable
+capacity, queues, or future intervals:
+
+- ITSM triages, queues, claims, and resolves against configured support capacity;
+- Hospitals triage and allocate ward capacity before discharge;
+- Field Service creates a future appointment and only starts work after its
+  ScheduledWork boundary becomes due;
+- Hospitality creates/holds/confirms a future stay, then checks in/out when the
+  configured arrival/departure boundaries are reached;
+- Airports schedules arrival and departure-slot boundaries, then reconciles
+  gate, service, baggage, queue, tug, and final departure.
+
+The rule remains: reconciliation consumes **current eligibility**. It must not
+invent artificial delays solely to spread a happy path over multiple triggers.
+If business meaning requires waiting, that wait must be represented as durable
+time or durable capacity ownership.

@@ -72,14 +72,21 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    now: datetime = ORIGIN,
     acuity: int = 50,
+    service: str = "general-medicine",
+    ward_bed_capacity: int = 1,
+    icu_bed_capacity: int = 1,
+    clinical_team_capacity: int = 1,
+    procedure_suite_capacity: int = 1,
+    triage_queue_capacity: int = 100,
 ) -> HospitalEntities:
-    context, engine = build_runtime(persistence)
+    context, engine = build_runtime(persistence, now=now)
     admission = context.entities.create(
         Admission,
         key=("hospital-reference", "admission-1"),
         state="admitted",
-        attributes={"acuity": acuity, "service": "general-medicine"},
+        attributes={"acuity": acuity, "service": service},
     )
     episode = context.entities.create(
         TreatmentEpisode,
@@ -94,15 +101,15 @@ def seed_reference(
     with persistence.transaction() as uow:
         uow.save_entity(admission)
         uow.save_entity(episode)
-        uow.save_resource_definition(ResourceDefinition("ward_bed", capacity=1))
-        uow.save_resource_definition(ResourceDefinition("icu_bed", capacity=1))
-        uow.save_resource_definition(ResourceDefinition("clinical_team", capacity=1))
+        uow.save_resource_definition(ResourceDefinition("ward_bed", capacity=ward_bed_capacity))
+        uow.save_resource_definition(ResourceDefinition("icu_bed", capacity=icu_bed_capacity))
+        uow.save_resource_definition(ResourceDefinition("clinical_team", capacity=clinical_team_capacity))
 
     engine.preemptive_resources.define(
-        PreemptiveResourceDefinition("procedure_suite", capacity=1)
+        PreemptiveResourceDefinition("procedure_suite", capacity=procedure_suite_capacity)
     )
     engine.stores.define(
-        StoreDefinition("triage_queue", kind="priority", capacity=100)
+        StoreDefinition("triage_queue", kind="priority", capacity=triage_queue_capacity)
     )
     return HospitalEntities(admission.id, episode.id)
 

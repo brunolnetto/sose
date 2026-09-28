@@ -4,6 +4,9 @@
 
 ### Added
 
+- recurring durable-job reconciliation for ITSM, Hospitals, Field Service,
+  Hospitality, and Airports, including configurable capacities and temporal
+  boundaries;
 - recurring reconciliation hooks for Cards & Payments, Logistics, Telecom,
   Warehouse / Fulfillment, and Subscription / SaaS so durable jobs advance one
   tick per trigger instead of requiring end-to-end example execution;

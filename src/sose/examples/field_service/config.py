@@ -17,3 +17,12 @@ class FieldServiceConfig(DomainConfig):
     wrong_skill: str = "copper-installation"
     technician_resource_capacity: int = Field(default=1, ge=1)
     parts_store_capacity: int = Field(default=20, ge=1)
+    appointment_start_delay: timedelta = Field(
+        default=timedelta(hours=1),
+        gt=timedelta(0),
+    )
+    appointment_duration: timedelta = Field(
+        default=timedelta(hours=1),
+        gt=timedelta(0),
+    )
+    auto_seed_required_part: bool = True

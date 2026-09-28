@@ -69,23 +69,28 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    now: datetime = ORIGIN,
     severity: int = 50,
+    service: str = "payments-api",
+    support_agent_capacity: int = 1,
+    escalation_manager_capacity: int = 1,
+    incident_queue_capacity: int = 100,
 ) -> ITSMEntities:
-    context, engine = build_runtime(persistence)
+    context, engine = build_runtime(persistence, now=now)
     incident = context.entities.create(
         Incident,
         key=("itsm-reference", "incident-1"),
         state="opened",
-        attributes={"severity": severity, "service": "payments-api"},
+        attributes={"severity": severity, "service": service},
     )
     with persistence.transaction() as uow:
         uow.save_entity(incident)
-        uow.save_resource_definition(ResourceDefinition("support_agent", capacity=1))
+        uow.save_resource_definition(ResourceDefinition("support_agent", capacity=support_agent_capacity))
         uow.save_resource_definition(
-            ResourceDefinition("escalation_manager", capacity=1)
+            ResourceDefinition("escalation_manager", capacity=escalation_manager_capacity)
         )
     engine.stores.define(
-        StoreDefinition("incident_queue", kind="priority", capacity=100)
+        StoreDefinition("incident_queue", kind="priority", capacity=incident_queue_capacity)
     )
     return ITSMEntities(incident_id=incident.id)
 
