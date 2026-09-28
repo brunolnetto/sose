@@ -340,7 +340,7 @@ REFERENCE_CATALOG = (
                 "tests/test_energy_utilities_restart_equivalence.py",
             ),
         ),
-    ),,
+    ),
     ReferenceContract(
         domain="Public Transit / Rail",
         package="sose.examples.transit",
