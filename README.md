@@ -351,10 +351,23 @@ The backend remains intentionally ephemeral in v0.7. Scheduled work, scenario ru
 
 ## Development direction
 
-v0.7 closes the durable operational-runtime milestone. Durable semantic state is authoritative; backend state is ephemeral and reconstructible. The next milestone is to implement domain examples on top of this stable runtime, beginning with supply-chain / Procure-to-Pay flows.
+v0.7 closed the durable operational-runtime milestone. Since then, the Reference
+suite has exercised the runtime across materially different domains including
+procurement, manufacturing, finance, insurance, telecom, utilities, transit,
+field service, hospitality, warehouse fulfillment, and subscription lifecycles.
+
+The next milestone is **v0.8 stabilization**: make the validated architecture a
+dependable library for other engineers. The focus is public API stability,
+external persistence portability, built-artifact validation, release discipline,
+a minimal authoring path, and repeated-restart hardening rather than adding more
+industry References.
+
+Release planning and policy live under `docs/releases/`.
 
 See:
 
+- [`docs/releases/README.md`](docs/releases/README.md)
+- [`docs/releases/v0.8.0-plan.md`](docs/releases/v0.8.0-plan.md)
 - [`docs/architecture/domain-implementation-blueprints.md`](docs/architecture/domain-implementation-blueprints.md)
 - [`docs/factories.md`](docs/factories.md)
 - [`docs/probabilistic-transition-graph.md`](docs/probabilistic-transition-graph.md)
