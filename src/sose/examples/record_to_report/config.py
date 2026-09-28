@@ -1,3 +1,4 @@
+from typing import Literal
 from datetime import datetime, timedelta
 from pydantic import Field
 from sose.domain.config import DomainConfig
@@ -9,5 +10,5 @@ class RecordToReportConfig(DomainConfig):
     random_seed: int = 420
     amount: float = Field(default=1000.0, gt=0)
     currency: str = "USD"
-    reconciliation_outcome: str = "match"
+    reconciliation_outcome: Literal["match", "unmatched"] = "match"
     close_delay: timedelta = Field(default=timedelta(hours=2), gt=timedelta(0))
