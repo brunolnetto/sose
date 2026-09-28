@@ -366,6 +366,7 @@ Release planning and policy live under `docs/releases/`.
 
 See:
 
+- [`docs/getting-started/first-domain.md`](docs/getting-started/first-domain.md)
 - [`docs/releases/README.md`](docs/releases/README.md)
 - [`docs/releases/v0.8.0-plan.md`](docs/releases/v0.8.0-plan.md)
 - [`docs/architecture/domain-implementation-blueprints.md`](docs/architecture/domain-implementation-blueprints.md)
