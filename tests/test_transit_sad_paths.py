@@ -187,3 +187,61 @@ def test_service_alert_owns_time_range_and_affected_trip_scope():
     assert persistence.entity("transit_service_alert", alert.id).state == "active"
     backend.run_until(end_at)
     assert persistence.entity("transit_service_alert", alert.id).state == "cleared"
+
+def test_direct_downstream_delay_is_not_erased_by_upstream_block_update():
+    persistence, entities, engine, _ = _runtime()
+    schedule_reference_block(persistence, engine, entities=entities)
+
+    direct = record_trip_update(
+        persistence,
+        engine,
+        entities=entities,
+        trip_id=entities.trip_b_id,
+        sequence=1,
+        delay_seconds=10 * 60,
+    )
+    assert direct is not None
+    propagated = record_trip_update(
+        persistence,
+        engine,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+        sequence=1,
+        delay_seconds=20 * 60,
+    )
+    assert propagated is not None
+
+    trip_b = persistence.entity("transit_scheduled_trip", entities.trip_b_id)
+    assert trip_b is not None
+    assert trip_b.attributes["direct_delay_seconds"] == 600
+    assert trip_b.attributes["block_delay_seconds"] == 300
+    assert trip_b.attributes["current_delay_seconds"] == 600
+
+
+def test_service_alert_replay_rejects_conflicting_time_range():
+    persistence, entities, engine, _ = _runtime()
+    start_at = ORIGIN + timedelta(minutes=30)
+    end_at = ORIGIN + timedelta(hours=2)
+    first = schedule_service_alert(
+        persistence,
+        engine,
+        alert_key="immutable-window",
+        affected_trip_ids=(entities.trip_a_id,),
+        start_at=start_at,
+        end_at=end_at,
+    )
+
+    with pytest.raises(ValueError, match="time range cannot change"):
+        schedule_service_alert(
+            persistence,
+            engine,
+            alert_key="immutable-window",
+            affected_trip_ids=(entities.trip_a_id,),
+            start_at=start_at,
+            end_at=end_at + timedelta(minutes=5),
+        )
+
+    persisted = persistence.entity("transit_service_alert", first.id)
+    assert persisted is not None
+    assert persisted.attributes["end_at"] == end_at.isoformat()
+
