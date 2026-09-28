@@ -19,6 +19,8 @@ class SimulationJobState:
     run_count: int = 0
     bootstrap_state: object | None = None
     last_triggered_at: datetime | None = None
+    active_trigger_id: str | None = None
+    last_completed_trigger_id: str | None = None
     last_error: str | None = None
 
     def __post_init__(self) -> None:
