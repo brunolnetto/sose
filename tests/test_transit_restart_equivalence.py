@@ -1,7 +1,10 @@
 from datetime import datetime, timedelta
 
 from sose.backends.simpy import SimPyBackend
-from sose.examples.transit.entities import VehiclePositionOccurrence
+from sose.examples.transit.entities import (
+    TripUpdateOccurrence,
+    VehiclePositionOccurrence,
+)
 from sose.examples.transit.scenarios import ORIGIN
 from sose.examples.transit.simulation import (
     TRIP_A_START,
@@ -11,6 +14,7 @@ from sose.examples.transit.simulation import (
     reconcile_vehicle_for_trip,
     schedule_reference_block,
     seed_reference,
+    trip_update_id,
     vehicle_position_id,
 )
 from sose.persistence.memory import MemoryPersistence
@@ -119,3 +123,57 @@ def test_captured_position_resumes_commit_after_restart():
         88,
     )
     assert recovered.state == "committed"
+    vehicle = persistence.entity("transit_vehicle", entities.vehicle_id)
+    assert vehicle is not None
+    assert vehicle.attributes["latest_position_id"] == recovered.id
+    assert vehicle.attributes["current_stop_sequence"] == 2
+
+def test_committed_trip_update_reconciles_projection_after_crash():
+    persistence = MemoryPersistence()
+    entities = seed_reference(persistence)
+    _, engine = build_runtime(persistence)
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+    schedule_reference_block(persistence, engine, entities=entities)
+
+    occurrence = engine.context.entities.create(
+        TripUpdateOccurrence,
+        key=("transit-reference", entities.trip_a_id, "trip-update", 55),
+        state="committed",
+        attributes={
+            "trip_id": entities.trip_a_id,
+            "sequence": 55,
+            "delay_seconds": 20 * 60,
+        },
+    )
+    with persistence.transaction() as uow:
+        uow.save_entity(occurrence)
+
+    trip_a = persistence.entity("transit_scheduled_trip", entities.trip_a_id)
+    assert trip_a is not None
+    assert trip_a.attributes["latest_update_sequence"] == 0
+
+    rebuilt = restart_reference_runtime(
+        persistence,
+        build_runtime,
+        backend,
+        backend_factory=SimPyBackend,
+    )
+    recovered = record_trip_update(
+        persistence,
+        rebuilt.engine,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+        sequence=55,
+        delay_seconds=20 * 60,
+    )
+
+    assert recovered is not None
+    assert recovered.id == trip_update_id(entities.trip_a_id, 55)
+    trip_a = persistence.entity("transit_scheduled_trip", entities.trip_a_id)
+    trip_b = persistence.entity("transit_scheduled_trip", entities.trip_b_id)
+    assert trip_a is not None and trip_b is not None
+    assert trip_a.attributes["latest_update_sequence"] == 55
+    assert trip_a.attributes["current_delay_seconds"] == 1200
+    assert trip_b.attributes["block_delay_seconds"] == 300
+
