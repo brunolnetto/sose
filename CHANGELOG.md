@@ -4,6 +4,8 @@
 
 ### Added
 
+- `sose apply --config sose.toml` for explicit idempotent application of
+  edited domain configuration to an existing durable job;
 - `sose init --domain <name>` scaffolding generated from each domain's actual
   validated defaults, with roundtrip coverage across the full builtin catalog;
 - `sose` command-line interface for config validation, one-tick execution,

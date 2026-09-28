@@ -77,7 +77,16 @@ The configuration stored inside the durable job state is authoritative.
 
 Editing `sose.toml` does **not** silently mutate an existing job.
 
-Use:
+For declarative deployments, edit `sose.toml` and explicitly apply it:
+
+```bash
+sose apply --config sose.toml
+```
+
+Applying the same desired configuration twice is idempotent and does not create
+another revision.
+
+Programmatic callers can still use:
 
 ```python
 job.update_config({

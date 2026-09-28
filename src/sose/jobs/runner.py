@@ -103,6 +103,29 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             uow.save_job_state(initialized)
         return initialized
 
+    def apply_config(
+        self,
+        config: ConfigT | dict[str, object],
+    ) -> SimulationJobState:
+        """Replace the durable domain configuration only when it changed.
+
+        Unlike update_config(), this treats the supplied value as the complete
+        desired configuration. It is the idempotent operation used by
+        declarative config files and deployment tooling.
+        """
+
+        current = self.state()
+        if current is None:
+            return self.initialize(config)
+
+        resolved = self.definition.parse_config(config)
+        persisted = self.definition.config_model.model_validate_json(
+            current.config_json
+        )
+        if resolved == persisted:
+            return current
+        return self.update_config(resolved)
+
     def update_config(
         self,
         config: ConfigT | dict[str, object],
