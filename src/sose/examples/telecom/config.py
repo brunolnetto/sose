@@ -17,3 +17,7 @@ class TelecomConfig(DomainConfig):
     access_technology: str = "5G"
     sim_type: str = "eSIM"
     provisioning_capacity: int = Field(default=1, ge=1)
+    activation_delay: timedelta = Field(
+        default=timedelta(hours=2),
+        gt=timedelta(0),
+    )
