@@ -7,6 +7,7 @@ import pytest
 
 from sose.core.events import Command, DomainEvent
 from sose.domain.entity import Entity
+from sose.jobs.model import SimulationJobState
 from sose.scenarios import AttributeEffect
 from sose.scenarios.model import ScenarioActivation, ScenarioRuntimeState
 from sose.core.runtime import (
@@ -39,6 +40,47 @@ class PersistenceConformanceSuite:
     @abstractmethod
     def make_persistence(self):
         raise NotImplementedError
+
+    def test_job_state_round_trip_and_rollback_are_durable(self):
+        store = self.make_persistence()
+        state = SimulationJobState(
+            job_id="job-1",
+            domain_name="demo",
+            config_json='{"start_at":"2026-01-01T08:00:00Z"}',
+            config_revision=1,
+            status="ready",
+            initialized=True,
+            logical_time=NOW,
+            next_tick=3,
+            run_count=2,
+            bootstrap_state={"entity_id": "entity-1"},
+        )
+
+        with store.transaction() as uow:
+            uow.save_job_state(state)
+            assert uow.get_job_state("job-1") == state
+
+        assert store.job_state("job-1") == state
+        assert store.job_states() == (state,)
+
+        changed = SimulationJobState(
+            job_id="job-1",
+            domain_name="demo",
+            config_json=state.config_json,
+            config_revision=2,
+            status="paused",
+            initialized=True,
+            logical_time=NOW + timedelta(hours=1),
+            next_tick=4,
+            run_count=3,
+            bootstrap_state={"entity_id": "entity-1"},
+        )
+        with pytest.raises(RuntimeError, match="abort job"):
+            with store.transaction() as uow:
+                uow.save_job_state(changed)
+                raise RuntimeError("abort job")
+
+        assert store.job_state("job-1") == state
 
     def test_transaction_commit_is_atomic_and_visible_after_exit(self):
         store = self.make_persistence()
