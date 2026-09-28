@@ -364,9 +364,10 @@ v0.8 closes the library-stabilization milestone: public API stability, SQLite
 persistence portability, built-artifact validation, release discipline, a
 minimal authoring path, and repeated-restart hardening are now executable gates.
 
-The next phase should be driven by adoption evidence, persistence migration
-needs, measured performance, diagnostics/observability, and eventual 1.0
-compatibility criteria rather than automatic expansion of the domain catalog.
+The next phase is the **v0.9 adoption and operations milestone**: persistence
+evolution, durable diagnostics, measured performance, real adoption evidence,
+and explicit 1.0 compatibility criteria. PostgreSQL remains evidence-triggered
+rather than a maturity checkbox.
 
 Release closure and policy live under `docs/releases/`.
 
@@ -375,6 +376,8 @@ See:
 - [`docs/getting-started/first-domain.md`](docs/getting-started/first-domain.md)
 - [`docs/releases/README.md`](docs/releases/README.md)
 - [`docs/releases/v0.8.0.md`](docs/releases/v0.8.0.md)
+- [`docs/releases/v0.9.0-plan.md`](docs/releases/v0.9.0-plan.md)
+- [`docs/architecture/version-1-readiness.md`](docs/architecture/version-1-readiness.md)
 - [`docs/releases/v0.8.0-plan.md`](docs/releases/v0.8.0-plan.md)
 - [`docs/architecture/domain-implementation-blueprints.md`](docs/architecture/domain-implementation-blueprints.md)
 - [`docs/factories.md`](docs/factories.md)
