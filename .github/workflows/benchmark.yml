@@ -8,6 +8,10 @@ on:
         required: false
         default: false
         type: boolean
+  pull_request:
+    paths:
+      - "benchmarks/persistence_scaling.py"
+      - ".github/workflows/benchmark.yml"
   schedule:
     - cron: "17 5 * * 1"
 
@@ -37,12 +41,19 @@ jobs:
       - name: Run benchmark suite
         env:
           QUICK: ${{ github.event_name == 'workflow_dispatch' && inputs.quick || false }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           if [ "$QUICK" = "true" ]; then
             python benchmarks/runtime_baseline.py --quick --output benchmark-results.json
             python benchmarks/persistence_scaling.py \
               --sizes 10,100 \
               --repetitions 1 \
+              --output persistence-scaling.json
+          elif [ "$EVENT_NAME" = "pull_request" ]; then
+            python benchmarks/runtime_baseline.py --quick --output benchmark-results.json
+            python benchmarks/persistence_scaling.py \
+              --sizes 10,100,1000,10000 \
+              --repetitions 3 \
               --output persistence-scaling.json
           else
             python benchmarks/runtime_baseline.py --output benchmark-results.json
