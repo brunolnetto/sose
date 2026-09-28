@@ -36,6 +36,7 @@ def test_delay_projection_and_rescheduled_boundaries_survive_restart():
     record_trip_update(
         persistence,
         engine,
+        backend,
         entities=entities,
         trip_id=entities.trip_a_id,
         sequence=1,
@@ -70,6 +71,7 @@ def test_captured_position_resumes_commit_after_restart():
     assert reconcile_vehicle_for_trip(
         persistence,
         engine,
+        backend,
         entities=entities,
         trip_id=entities.trip_a_id,
     )
@@ -162,6 +164,7 @@ def test_committed_trip_update_reconciles_projection_after_crash():
     recovered = record_trip_update(
         persistence,
         rebuilt.engine,
+        rebuilt.backend,
         entities=entities,
         trip_id=entities.trip_a_id,
         sequence=55,
