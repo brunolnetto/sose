@@ -15,3 +15,7 @@ class CardsPaymentsConfig(DomainConfig):
     amount: float = Field(default=125.0, gt=0)
     currency: str = "USD"
     processor_capacity: int = Field(default=1, ge=1)
+    settlement_delay: timedelta = Field(
+        default=timedelta(hours=2),
+        gt=timedelta(0),
+    )
