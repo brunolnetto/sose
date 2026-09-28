@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import math
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
@@ -223,8 +224,8 @@ def record_meter_reading(
     correction_ordinal: int = 0,
     supersedes_reading_id: str | None = None,
 ) -> MeterReading | None:
-    if quantity_kwh < 0:
-        raise ValueError("meter reading quantity must be non-negative")
+    if not math.isfinite(float(quantity_kwh)) or quantity_kwh < 0:
+        raise ValueError("meter reading quantity must be finite and non-negative")
     if quality not in {"actual", "estimated", "corrected"}:
         raise ValueError(f"unsupported meter reading quality: {quality}")
     if correction_ordinal < 0:
@@ -465,6 +466,8 @@ def schedule_demand_response(
     )
     if not requested_targets:
         raise ValueError("demand-response event requires at least one target")
+    if entities.service_point_id not in requested_targets:
+        raise ValueError("primary service point must belong to target population")
     for service_point_id in requested_targets:
         _entity(persistence, "utility_service_point", service_point_id)
 
