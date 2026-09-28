@@ -97,13 +97,29 @@ A persistence sink is supported only when it:
 6. participates in benchmark comparison;
 7. documents concurrency and migration limitations.
 
-## Next sink: DuckDB
+## DuckDB
 
-DuckDB is a good next optional adapter because it exercises a separate embedded
-SQL implementation and analytical ecosystem.
+`DuckDBPersistence` is an optional embedded SQL sink using the same
+backend-neutral record/delta mapping as Incremental SQLite.
 
-It should reuse the same record/delta mapping and remain an optional dependency.
-It should not be added to core dependencies merely to increase the sink count.
+Install it with:
+
+```bash
+pip install "sose[duckdb]"
+```
+
+or, from source:
+
+```bash
+pip install -e ".[duckdb]"
+```
+
+DuckDB is intentionally not imported by `sose.api`; optional database
+dependencies remain explicit integration choices.
+
+The adapter exists to test whether the record/delta mapping is portable across
+independent SQL engines and to expose an analytical ecosystem without turning
+DuckDB into a core dependency.
 
 ## PostgreSQL
 
