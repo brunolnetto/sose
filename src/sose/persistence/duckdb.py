@@ -8,7 +8,7 @@ from typing import Iterator
 import duckdb
 
 from .memory import MemoryPersistence, MemoryUnitOfWork, _State
-from .records import StateRecord, diff_state_records, records_to_state
+from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
 _SCHEMA_VERSION = 1
@@ -86,8 +86,13 @@ class DuckDBPersistence(MemoryPersistence):
         )
         self._state = records_to_state(records)
 
-    def _apply_changes(self, before: _State, after: _State) -> int:
-        changes = diff_state_records(before, after)
+    def _apply_changes(
+        self,
+        before: _State,
+        after: _State,
+        dirty_records,
+    ) -> int:
+        changes = changes_for_dirty_records(before, after, dirty_records)
         for change in changes:
             if change.operation == "delete":
                 self._connection.execute(
