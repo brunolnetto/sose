@@ -7,7 +7,7 @@ import sqlite3
 from typing import Iterator
 
 from .codec import dumps, loads
-from .memory import MemoryPersistence, MemoryUnitOfWork, _State
+from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .sqlite_migrations import (
     CURRENT_CODEC_VERSION,
     CURRENT_SCHEMA_VERSION,
@@ -118,7 +118,7 @@ class SQLitePersistence(MemoryPersistence):
         self._connection.execute("BEGIN IMMEDIATE")
         try:
             self._refresh_from_db()
-            uow = MemoryUnitOfWork(deepcopy(self._state), self)
+            uow = MemoryUnitOfWork(fork_state(self._state), self)
             yield uow
             if not uow._closed:
                 uow.commit()
