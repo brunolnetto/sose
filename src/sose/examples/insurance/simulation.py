@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import math
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
@@ -42,7 +43,8 @@ PAYMENT_DELAY = timedelta(hours=2)
 def _reference_minor_units(value: float) -> int:
     scaled = float(value) * 100
     nearest = round(scaled)
-    if abs(scaled - nearest) > 1e-7:
+    tolerance = max(1e-7, 2 * math.ulp(scaled))
+    if abs(scaled - nearest) > tolerance:
         raise ValueError("Reference payout amount must not contain fractional minor units")
     return int(nearest)
 
@@ -752,6 +754,8 @@ def reconcile_payment(
     payment = _entity(persistence, "insurance_payment", payment.id)
     if partial and payment.state == "due":
         total_units = _reference_minor_units(float(payment.attributes["amount"]))
+        if total_units < 2:
+            raise ValueError("partial payout requires at least two minor units")
         payment.attributes["paid_amount"] = (total_units // 2) / 100
         with persistence.transaction() as uow:
             uow.save_entity(payment)
