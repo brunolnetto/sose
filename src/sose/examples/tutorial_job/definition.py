@@ -39,6 +39,9 @@ def _reconcile_tick(
     config: TutorialJobConfig,
     job,
 ) -> None:
+    current = persistence.entity("tutorial_job", job.id)
+    if current is None or current.state not in {"queued", "running"}:
+        return
     start_and_schedule_completion(
         persistence,
         engine,
