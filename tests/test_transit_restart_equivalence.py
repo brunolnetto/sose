@@ -71,7 +71,6 @@ def test_captured_position_resumes_commit_after_restart():
     assert reconcile_vehicle_for_trip(
         persistence,
         engine,
-        backend,
         entities=entities,
         trip_id=entities.trip_a_id,
     )
