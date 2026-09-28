@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import math
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
@@ -46,7 +47,8 @@ COLLECTION_FOLLOWUP = timedelta(hours=1)
 def _usd_cents(value: float) -> int:
     scaled = float(value) * 100
     nearest = round(scaled)
-    if abs(scaled - nearest) > 1e-7:
+    tolerance = max(1e-7, 2 * math.ulp(scaled))
+    if abs(scaled - nearest) > tolerance:
         raise ValueError("USD amount must not contain fractional cents")
     return int(nearest)
 
