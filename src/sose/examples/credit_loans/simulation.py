@@ -152,6 +152,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    now: datetime = ORIGIN,
     principal: float = 1200.0,
     installment_count: int = 3,
 ) -> CreditLoanEntities:
@@ -160,7 +161,7 @@ def seed_reference(
         raise ValueError("principal must be positive")
     if installment_count <= 0:
         raise ValueError("installment_count must be positive")
-    context, _ = build_runtime(persistence)
+    context, _ = build_runtime(persistence, now=now)
     application = context.entities.create(
         LoanApplication,
         key=("credit-loans-reference", "application-1"),
@@ -316,7 +317,15 @@ def ensure_loan(persistence, engine, *, entities):
     return value
 
 
-def disburse_and_schedule(persistence, engine, backend, *, entities):
+def disburse_and_schedule(
+    persistence,
+    engine,
+    backend,
+    *,
+    entities,
+    first_due_delay: timedelta = FIRST_DUE_DELAY,
+    installment_interval: timedelta = INSTALLMENT_INTERVAL,
+):
     loan = ensure_loan(persistence, engine, entities=entities)
     correlation_id = flow_correlation_id(entities.application_id)
     if loan.state == "approved":
@@ -372,7 +381,7 @@ def disburse_and_schedule(persistence, engine, backend, *, entities):
             name="make_due",
         )
         if installment.state == "scheduled" and existing is None:
-            due_at = backend.now + FIRST_DUE_DELAY + INSTALLMENT_INTERVAL * (ordinal - 1)
+            due_at = backend.now + first_due_delay + installment_interval * (ordinal - 1)
             command = engine.context.commands.create(
                 "make_due",
                 target=installment,
