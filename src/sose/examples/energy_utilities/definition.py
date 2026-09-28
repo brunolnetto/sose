@@ -8,7 +8,15 @@ def _build(persistence: Persistence, config: EnergyUtilitiesConfig, now: datetim
     return build_runtime(persistence, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
 
 def _seed(persistence: Persistence, config: EnergyUtilitiesConfig):
-    return seed_reference(persistence)
+    return seed_reference(
+        persistence,
+        now=config.start_at,
+        primary_customer_id=config.primary_customer_id,
+        secondary_customer_id=config.secondary_customer_id,
+        include_secondary=config.include_secondary,
+        quantity_kind=config.quantity_kind,
+        unit=config.unit,
+    )
 
 definition = DomainDefinition(
     name="energy_utilities",
