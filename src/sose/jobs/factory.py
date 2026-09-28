@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sose.examples.catalog import builtin_catalog
 from sose.jobs.config import SOSEConfig, load_sose_config
 from sose.jobs.runner import SimulationJob
 from sose.persistence.registry import (
@@ -29,6 +28,12 @@ def build_job_from_config(
     base_dir: Path,
     persistence_registry: PersistenceRegistry | None = None,
 ) -> SimulationJob:
+    # Import the builtin examples only when a declarative job is actually
+    # constructed. The stable sose.api facade must stay importable without
+    # optional execution backends and without pulling the example graph into
+    # module initialization.
+    from sose.examples.catalog import builtin_catalog
+
     domains = builtin_catalog()
     definition = domains.get(config.domain.name)
     registry = persistence_registry or builtin_persistence_registry()
