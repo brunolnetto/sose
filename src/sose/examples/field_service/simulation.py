@@ -399,6 +399,16 @@ def confirm_appointment(
 ) -> Appointment:
     appointment = _appointment(persistence, appointment_id_value)
     work_order = _work_order(persistence, entities)
+    active_id = work_order.attributes.get("active_appointment_id")
+    if active_id is not None and active_id != appointment.id:
+        active = persistence.entity("field_appointment", str(active_id))
+        if active is not None and active.state not in {
+            "completed",
+            "no_access_recorded",
+            "missed",
+            "cancelled",
+        }:
+            raise RuntimeError("work order already has an active appointment")
     start_at = _at(appointment.attributes["start_at"])
     end_at = _at(appointment.attributes["end_at"])
 
