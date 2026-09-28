@@ -1,3 +1,5 @@
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 import sqlite3
 
 import pytest
@@ -176,3 +178,82 @@ def test_external_stale_object_is_last_writer_wins_outside_uow_read_discipline(
 
     first.close()
     second.close()
+
+
+
+def _construct_concurrently(path, workers: int = 4):
+    barrier = Barrier(workers)
+
+    def open_adapter(_):
+        barrier.wait()
+        persistence = SQLiteIncrementalPersistence(path)
+        result = (
+            persistence._database_revision(),
+            persistence.persisted_record_count(),
+        )
+        persistence.close()
+        return result
+
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        return list(executor.map(open_adapter, range(workers)))
+
+
+def test_simultaneous_constructors_safely_bootstrap_new_database(tmp_path):
+    path = tmp_path / "bootstrap-race.sqlite3"
+
+    results = _construct_concurrently(path)
+
+    assert results == [(0, 0)] * 4
+    persistence = SQLiteIncrementalPersistence(path)
+    row = persistence._connection.execute(
+        """
+        SELECT schema_version, revision
+        FROM sose_record_meta
+        WHERE singleton = 1
+        """
+    ).fetchone()
+    assert row == (2, 0)
+    persistence.close()
+
+
+def test_simultaneous_constructors_safely_migrate_v1_database(tmp_path):
+    path = tmp_path / "migration-race.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        """
+        CREATE TABLE sose_record_meta (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            schema_version INTEGER NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        """
+        CREATE TABLE sose_record (
+            collection TEXT NOT NULL,
+            record_key TEXT NOT NULL,
+            position INTEGER NOT NULL,
+            payload TEXT NOT NULL,
+            PRIMARY KEY (collection, record_key)
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO sose_record_meta(singleton, schema_version) VALUES (1, 1)"
+    )
+    connection.commit()
+    connection.close()
+
+    results = _construct_concurrently(path)
+
+    assert results == [(0, 0)] * 4
+    persistence = SQLiteIncrementalPersistence(path)
+    row = persistence._connection.execute(
+        """
+        SELECT schema_version, revision
+        FROM sose_record_meta
+        WHERE singleton = 1
+        """
+    ).fetchone()
+    assert row == (2, 0)
+    persistence.close()
