@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Added
+
+- read-only runtime diagnostics with durable counts, recovery position, and
+  stable consistency issue codes;
+- transactional SQLite schema migrations with independent schema/codec
+  versioning and a tested v1 -> v2 path.
+
 ## 0.8.0 — 2026-09-28
 
 ### Added

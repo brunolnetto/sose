@@ -20,6 +20,7 @@ from .resources import DurableResourceManager
 from .stores import DurableStoreManager
 from .preemption import DurablePreemptiveResourceManager
 from .containers import DurableContainerManager
+from .diagnostics import RuntimeDiagnostics, collect_runtime_diagnostics
 from .runtime import SimulationPosition
 
 
@@ -145,6 +146,11 @@ class Engine:
             raise
 
         return True
+
+
+    def diagnostics(self) -> RuntimeDiagnostics:
+        """Return a read-only snapshot of durable runtime state and warnings."""
+        return collect_runtime_diagnostics(self.persistence)
 
 
     def rebuild_backend(self, backend) -> int:

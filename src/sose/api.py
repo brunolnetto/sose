@@ -14,6 +14,12 @@ from sose.backends.base import (
 )
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
+from sose.core.diagnostics import (
+    DiagnosticIssue,
+    RuntimeCounts,
+    RuntimeDiagnostics,
+    collect_runtime_diagnostics,
+)
 from sose.core.engine import Engine
 from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
@@ -37,6 +43,7 @@ __all__ = [
     "AttributeEffect",
     "CompositeEffect",
     "ContainerBackend",
+    "DiagnosticIssue",
     "DomainRegistry",
     "Engine",
     "Entity",
@@ -46,6 +53,8 @@ __all__ = [
     "Persistence",
     "PreemptiveResourceBackend",
     "RandomSource",
+    "RuntimeCounts",
+    "RuntimeDiagnostics",
     "ResourceBackend",
     "SQLitePersistence",
     "Scenario",
@@ -58,6 +67,7 @@ __all__ = [
     "TickTrigger",
     "TransitionWeightEffect",
     "UnitOfWork",
+    "collect_runtime_diagnostics",
     "probabilistic",
     "probabilistic_transitions",
 ]
