@@ -57,8 +57,13 @@ entity:
 4. writer B refreshes durable state;
 5. writer B evaluates its command against the newly committed entity state.
 
-If B's command is no longer legal, the StateChart rejects it. It does not
-overwrite A's committed state.
+If B's command has no enabled transition in the newly committed state, SOSE's
+StateChart semantics treat it as a no-op. It emits no transition event, writes
+no new semantic state, and does not overwrite A's committed state.
+
+This follows the tolerant SCXML-oriented StateChart contract. Domains that need
+an explicit business rejection should model that rejection as domain meaning
+rather than rely on a persistence-level concurrency exception.
 
 ## Detached stale entities
 
