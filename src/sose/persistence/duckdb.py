@@ -145,7 +145,11 @@ class DuckDBPersistence(MemoryPersistence):
             yield uow
             if not uow._closed:
                 uow.commit()
-            self._apply_changes(before, self._state)
+            self._apply_changes(
+                before,
+                self._state,
+                uow.dirty_records,
+            )
             self._connection.execute("COMMIT")
         except Exception:
             self._connection.execute("ROLLBACK")
