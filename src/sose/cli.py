@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 import sys
 
-from sose.examples.catalog import builtin_catalog
 from sose.jobs.config import load_sose_config
 from sose.jobs.factory import build_job_from_file
 from sose.persistence.registry import builtin_persistence_registry
@@ -23,6 +22,8 @@ def _close_persistence(persistence) -> None:
 
 
 def _validate_config(path: str | Path) -> dict[str, object]:
+    from sose.examples.catalog import builtin_catalog
+
     config, _ = load_sose_config(path)
     domains = builtin_catalog()
     definition = domains.get(config.domain.name)
@@ -98,6 +99,8 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
 
 
 def _cmd_domains(args: argparse.Namespace) -> int:
+    from sose.examples.catalog import builtin_catalog
+
     catalog = builtin_catalog()
     payload = [
         {
