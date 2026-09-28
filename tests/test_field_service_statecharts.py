@@ -29,7 +29,7 @@ def test_no_access_is_a_reschedule_branch_not_history_rewrite():
     assert ("ready", "schedule", ("scheduled",)) in _edges(WorkOrderChart())
     assert ("in_progress", "require_reschedule", ("reschedule_required",)) in _edges(WorkOrderChart())
     assert ("reschedule_required", "reschedule", ("scheduled",)) in _edges(WorkOrderChart())
-    assert ("in_progress", "no_access", ("no_access",)) in _edges(AppointmentChart())
+    assert ("in_progress", "no_access", ("no_access_recorded",)) in _edges(AppointmentChart())
     assert ("captured", "commit", ("committed",)) in _edges(VisitOccurrenceChart())
 
 
