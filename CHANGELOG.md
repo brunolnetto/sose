@@ -4,6 +4,8 @@
 
 ### Added
 
+- persistence scaling curves at 10/100/1,000/10,000 durable entities for
+  snapshot SQLite, incremental SQLite, JSONL, and DuckDB;
 - UnitOfWork dirty-record tracking so record-oriented sinks encode only touched
   semantic identities instead of diffing the entire durable state;
 - revision-aware incremental SQLite cache that avoids full record reloads when
