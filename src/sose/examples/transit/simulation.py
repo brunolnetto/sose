@@ -519,6 +519,13 @@ def record_vehicle_position(
 
     if not engine.context.scenarios.attribute("transit.realtime.available", True):
         return None
+    if trip.state != "running":
+        raise RuntimeError("vehicle position requires running trip")
+    if (
+        vehicle.state != "in_service"
+        or vehicle.attributes.get("active_trip_id") != trip.id
+    ):
+        raise RuntimeError("vehicle position requires vehicle assigned to trip")
 
     position = engine.context.entities.create(
         VehiclePositionOccurrence,
