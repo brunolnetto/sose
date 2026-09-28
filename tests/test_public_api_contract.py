@@ -15,6 +15,7 @@ EXPECTED_PUBLIC_API = {
     "PreemptiveResourceBackend",
     "RandomSource",
     "ResourceBackend",
+    "SQLitePersistence",
     "Scenario",
     "ScheduledTrigger",
     "SimulationClock",
