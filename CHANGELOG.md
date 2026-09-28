@@ -4,6 +4,8 @@
 
 ### Added
 
+- UnitOfWork dirty-record tracking so record-oriented sinks encode only touched
+  semantic identities instead of diffing the entire durable state;
 - revision-aware incremental SQLite cache that avoids full record reloads when
   durable state has not changed;
 - optional DuckDB persistence sink using the shared record/delta mapping;
