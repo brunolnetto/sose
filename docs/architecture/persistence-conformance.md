@@ -66,3 +66,45 @@ class TestPostgresPersistenceConformance(PersistenceConformanceSuite):
 ```
 
 The same suite should run unchanged against every supported persistence backend.
+
+
+## SQLite reference adapter
+
+`SQLitePersistence` is the first external transactional adapter.
+
+Its v0.8 implementation intentionally stores one tagged-JSON semantic snapshot
+inside SQLite rather than prematurely normalizing every durable record into a
+database-specific schema. That design has two purposes:
+
+1. prove the Persistence contract survives a real serialization/process boundary;
+2. preserve exactly the same validation semantics as MemoryPersistence.
+
+The adapter therefore optimizes for correctness and portability before query
+performance. A future normalized SQLite/PostgreSQL schema may replace this
+storage layout without changing the public Persistence protocol.
+
+### Serialization contract
+
+SQLitePersistence does not use pickle.
+
+The tagged JSON codec preserves SOSE dataclasses, datetime/date, enums, UUIDs,
+bytes, tuples, sets/frozensets, mappings, and exact float bit patterns. Values
+outside the supported durable codec fail explicitly instead of falling back to
+`repr()` or `str()`.
+
+The database is treated as trusted application state. The codec resolves durable
+dataclass/enum types by their Python module and qualified name, so moving those
+types is a persistence compatibility concern and must be documented during the
+pre-1.0 line.
+
+### Reopen evidence
+
+In addition to the reusable conformance suite, a Reference-level restart test:
+
+1. persists an in-progress ITSM incident and SLA boundary;
+2. closes the SQLite connection;
+3. creates a fresh SQLitePersistence from the same file;
+4. rebuilds a fresh ephemeral backend;
+5. executes the durable SLA boundary and completes reconciliation.
+
+This is intentionally stronger than rebuilding against the same in-memory object.
