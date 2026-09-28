@@ -7,7 +7,7 @@ import sqlite3
 from time import monotonic, sleep
 from typing import Iterator
 
-from .memory import MemoryPersistence, MemoryUnitOfWork, _State
+from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
@@ -223,9 +223,9 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
     def transaction(self) -> Iterator[MemoryUnitOfWork]:
         self._connection.execute("BEGIN IMMEDIATE")
         self._refresh_from_db()
-        before = deepcopy(self._state)
+        before = fork_state(self._state)
         try:
-            uow = MemoryUnitOfWork(deepcopy(self._state), self)
+            uow = MemoryUnitOfWork(fork_state(self._state), self)
             yield uow
             if not uow._closed:
                 uow.commit()
