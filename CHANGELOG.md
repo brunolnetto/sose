@@ -4,6 +4,8 @@
 
 ### Added
 
+- revision-aware incremental SQLite cache that avoids full record reloads when
+  durable state has not changed;
 - optional DuckDB persistence sink using the shared record/delta mapping;
 - DuckDB benchmark comparison for scheduled execution and reopen/rebuild;
 - incremental SQLite persistence using backend-neutral record deltas;
