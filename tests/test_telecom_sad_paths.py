@@ -14,6 +14,7 @@ from sose.examples.telecom.simulation import (
     seed_reference,
     subscription_service_id,
     trouble_ticket_id,
+    usage_record_id,
 )
 from sose.persistence.memory import MemoryPersistence
 
@@ -223,8 +224,5 @@ def test_usage_rejects_non_finite_quantities(quantity):
     service_id = subscription_service_id(entities.product_order_id)
     assert persistence.entity(
         "telecom_usage_record",
-        __import__(
-            "sose.examples.telecom.simulation",
-            fromlist=["usage_record_id"],
-        ).usage_record_id(service_id, 101),
+        usage_record_id(service_id, 101),
     ) is None
