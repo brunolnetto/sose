@@ -91,35 +91,41 @@ def build_runtime(
     )
 
 
-def seed_reference(persistence: MemoryPersistence) -> HospitalityEntities:
-    context, _ = build_runtime(persistence)
-    room_101 = context.entities.create(
-        Room,
-        key=("hospitality-reference", "room-101"),
-        state="inventory",
-        attributes={"room_number": "101", "room_type": "standard"},
-    )
-    room_102 = context.entities.create(
-        Room,
-        key=("hospitality-reference", "room-102"),
-        state="inventory",
-        attributes={"room_number": "102", "room_type": "standard"},
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    room_count: int = 2,
+    room_type: str = "standard",
+) -> HospitalityEntities:
+    context, _ = build_runtime(persistence, now=now)
+    rooms = tuple(
+        context.entities.create(
+            Room,
+            key=("hospitality-reference", f"room-{101 + index}"),
+            state="inventory",
+            attributes={
+                "room_number": str(101 + index),
+                "room_type": room_type,
+            },
+        )
+        for index in range(room_count)
     )
     hotel = context.entities.create(
         Hotel,
         key=("hospitality-reference", "hotel-1"),
         state="open",
         attributes={
-            "room_ids": [room_101.id, room_102.id],
+            "room_ids": [room.id for room in rooms],
             "booking_ids": [],
         },
     )
     with persistence.transaction() as uow:
-        for entity in (room_101, room_102, hotel):
+        for entity in (*rooms, hotel):
             uow.save_entity(entity)
     return HospitalityEntities(
         hotel_id=hotel.id,
-        room_ids=(room_101.id, room_102.id),
+        room_ids=tuple(room.id for room in rooms),
     )
 
 
