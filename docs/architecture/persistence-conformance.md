@@ -108,3 +108,12 @@ In addition to the reusable conformance suite, a Reference-level restart test:
 5. executes the durable SLA boundary and completes reconciliation.
 
 This is intentionally stronger than rebuilding against the same in-memory object.
+
+
+## Schema evolution
+
+SQLite schema and codec evolution are versioned separately. Supported older
+schemas migrate transactionally on open; newer schemas/codecs are rejected
+without mutation.
+
+See [SQLite persistence migrations](sqlite-migrations.md).

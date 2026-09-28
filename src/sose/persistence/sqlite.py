@@ -8,9 +8,13 @@ from typing import Iterator
 
 from .codec import dumps, loads
 from .memory import MemoryPersistence, MemoryUnitOfWork, _State
-
-
-_SCHEMA_VERSION = 1
+from .sqlite_migrations import (
+    CURRENT_CODEC_VERSION,
+    CURRENT_SCHEMA_VERSION,
+    SQLiteSchemaInfo,
+    ensure_schema,
+    read_schema_info,
+)
 
 
 class SQLitePersistence(MemoryPersistence):
@@ -34,15 +38,13 @@ class SQLitePersistence(MemoryPersistence):
             timeout=30.0,
         )
         self._connection.execute("PRAGMA foreign_keys = ON")
-        self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sose_state (
-                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-                schema_version INTEGER NOT NULL,
-                payload TEXT NOT NULL
-            )
-            """
-        )
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            ensure_schema(self._connection)
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
         self._refresh_from_db()
         if self._connection.execute(
             "SELECT 1 FROM sose_state WHERE singleton = 1"
@@ -53,6 +55,10 @@ class SQLitePersistence(MemoryPersistence):
     def close(self) -> None:
         self._connection.close()
 
+    def schema_info(self) -> SQLiteSchemaInfo:
+        """Return the durable SQLite schema/codec versions currently stored."""
+        return read_schema_info(self._connection)
+
     def __enter__(self) -> "SQLitePersistence":
         return self
 
@@ -61,15 +67,22 @@ class SQLitePersistence(MemoryPersistence):
 
     def _refresh_from_db(self) -> None:
         row = self._connection.execute(
-            "SELECT schema_version, payload FROM sose_state WHERE singleton = 1"
+            "SELECT schema_version, codec_version, payload "
+            "FROM sose_state WHERE singleton = 1"
         ).fetchone()
         if row is None:
             self._state = _State()
             return
-        schema_version, payload = row
-        if schema_version != _SCHEMA_VERSION:
+        schema_version, codec_version, payload = row
+        if schema_version != CURRENT_SCHEMA_VERSION:
             raise RuntimeError(
-                f"unsupported SQLitePersistence schema version: {schema_version}"
+                "SQLitePersistence schema was not migrated to current version: "
+                f"{schema_version}"
+            )
+        if codec_version > CURRENT_CODEC_VERSION:
+            raise RuntimeError(
+                "SQLitePersistence codec is newer than this runtime: "
+                f"database={codec_version}, runtime={CURRENT_CODEC_VERSION}"
             )
         restored = loads(str(payload))
         if not isinstance(restored, _State):
@@ -81,13 +94,23 @@ class SQLitePersistence(MemoryPersistence):
     def _write_state(self) -> None:
         self._connection.execute(
             """
-            INSERT INTO sose_state(singleton, schema_version, payload)
-            VALUES (1, ?, ?)
+            INSERT INTO sose_state(
+                singleton,
+                schema_version,
+                codec_version,
+                payload
+            )
+            VALUES (1, ?, ?, ?)
             ON CONFLICT(singleton) DO UPDATE SET
                 schema_version = excluded.schema_version,
+                codec_version = excluded.codec_version,
                 payload = excluded.payload
             """,
-            (_SCHEMA_VERSION, dumps(self._state)),
+            (
+                CURRENT_SCHEMA_VERSION,
+                CURRENT_CODEC_VERSION,
+                dumps(self._state),
+            ),
         )
 
     @contextmanager
