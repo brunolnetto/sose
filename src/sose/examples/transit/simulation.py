@@ -424,47 +424,6 @@ def reconcile_vehicle_for_trip(
     return False
 
 
-def cancel_trip(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    *,
-    entities: TransitEntities,
-    trip_id: str,
-) -> bool:
-    trip = _trip(persistence, trip_id)
-    if trip.state == "cancelled":
-        reconcile_vehicle_for_trip(
-            persistence,
-            engine,
-            entities=entities,
-            trip_id=trip.id,
-        )
-        return True
-    if trip.state == "completed":
-        return False
-
-    for name in ("start", "complete"):
-        engine.scheduler.cancel_pending(
-            entity_type="transit_scheduled_trip",
-            entity_id=trip.id,
-            name=name,
-        )
-    _dispatch(
-        engine,
-        trip,
-        "cancel",
-        key=("transit-trip", trip.id, "cancel", trip.version),
-        correlation_id=flow_correlation_id(str(trip.attributes["block_id"])),
-    )
-    reconcile_vehicle_for_trip(
-        persistence,
-        engine,
-        entities=entities,
-        trip_id=trip.id,
-    )
-    return True
-
-
 def _apply_trip_projection(
     persistence: MemoryPersistence,
     engine: Engine,
