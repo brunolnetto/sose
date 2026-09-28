@@ -363,6 +363,24 @@ def request_cancellation(
     if subscription.state == "ended":
         return datetime.fromisoformat(str(subscription.attributes["term_end_at"]))
     if subscription.state == "active":
+        # Cancellation-at-period-end freezes future commercial amendments.
+        # Any still-pending plan change loses durable scheduler ownership before
+        # cancellation becomes authoritative.
+        for change_id in subscription.attributes.get("change_request_ids", []):
+            change = persistence.entity("saas_change_request", str(change_id))
+            if change is None or change.state != "scheduled":
+                continue
+            engine.scheduler.cancel_pending(
+                entity_type="saas_change_request",
+                entity_id=change.id,
+                name="apply",
+            )
+            _dispatch(
+                engine,
+                change,
+                "cancel",
+                key=("saas-change", change.id, "cancel-for-subscription-end"),
+            )
         _dispatch(
             engine,
             subscription,
