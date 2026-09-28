@@ -680,43 +680,59 @@ open → acknowledged → resolved → closed
 
 ## 14. Utilities
 
-### Core entities
+Status: **Reference implementation** for the metering, outage, and
+demand-response slice.
+
+### Executable core entities
 
 ```text
-ConsumerAccount
+ServicePoint
 Meter
-Reading
-Bill
-Payment
-CollectionCase
-ServiceConnection
+MeterReading
+Outage
+DemandResponseEvent
+DemandResponseParticipation
 ```
 
-### Canonical lifecycle
+### Executable lifecycle slice
 
 ```text
-metered
-→ billed
-→ due
-→ paid
+ServicePoint:
+energized ↔ interrupted
 
-exception branches:
-→ estimated_reading
-→ overdue
-→ collection
-→ disconnected
-→ reconnected
+MeterReading:
+captured → committed
+
+Outage:
+reported → confirmed → restoring → restored
+
+DemandResponseEvent:
+scheduled → active → completed
+
+DemandResponseParticipation:
+eligible → active → completed
+        \→ missed
+        \→ opted_out
 ```
 
 ### SOSE mechanics
 
-- Periodic schedules for readings and bills.
-- Scenario Engine for meter failures and tariff changes.
-- Resource queues for field-service crews.
+- Immutable interval MeterReading evidence with explicit correction lineage.
+- Durable overlapping-outage ownership on ServicePoint.
+- ScheduledWork for demand-response start/end windows.
+- Participation reconciliation separate from the event clock.
+- Finite communications scenarios that alter prerequisites without forcing
+  business state.
+- Tariff billing, payment, settlement, and field-service dispatch remain
+  blueprint extensions.
 
 ---
 
 ## 15. Energy
+
+The generation/dispatch model below remains a **Blueprint**. The promoted
+**Energy / Utilities** Reference currently covers metering, service
+interruption/restoration, and demand response under the Utilities slice above.
 
 ### Core entities
 
@@ -1554,6 +1570,7 @@ At the time of this document:
 - **Aviation**: Reference implementation. Two-leg rotation causality, durable departure timing, crew/aircraft gating, inspection, AOG part flow, PriorityStore maintenance ownership, preemptive maintenance with ResourcePreemptionResult evidence, downstream delay propagation, finite scenarios, post-commit crash recovery, and restart equivalence are executable.
 - **Credit and loans**: Reference implementation. Underwriting/decision causality, loan origination, recurring installment ScheduledWork, immutable Payment evidence, partial repayment, idempotent ledger projection, delinquency/collection/default, restructure, finite macro stress, and restart equivalence are executable.
 - **Telecommunications**: Reference implementation. ProductOrder/ServiceOrder decomposition, asynchronous resource-gated activation, long-lived SubscriptionService inventory, immutable non-rated UsageRecord evidence, Alarm/TroubleTicket assurance separation, multi-incident restoration ownership, finite provisioning outage recovery, and restart equivalence are executable.
+- **Energy / Utilities**: Reference implementation. Immutable interval MeterReading/correction lineage, durable overlapping-outage ownership and restoration, bounded demand-response ScheduledWork, finite communications recovery, illegal-correction prerequisites, captured-reading crash recovery, and restart equivalence are executable.
 - All other domains in this document: Blueprint.
 
 ---

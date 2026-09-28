@@ -11,8 +11,9 @@ The selection rule is:
 
 > prefer domains that can falsify current architecture assumptions.
 
-This document records the next domain frontier after the first fifteen
-References, the Money audit, and the Telecommunications promotion. The remaining
+This document records the next domain frontier after the first sixteen
+References, the Money audit, the Telecommunications promotion, and the
+Energy / Utilities metering-outage-demand-response promotion. The remaining
 frontier is ordered by the new semantic pressure each domain can place on the
 architecture.
 
@@ -72,7 +73,7 @@ when they introduce new semantic pressure.
 
 ---
 
-## Frontier 1 — Energy / Utilities
+## Promoted — Energy / Utilities
 
 ### Why it is high value
 
@@ -373,15 +374,18 @@ Telecommunications is now a Reference implementation covering service inventory,
 non-rated usage, and assurance separation. Further Telecom breadth should be
 added only when it introduces new semantic pressure.
 
-### Energy / Utilities
+### Energy / Utilities — promoted
 
-Next strongest candidate. It adds immutable measurements, event windows,
-population targeting, and outage/restoration semantics.
+Energy / Utilities is now a Reference implementation for immutable interval
+measurements with correction lineage, overlapping outage ownership/restoration,
+and service-point-targeted participation in bounded demand-response windows.
+Generation/dispatch and billing remain blueprint extensions.
 
-### Public Transit / Rail
+### Public Transit / Rail — next
 
-Adds schedule-versus-realtime projection, ordered delay propagation, freshness,
-and repeated observational occurrences.
+This is the next strongest falsification target. It adds
+schedule-versus-realtime projection, ordered delay propagation, freshness,
+persistent vehicle/block identity, and repeated observational occurrences.
 
 ### Field Service
 
