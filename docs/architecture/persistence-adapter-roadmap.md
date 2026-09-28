@@ -101,3 +101,22 @@ reopen workloads.
 
 The next decision should use these measurements before selecting PostgreSQL.
 See [Persistence sinks](persistence-sinks.md).
+
+
+## Concurrency evidence
+
+Incremental SQLite now has executable multi-connection semantics for read
+visibility, alternating writers, write-lock contention, and conflicting Engine
+commands.
+
+The key limitation is explicit: detached stale Entity objects remain
+last-writer-wins because the Persistence contract does not define compare-and-swap
+metadata. Core Engine operations are safer because they reload authoritative
+state inside the UnitOfWork after acquiring the writer transaction.
+
+See [Incremental SQLite concurrency semantics](sqlite-concurrency.md).
+
+This is evidence for a future PostgreSQL adapter only when real adoption needs
+sustained concurrent writers, remote durability, row-level concurrency, or HA.
+It is not evidence that PostgreSQL should redefine the Persistence semantic
+contract.
