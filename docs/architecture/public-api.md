@@ -35,6 +35,7 @@ from sose.api import (
     EntityType,
     MemoryPersistence,
     RandomSource,
+    Scheduler,
     SimulationClock,
     SimulationContext,
     probabilistic_transitions,
@@ -109,3 +110,10 @@ A lower-level symbol should move into `sose.api` only when:
 - maintaining compatibility is preferable to leaving it advanced.
 
 The goal is a small dependable facade, not re-exporting the entire package.
+
+
+## Runtime-construction completeness
+
+`Scheduler` is public because `SimulationContext` requires it at construction
+time. The v0.8 facade is expected to be sufficient to assemble the backend-neutral
+runtime without importing `sose.core.*` implementation modules.
