@@ -113,9 +113,14 @@ boundaries without requiring vendor-specific grid commands.
 
 ### What would count as a strong first slice
 
-A ServicePoint with periodic MeterReading occurrences, one outage affecting the
-service point, explicit restoration, and a demand-response event with a finite
-window.
+A ServicePoint with immutable interval MeterReading occurrences **and explicit
+correction lineage**, overlapping outage ownership/restoration, and a
+demand-response event whose Participation explicitly targets that ServicePoint
+inside a finite event window.
+
+That is the minimum useful slice: ordinary readings plus one timer are not enough
+to justify Energy as a new Reference because those mechanics are already covered
+elsewhere.
 
 ### What should remain out of scope initially
 
