@@ -404,9 +404,15 @@ occurrences, schedule-versus-projection separation, vehicle-block delay
 propagation, stale observation handling, bounded ServiceAlert windows, finite
 realtime outages, and restart equivalence.
 
-### Field Service — next
+### Field Service / Workforce — promoted
 
-Adds multi-dimensional resource eligibility, location, and appointment windows.
+Field Service is now a Reference implementation for multi-dimensional technician
+eligibility, durable future bookings, appointment-window expiry, filtered part
+selection, immutable visit outcomes, no-access rescheduling, and restart
+equivalence.
+
+The implementation deliberately keeps qualified-resource matching in domain
+logic: one domain is not enough evidence for a core QualifiedResource primitive.
 
 ### Hospitality / Reservations
 
