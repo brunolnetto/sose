@@ -118,20 +118,32 @@ def build_runtime(
     )
 
 
-def seed_reference(persistence: MemoryPersistence) -> AviationEntities:
-    context, engine = build_runtime(persistence)
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    tail_number: str = "N-SOSE",
+    leg1_number: str = "SOSE101",
+    leg2_number: str = "SOSE102",
+    flight_crew_capacity: int = 1,
+    inspection_team_capacity: int = 1,
+    maintenance_bay_capacity: int = 1,
+    maintenance_queue_capacity: int = 100,
+    part_lot_capacity: int = 100,
+) -> AviationEntities:
+    context, engine = build_runtime(persistence, now=now)
     aircraft = context.entities.create(
         Aircraft,
         key=("aviation-reference", "aircraft-1"),
         state="available",
-        attributes={"tail_number": "N-SOSE", "rotation": "SOSE101/SOSE102"},
+        attributes={"tail_number": tail_number, "rotation": f"{leg1_number}/{leg2_number}"},
     )
     leg1 = context.entities.create(
         Flight,
         key=("aviation-reference", "flight-101"),
         state="scheduled",
         attributes={
-            "flight_number": "SOSE101",
+            "flight_number": leg1_number,
             "aircraft_id": aircraft.id,
             "sequence": 1,
         },
@@ -141,7 +153,7 @@ def seed_reference(persistence: MemoryPersistence) -> AviationEntities:
         key=("aviation-reference", "flight-102"),
         state="scheduled",
         attributes={
-            "flight_number": "SOSE102",
+            "flight_number": leg2_number,
             "aircraft_id": aircraft.id,
             "sequence": 2,
             "predecessor_flight_id": leg1.id,
@@ -162,16 +174,16 @@ def seed_reference(persistence: MemoryPersistence) -> AviationEntities:
     with persistence.transaction() as uow:
         for entity in (aircraft, leg1, leg2, crew1, crew2):
             uow.save_entity(entity)
-        uow.save_resource_definition(ResourceDefinition("flight_crew", capacity=1))
-        uow.save_resource_definition(ResourceDefinition("inspection_team", capacity=1))
+        uow.save_resource_definition(ResourceDefinition("flight_crew", capacity=flight_crew_capacity))
+        uow.save_resource_definition(ResourceDefinition("inspection_team", capacity=inspection_team_capacity))
     engine.preemptive_resources.define(
-        PreemptiveResourceDefinition("maintenance_bay", capacity=1)
+        PreemptiveResourceDefinition("maintenance_bay", capacity=maintenance_bay_capacity)
     )
     engine.stores.define(
-        StoreDefinition("maintenance_queue", kind="priority", capacity=100)
+        StoreDefinition("maintenance_queue", kind="priority", capacity=maintenance_queue_capacity)
     )
     engine.stores.define(
-        StoreDefinition("part_lots", kind="priority", capacity=100)
+        StoreDefinition("part_lots", kind="priority", capacity=part_lot_capacity)
     )
     return AviationEntities(
         aircraft_id=aircraft.id,
