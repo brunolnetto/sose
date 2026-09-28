@@ -68,6 +68,7 @@ def outage_id(service_point_id: str, incident_key: str) -> str:
         "utility_outage",
         "energy-reference",
         service_point_id,
+        "outage",
         incident_key,
     )
 
@@ -77,6 +78,7 @@ def dr_event_id(event_key: str) -> str:
         "entity",
         "utility_dr_event",
         "energy-reference",
+        "dr-event",
         event_key,
     )
 
