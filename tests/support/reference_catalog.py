@@ -298,4 +298,24 @@ REFERENCE_CATALOG = (
             immutable_occurrences=("tests/test_credit_loans_restart_equivalence.py",),
         ),
     ),
+    ReferenceContract(
+        domain="Telecommunications",
+        package="sose.examples.telecom",
+        docs_dir="docs/examples/telecom",
+        runtime_entrypoints=("build_runtime", "seed_reference"),
+        capabilities=frozenset({
+            C.STATECHARTS, C.HAPPY_PATH, C.SAD_PATHS, C.RESTART_EQUIVALENCE,
+            C.SCENARIOS, C.RESOURCES, C.SCHEDULED_WORK, C.IMMUTABLE_OCCURRENCES,
+        }),
+        evidence=_evidence(
+            statecharts=("tests/test_telecom_statecharts.py",),
+            happy_path=("tests/test_telecom_happy_path.py",),
+            sad_paths=("tests/test_telecom_sad_paths.py",),
+            restart_equivalence=("tests/test_telecom_restart_equivalence.py",),
+            scenarios=("tests/test_telecom_scenarios.py",),
+            resources=("tests/test_telecom_scenarios.py",),
+            scheduled_work=("tests/test_telecom_restart_equivalence.py",),
+            immutable_occurrences=("tests/test_telecom_restart_equivalence.py",),
+        ),
+    ),
 )
