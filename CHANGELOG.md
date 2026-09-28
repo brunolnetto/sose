@@ -4,6 +4,8 @@
 
 ### Added
 
+- `sose init --domain <name>` scaffolding generated from each domain's actual
+  validated defaults, with roundtrip coverage across the full builtin catalog;
 - `sose` command-line interface for config validation, one-tick execution,
   durable inspection, domain discovery, and persistence-adapter discovery;
 - declarative sose.toml job configuration with domain parameters, persistence

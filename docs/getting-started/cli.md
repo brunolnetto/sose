@@ -4,6 +4,30 @@ The `sose` command is a thin wrapper over the public declarative job APIs.
 
 It does not implement a second orchestration model.
 
+## Create a configuration
+
+Generate an editable `sose.toml` directly from a domain's validated defaults:
+
+```bash
+sose init --domain mro
+```
+
+Choose job identity and persistence location explicitly when needed:
+
+```bash
+sose init \
+  --domain mro \
+  --job-id plant-maintenance \
+  --persistence sqlite_incremental \
+  --persistence-path state/mro.sqlite3
+```
+
+The generated `[domain.parameters]` table comes from the selected
+`DomainConfig` model. SOSE does not maintain a separate handwritten template
+schema.
+
+Existing files are not overwritten unless `--force` is supplied.
+
 ## Validate configuration
 
 ```bash

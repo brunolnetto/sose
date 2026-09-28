@@ -35,6 +35,7 @@ from sose.jobs.config import SOSEConfig, load_sose_config
 from sose.jobs.factory import build_job_from_config, build_job_from_file
 from sose.jobs.model import SimulationJobState
 from sose.jobs.runner import JobTickResult, SimulationJob
+from sose.jobs.scaffold import render_sose_toml, write_sose_toml
 from sose.persistence.registry import (
     PersistenceAdapter,
     PersistenceRegistry,
@@ -97,4 +98,6 @@ __all__ = [
     "load_sose_config",
     "probabilistic",
     "probabilistic_transitions",
+    "render_sose_toml",
+    "write_sose_toml",
 ]

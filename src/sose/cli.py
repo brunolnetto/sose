@@ -46,6 +46,24 @@ def _validate_config(path: str | Path) -> dict[str, object]:
     }
 
 
+def _cmd_init(args: argparse.Namespace) -> int:
+    from sose.examples.catalog import builtin_catalog
+    from sose.jobs.scaffold import write_sose_toml
+
+    definition = builtin_catalog().get(args.domain)
+    output = write_sose_toml(
+        args.output,
+        definition,
+        job_id=args.job_id,
+        persistence_adapter=args.persistence,
+        persistence_path=args.persistence_path,
+        runtime_backend=args.backend,
+        force=args.force,
+    )
+    print(str(output))
+    return 0
+
+
 def _cmd_validate(args: argparse.Namespace) -> int:
     validated = _validate_config(args.config)
     print(_json(validated))
@@ -126,6 +144,26 @@ def build_parser() -> argparse.ArgumentParser:
         description="Synthetic Operational System Engine",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    init = subparsers.add_parser(
+        "init",
+        help="Create a sose.toml file from a domain's validated defaults.",
+    )
+    init.add_argument("--domain", required=True)
+    init.add_argument("--output", default="sose.toml")
+    init.add_argument("--job-id")
+    init.add_argument(
+        "--persistence",
+        default="sqlite_incremental",
+        help="Persistence adapter name.",
+    )
+    init.add_argument(
+        "--persistence-path",
+        default="state/sose.sqlite3",
+    )
+    init.add_argument("--backend", default="simpy")
+    init.add_argument("--force", action="store_true")
+    init.set_defaults(handler=_cmd_init)
 
     validate = subparsers.add_parser(
         "validate",

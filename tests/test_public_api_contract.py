@@ -47,6 +47,8 @@ EXPECTED_PUBLIC_API = {
     "collect_runtime_diagnostics",
     "load_sose_config",
     "probabilistic_transitions",
+    "render_sose_toml",
+    "write_sose_toml",
 }
 
 
