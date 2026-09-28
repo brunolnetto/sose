@@ -69,14 +69,19 @@ A confirmed Appointment owns:
 - technician;
 - replacement lineage.
 
-ScheduledWork owns the start and end/miss boundaries. This is future semantic
-ownership, not a generic Resource reservation.
+ScheduledWork owns the appointment start, appointment miss, WorkOrder
+reschedule, and technician-release boundaries. The durable technician booking
+owns the future interval. The core Resource is acquired only as a start-time
+concurrency gate and is released immediately after the durable Technician
+assignment is committed.
 
 ## 5. Part ownership
 
-The required part is selected from `field_parts` through durable Store
-selection. The WorkOrder request ID is stable across a no-access reschedule, so
-the same selected part remains owned rather than being consumed twice.
+The required part is selected from a FilterStore-backed `field_parts` store.
+SKU eligibility is applied before `StoreGetResult` is committed, so an
+unrelated FIFO head can never become durable ownership by mistake. The
+WorkOrder request ID is stable across a no-access reschedule, so the same
+selected part remains owned rather than being consumed twice.
 
 ## 6. No-access semantics
 
@@ -115,6 +120,14 @@ FS-08 — Pending appointment boundaries survive backend rebuild.
 FS-09 — A finite dispatch outage defers work start without inventing technician
 ownership or changing the appointment evidence.
 
+FS-10 — A WorkOrder has at most one active Appointment; pre-proposed
+appointments cannot later overwrite active ownership.
+
+FS-11 — Appointment-window expiry reconciles Appointment, WorkOrder, and
+Technician durable states without leaking Resource capacity.
+
+FS-12 — Part eligibility is evaluated before durable Store selection ownership.
+
 ## 8. Happy path
 
 1. seed WorkOrder and two technicians;
@@ -133,6 +146,9 @@ ownership or changing the appointment evidence.
 - no technician satisfying skill/territory/window;
 - overlapping technician booking;
 - missing part;
+- unrelated part ahead of the required SKU;
+- second active appointment / pre-proposed confirmation race;
+- started and never-started appointment-window expiry;
 - dispatch outage;
 - conflicting VisitOccurrence replay;
 - no-access followed by replacement appointment.
