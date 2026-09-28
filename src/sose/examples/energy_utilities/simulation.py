@@ -214,10 +214,16 @@ def record_meter_reading(
         raise ValueError(f"unsupported meter reading quality: {quality}")
     if correction_ordinal < 0:
         raise ValueError("correction_ordinal must be non-negative")
-    if correction_ordinal == 0 and supersedes_reading_id is not None:
-        raise ValueError("base reading cannot supersede another reading")
-    if correction_ordinal > 0 and supersedes_reading_id is None:
-        raise ValueError("corrected reading requires supersedes_reading_id")
+    if correction_ordinal == 0:
+        if supersedes_reading_id is not None:
+            raise ValueError("base reading cannot supersede another reading")
+        if quality == "corrected":
+            raise ValueError("corrected quality requires correction lineage")
+    else:
+        if supersedes_reading_id is None:
+            raise ValueError("corrected reading requires supersedes_reading_id")
+        if quality != "corrected":
+            raise ValueError("correction lineage requires corrected quality")
     if not engine.context.scenarios.attribute("energy.metering.available", True):
         return None
 
@@ -442,6 +448,8 @@ def schedule_demand_response(
     event = persistence.entity("utility_dr_event", eid)
     participation = None
     if event is None:
+        start_at = backend.now + start_delay
+        end_at = start_at + duration
         event = engine.context.entities.create(
             DemandResponseEvent,
             key=("energy-reference", "dr-event", event_key),
@@ -449,6 +457,8 @@ def schedule_demand_response(
             attributes={
                 "event_key": event_key,
                 "service_point_id": entities.service_point_id,
+                "start_at": start_at.isoformat(),
+                "end_at": end_at.isoformat(),
             },
         )
         participation = engine.context.entities.create(
@@ -464,14 +474,14 @@ def schedule_demand_response(
             uow.save_entity(event)
             uow.save_entity(participation)
     else:
+        start_at = datetime.fromisoformat(str(event.attributes["start_at"]))
+        end_at = datetime.fromisoformat(str(event.attributes["end_at"]))
         participation = _entity(
             persistence,
             "utility_dr_participation",
             dr_participation_id(event.id, entities.service_point_id),
         )
 
-    start_at = backend.now + start_delay
-    end_at = start_at + duration
     correlation_id = flow_correlation_id(entities.service_point_id)
 
     if event.state == "scheduled" and engine.scheduler.find_pending(
@@ -508,6 +518,39 @@ def schedule_demand_response(
         start_at,
         end_at,
     )
+
+
+def cancel_demand_response(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: EnergyEntities,
+    event_key: str,
+) -> bool:
+    event = _entity(persistence, "utility_dr_event", dr_event_id(event_key))
+    if event.state == "cancelled":
+        return True
+    if event.state == "completed":
+        return False
+
+    engine.scheduler.cancel_pending(
+        entity_type="utility_dr_event",
+        entity_id=event.id,
+        name="start",
+    )
+    engine.scheduler.cancel_pending(
+        entity_type="utility_dr_event",
+        entity_id=event.id,
+        name="finish",
+    )
+    _dispatch(
+        engine,
+        event,
+        "cancel",
+        key=("energy-dr", event.id, "cancel"),
+        correlation_id=flow_correlation_id(entities.service_point_id),
+    )
+    return True
 
 
 def opt_out_demand_response(
