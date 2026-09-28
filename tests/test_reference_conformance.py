@@ -14,9 +14,8 @@ from tests.support.reference_catalog import REFERENCE_CATALOG
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
-def test_reference_catalog_has_all_fourteen_promoted_domains():
-    assert len(REFERENCE_CATALOG) == 14
-    assert {contract.domain for contract in REFERENCE_CATALOG} == {
+def test_reference_catalog_has_all_promoted_domains():
+    expected_domains = {
         "Maintenance / MRO",
         "Procure-to-Pay",
         "Manufacturing",
@@ -31,7 +30,10 @@ def test_reference_catalog_has_all_fourteen_promoted_domains():
         "Airports",
         "Aviation",
         "Credit and loans",
+        "Telecommunications",
     }
+    assert len(REFERENCE_CATALOG) == len(expected_domains)
+    assert {contract.domain for contract in REFERENCE_CATALOG} == expected_domains
 
 
 def test_all_reference_contracts_conform():
