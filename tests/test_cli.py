@@ -120,3 +120,61 @@ id = "bad"
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "unknown domain" in captured.err
+
+
+def test_cli_apply_updates_existing_job_revision_explicitly(tmp_path, capsys):
+    config = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[domain.parameters]
+random_seed = 1
+complete_after = "PT3H"
+
+[persistence]
+adapter = "sqlite_incremental"
+
+[persistence.options]
+path = "state.sqlite3"
+
+[job]
+id = "apply-cli"
+""".strip(),
+    )
+
+    assert run_cli(["run", "--config", str(config), "--trigger-id", "run-1"]) == 0
+    capsys.readouterr()
+
+    _write(
+        config,
+        """
+[domain]
+name = "tutorial_job"
+
+[domain.parameters]
+random_seed = 99
+complete_after = "PT1H"
+
+[persistence]
+adapter = "sqlite_incremental"
+
+[persistence.options]
+path = "state.sqlite3"
+
+[job]
+id = "apply-cli"
+""".strip(),
+    )
+
+    assert run_cli(["apply", "--config", str(config)]) == 0
+    applied = json.loads(capsys.readouterr().out)
+    assert applied["changed"] is True
+    assert applied["config_revision"] == 2
+    assert applied["config"]["random_seed"] == 99
+
+    assert run_cli(["apply", "--config", str(config)]) == 0
+    repeated = json.loads(capsys.readouterr().out)
+    assert repeated["changed"] is False
+    assert repeated["config_revision"] == 2
