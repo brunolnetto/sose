@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -75,14 +76,13 @@ def test_apply_config_rejects_real_change_while_trigger_is_owned():
 
     with persistence.transaction() as uow:
         current = uow.get_job_state(job.job_id)
+        assert current is not None
         uow.save_job_state(
-            current.__class__(
-                **{
-                    **current.__dict__,
-                    "status": "running",
-                    "active_trigger_id": "scheduler-1",
-                    "phase": "advance",
-                }
+            replace(
+                current,
+                status="running",
+                active_trigger_id="scheduler-1",
+                phase="advance",
             )
         )
 
