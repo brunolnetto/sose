@@ -4,7 +4,7 @@ import pytest
 
 from sose.backends.simpy import SimPyBackend
 from sose.examples.catalog import builtin_catalog
-from sose.jobs import SimulationJob
+from sose.jobs.runner import SimulationJob
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
