@@ -23,6 +23,7 @@ from sose.core.diagnostics import (
 from sose.core.engine import Engine
 from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
+from sose.domain.config import DomainCatalog, DomainConfig, DomainDefinition
 from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.base import Persistence, UnitOfWork
@@ -46,6 +47,9 @@ __all__ = [
     "CompositeEffect",
     "ContainerBackend",
     "DiagnosticIssue",
+    "DomainCatalog",
+    "DomainConfig",
+    "DomainDefinition",
     "DomainRegistry",
     "Engine",
     "Entity",
