@@ -8,11 +8,11 @@ from sose.api import (
     EntityType,
     MemoryPersistence,
     RandomSource,
+    Scheduler,
     SimulationClock,
     SimulationContext,
 )
 from sose.backends.simpy import SimPyBackend
-from sose.core.scheduler import Scheduler
 
 from .entities import TutorialJob
 from .statecharts import TutorialJobChart
