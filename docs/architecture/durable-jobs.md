@@ -35,8 +35,16 @@ metadata.
 External orchestration calls:
 
 ```python
-result = job.run_tick()
+result = job.run_tick(trigger_id="airflow-run-2026-09-28T20:00Z")
 ```
+
+An explicit `trigger_id` is persisted as orchestration ownership. Repeating a
+successfully completed trigger returns the prior tick result without advancing
+simulation time again. A different trigger is rejected while the job is already
+running.
+
+Callers that do not provide a trigger id still receive a deterministic
+per-job/per-tick generated identity for the current process invocation.
 
 The runner:
 
@@ -141,3 +149,29 @@ one tick per external trigger
       +
 chosen persistence target
 ```
+
+
+## Trigger ownership
+
+Recurring schedulers can retry or overlap executions. SOSE therefore persists:
+
+- `active_trigger_id` while one trigger owns execution;
+- `last_completed_trigger_id` after a successful tick.
+
+The claim happens transactionally before backend reconstruction.
+
+This gives two guarantees:
+
+1. the same completed external trigger is idempotent;
+2. a second trigger cannot execute the same job concurrently while ownership is
+   active.
+
+A process crash before completion can leave a running claim. Automatic lease
+expiry is intentionally not part of this contract yet. Recovery of an
+in-progress tick requires a separate phase/recovery contract so SOSE does not
+guess whether a worker is still alive.
+
+That recovery work is tracked separately because `advance_tick()` may commit
+semantic position before domain `reconcile_tick` completes. The next job
+hardening step must make the advance/reconcile/checkpoint phases resumable rather
+than merely clearing a stale claim.

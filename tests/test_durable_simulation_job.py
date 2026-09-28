@@ -180,3 +180,91 @@ def test_failed_tick_persists_operational_failure():
     state = job.state()
     assert state.status == "failed"
     assert "RuntimeError: boom" in state.last_error
+
+
+def test_explicit_trigger_id_is_idempotent_after_success():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    job = SimulationJob(
+        job_id="idempotent-trigger",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+    )
+    job.initialize({"complete_after": timedelta(hours=3)})
+
+    first = job.run_tick(trigger_id="scheduler-run-001")
+    repeated = job.run_tick(trigger_id="scheduler-run-001")
+
+    assert repeated == first
+    assert repeated.trigger_id == "scheduler-run-001"
+    assert persistence.simulation_position().logical_tick == 1
+    assert job.state().run_count == 1
+    assert job.state().last_completed_trigger_id == "scheduler-run-001"
+    assert job.state().active_trigger_id is None
+
+
+def test_overlapping_trigger_is_rejected_while_job_is_claimed():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    overlap_errors: list[str] = []
+
+    second_job = SimulationJob(
+        job_id="overlap-job",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+    )
+
+    def inspecting_backend(origin):
+        try:
+            second_job.run_tick(trigger_id="overlap-B")
+        except RuntimeError as exc:
+            overlap_errors.append(str(exc))
+        return SimPyBackend(origin=origin)
+
+    first_job = SimulationJob(
+        job_id="overlap-job",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=inspecting_backend,
+    )
+    first_job.initialize()
+
+    result = first_job.run_tick(trigger_id="overlap-A")
+
+    assert result.logical_tick == 1
+    assert result.trigger_id == "overlap-A"
+    assert overlap_errors
+    assert "already running" in overlap_errors[0]
+    assert "overlap-A" in overlap_errors[0]
+
+
+def test_trigger_identity_survives_sqlite_reopen(tmp_path):
+    path = tmp_path / "trigger-identity.sqlite3"
+    definition = builtin_catalog().get("tutorial_job")
+
+    first_persistence = SQLiteIncrementalPersistence(path)
+    first_job = SimulationJob(
+        job_id="trigger-reopen",
+        definition=definition,
+        persistence=first_persistence,
+        backend_factory=_backend,
+    )
+    first_job.initialize()
+    first = first_job.run_tick(trigger_id="external-42")
+    first_persistence.close()
+
+    reopened = SQLiteIncrementalPersistence(path)
+    resumed = SimulationJob(
+        job_id="trigger-reopen",
+        definition=definition,
+        persistence=reopened,
+        backend_factory=_backend,
+    )
+    repeated = resumed.run_tick(trigger_id="external-42")
+
+    assert repeated == first
+    assert reopened.simulation_position().logical_tick == 1
+    assert resumed.state().last_completed_trigger_id == "external-42"
+    reopened.close()
