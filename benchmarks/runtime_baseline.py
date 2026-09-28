@@ -22,6 +22,7 @@ from sose.examples.tutorial_job.simulation import (
     seed_job,
     start_and_schedule_completion,
 )
+from sose.persistence.duckdb import DuckDBPersistence
 from sose.persistence.jsonl_journal import JSONLJournalPersistence
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
@@ -167,6 +168,15 @@ def _jsonl_scheduled_batch(count: int) -> None:
     )
 
 
+def _duckdb_scheduled_batch(count: int) -> None:
+    _file_sink_scheduled_batch(
+        count,
+        DuckDBPersistence,
+        "state.duckdb",
+        "duckdb",
+    )
+
+
 def _sqlite_reopen(count: int) -> None:
     _file_sink_reopen(
         count,
@@ -191,6 +201,15 @@ def _jsonl_reopen(count: int) -> None:
         JSONLJournalPersistence,
         "journal-reopen.jsonl",
         "jsonl-journal",
+    )
+
+
+def _duckdb_reopen(count: int) -> None:
+    _file_sink_reopen(
+        count,
+        DuckDBPersistence,
+        "reopen.duckdb",
+        "duckdb",
     )
 
 
@@ -283,9 +302,11 @@ def run_suite(*, quick: bool) -> dict[str, object]:
         "sqlite_scheduled_batch": 8 if quick else 100,
         "sqlite_incremental_scheduled_batch": 8 if quick else 100,
         "jsonl_scheduled_batch": 8 if quick else 100,
+        "duckdb_scheduled_batch": 8 if quick else 100,
         "sqlite_reopen": 8 if quick else 100,
         "sqlite_incremental_reopen": 8 if quick else 100,
         "jsonl_reopen": 8 if quick else 100,
+        "duckdb_reopen": 8 if quick else 100,
         "diagnostics_collection": 24 if quick else 500,
         "resource_contention": 32 if quick else 500,
         "priority_store_selection": 32 if quick else 500,
@@ -308,6 +329,10 @@ def run_suite(*, quick: bool) -> dict[str, object]:
             _jsonl_scheduled_batch,
         ),
         (
+            "duckdb_scheduled_batch",
+            _duckdb_scheduled_batch,
+        ),
+        (
             "sqlite_reopen",
             _sqlite_reopen,
         ),
@@ -318,6 +343,10 @@ def run_suite(*, quick: bool) -> dict[str, object]:
         (
             "jsonl_reopen",
             _jsonl_reopen,
+        ),
+        (
+            "duckdb_reopen",
+            _duckdb_reopen,
         ),
         (
             "diagnostics_collection",
@@ -337,7 +366,7 @@ def run_suite(*, quick: bool) -> dict[str, object]:
         for name, fn in cases
     ]
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "mode": "quick" if quick else "full",
         "environment": {
             "python": sys.version,
