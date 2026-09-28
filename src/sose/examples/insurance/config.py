@@ -17,3 +17,4 @@ class InsuranceConfig(DomainConfig):
     assessment_outcome: Literal["approve", "reject", "fraud"] = "approve"
     payment_delay: timedelta = Field(default=timedelta(hours=2), gt=timedelta(0))
     partial_payment: bool = False
+    fraud_confirmed: bool = False
