@@ -54,6 +54,7 @@ def trip_update_id(trip_id: str, sequence: int) -> str:
         "transit_trip_update",
         "transit-reference",
         trip_id,
+        "trip-update",
         sequence,
     )
 
@@ -65,6 +66,7 @@ def vehicle_position_id(vehicle_id: str, trip_id: str, sequence: int) -> str:
         "transit-reference",
         vehicle_id,
         trip_id,
+        "position",
         sequence,
     )
 
