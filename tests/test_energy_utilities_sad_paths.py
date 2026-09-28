@@ -1,11 +1,16 @@
 import pytest
 
+from sose.backends.simpy import SimPyBackend
 from sose.examples.energy_utilities.scenarios import ORIGIN
 from sose.examples.energy_utilities.simulation import (
     build_runtime,
+    cancel_demand_response,
+    dr_event_id,
+    dr_participation_id,
     record_meter_reading,
     report_outage,
     restore_outage,
+    schedule_demand_response,
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
@@ -158,3 +163,95 @@ def test_terminal_outage_replay_does_not_interrupt_restored_service():
     assert replay.state == "restored"
     assert point is not None and point.state == "energized"
     assert point.attributes["open_outage_keys"] == []
+
+
+def test_correction_lineage_and_quality_must_agree():
+    persistence, entities, engine = _runtime()
+    base = record_meter_reading(
+        persistence,
+        engine,
+        entities=entities,
+        interval_end=ORIGIN,
+        quantity_kwh=5.0,
+    )
+    assert base is not None
+
+    with pytest.raises(ValueError, match="requires correction lineage"):
+        record_meter_reading(
+            persistence,
+            engine,
+            entities=entities,
+            interval_end=ORIGIN,
+            quantity_kwh=5.1,
+            quality="corrected",
+        )
+
+    with pytest.raises(ValueError, match="requires corrected quality"):
+        record_meter_reading(
+            persistence,
+            engine,
+            entities=entities,
+            interval_end=ORIGIN,
+            quantity_kwh=5.1,
+            quality="actual",
+            correction_ordinal=1,
+            supersedes_reading_id=base.id,
+        )
+
+
+def test_demand_response_replay_reuses_original_window():
+    persistence, entities, engine = _runtime()
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    event, _, start_at, end_at = schedule_demand_response(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        event_key="dr-replay-window",
+    )
+    backend.run_until(ORIGIN + (start_at - ORIGIN) / 2)
+
+    replay_event, _, replay_start, replay_end = schedule_demand_response(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        event_key="dr-replay-window",
+    )
+
+    assert replay_event.id == event.id
+    assert replay_start == start_at
+    assert replay_end == end_at
+
+
+def test_cancelling_demand_response_removes_pending_boundaries():
+    persistence, entities, engine = _runtime()
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    event, participation, _, end_at = schedule_demand_response(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        event_key="dr-cancel",
+    )
+    assert len(persistence.scheduled_work()) == 2
+
+    assert cancel_demand_response(
+        persistence,
+        engine,
+        entities=entities,
+        event_key="dr-cancel",
+    )
+    assert persistence.entity("utility_dr_event", dr_event_id("dr-cancel")).state == "cancelled"
+    assert persistence.scheduled_work() == ()
+
+    backend.run_until(end_at)
+    assert persistence.entity("utility_dr_event", event.id).state == "cancelled"
+    assert persistence.entity(
+        "utility_dr_participation",
+        dr_participation_id(event.id, entities.service_point_id),
+    ).id == participation.id
