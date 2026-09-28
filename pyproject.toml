@@ -43,6 +43,7 @@ line-length = 100
 
 [dependency-groups]
 dev = [
+    "duckdb>=1.5.5,<2",
     "codebase-stats>=0.0.3",
     "simpy>=4.1.1,<5",
 ]
