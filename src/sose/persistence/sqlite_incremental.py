@@ -7,7 +7,7 @@ import sqlite3
 from typing import Iterator
 
 from .memory import MemoryPersistence, MemoryUnitOfWork, _State
-from .records import StateRecord, diff_state_records, records_to_state
+from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
 _SCHEMA_VERSION = 2
@@ -139,8 +139,13 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         self._state = records_to_state(records)
         self._revision = revision
 
-    def _apply_changes(self, before: _State, after: _State) -> int:
-        changes = diff_state_records(before, after)
+    def _apply_changes(
+        self,
+        before: _State,
+        after: _State,
+        dirty_records,
+    ) -> int:
+        changes = changes_for_dirty_records(before, after, dirty_records)
         for change in changes:
             if change.operation == "delete":
                 self._connection.execute(
@@ -181,7 +186,11 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             yield uow
             if not uow._closed:
                 uow.commit()
-            changed = self._apply_changes(before, self._state)
+            changed = self._apply_changes(
+                before,
+                self._state,
+                uow.dirty_records,
+            )
             if changed:
                 next_revision = self._revision + 1
                 self._connection.execute(
