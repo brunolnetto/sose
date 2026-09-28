@@ -4,6 +4,8 @@
 
 ### Added
 
+- structural copy-on-write UnitOfWork state forks that avoid deep-copying untouched durable records at transaction entry;
+
 - incremental SQLite concurrency semantics covering independent readers,
   alternating writers, stale-cache refresh, lock contention, and conflicting
   Engine commands;
