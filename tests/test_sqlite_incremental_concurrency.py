@@ -1,7 +1,6 @@
 import sqlite3
 
 import pytest
-from statemachine.exceptions import TransitionNotAllowed
 
 from sose.domain.entity import Entity
 from sose.examples.tutorial_job.simulation import build_runtime, seed_job
@@ -133,13 +132,14 @@ def test_conflicting_engine_commands_re_evaluate_latest_committed_state(tmp_path
     engine_a.dispatch(command_a)
     assert first.entity("tutorial_job", job.id).state == "running"
 
-    with pytest.raises(TransitionNotAllowed):
-        engine_b.dispatch(command_b)
+    revision_after_a = first._database_revision()
+    engine_b.dispatch(command_b)
 
     persisted = second.entity("tutorial_job", job.id)
     assert persisted is not None
     assert persisted.state == "running"
     assert len(second.events()) == 1
+    assert second._database_revision() == revision_after_a
 
     first.close()
     second.close()
