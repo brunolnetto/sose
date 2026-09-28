@@ -175,3 +175,74 @@ That recovery work is tracked separately because `advance_tick()` may commit
 semantic position before domain `reconcile_tick` completes. The next job
 hardening step must make the advance/reconcile/checkpoint phases resumable rather
 than merely clearing a stale claim.
+
+
+## Resumable tick phases
+
+A recurring tick has two durable orchestration phases:
+
+```text
+advance
+  |
+  | Engine.advance_tick() commits SimulationPosition
+  v
+reconcile
+  |
+  | DomainDefinition.reconcile_tick()
+  v
+idle / completed trigger
+```
+
+`SimulationJobState.phase` persists one of:
+
+- `idle` — no trigger owns unfinished work;
+- `advance` — the trigger owns the next semantic tick;
+- `reconcile` — semantic position advanced and domain reconciliation must finish.
+
+The phase exists because semantic tick advancement and domain reconciliation may
+cross multiple transactions.
+
+### Crash after advance commit
+
+If the process dies after `Engine.advance_tick()` commits but before the job
+checkpoint changes to `reconcile`, the persisted job may still say
+`phase="advance"`.
+
+On explicit recovery, SOSE compares the job checkpoint with authoritative
+`Persistence.simulation_position()`.
+
+If durable logical tick is already ahead of the job's `next_tick`, the runner
+infers that advance committed and resumes directly at reconciliation. It does
+not execute another semantic tick.
+
+### Crash during reconciliation
+
+The job remains owned by the same trigger with `phase="reconcile"` and
+`status="failed"`.
+
+Retry requires the same trigger identity and explicit recovery:
+
+```python
+job.run_tick(
+    trigger_id="airflow-run-42",
+    recover=True,
+)
+```
+
+A different trigger is rejected until the unresolved trigger completes.
+
+Domain `reconcile_tick` implementations must therefore be restart-safe and
+idempotent at the same durable boundary. This is the same design rule already
+used by Reference reconciliation helpers.
+
+### Why recovery is explicit
+
+SOSE does not automatically expire a running claim based on wall-clock time.
+The library cannot know whether an external worker is dead, slow, paused, or
+partitioned.
+
+The orchestrator decides when an attempt is no longer live, then retries the
+same trigger with `recover=True`.
+
+This keeps scheduler liveness policy outside semantic truth while preserving a
+durable, deterministic recovery contract.
