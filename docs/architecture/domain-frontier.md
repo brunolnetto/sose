@@ -414,9 +414,16 @@ equivalence.
 The implementation deliberately keeps qualified-resource matching in domain
 logic: one domain is not enough evidence for a core QualifiedResource primitive.
 
-### Hospitality / Reservations
+### Hospitality / Reservations — promoted
 
-Use specifically to test interval ownership and expiring holds.
+Hospitality is now a Reference implementation for first-class future room
+ownership, expiring holds, confirmation, cancellation, check-in/out, no-show
+release, immutable no-show evidence, and restart equivalence.
+
+Unlike Field Service, Hospitality models interval ownership as a dedicated
+RoomBooking lifecycle. The comparison therefore does not yet justify a shared
+temporal-capacity primitive; the overlap relation is common, but the ownership
+and terminal semantics remain domain-specific.
 
 ### Warehouse / Fulfillment
 
