@@ -6,7 +6,14 @@ from sose.domain.config import DomainDefinition
 from sose.persistence.base import Persistence
 
 from .config import MROConfig
-from .simulation import build_runtime, seed_reference
+from .simulation import (
+    MROEntities,
+    build_runtime,
+    reconcile_scenario_emergency,
+    reconcile_start,
+    seed_reference,
+    seed_spare_parts,
+)
 
 
 def _build(
@@ -36,10 +43,35 @@ def _seed(persistence: Persistence, config: MROConfig):
     )
 
 
+def _reconcile_tick(
+    persistence: Persistence,
+    engine,
+    backend,
+    config: MROConfig,
+    entities: MROEntities,
+) -> None:
+    if config.auto_seed_spare_parts:
+        seed_spare_parts(engine, backend, quantity=config.quantity)
+    reconcile_start(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        quantity=config.quantity,
+    )
+    reconcile_scenario_emergency(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+
+
 definition = DomainDefinition(
     name="mro",
     description="Maintenance, repair and operations reference domain.",
     config_model=MROConfig,
     build_runtime=_build,
     seed=_seed,
+    reconcile_tick=_reconcile_tick,
 )
