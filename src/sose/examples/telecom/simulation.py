@@ -454,7 +454,7 @@ def record_usage(
         raise ValueError("quantity must be positive")
     service = _service(persistence, entities.product_order_id)
     if service is None:
-        raise RuntimeError("usage requires provisioned subscription service")
+        raise RuntimeError("usage requires active subscription service")
 
     uid = usage_record_id(service.id, sequence)
     existing = persistence.entity("telecom_usage_record", uid)
