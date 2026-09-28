@@ -530,6 +530,51 @@ def _apply_trip_projection(
                     str(current.attributes["block_id"])
                 ),
             )
+        elif trip.state == "planned" and projected_start <= backend.now:
+            for name in ("start", "complete"):
+                engine.scheduler.cancel_pending(
+                    entity_type="transit_scheduled_trip",
+                    entity_id=trip.id,
+                    name=name,
+                )
+            current = _trip(persistence, trip.id)
+            _dispatch(
+                engine,
+                current,
+                "start",
+                key=(
+                    "transit-trip",
+                    current.id,
+                    "start-from-projection",
+                    projected_start.isoformat(),
+                ),
+                correlation_id=flow_correlation_id(
+                    str(current.attributes["block_id"])
+                ),
+            )
+            current = _trip(persistence, trip.id)
+            if projected_end <= backend.now:
+                _dispatch(
+                    engine,
+                    current,
+                    "complete",
+                    key=(
+                        "transit-trip",
+                        current.id,
+                        "complete-from-projection",
+                        projected_end.isoformat(),
+                    ),
+                    correlation_id=flow_correlation_id(
+                        str(current.attributes["block_id"])
+                    ),
+                )
+            else:
+                _ensure_boundary(
+                    engine,
+                    trip=current,
+                    name="complete",
+                    due_at=projected_end,
+                )
         else:
             _reschedule_trip_boundaries(
                 persistence,
