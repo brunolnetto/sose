@@ -70,13 +70,22 @@ def build_runtime(
     )
 
 
-def seed_reference(persistence: MemoryPersistence) -> LogisticsEntities:
-    context, engine = build_runtime(persistence)
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    service_level: str = "standard",
+    route: str = "origin-a:destination-b",
+    resource_capacity: int = 1,
+    hub_queue_capacity: int = 10,
+    pickup_delay: timedelta = timedelta(hours=1),
+) -> LogisticsEntities:
+    context, engine = build_runtime(persistence, now=now)
     shipment = context.entities.create(
         Shipment,
         key=("logistics-reference", "shipment-1"),
         state="created",
-        attributes={"service_level": "standard", "route": "origin-a:destination-b"},
+        attributes={"service_level": service_level, "route": route},
     )
     with persistence.transaction() as uow:
         uow.save_entity(shipment)
@@ -87,17 +96,17 @@ def seed_reference(persistence: MemoryPersistence) -> LogisticsEntities:
             "destination_dock",
             "delivery_courier",
         ):
-            uow.save_resource_definition(ResourceDefinition(name, capacity=1))
+            uow.save_resource_definition(ResourceDefinition(name, capacity=resource_capacity))
 
-    engine.stores.define(StoreDefinition("origin_hub_queue", kind="fifo", capacity=10))
+    engine.stores.define(StoreDefinition("origin_hub_queue", kind="fifo", capacity=hub_queue_capacity))
     engine.stores.define(
-        StoreDefinition("destination_hub_queue", kind="fifo", capacity=10)
+        StoreDefinition("destination_hub_queue", kind="fifo", capacity=hub_queue_capacity)
     )
 
     command = context.commands.create(
         "schedule_pickup",
         target=shipment,
-        due_at=PICKUP_DUE,
+        due_at=now + pickup_delay,
         correlation_id=flow_correlation_id(),
         key=("logistics-reference", shipment.id, "schedule-pickup"),
     )

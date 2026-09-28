@@ -130,16 +130,28 @@ def build_runtime(
     )
 
 
-def seed_reference(persistence: MemoryPersistence) -> EnergyEntities:
-    context, _ = build_runtime(persistence)
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    primary_customer_id: str = "customer-1",
+    secondary_customer_id: str = "customer-2",
+    include_secondary: bool = True,
+    quantity_kind: str = "energy",
+    unit: str = "kWh",
+) -> EnergyEntities:
+    context, _ = build_runtime(persistence, now=now)
 
-    def create_point(ordinal: int) -> tuple[ServicePoint, Meter]:
+    def create_point(
+        ordinal: int,
+        customer_id: str,
+    ) -> tuple[ServicePoint, Meter]:
         service_point = context.entities.create(
             ServicePoint,
             key=("energy-reference", f"service-point-{ordinal}"),
             state="energized",
             attributes={
-                "customer_id": f"customer-{ordinal}",
+                "customer_id": customer_id,
                 "premise_id": f"premise-{ordinal}",
                 "open_outage_keys": [],
             },
@@ -151,28 +163,35 @@ def seed_reference(persistence: MemoryPersistence) -> EnergyEntities:
             attributes={
                 "service_point_id": service_point.id,
                 "serial_number": f"MTR-SOSE-{ordinal:03d}",
-                "quantity_kind": "energy",
-                "unit": "kWh",
+                "quantity_kind": quantity_kind,
+                "unit": unit,
             },
         )
         service_point.attributes["meter_id"] = meter.id
         return service_point, meter
 
-    primary_point, primary_meter = create_point(1)
-    secondary_point, secondary_meter = create_point(2)
+    primary_point, primary_meter = create_point(1, primary_customer_id)
+    secondary = (
+        create_point(2, secondary_customer_id)
+        if include_secondary
+        else None
+    )
     with persistence.transaction() as uow:
-        for entity in (
-            primary_point,
-            primary_meter,
-            secondary_point,
-            secondary_meter,
-        ):
-            uow.save_entity(entity)
+        uow.save_entity(primary_point)
+        uow.save_entity(primary_meter)
+        if secondary is not None:
+            secondary_point, secondary_meter = secondary
+            uow.save_entity(secondary_point)
+            uow.save_entity(secondary_meter)
     return EnergyEntities(
         service_point_id=primary_point.id,
         meter_id=primary_meter.id,
-        secondary_service_point_id=secondary_point.id,
-        secondary_meter_id=secondary_meter.id,
+        secondary_service_point_id=(
+            None if secondary is None else secondary[0].id
+        ),
+        secondary_meter_id=(
+            None if secondary is None else secondary[1].id
+        ),
     )
 
 

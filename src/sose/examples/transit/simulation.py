@@ -115,15 +115,27 @@ def build_runtime(
     )
 
 
-def seed_reference(persistence: MemoryPersistence) -> TransitEntities:
-    context, _ = build_runtime(persistence)
-    block_id = "block-1"
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    vehicle_key: str = "vehicle-1",
+    block_id: str = "block-1",
+    first_trip_delay: timedelta = timedelta(hours=1),
+    trip_duration: timedelta = timedelta(hours=1),
+    layover: timedelta = timedelta(minutes=15),
+) -> TransitEntities:
+    context, _ = build_runtime(persistence, now=now)
+    first_start = now + first_trip_delay
+    first_end = first_start + trip_duration
+    second_start = first_end + layover
+    second_end = second_start + trip_duration
     vehicle = context.entities.create(
         Vehicle,
-        key=("transit-reference", "vehicle-1"),
+        key=("transit-reference", vehicle_key),
         state="available",
         attributes={
-            "vehicle_key": "vehicle-1",
+            "vehicle_key": vehicle_key,
             "block_id": block_id,
             "active_trip_id": None,
             "latest_position_id": None,
@@ -160,8 +172,8 @@ def seed_reference(persistence: MemoryPersistence) -> TransitEntities:
             },
         )
 
-    trip_a = create_trip("trip-a", 1, TRIP_A_START, TRIP_A_END)
-    trip_b = create_trip("trip-b", 2, TRIP_B_START, TRIP_B_END)
+    trip_a = create_trip("trip-a", 1, first_start, first_end)
+    trip_b = create_trip("trip-b", 2, second_start, second_end)
     with persistence.transaction() as uow:
         for entity in (vehicle, trip_a, trip_b):
             uow.save_entity(entity)

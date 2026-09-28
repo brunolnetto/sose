@@ -8,7 +8,14 @@ def _build(persistence: Persistence, config: WarehouseFulfillmentConfig, now: da
     return build_runtime(persistence, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
 
 def _seed(persistence: Persistence, config: WarehouseFulfillmentConfig):
-    return seed_reference(persistence)
+    return seed_reference(
+        persistence,
+        now=config.start_at,
+        requested_quantity=config.requested_quantity,
+        primary_on_hand=config.primary_on_hand,
+        substitute_on_hand=config.substitute_on_hand,
+        allow_substitute=config.allow_substitute,
+    )
 
 definition = DomainDefinition(
     name="warehouse_fulfillment",

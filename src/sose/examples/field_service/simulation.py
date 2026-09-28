@@ -94,8 +94,17 @@ def build_runtime(
     )
 
 
-def seed_reference(persistence: MemoryPersistence) -> FieldServiceEntities:
-    context, engine = build_runtime(persistence)
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    territory: str = REQUIRED_TERRITORY,
+    required_skill: str = REQUIRED_SKILL,
+    wrong_skill: str = "copper-installation",
+    technician_resource_capacity: int = 1,
+    parts_store_capacity: int = 20,
+) -> FieldServiceEntities:
+    context, engine = build_runtime(persistence, now=now)
     work_order = context.entities.create(
         WorkOrder,
         key=("field-service-reference", "installation-1"),
@@ -103,8 +112,8 @@ def seed_reference(persistence: MemoryPersistence) -> FieldServiceEntities:
         attributes={
             "customer_id": "customer-1",
             "place_id": "premises-1",
-            "territory": REQUIRED_TERRITORY,
-            "required_skills": [REQUIRED_SKILL],
+            "territory": territory,
+            "required_skills": [required_skill],
             "required_part": REQUIRED_PART,
             "active_appointment_id": None,
             "appointment_ids": [],
@@ -116,8 +125,8 @@ def seed_reference(persistence: MemoryPersistence) -> FieldServiceEntities:
         state="available",
         attributes={
             "technician_key": "technician-1",
-            "skills": ["copper-installation"],
-            "territories": [REQUIRED_TERRITORY],
+            "skills": [wrong_skill],
+            "territories": [territory],
             "bookings": [],
         },
     )
@@ -127,8 +136,8 @@ def seed_reference(persistence: MemoryPersistence) -> FieldServiceEntities:
         state="available",
         attributes={
             "technician_key": "technician-2",
-            "skills": [REQUIRED_SKILL, "wifi-commissioning"],
-            "territories": [REQUIRED_TERRITORY, "central"],
+            "skills": [required_skill, "wifi-commissioning"],
+            "territories": [territory, "central"],
             "bookings": [],
         },
     )
@@ -137,9 +146,12 @@ def seed_reference(persistence: MemoryPersistence) -> FieldServiceEntities:
             uow.save_entity(entity)
         for technician in (wrong_skill, qualified):
             uow.save_resource_definition(
-                ResourceDefinition(f"field-tech:{technician.id}", capacity=1)
+                ResourceDefinition(
+                    f"field-tech:{technician.id}",
+                    capacity=technician_resource_capacity,
+                )
             )
-    engine.stores.define(StoreDefinition("field_parts", kind="filter", capacity=20))
+    engine.stores.define(StoreDefinition("field_parts", kind="filter", capacity=parts_store_capacity))
     return FieldServiceEntities(
         work_order_id=work_order.id,
         technician_ids=(wrong_skill.id, qualified.id),

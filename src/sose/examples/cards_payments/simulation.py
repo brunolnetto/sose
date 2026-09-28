@@ -68,13 +68,20 @@ def build_runtime(
     )
 
 
-def seed_reference(persistence: MemoryPersistence) -> PaymentEntities:
-    context, _ = build_runtime(persistence)
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    amount: float = 125.0,
+    currency: str = "USD",
+    processor_capacity: int = 1,
+) -> PaymentEntities:
+    context, _ = build_runtime(persistence, now=now)
     payment = context.entities.create(
         Payment,
         key=("cards-reference", "payment-1"),
         state="authorization_requested",
-        attributes={"amount": 125.0, "currency": "USD"},
+        attributes={"amount": amount, "currency": currency},
     )
     with persistence.transaction() as uow:
         uow.save_entity(payment)
@@ -83,7 +90,9 @@ def seed_reference(persistence: MemoryPersistence) -> PaymentEntities:
             "settlement_processor",
             "dispute_analyst",
         ):
-            uow.save_resource_definition(ResourceDefinition(name, capacity=1))
+            uow.save_resource_definition(
+                ResourceDefinition(name, capacity=processor_capacity)
+            )
     return PaymentEntities(payment_id=payment.id)
 
 

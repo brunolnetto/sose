@@ -8,7 +8,13 @@ def _build(persistence: Persistence, config: SubscriptionSaaSConfig, now: dateti
     return build_runtime(persistence, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
 
 def _seed(persistence: Persistence, config: SubscriptionSaaSConfig):
-    return seed_reference(persistence)
+    return seed_reference(
+        persistence,
+        now=config.start_at,
+        customer_id=config.customer_id,
+        initial_plan=config.initial_plan,
+        term_duration=config.term_duration,
+    )
 
 definition = DomainDefinition(
     name="subscription_saas",

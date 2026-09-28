@@ -82,16 +82,28 @@ def build_runtime(
     )
 
 
-def seed_reference(persistence: MemoryPersistence) -> WarehouseEntities:
-    context, _ = build_runtime(persistence)
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    requested_quantity: float = 10.0,
+    primary_on_hand: float = 6.0,
+    substitute_on_hand: float = 5.0,
+    allow_substitute: bool = True,
+) -> WarehouseEntities:
+    context, _ = build_runtime(persistence, now=now)
     order = context.entities.create(
         FulfillmentOrder,
         key=("warehouse-reference", "order-1"),
         state="requested",
         attributes={
             "requested_sku": PRIMARY_SKU,
-            "acceptable_skus": [PRIMARY_SKU, SUBSTITUTE_SKU],
-            "requested_quantity": 10.0,
+            "acceptable_skus": (
+                [PRIMARY_SKU, SUBSTITUTE_SKU]
+                if allow_substitute
+                else [PRIMARY_SKU]
+            ),
+            "requested_quantity": requested_quantity,
             "allocation_ids": [],
             "occurrence_ids": [],
         },
@@ -103,7 +115,7 @@ def seed_reference(persistence: MemoryPersistence) -> WarehouseEntities:
         attributes={
             "lot_key": "lot-a",
             "sku": PRIMARY_SKU,
-            "on_hand": 6.0,
+            "on_hand": primary_on_hand,
             "allocated": 0.0,
             "occurrence_ids": [],
         },
@@ -115,7 +127,7 @@ def seed_reference(persistence: MemoryPersistence) -> WarehouseEntities:
         attributes={
             "lot_key": "lot-b",
             "sku": SUBSTITUTE_SKU,
-            "on_hand": 5.0,
+            "on_hand": substitute_on_hand,
             "allocated": 0.0,
             "occurrence_ids": [],
         },

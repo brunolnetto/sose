@@ -4,6 +4,10 @@
 
 ### Added
 
+- operational configuration knobs across Transit, Telecom, Aviation, Logistics,
+  Hospitality, Field Service, Cards & Payments, Energy / Utilities,
+  Subscription / SaaS, and Warehouse / Fulfillment, with executable evidence
+  that overrides change durable truth;
 - `sose apply --config sose.toml` for explicit idempotent application of
   edited domain configuration to an existing durable job;
 - `sose init --domain <name>` scaffolding generated from each domain's actual
