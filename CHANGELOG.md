@@ -4,6 +4,8 @@
 
 ### Added
 
+- optional DuckDB persistence sink using the shared record/delta mapping;
+- DuckDB benchmark comparison for scheduled execution and reopen/rebuild;
 - incremental SQLite persistence using backend-neutral record deltas;
 - append-only JSONL journal persistence using the same record-delta contract;
 - benchmark comparison across snapshot SQLite, incremental SQLite, and JSONL;
