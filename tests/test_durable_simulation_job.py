@@ -159,21 +159,20 @@ def test_mro_recurring_job_uses_domain_reconcile_hook():
     assert persistence.container_operation_results()
 
 
-def test_failed_tick_persists_operational_failure(monkeypatch):
+def test_failed_tick_persists_operational_failure():
     persistence = MemoryPersistence()
     definition = builtin_catalog().get("tutorial_job")
+
+    def fail_backend(origin):
+        raise RuntimeError("boom")
+
     job = SimulationJob(
         job_id="failed-job",
         definition=definition,
         persistence=persistence,
-        backend_factory=_backend,
+        backend_factory=fail_backend,
     )
     job.initialize()
-
-    def fail(*args, **kwargs):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(definition, "build_runtime", fail)
 
     with pytest.raises(RuntimeError, match="boom"):
         job.run_tick()
