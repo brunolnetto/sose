@@ -17,12 +17,13 @@ Each release note should explain:
 | Version | Status | Milestone |
 | --- | --- | --- |
 | 0.7.0 | released | durable operational-runtime boundary |
-| 0.8.0 | planned | stabilization, persistence portability, packaging, and adoption |
+| 0.8.0 | release candidate | stabilization, persistence portability, packaging, and adoption |
 
 See:
 
 - [v0.7.0](v0.7.0.md)
-- [v0.8.0 plan](v0.8.0-plan.md)
+- [v0.8.0](v0.8.0.md)
+- [v0.8.0 plan/history](v0.8.0-plan.md)
 - [release policy](release-policy.md)
 
 ## Release-note rule
