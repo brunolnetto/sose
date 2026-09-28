@@ -31,6 +31,7 @@ from sose.core.runtime import (
 )
 from sose.domain.entity import Entity
 from sose.scenarios.model import ScenarioRuntimeState
+from sose.jobs.model import SimulationJobState
 
 
 @dataclass
@@ -59,6 +60,7 @@ class _State:
     preemptive_resource_reservations: dict[str, PreemptiveResourceReservation] = field(default_factory=dict)
     preemptive_resource_release_intents: dict[str, PreemptiveResourceReleaseIntent] = field(default_factory=dict)
     resource_preemption_results: dict[str, ResourcePreemptionResult] = field(default_factory=dict)
+    job_states: dict[str, SimulationJobState] = field(default_factory=dict)
     committed_tick: int = -1
 
 
@@ -97,6 +99,21 @@ class MemoryUnitOfWork:
 
     def _mark_dirty(self, collection: str, key: object) -> None:
         self._dirty_records.add((collection, key))
+
+
+    def get_job_state(self, job_id: str) -> SimulationJobState | None:
+        value = self._working.job_states.get(job_id)
+        return deepcopy(value) if value else None
+
+    def save_job_state(self, state: SimulationJobState) -> None:
+        existing = self._working.job_states.get(state.job_id)
+        if existing is not None and existing.domain_name != state.domain_name:
+            raise ValueError(
+                f"job domain cannot change: {state.job_id} "
+                f"{existing.domain_name!r} -> {state.domain_name!r}"
+            )
+        self._working.job_states[state.job_id] = deepcopy(state)
+        self._mark_dirty("job_states", state.job_id)
 
     def get_entity(self, entity_type: str, entity_id: str) -> Entity | None:
         value = self._working.entities.get((entity_type, entity_id))
@@ -508,6 +525,17 @@ class MemoryPersistence:
         except Exception:
             uow.rollback()
             raise
+
+
+    def job_state(self, job_id: str) -> SimulationJobState | None:
+        value = self._state.job_states.get(job_id)
+        return deepcopy(value) if value else None
+
+    def job_states(self) -> tuple[SimulationJobState, ...]:
+        return tuple(
+            deepcopy(self._state.job_states[job_id])
+            for job_id in sorted(self._state.job_states)
+        )
 
     def committed_tick(self) -> int:
         return self._state.committed_tick

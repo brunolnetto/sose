@@ -6,7 +6,11 @@ from sose.domain.config import DomainDefinition
 from sose.persistence.base import Persistence
 
 from .config import TutorialJobConfig
-from .simulation import build_runtime, seed_job
+from .simulation import (
+    build_runtime,
+    seed_job,
+    start_and_schedule_completion,
+)
 
 
 def _build(
@@ -28,10 +32,29 @@ def _seed(persistence: Persistence, config: TutorialJobConfig):
     return seed_job(persistence, job_key=config.job_key)
 
 
+def _reconcile_tick(
+    persistence: Persistence,
+    engine,
+    backend,
+    config: TutorialJobConfig,
+    job,
+) -> None:
+    current = persistence.entity("tutorial_job", job.id)
+    if current is None or current.state not in {"queued", "running"}:
+        return
+    start_and_schedule_completion(
+        persistence,
+        engine,
+        job_id=job.id,
+        complete_at=config.start_at + config.complete_after,
+    )
+
+
 definition = DomainDefinition(
     name="tutorial_job",
     description="Minimal queued -> running -> completed durable tutorial domain.",
     config_model=TutorialJobConfig,
     build_runtime=_build,
     seed=_seed,
+    reconcile_tick=_reconcile_tick,
 )

@@ -262,6 +262,14 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
     def _fresh(self) -> None:
         self._refresh_from_db()
 
+    def job_state(self, job_id: str):
+        self._fresh()
+        return super().job_state(job_id)
+
+    def job_states(self):
+        self._fresh()
+        return super().job_states()
+
     def committed_tick(self) -> int:
         self._fresh()
         return super().committed_tick()
