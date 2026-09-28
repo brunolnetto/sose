@@ -139,7 +139,11 @@ class JSONLJournalPersistence(MemoryPersistence):
             yield uow
             if not uow._closed:
                 uow.commit()
-            changes = diff_state_records(before, self._state)
+            changes = changes_for_dirty_records(
+                before,
+                self._state,
+                uow.dirty_records,
+            )
             self._append_transaction(changes)
         except Exception:
             self._state = before
