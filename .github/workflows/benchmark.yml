@@ -1,0 +1,53 @@
+name: Runtime benchmarks
+
+on:
+  workflow_dispatch:
+    inputs:
+      quick:
+        description: "Run reduced benchmark sizes"
+        required: false
+        default: false
+        type: boolean
+  schedule:
+    - cron: "17 5 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install benchmark dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip check
+
+      - name: Run benchmark suite
+        env:
+          QUICK: ${{ github.event_name == 'workflow_dispatch' && inputs.quick || false }}
+        run: |
+          if [ "$QUICK" = "true" ]; then
+            python benchmarks/runtime_baseline.py --quick --output benchmark-results.json
+          else
+            python benchmarks/runtime_baseline.py --output benchmark-results.json
+          fi
+
+      - name: Upload benchmark report
+        uses: actions/upload-artifact@v7
+        with:
+          name: runtime-benchmark-results
+          path: benchmark-results.json
+          if-no-files-found: error
+          retention-days: 90
