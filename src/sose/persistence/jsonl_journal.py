@@ -159,11 +159,11 @@ class JSONLJournalPersistence(MemoryPersistence):
         return self._transaction_count
 
     def job_state(self, job_id: str):
-        self._fresh()
+        self._refresh_from_journal()
         return super().job_state(job_id)
 
     def job_states(self):
-        self._fresh()
+        self._refresh_from_journal()
         return super().job_states()
 
     def committed_tick(self) -> int:
