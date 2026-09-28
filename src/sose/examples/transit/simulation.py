@@ -147,6 +147,8 @@ def seed_reference(persistence: MemoryPersistence) -> TransitEntities:
                 "scheduled_end_at": end_at.isoformat(),
                 "projected_start_at": start_at.isoformat(),
                 "projected_end_at": end_at.isoformat(),
+                "direct_delay_seconds": 0,
+                "block_delay_seconds": 0,
                 "current_delay_seconds": 0,
                 "latest_update_sequence": 0,
             },
@@ -343,6 +345,91 @@ def reconcile_vehicle_for_trip(
     return False
 
 
+def _apply_trip_projection(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    trip: ScheduledTrip,
+    direct_delay_seconds: int | None = None,
+    block_delay_seconds: int | None = None,
+    latest_update_sequence: int | None = None,
+) -> ScheduledTrip:
+    direct = (
+        int(trip.attributes.get("direct_delay_seconds", 0))
+        if direct_delay_seconds is None
+        else int(direct_delay_seconds)
+    )
+    block = (
+        int(trip.attributes.get("block_delay_seconds", 0))
+        if block_delay_seconds is None
+        else int(block_delay_seconds)
+    )
+    effective = max(direct, block)
+    scheduled_start = _at(trip.attributes["scheduled_start_at"])
+    scheduled_end = _at(trip.attributes["scheduled_end_at"])
+    trip.attributes["direct_delay_seconds"] = direct
+    trip.attributes["block_delay_seconds"] = block
+    trip.attributes["current_delay_seconds"] = effective
+    trip.attributes["projected_start_at"] = (
+        scheduled_start + timedelta(seconds=effective)
+    ).isoformat()
+    trip.attributes["projected_end_at"] = (
+        scheduled_end + timedelta(seconds=effective)
+    ).isoformat()
+    if latest_update_sequence is not None:
+        trip.attributes["latest_update_sequence"] = int(latest_update_sequence)
+    with persistence.transaction() as uow:
+        uow.save_entity(trip)
+    _reschedule_trip_boundaries(
+        persistence,
+        engine,
+        trip_id=trip.id,
+    )
+    return _trip(persistence, trip.id)
+
+
+def _reconcile_trip_update_projection(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: TransitEntities,
+    occurrence: TripUpdateOccurrence,
+) -> None:
+    trip = _trip(persistence, str(occurrence.attributes["trip_id"]))
+    sequence = int(occurrence.attributes["sequence"])
+    delay_seconds = int(occurrence.attributes["delay_seconds"])
+    latest_sequence = int(trip.attributes.get("latest_update_sequence", 0))
+
+    if sequence > latest_sequence:
+        trip = _apply_trip_projection(
+            persistence,
+            engine,
+            trip=trip,
+            direct_delay_seconds=delay_seconds,
+            latest_update_sequence=sequence,
+        )
+
+    if trip.id != entities.trip_a_id:
+        return
+
+    downstream = _trip(persistence, entities.trip_b_id)
+    if downstream.state != "planned":
+        return
+    upstream_end = _at(trip.attributes["projected_end_at"])
+    downstream_scheduled_start = _at(downstream.attributes["scheduled_start_at"])
+    propagated_seconds = max(
+        0,
+        int((upstream_end - downstream_scheduled_start).total_seconds()),
+    )
+    if int(downstream.attributes.get("block_delay_seconds", 0)) != propagated_seconds:
+        _apply_trip_projection(
+            persistence,
+            engine,
+            trip=downstream,
+            block_delay_seconds=propagated_seconds,
+        )
+
+
 def record_trip_update(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -380,6 +467,12 @@ def record_trip_update(
                 "transit_trip_update",
                 existing.id,
             )
+        _reconcile_trip_update_projection(
+            persistence,
+            engine,
+            entities=entities,
+            occurrence=existing,
+        )
         return existing
 
     if not engine.context.scenarios.attribute("transit.realtime.available", True):
@@ -409,59 +502,36 @@ def record_trip_update(
         correlation_id=flow_correlation_id(str(trip.attributes["block_id"])),
     )
     occurrence = _entity(persistence, "transit_trip_update", occurrence.id)
-
-    trip = _trip(persistence, trip.id)
-    if sequence <= int(trip.attributes.get("latest_update_sequence", 0)):
-        return occurrence
-
-    delay = timedelta(seconds=delay_seconds)
-    scheduled_start = _at(trip.attributes["scheduled_start_at"])
-    scheduled_end = _at(trip.attributes["scheduled_end_at"])
-    trip.attributes["projected_start_at"] = (scheduled_start + delay).isoformat()
-    trip.attributes["projected_end_at"] = (scheduled_end + delay).isoformat()
-    trip.attributes["current_delay_seconds"] = int(delay_seconds)
-    trip.attributes["latest_update_sequence"] = sequence
-    with persistence.transaction() as uow:
-        uow.save_entity(trip)
-    _reschedule_trip_boundaries(
+    _reconcile_trip_update_projection(
         persistence,
         engine,
-        trip_id=trip.id,
+        entities=entities,
+        occurrence=occurrence,
     )
-
-    if trip.id == entities.trip_a_id:
-        downstream = _trip(persistence, entities.trip_b_id)
-        if downstream.state == "planned":
-            upstream_end = _at(trip.attributes["projected_end_at"])
-            downstream_scheduled_start = _at(
-                downstream.attributes["scheduled_start_at"]
-            )
-            propagated_seconds = max(
-                0,
-                int(
-                    (upstream_end - downstream_scheduled_start).total_seconds()
-                ),
-            )
-            downstream_start = downstream_scheduled_start + timedelta(
-                seconds=propagated_seconds
-            )
-            downstream_end = _at(
-                downstream.attributes["scheduled_end_at"]
-            ) + timedelta(seconds=propagated_seconds)
-            downstream.attributes["projected_start_at"] = (
-                downstream_start.isoformat()
-            )
-            downstream.attributes["projected_end_at"] = downstream_end.isoformat()
-            downstream.attributes["current_delay_seconds"] = propagated_seconds
-            with persistence.transaction() as uow:
-                uow.save_entity(downstream)
-            _reschedule_trip_boundaries(
-                persistence,
-                engine,
-                trip_id=downstream.id,
-            )
-
     return occurrence
+
+
+def _reconcile_vehicle_position_projection(
+    persistence: MemoryPersistence,
+    *,
+    entities: TransitEntities,
+    position: VehiclePositionOccurrence,
+) -> None:
+    vehicle = _vehicle(persistence, entities)
+    observed_at = _at(position.attributes["observed_at"])
+    latest_observed_at = vehicle.attributes.get("latest_position_observed_at")
+    if (
+        latest_observed_at is not None
+        and observed_at <= _at(latest_observed_at)
+    ):
+        return
+    vehicle.attributes["latest_position_id"] = position.id
+    vehicle.attributes["latest_position_observed_at"] = observed_at.isoformat()
+    vehicle.attributes["current_stop_sequence"] = int(
+        position.attributes["stop_sequence"]
+    )
+    with persistence.transaction() as uow:
+        uow.save_entity(vehicle)
 
 
 def record_vehicle_position(
@@ -517,6 +587,11 @@ def record_vehicle_position(
                 "transit_vehicle_position",
                 existing.id,
             )
+        _reconcile_vehicle_position_projection(
+            persistence,
+            entities=entities,
+            position=existing,
+        )
         return existing
 
     if not engine.context.scenarios.attribute("transit.realtime.available", True):
@@ -563,18 +638,11 @@ def record_vehicle_position(
         "transit_vehicle_position",
         position.id,
     )
-
-    vehicle = _vehicle(persistence, entities)
-    latest_observed_at = vehicle.attributes.get("latest_position_observed_at")
-    if (
-        latest_observed_at is None
-        or observed_at > datetime.fromisoformat(str(latest_observed_at))
-    ):
-        vehicle.attributes["latest_position_id"] = position.id
-        vehicle.attributes["latest_position_observed_at"] = observed_at.isoformat()
-        vehicle.attributes["current_stop_sequence"] = stop_sequence
-        with persistence.transaction() as uow:
-            uow.save_entity(vehicle)
+    _reconcile_vehicle_position_projection(
+        persistence,
+        entities=entities,
+        position=position,
+    )
     return position
 
 
@@ -616,8 +684,12 @@ def schedule_service_alert(
     else:
         if tuple(alert.attributes["affected_trip_ids"]) != requested:
             raise ValueError("service alert scope cannot change on replay")
-        start_at = _at(alert.attributes["start_at"])
-        end_at = _at(alert.attributes["end_at"])
+        persisted_start = _at(alert.attributes["start_at"])
+        persisted_end = _at(alert.attributes["end_at"])
+        if start_at != persisted_start or end_at != persisted_end:
+            raise ValueError("service alert time range cannot change on replay")
+        start_at = persisted_start
+        end_at = persisted_end
 
     if alert.state == "scheduled" and engine.scheduler.find_pending(
         entity_type="transit_service_alert",
