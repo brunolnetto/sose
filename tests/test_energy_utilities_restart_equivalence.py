@@ -12,6 +12,7 @@ from sose.examples.energy_utilities.simulation import (
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.scenarios import AttributeEffect, Scenario, ScheduledTrigger
 from sose.testing.restart import restart_reference_runtime
 
 
@@ -122,16 +123,14 @@ def test_persisted_reading_replay_ignores_new_ingestion_outage():
     _, unavailable_engine = build_runtime(
         persistence,
         scenarios=(
-            __import__(
-                "sose.examples.energy_utilities.scenarios",
-                fromlist=["demand_response_communications_outage"],
-            ).demand_response_communications_outage,
+            Scenario(
+                name="metering-outage",
+                trigger=ScheduledTrigger(at=ORIGIN),
+                effects=(AttributeEffect("energy.metering.available", False),),
+            ),
         ),
     )
-    unavailable_engine.context.scenarios.set_attribute(
-        "energy.metering.available",
-        False,
-    )
+    unavailable_engine.advance_tick()
     replay = record_meter_reading(
         persistence,
         unavailable_engine,
