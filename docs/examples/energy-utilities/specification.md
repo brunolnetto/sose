@@ -129,10 +129,12 @@ ScheduledWork makes two time boundaries durable:
 - event start;
 - event finish.
 
-DemandResponseParticipation is separate from the event clock. When the event is
-active, participation begins only if:
+DemandResponseParticipation is separate from the event clock. One durable event
+may target a population of ServicePoints, with one Participation per target.
+The target population is fixed on first scheduling and cannot silently change on
+replay. When the event is active, each participation begins only if:
 
-- ServicePoint is energized;
+- its ServicePoint is energized;
 - demand-response communications/prerequisites are available.
 
 If the event completes while participation is still eligible, the participation
@@ -190,6 +192,14 @@ directly changing domain state.
 ENE-12 — Restart equivalence preserves both pending event boundaries and
 immutable measurement identity.
 
+ENE-13 — Demand-response event windows and target populations are durable
+business facts and are reused on replay.
+
+ENE-14 — Event cancellation removes pending start/finish work before the event
+enters its terminal cancelled state.
+
+ENE-15 — Correction quality and correction lineage are mutually consistent.
+
 ## 9. Happy path
 
 1. Seed energized ServicePoint and active Meter.
@@ -236,7 +246,8 @@ Current status: **Reference implementation**.
 
 The slice is complete when its executable evidence proves immutable measurement
 lineage, multi-outage restoration ownership, bounded demand-response event
-semantics, finite scenario recovery, and restart equivalence.
+semantics, multi-ServicePoint population targeting, finite scenario recovery,
+and restart equivalence.
 
 Further utility breadth should stop here unless a new slice challenges an
 unproven architectural assumption.
