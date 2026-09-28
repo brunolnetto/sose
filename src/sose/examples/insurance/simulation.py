@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
@@ -41,11 +40,11 @@ PAYMENT_DELAY = timedelta(hours=2)
 
 
 def _reference_minor_units(value: float) -> int:
-    decimal = Decimal(str(value))
-    units = decimal * 100
-    if units != units.to_integral_value():
+    scaled = float(value) * 100
+    nearest = round(scaled)
+    if abs(scaled - nearest) > 1e-7:
         raise ValueError("Reference payout amount must not contain fractional minor units")
-    return int(units)
+    return int(nearest)
 
 
 @dataclass(frozen=True, slots=True)
