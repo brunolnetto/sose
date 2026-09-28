@@ -45,8 +45,11 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
     name: str
     description: str
     config_model: type[ConfigT]
-    build_runtime: BuildRuntime[ConfigT]
-    seed: SeedDomain[ConfigT, SeedT]
+    build_runtime: Callable[
+        [Persistence, ConfigT, datetime, int],
+        tuple[SimulationContext, Engine],
+    ]
+    seed: Callable[[Persistence, ConfigT], SeedT]
 
     def default_config(self) -> ConfigT:
         return self.config_model()
