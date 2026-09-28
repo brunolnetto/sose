@@ -318,3 +318,34 @@ def test_demand_response_targets_population_with_independent_participation():
     )
     assert persistence.entity("utility_dr_participation", primary.id).state == "completed"
     assert persistence.entity("utility_dr_participation", secondary.id).state == "opted_out"
+
+@pytest.mark.parametrize("quantity", [float("nan"), float("inf"), float("-inf")])
+def test_meter_reading_rejects_non_finite_quantity(quantity):
+    persistence, entities, engine = _runtime()
+
+    with pytest.raises(ValueError, match="finite and non-negative"):
+        record_meter_reading(
+            persistence,
+            engine,
+            entities=entities,
+            interval_end=ORIGIN,
+            quantity_kwh=quantity,
+        )
+
+
+def test_demand_response_target_population_must_include_primary_point():
+    persistence, entities, engine = _runtime()
+    assert entities.secondary_service_point_id is not None
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    with pytest.raises(ValueError, match="primary service point"):
+        schedule_demand_response(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            event_key="dr-invalid-population",
+            target_service_point_ids=(entities.secondary_service_point_id,),
+        )
+
