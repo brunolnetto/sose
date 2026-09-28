@@ -56,12 +56,31 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
     }:
         seed_material(engine, backend, quantity=config.quantity)
 
-    if order.state in {"released", "waiting_material"}:
+    if order.state == "waiting_material":
         reconcile_material_availability(
             persistence,
             engine,
             entities=entities,
         )
+        return
+
+    if order.state == "released":
+        reconcile_material_availability(
+            persistence,
+            engine,
+            entities=entities,
+        )
+        order = persistence.entity(
+            "production_order",
+            entities.production_order_id,
+        )
+        if order is not None and order.state == "released":
+            reconcile_setup_resources(
+                persistence,
+                engine,
+                backend,
+                entities=entities,
+            )
         return
 
     if order.state == "setup":
@@ -110,13 +129,6 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
         )
         return
 
-    if order.state == "released":
-        reconcile_setup_resources(
-            persistence,
-            engine,
-            backend,
-            entities=entities,
-        )
 
 
 definition = DomainDefinition(
