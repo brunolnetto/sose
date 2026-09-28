@@ -106,8 +106,7 @@ See [Persistence sinks](persistence-sinks.md).
 ## Concurrency evidence
 
 Incremental SQLite now has executable multi-connection semantics for read
-visibility, alternating writers, write-lock contention, and conflicting Engine
-commands.
+visibility, alternating writers, write-lock contention, and conflicting Engine commands that become semantic no-ops after the first commit.
 
 The key limitation is explicit: detached stale Entity objects remain
 last-writer-wins because the Persistence contract does not define compare-and-swap
