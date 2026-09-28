@@ -27,6 +27,11 @@ from .statecharts import (
 REQUIRED_SKILL = "fiber-installation"
 REQUIRED_TERRITORY = "west"
 REQUIRED_PART = "ont-router"
+PART_FILTER_KEY = f"sku:{REQUIRED_PART}"
+
+
+def _required_part_filter(item) -> bool:
+    return item.value.get("sku") == REQUIRED_PART
 
 
 @dataclass(frozen=True, slots=True)
@@ -83,6 +88,7 @@ def build_runtime(
         registry=registry,
         persistence=persistence,
         scenarios=scenarios,
+        store_filters={PART_FILTER_KEY: _required_part_filter},
     )
 
 
@@ -131,7 +137,7 @@ def seed_reference(persistence: MemoryPersistence) -> FieldServiceEntities:
             uow.save_resource_definition(
                 ResourceDefinition(f"field-tech:{technician.id}", capacity=1)
             )
-    engine.stores.define(StoreDefinition("field_parts", kind="fifo", capacity=20))
+    engine.stores.define(StoreDefinition("field_parts", kind="filter", capacity=20))
     return FieldServiceEntities(
         work_order_id=work_order.id,
         technician_ids=(wrong_skill.id, qualified.id),
@@ -275,10 +281,21 @@ def propose_appointment(
     if end_at <= start_at:
         raise ValueError("appointment end must be after start")
     work_order = _work_order(persistence, entities)
-    if work_order.state not in {"ready", "reschedule_required", "scheduled"}:
+    if work_order.state not in {"ready", "reschedule_required"}:
         raise RuntimeError(
             f"appointment requires schedulable work order, got {work_order.state}"
         )
+    active_id = work_order.attributes.get("active_appointment_id")
+    if active_id is not None:
+        active = persistence.entity("field_appointment", str(active_id))
+        if active is not None and active.state not in {
+            "completed",
+            "no_access_recorded",
+            "missed",
+            "cancelled",
+        }:
+            raise RuntimeError("work order already has an active appointment")
+        work_order.attributes["active_appointment_id"] = None
     aid = appointment_id(work_order.id, ordinal)
     existing = persistence.entity("field_appointment", aid)
     if existing is not None:
@@ -323,8 +340,11 @@ def propose_appointment(
 
 
 def _ensure_appointment_boundaries(
+    persistence: MemoryPersistence,
     engine: Engine,
+    *,
     appointment: Appointment,
+    work_order: WorkOrder,
 ) -> None:
     start_at = _at(appointment.attributes["start_at"])
     end_at = _at(appointment.attributes["end_at"])
@@ -353,6 +373,19 @@ def _ensure_appointment_boundaries(
             due_at=end_at,
             correlation_id=correlation_id,
             key=("field-appointment", appointment.id, "miss"),
+        )
+        engine.context.schedules.at(end_at, command=command)
+    if work_order.state in {"scheduled", "in_progress"} and engine.scheduler.find_pending(
+        entity_type="field_work_order",
+        entity_id=work_order.id,
+        name="require_reschedule",
+    ) is None:
+        command = engine.context.commands.create(
+            "require_reschedule",
+            target=work_order,
+            due_at=end_at,
+            correlation_id=correlation_id,
+            key=("field-work-order", work_order.id, appointment.id, "window-expired"),
         )
         engine.context.schedules.at(end_at, command=command)
 
@@ -424,7 +457,13 @@ def confirm_appointment(
             correlation_id=correlation_id,
         )
 
-    _ensure_appointment_boundaries(engine, appointment)
+    work_order = _work_order(persistence, entities)
+    _ensure_appointment_boundaries(
+        persistence,
+        engine,
+        appointment=appointment,
+        work_order=work_order,
+    )
     return _appointment(persistence, appointment.id)
 
 
@@ -455,6 +494,7 @@ def reserve_required_part(
         store_name="field_parts",
         request_id=request_id,
         requested_at=backend.now,
+        filter_key=PART_FILTER_KEY,
     )
     if result is None:
         return False
@@ -474,6 +514,10 @@ def reconcile_work_start(
     appointment = _appointment(persistence, appointment_id_value)
     work_order = _work_order(persistence, entities)
     if appointment.state != "in_progress":
+        return False
+    if work_order.attributes.get("active_appointment_id") != appointment.id:
+        return False
+    if work_order.state != "scheduled":
         return False
     if not engine.context.scenarios.attribute("field_service.dispatch.available", True):
         return False
@@ -518,6 +562,28 @@ def reconcile_work_start(
             key=("field-work-order", work_order.id, appointment.id, "start"),
             correlation_id=correlation_id,
         )
+
+    # The durable booking owns the whole appointment window. Resource capacity is
+    # only the start-time concurrency gate, so release it immediately after the
+    # semantic assignment has been committed. This prevents an expiry callback
+    # from leaking backend capacity while the Technician entity remains the
+    # durable assignment truth.
+    engine.resources.withdraw(backend, request_id)
+    end_at = _at(appointment.attributes["end_at"])
+    technician = _technician(persistence, technician.id)
+    if technician.state == "assigned" and engine.scheduler.find_pending(
+        entity_type="field_technician",
+        entity_id=technician.id,
+        name="release",
+    ) is None:
+        command = engine.context.commands.create(
+            "release",
+            target=technician,
+            due_at=end_at,
+            correlation_id=correlation_id,
+            key=("field-technician", technician.id, appointment.id, "window-end"),
+        )
+        engine.context.schedules.at(end_at, command=command)
     return True
 
 
@@ -534,6 +600,11 @@ def _release_technician(
         return
     engine.resources.withdraw(backend, f"field-tech:{appointment.id}")
     technician = _technician(persistence, str(technician_id))
+    engine.scheduler.cancel_pending(
+        entity_type="field_technician",
+        entity_id=technician.id,
+        name="release",
+    )
     if technician.state == "assigned":
         _dispatch(
             engine,
@@ -597,6 +668,11 @@ def record_visit(
         entity_id=appointment.id,
         name="miss",
     )
+    engine.scheduler.cancel_pending(
+        entity_type="field_work_order",
+        entity_id=work_order.id,
+        name="require_reschedule",
+    )
     appointment = _appointment(persistence, appointment.id)
     work_order = _work_order(persistence, entities)
     if outcome == "no_access":
@@ -637,6 +713,11 @@ def record_visit(
         appointment=appointment,
         work_order_id=work_order.id,
     )
+    work_order = _work_order(persistence, entities)
+    if work_order.attributes.get("active_appointment_id") == appointment.id:
+        work_order.attributes["active_appointment_id"] = None
+        with persistence.transaction() as uow:
+            uow.save_entity(work_order)
     return _entity(persistence, "field_visit_occurrence", visit.id)
 
 
