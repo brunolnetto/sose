@@ -451,6 +451,7 @@ def schedule_demand_response(
     event_key: str,
     start_delay: timedelta = DR_START_DELAY,
     duration: timedelta = DR_DURATION,
+    target_service_point_ids: tuple[str, ...] | None = None,
 ) -> tuple[DemandResponseEvent, DemandResponseParticipation, datetime, datetime]:
     if not event_key:
         raise ValueError("event_key must be non-empty")
@@ -458,6 +459,14 @@ def schedule_demand_response(
         raise ValueError("start_delay must be non-negative")
     if duration <= timedelta(0):
         raise ValueError("duration must be positive")
+
+    requested_targets = tuple(
+        dict.fromkeys(target_service_point_ids or (entities.service_point_id,))
+    )
+    if not requested_targets:
+        raise ValueError("demand-response event requires at least one target")
+    for service_point_id in requested_targets:
+        _entity(persistence, "utility_service_point", service_point_id)
 
     eid = dr_event_id(event_key)
     event = persistence.entity("utility_dr_event", eid)
@@ -472,25 +481,38 @@ def schedule_demand_response(
             attributes={
                 "event_key": event_key,
                 "service_point_id": entities.service_point_id,
+                "target_service_point_ids": list(requested_targets),
                 "start_at": start_at.isoformat(),
                 "end_at": end_at.isoformat(),
             },
         )
-        participation = engine.context.entities.create(
-            DemandResponseParticipation,
-            key=("energy-reference", event.id, entities.service_point_id),
-            state="eligible",
-            attributes={
-                "event_id": event.id,
-                "service_point_id": entities.service_point_id,
-            },
+        participations = [
+            engine.context.entities.create(
+                DemandResponseParticipation,
+                key=("energy-reference", event.id, service_point_id),
+                state="eligible",
+                attributes={
+                    "event_id": event.id,
+                    "service_point_id": service_point_id,
+                },
+            )
+            for service_point_id in requested_targets
+        ]
+        participation = next(
+            value
+            for value in participations
+            if value.attributes["service_point_id"] == entities.service_point_id
         )
         with persistence.transaction() as uow:
             uow.save_entity(event)
-            uow.save_entity(participation)
+            for value in participations:
+                uow.save_entity(value)
     else:
         start_at = datetime.fromisoformat(str(event.attributes["start_at"]))
         end_at = datetime.fromisoformat(str(event.attributes["end_at"]))
+        persisted_targets = tuple(event.attributes.get("target_service_point_ids", []))
+        if target_service_point_ids is not None and requested_targets != persisted_targets:
+            raise ValueError("demand-response target population cannot change on replay")
         participation = _entity(
             persistence,
             "utility_dr_participation",
@@ -558,6 +580,22 @@ def cancel_demand_response(
         entity_id=event.id,
         name="finish",
     )
+    for service_point_id in event.attributes.get(
+        "target_service_point_ids",
+        [entities.service_point_id],
+    ):
+        participation = persistence.entity(
+            "utility_dr_participation",
+            dr_participation_id(event.id, str(service_point_id)),
+        )
+        if participation is not None and participation.state in {"eligible", "active"}:
+            _dispatch(
+                engine,
+                participation,
+                "opt_out",
+                key=("energy-dr-participation", participation.id, "event-cancel"),
+                correlation_id=flow_correlation_id(str(service_point_id)),
+            )
     _dispatch(
         engine,
         event,
@@ -600,48 +638,65 @@ def reconcile_demand_response(
     event_key: str,
 ) -> bool:
     event = _entity(persistence, "utility_dr_event", dr_event_id(event_key))
-    participation = _entity(
-        persistence,
-        "utility_dr_participation",
-        dr_participation_id(event.id, entities.service_point_id),
-    )
-    service_point = _service_point(persistence, entities)
-    correlation_id = flow_correlation_id(entities.service_point_id)
-
-    if event.state == "active" and participation.state == "eligible":
-        if service_point.state != "energized":
-            return False
-        if not engine.context.scenarios.attribute("energy.dr.available", True):
-            return False
-        _dispatch(
-            engine,
-            participation,
-            "begin",
-            key=("energy-dr-participation", participation.id, "begin"),
-            correlation_id=correlation_id,
+    target_ids = tuple(
+        str(value)
+        for value in event.attributes.get(
+            "target_service_point_ids",
+            [entities.service_point_id],
         )
-        return True
+    )
+    available = bool(engine.context.scenarios.attribute("energy.dr.available", True))
+    all_reconciled = True
 
-    if event.state == "completed":
-        if participation.state == "active":
+    for service_point_id in target_ids:
+        participation = _entity(
+            persistence,
+            "utility_dr_participation",
+            dr_participation_id(event.id, service_point_id),
+        )
+        service_point = _entity(
+            persistence,
+            "utility_service_point",
+            service_point_id,
+        )
+        correlation_id = flow_correlation_id(service_point_id)
+
+        if event.state == "active" and participation.state == "eligible":
+            if service_point.state != "energized" or not available:
+                all_reconciled = False
+                continue
             _dispatch(
                 engine,
                 participation,
-                "complete",
-                key=("energy-dr-participation", participation.id, "complete"),
+                "begin",
+                key=("energy-dr-participation", participation.id, "begin"),
                 correlation_id=correlation_id,
             )
-        elif participation.state == "eligible":
-            _dispatch(
-                engine,
-                participation,
-                "miss",
-                key=("energy-dr-participation", participation.id, "miss"),
-                correlation_id=correlation_id,
-            )
-        return True
+            continue
 
-    return participation.state in {"active", "completed", "missed", "opted_out"}
+        if event.state == "completed":
+            if participation.state == "active":
+                _dispatch(
+                    engine,
+                    participation,
+                    "complete",
+                    key=("energy-dr-participation", participation.id, "complete"),
+                    correlation_id=correlation_id,
+                )
+            elif participation.state == "eligible":
+                _dispatch(
+                    engine,
+                    participation,
+                    "miss",
+                    key=("energy-dr-participation", participation.id, "miss"),
+                    correlation_id=correlation_id,
+                )
+            continue
+
+        if participation.state not in {"active", "completed", "missed", "opted_out"}:
+            all_reconciled = False
+
+    return all_reconciled
 
 
 def run_happy_path() -> tuple[MemoryPersistence, EnergyEntities]:
