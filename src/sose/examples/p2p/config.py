@@ -8,3 +8,5 @@ class P2PConfig(DomainConfig):
     tick_step: timedelta = timedelta(hours=1)
     random_seed: int = 42
     quantity: float = Field(default=10.0, gt=0)
+    receipt_outcome: str = "accepted"
+    auto_consume_inventory: bool = True
