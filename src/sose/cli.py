@@ -77,16 +77,6 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         position = persistence.simulation_position()
         diagnostics = None
         if state is not None:
-            from sose.domain.config import DomainDefinition
-            from sose.jobs.runner import SimulationJob
-
-            definition = builtin_catalog().get(state.domain_name)
-            job = SimulationJob(
-                job_id=state.job_id,
-                definition=definition,
-                persistence=persistence,
-                backend_factory=lambda origin: None,
-            )
             diagnostics = {
                 "job": asdict(state),
                 "position": (
