@@ -8,7 +8,12 @@ def _build(persistence: Persistence, config: HospitalityConfig, now: datetime, t
     return build_runtime(persistence, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
 
 def _seed(persistence: Persistence, config: HospitalityConfig):
-    return seed_reference(persistence)
+    return seed_reference(
+        persistence,
+        now=config.start_at,
+        room_count=config.room_count,
+        room_type=config.room_type,
+    )
 
 definition = DomainDefinition(
     name="hospitality",
