@@ -367,7 +367,7 @@ REFERENCE_CATALOG = (
                 "tests/test_transit_restart_equivalence.py",
             ),
         ),
-    )
+    ),
     ReferenceContract(
         domain="Field Service / Workforce",
         package="sose.examples.field_service",
