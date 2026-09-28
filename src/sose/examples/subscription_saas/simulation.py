@@ -96,17 +96,24 @@ def build_runtime(
     )
 
 
-def seed_reference(persistence: MemoryPersistence) -> SubscriptionEntities:
-    context, _ = build_runtime(persistence)
+def seed_reference(
+    persistence: MemoryPersistence,
+    *,
+    now: datetime = ORIGIN,
+    customer_id: str = "customer-1",
+    initial_plan: str = "basic",
+    term_duration: timedelta = TERM_DURATION,
+) -> SubscriptionEntities:
+    context, _ = build_runtime(persistence, now=now)
     subscription = context.entities.create(
         Subscription,
         key=("saas-reference", "subscription-1"),
         state="active",
         attributes={
-            "customer_id": "customer-1",
-            "plan_code": "basic",
-            "term_start_at": ORIGIN.isoformat(),
-            "term_end_at": (ORIGIN + TERM_DURATION).isoformat(),
+            "customer_id": customer_id,
+            "plan_code": initial_plan,
+            "term_start_at": now.isoformat(),
+            "term_end_at": (now + term_duration).isoformat(),
             "active_entitlement_id": None,
             "entitlement_ids": [],
             "change_request_ids": [],
@@ -115,12 +122,12 @@ def seed_reference(persistence: MemoryPersistence) -> SubscriptionEntities:
     )
     entitlement = context.entities.create(
         Entitlement,
-        key=("saas-reference", subscription.id, "entitlement-basic"),
+        key=("saas-reference", subscription.id, f"entitlement-{initial_plan}"),
         state="active",
         attributes={
             "subscription_id": subscription.id,
-            "plan_code": "basic",
-            "effective_at": ORIGIN.isoformat(),
+            "plan_code": initial_plan,
+            "effective_at": now.isoformat(),
         },
     )
     subscription.attributes["active_entitlement_id"] = entitlement.id
