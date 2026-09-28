@@ -50,6 +50,10 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
         tuple[SimulationContext, Engine],
     ]
     seed: Callable[[Persistence, ConfigT], SeedT]
+    reconcile_tick: Callable[
+        [Persistence, Engine, object, ConfigT, SeedT],
+        None,
+    ] | None = None
 
     def default_config(self) -> ConfigT:
         return self.config_model()
