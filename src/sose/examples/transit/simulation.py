@@ -126,6 +126,7 @@ def seed_reference(persistence: MemoryPersistence) -> TransitEntities:
             "active_trip_id": None,
             "latest_position_id": None,
             "latest_position_observed_at": None,
+            "latest_position_sequence": 0,
             "current_stop_sequence": None,
         },
     )
@@ -404,7 +405,7 @@ def reconcile_vehicle_for_trip(
                 uow.save_entity(vehicle)
         return True
 
-    if trip.state == "completed":
+    if trip.state in {"completed", "cancelled"}:
         if vehicle.attributes.get("active_trip_id") == trip.id:
             if vehicle.state == "in_service":
                 _dispatch(
@@ -421,6 +422,47 @@ def reconcile_vehicle_for_trip(
         return True
 
     return False
+
+
+def cancel_trip(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: TransitEntities,
+    trip_id: str,
+) -> bool:
+    trip = _trip(persistence, trip_id)
+    if trip.state == "cancelled":
+        reconcile_vehicle_for_trip(
+            persistence,
+            engine,
+            entities=entities,
+            trip_id=trip.id,
+        )
+        return True
+    if trip.state == "completed":
+        return False
+
+    for name in ("start", "complete"):
+        engine.scheduler.cancel_pending(
+            entity_type="transit_scheduled_trip",
+            entity_id=trip.id,
+            name=name,
+        )
+    _dispatch(
+        engine,
+        trip,
+        "cancel",
+        key=("transit-trip", trip.id, "cancel", trip.version),
+        correlation_id=flow_correlation_id(str(trip.attributes["block_id"])),
+    )
+    reconcile_vehicle_for_trip(
+        persistence,
+        engine,
+        entities=entities,
+        trip_id=trip.id,
+    )
+    return True
 
 
 def _apply_trip_projection(
@@ -467,11 +509,33 @@ def _apply_trip_projection(
         uow.save_entity(trip)
 
     if projection_changed:
-        _reschedule_trip_boundaries(
-            persistence,
-            engine,
-            trip_id=trip.id,
-        )
+        if trip.state == "running" and projected_end <= backend.now:
+            engine.scheduler.cancel_pending(
+                entity_type="transit_scheduled_trip",
+                entity_id=trip.id,
+                name="complete",
+            )
+            current = _trip(persistence, trip.id)
+            _dispatch(
+                engine,
+                current,
+                "complete",
+                key=(
+                    "transit-trip",
+                    current.id,
+                    "complete-from-projection",
+                    projected_end.isoformat(),
+                ),
+                correlation_id=flow_correlation_id(
+                    str(current.attributes["block_id"])
+                ),
+            )
+        else:
+            _reschedule_trip_boundaries(
+                persistence,
+                engine,
+                trip_id=trip.id,
+            )
     return _trip(persistence, trip.id)
 
 
@@ -567,6 +631,14 @@ def record_trip_update(
             entities=entities,
             occurrence=existing,
         )
+        projected_trip = _trip(persistence, trip.id)
+        if projected_trip.state == "completed":
+            reconcile_vehicle_for_trip(
+                persistence,
+                engine,
+                entities=entities,
+                trip_id=projected_trip.id,
+            )
         return existing
 
     if not engine.context.scenarios.attribute("transit.realtime.available", True):
@@ -603,6 +675,14 @@ def record_trip_update(
         entities=entities,
         occurrence=occurrence,
     )
+    projected_trip = _trip(persistence, trip.id)
+    if projected_trip.state == "completed":
+        reconcile_vehicle_for_trip(
+            persistence,
+            engine,
+            entities=entities,
+            trip_id=projected_trip.id,
+        )
     return occurrence
 
 
@@ -940,6 +1020,38 @@ def schedule_service_alert(
         engine.context.schedules.at(end_at, command=command)
 
     return _entity(persistence, "transit_service_alert", alert.id)
+
+
+def cancel_service_alert(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    alert_key: str,
+) -> bool:
+    alert = _entity(
+        persistence,
+        "transit_service_alert",
+        service_alert_id(alert_key),
+    )
+    if alert.state == "cancelled":
+        return True
+    if alert.state == "cleared":
+        return False
+
+    for name in ("activate", "clear"):
+        engine.scheduler.cancel_pending(
+            entity_type="transit_service_alert",
+            entity_id=alert.id,
+            name=name,
+        )
+    _dispatch(
+        engine,
+        alert,
+        "cancel",
+        key=("transit-alert", alert.id, "cancel", alert.version),
+        correlation_id=deterministic_id("transit-alert", alert.id),
+    )
+    return True
 
 
 def run_happy_path() -> tuple[MemoryPersistence, TransitEntities]:
