@@ -15,3 +15,9 @@ class EnergyUtilitiesConfig(DomainConfig):
     include_secondary: bool = True
     quantity_kind: str = "energy"
     unit: str = "kWh"
+    auto_meter_reading: bool = True
+    meter_reading_quantity: float = 12.5
+    demand_response_enabled: bool = True
+    demand_response_event_key: str = "dr-1"
+    demand_response_start_delay: timedelta = timedelta(hours=1)
+    demand_response_duration: timedelta = timedelta(hours=2)
