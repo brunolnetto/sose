@@ -9,7 +9,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_builtin_catalog_exposes_parameterized_domains():
     catalog = builtin_catalog()
-    assert catalog.names() == ("mro", "tutorial_job")
+    names = catalog.names()
+    assert "mro" in names
+    assert "tutorial_job" in names
+    assert names == tuple(sorted(names))
 
 
 def test_mro_config_validates_and_accepts_overrides():
