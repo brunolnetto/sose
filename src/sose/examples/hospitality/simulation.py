@@ -132,7 +132,7 @@ def _hotel(persistence: MemoryPersistence, entities: HospitalityEntities) -> Hot
     return _entity(persistence, "hospitality_hotel", entities.hotel_id)
 
 
-def _reservation(
+def _reservation_entity(
     persistence: MemoryPersistence,
     reservation_id_value: str,
 ) -> Reservation:
@@ -304,7 +304,7 @@ def create_hold(
         "hold",
         key=("hospitality-reservation", reservation.id, "hold"),
     )
-    reservation = _reservation(persistence, reservation.id)
+    reservation = _reservation_entity(persistence, reservation.id)
 
     expire_reservation = engine.context.commands.create(
         "expire_hold",
@@ -325,14 +325,14 @@ def create_hold(
     return reservation
 
 
-def confirm_reservation(
+def confirm_reservation_entity(
     persistence: MemoryPersistence,
     engine: Engine,
     *,
     reservation_id_value: str,
     no_show_grace: timedelta = DEFAULT_NO_SHOW_GRACE,
 ) -> Reservation:
-    reservation = _reservation(persistence, reservation_id_value)
+    reservation = _reservation_entity(persistence, reservation_id_value)
     booking = _booking(persistence, reservation.id)
     if reservation.state == "confirmed":
         return reservation
@@ -362,7 +362,7 @@ def confirm_reservation(
         key=("hospitality-booking", booking.id, "confirm"),
     )
 
-    reservation = _reservation(persistence, reservation.id)
+    reservation = _reservation_entity(persistence, reservation.id)
     booking = _booking(persistence, reservation.id)
     no_show_at = _at(reservation.attributes["arrival_at"]) + no_show_grace
     reservation.attributes["no_show_at"] = no_show_at.isoformat()
@@ -387,7 +387,7 @@ def confirm_reservation(
     )
     engine.context.schedules.at(no_show_at, command=reservation_command)
     engine.context.schedules.at(no_show_at, command=booking_command)
-    return _reservation(persistence, reservation.id)
+    return _reservation_entity(persistence, reservation.id)
 
 
 def check_in(
@@ -397,7 +397,7 @@ def check_in(
     reservation_id_value: str,
     at: datetime | None = None,
 ) -> Reservation:
-    reservation = _reservation(persistence, reservation_id_value)
+    reservation = _reservation_entity(persistence, reservation_id_value)
     booking = _booking(persistence, reservation.id)
     if reservation.state != "confirmed" or booking.state != "confirmed":
         raise RuntimeError("check-in requires confirmed reservation and room booking")
@@ -429,7 +429,7 @@ def check_in(
         "occupy",
         key=("hospitality-booking", booking.id, "occupy"),
     )
-    return _reservation(persistence, reservation.id)
+    return _reservation_entity(persistence, reservation.id)
 
 
 def check_out(
@@ -439,7 +439,7 @@ def check_out(
     reservation_id_value: str,
     at: datetime | None = None,
 ) -> Reservation:
-    reservation = _reservation(persistence, reservation_id_value)
+    reservation = _reservation_entity(persistence, reservation_id_value)
     booking = _booking(persistence, reservation.id)
     if reservation.state != "checked_in" or booking.state != "occupied":
         raise RuntimeError("check-out requires occupied room booking")
@@ -458,16 +458,16 @@ def check_out(
         "complete",
         key=("hospitality-booking", booking.id, "complete"),
     )
-    return _reservation(persistence, reservation.id)
+    return _reservation_entity(persistence, reservation.id)
 
 
-def cancel_reservation(
+def cancel_reservation_entity(
     persistence: MemoryPersistence,
     engine: Engine,
     *,
     reservation_id_value: str,
 ) -> Reservation:
-    reservation = _reservation(persistence, reservation_id_value)
+    reservation = _reservation_entity(persistence, reservation_id_value)
     booking = _booking(persistence, reservation.id)
     if reservation.state not in {"held", "confirmed"}:
         raise RuntimeError("cancellation requires held or confirmed reservation")
@@ -496,7 +496,7 @@ def cancel_reservation(
         "release",
         key=("hospitality-booking", booking.id, "release"),
     )
-    return _reservation(persistence, reservation.id)
+    return _reservation_entity(persistence, reservation.id)
 
 
 def record_no_show_occurrence(
@@ -505,7 +505,7 @@ def record_no_show_occurrence(
     *,
     reservation_id_value: str,
 ) -> NoShowOccurrence:
-    reservation = _reservation(persistence, reservation_id_value)
+    reservation = _reservation_entity(persistence, reservation_id_value)
     booking = _booking(persistence, reservation.id)
     if reservation.state != "no_show_recorded" or booking.state != "no_show_recorded":
         raise RuntimeError("no-show occurrence requires terminal no-show evidence")
@@ -556,7 +556,7 @@ def run_happy_path() -> tuple[MemoryPersistence, HospitalityEntities]:
         arrival_at=ORIGIN + timedelta(days=1),
         departure_at=ORIGIN + timedelta(days=2),
     )
-    confirm_reservation(
+    confirm_reservation_entity(
         persistence,
         engine,
         reservation_id_value=reservation.id,
