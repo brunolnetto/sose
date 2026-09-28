@@ -8,7 +8,13 @@ def _build(persistence: Persistence, config: CardsPaymentsConfig, now: datetime,
     return build_runtime(persistence, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
 
 def _seed(persistence: Persistence, config: CardsPaymentsConfig):
-    return seed_reference(persistence)
+    return seed_reference(
+        persistence,
+        now=config.start_at,
+        amount=config.amount,
+        currency=config.currency,
+        processor_capacity=config.processor_capacity,
+    )
 
 definition = DomainDefinition(
     name="cards_payments",
