@@ -3,10 +3,13 @@ import pytest
 from sose.backends.simpy import SimPyBackend
 from sose.examples.energy_utilities.scenarios import ORIGIN
 from sose.examples.energy_utilities.simulation import (
+    EnergyEntities,
     build_runtime,
     cancel_demand_response,
     dr_event_id,
     dr_participation_id,
+    opt_out_demand_response,
+    reconcile_demand_response,
     record_meter_reading,
     report_outage,
     restore_outage,
@@ -255,3 +258,63 @@ def test_cancelling_demand_response_removes_pending_boundaries():
         "utility_dr_participation",
         dr_participation_id(event.id, entities.service_point_id),
     ).id == participation.id
+
+
+def test_demand_response_targets_population_with_independent_participation():
+    persistence, entities, engine = _runtime()
+    assert entities.secondary_service_point_id is not None
+    assert entities.secondary_meter_id is not None
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    event, primary, start_at, end_at = schedule_demand_response(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        event_key="dr-population",
+        target_service_point_ids=(
+            entities.service_point_id,
+            entities.secondary_service_point_id,
+        ),
+    )
+    secondary_entities = EnergyEntities(
+        service_point_id=entities.secondary_service_point_id,
+        meter_id=entities.secondary_meter_id,
+    )
+    secondary = persistence.entity(
+        "utility_dr_participation",
+        dr_participation_id(event.id, entities.secondary_service_point_id),
+    )
+    assert secondary is not None
+    assert event.attributes["target_service_point_ids"] == [
+        entities.service_point_id,
+        entities.secondary_service_point_id,
+    ]
+
+    assert opt_out_demand_response(
+        persistence,
+        engine,
+        entities=secondary_entities,
+        event_key="dr-population",
+    )
+    backend.run_until(start_at)
+    assert reconcile_demand_response(
+        persistence,
+        engine,
+        entities=entities,
+        event_key="dr-population",
+    )
+
+    assert persistence.entity("utility_dr_participation", primary.id).state == "active"
+    assert persistence.entity("utility_dr_participation", secondary.id).state == "opted_out"
+
+    backend.run_until(end_at)
+    assert reconcile_demand_response(
+        persistence,
+        engine,
+        entities=entities,
+        event_key="dr-population",
+    )
+    assert persistence.entity("utility_dr_participation", primary.id).state == "completed"
+    assert persistence.entity("utility_dr_participation", secondary.id).state == "opted_out"
