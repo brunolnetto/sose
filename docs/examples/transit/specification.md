@@ -78,8 +78,14 @@ The same entity separately owns the current operational projection:
 
 - `projected_start_at`;
 - `projected_end_at`;
+- `direct_delay_seconds`;
+- `block_delay_seconds`;
 - `current_delay_seconds`;
 - `latest_update_sequence`.
+
+The effective delay is the maximum of direct realtime evidence for that trip and
+the delay required by availability of the physical vehicle from the previous
+trip in the block.
 
 A TripUpdateOccurrence is immutable evidence. A newer committed update may
 advance the projection; an older occurrence remains history and must not roll
@@ -164,8 +170,9 @@ TRN-02 — TripUpdateOccurrence is immutable replay-safe evidence.
 
 TRN-03 — Only a newer update sequence may advance the current trip projection.
 
-TRN-04 — Downstream delay in one vehicle block equals only the portion not
-absorbed by the planned gap between trips.
+TRN-04 — Downstream block delay equals only the portion not absorbed by the
+planned gap between trips and cannot erase a larger direct delay already
+supported by that trip's own realtime evidence.
 
 TRN-05 — Rescheduled trip boundaries are durable ScheduledWork and survive
 runtime rebuild.
@@ -179,7 +186,8 @@ TRN-08 — New position evidence requires a running trip and durable vehicle
 ownership.
 
 TRN-09 — Persisted realtime evidence can be replayed independently of later
-feed availability.
+feed availability, and replay reconciles a projection if a crash happened after
+evidence commit but before projection persistence.
 
 TRN-10 — ServiceAlert scope and time range are durable and replay-stable.
 
