@@ -118,3 +118,91 @@ def test_alarm_suspends_service_and_ticket_restoration_is_explicit():
     assert persistence.entity("telecom_network_alarm", alarm.id).state == "cleared"
     assert persistence.entity("telecom_trouble_ticket", ticket.id).state == "closed"
     assert persistence.entity("telecom_subscription_service", service.id).state == "active"
+
+
+
+def test_closed_incident_replay_does_not_resuspend_service():
+    persistence, entities, engine, _ = _active_service()
+    service_id = subscription_service_id(entities.product_order_id)
+
+    raise_service_alarm(
+        persistence,
+        engine,
+        entities=entities,
+        incident_key="ran-site-replay",
+    )
+    assert restore_service(
+        persistence,
+        engine,
+        entities=entities,
+        incident_key="ran-site-replay",
+    )
+    service = persistence.entity("telecom_subscription_service", service_id)
+    assert service is not None and service.state == "active"
+    assert service.attributes["open_incident_keys"] == []
+
+    alarm, ticket = raise_service_alarm(
+        persistence,
+        engine,
+        entities=entities,
+        incident_key="ran-site-replay",
+    )
+
+    assert alarm.state == "cleared"
+    assert ticket.state == "closed"
+    service = persistence.entity("telecom_subscription_service", service_id)
+    assert service is not None and service.state == "active"
+    assert service.attributes["open_incident_keys"] == []
+
+
+def test_service_restores_only_after_all_open_incidents_are_closed():
+    persistence, entities, engine, _ = _active_service()
+    service_id = subscription_service_id(entities.product_order_id)
+
+    raise_service_alarm(
+        persistence,
+        engine,
+        entities=entities,
+        incident_key="ran-site-a",
+    )
+    raise_service_alarm(
+        persistence,
+        engine,
+        entities=entities,
+        incident_key="ran-site-b",
+    )
+    service = persistence.entity("telecom_subscription_service", service_id)
+    assert service is not None and service.state == "suspended"
+    assert set(service.attributes["open_incident_keys"]) == {
+        "ran-site-a",
+        "ran-site-b",
+    }
+
+    assert restore_service(
+        persistence,
+        engine,
+        entities=entities,
+        incident_key="ran-site-a",
+    )
+    service = persistence.entity("telecom_subscription_service", service_id)
+    assert service is not None and service.state == "suspended"
+    assert service.attributes["open_incident_keys"] == ["ran-site-b"]
+
+    with pytest.raises(RuntimeError, match="active subscription"):
+        record_usage(
+            persistence,
+            engine,
+            entities=entities,
+            sequence=99,
+            quantity=1.0,
+        )
+
+    assert restore_service(
+        persistence,
+        engine,
+        entities=entities,
+        incident_key="ran-site-b",
+    )
+    service = persistence.entity("telecom_subscription_service", service_id)
+    assert service is not None and service.state == "active"
+    assert service.attributes["open_incident_keys"] == []
