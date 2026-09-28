@@ -246,3 +246,59 @@ same trigger with `recover=True`.
 
 This keeps scheduler liveness policy outside semantic truth while preserving a
 durable, deterministic recovery contract.
+
+
+## Domain reconciliation hooks
+
+A durable tick job has two phases:
+
+1. **advance** — advance logical time exactly one tick and execute due durable
+   ScheduledWork;
+2. **reconcile** — let the selected domain make currently eligible operational
+   progress using the newly committed semantic position.
+
+The domain hook must be idempotent with respect to already committed business
+state. It must not simulate future time by itself. If an action is not yet due,
+the domain owns a ScheduledWork boundary and a later job trigger will execute it.
+
+This keeps recurring execution incremental:
+
+```text
+external trigger
+    ↓
+claim durable trigger
+    ↓
+advance one logical tick
+    ↓
+execute due ScheduledWork
+    ↓
+domain reconcile_tick()
+    ↓
+persist job checkpoint
+    ↓
+exit
+```
+
+The first operational rollout covers:
+
+- MRO;
+- Cards & Payments;
+- Logistics;
+- Telecommunications;
+- Warehouse / Fulfillment;
+- Subscription / SaaS;
+- the minimal tutorial domain.
+
+Examples of behavior:
+
+- payment capture schedules settlement for a future tick rather than settling
+  immediately;
+- telecom provisioning schedules activation readiness and completes only after
+  that boundary becomes due;
+- subscription plan changes remain future-effective ScheduledWork;
+- logistics and warehouse reconcile all work that is already eligible in the
+  current tick.
+
+A promoted Reference should receive a recurring reconciliation hook when its
+business flow has a clear idempotent operational interpretation. The hook is
+not a wrapper around `run_happy_path()`.

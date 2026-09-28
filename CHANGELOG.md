@@ -4,6 +4,9 @@
 
 ### Added
 
+- recurring reconciliation hooks for Cards & Payments, Logistics, Telecom,
+  Warehouse / Fulfillment, and Subscription / SaaS so durable jobs advance one
+  tick per trigger instead of requiring end-to-end example execution;
 - operational configuration knobs across Transit, Telecom, Aviation, Logistics,
   Hospitality, Field Service, Cards & Payments, Energy / Utilities,
   Subscription / SaaS, and Warehouse / Fulfillment, with executable evidence
