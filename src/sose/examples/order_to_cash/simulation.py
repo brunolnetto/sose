@@ -82,16 +82,18 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    now: datetime = ORIGIN,
     amount: float = 250.0,
+    currency: str = "USD",
 ) -> O2CEntities:
     if amount <= 0:
         raise ValueError("amount must be positive")
-    context, _ = build_runtime(persistence)
+    context, _ = build_runtime(persistence, now=now)
     order = context.entities.create(
         SalesOrder,
         key=("o2c-reference", "order-1"),
         state="submitted",
-        attributes={"amount": float(amount), "currency": "USD"},
+        attributes={"amount": float(amount), "currency": currency},
     )
     with persistence.transaction() as uow:
         uow.save_entity(order)
