@@ -341,4 +341,23 @@ REFERENCE_CATALOG = (
             ),
         ),
     ),
+    ReferenceContract(
+        domain="Public Transit / Rail",
+        package="sose.examples.public_transit",
+        docs_dir="docs/examples/public-transit",
+        runtime_entrypoints=("build_runtime", "seed_reference"),
+        capabilities=frozenset({
+            C.STATECHARTS, C.HAPPY_PATH, C.SAD_PATHS, C.RESTART_EQUIVALENCE,
+            C.SCENARIOS, C.SCHEDULED_WORK, C.IMMUTABLE_OCCURRENCES,
+        }),
+        evidence=_evidence(
+            statecharts=("tests/test_public_transit_statecharts.py",),
+            happy_path=("tests/test_public_transit_happy_path.py",),
+            sad_paths=("tests/test_public_transit_sad_paths.py",),
+            restart_equivalence=("tests/test_public_transit_restart_equivalence.py",),
+            scenarios=("tests/test_public_transit_scenarios.py",),
+            scheduled_work=("tests/test_public_transit_restart_equivalence.py",),
+            immutable_occurrences=("tests/test_public_transit_occurrences.py",),
+        ),
+    ),
 )
