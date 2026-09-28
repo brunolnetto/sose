@@ -538,6 +538,8 @@ def _apply_trip_projection(
             _reschedule_trip_boundaries(
                 persistence,
                 engine,
+                backend,
+                entities=entities,
                 trip_id=trip.id,
             )
     return _trip(persistence, trip.id)
@@ -718,6 +720,7 @@ def _reconcile_vehicle_position_projection(
             return
     vehicle.attributes["latest_position_id"] = position.id
     vehicle.attributes["latest_position_observed_at"] = observed_at.isoformat()
+    vehicle.attributes["latest_position_sequence"] = int(position.attributes["sequence"])
     vehicle.attributes["current_stop_sequence"] = int(
         position.attributes["stop_sequence"]
     )
