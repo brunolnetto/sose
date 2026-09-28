@@ -9,6 +9,7 @@ from .simulation import (
     complete_aog_maintenance,
     land_flight,
     maintenance_work_order_id,
+    part_demand_id,
     reconcile_aog_maintenance,
     reconcile_departure,
     reconcile_inspection,
@@ -70,7 +71,7 @@ def _reconcile_aog_branch(
 
     demand = persistence.entity(
         "aviation_part_demand",
-        work.attributes.get("part_demand_id", ""),
+        part_demand_id(flight_id),
     )
     if demand is None or demand.state != "issued":
         reconcile_part_issue(
