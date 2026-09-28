@@ -11,6 +11,7 @@
 
 ### Documentation
 
+- added a minimal restart-safe domain tutorial and getting-started path;
 - added a release index and pre-1.0 release policy;
 - added the v0.8.0 stabilization plan covering public API, SQLite persistence,
   distribution, adoption, and hardening gates.
