@@ -20,3 +20,7 @@ class AviationConfig(DomainConfig):
     maintenance_bay_capacity: int = Field(default=1, ge=1)
     maintenance_queue_capacity: int = Field(default=100, ge=1)
     part_lot_capacity: int = Field(default=100, ge=1)
+    leg1_departure_delay: timedelta = Field(default=timedelta(hours=1), gt=timedelta(0))
+    leg2_departure_delay: timedelta = Field(default=timedelta(hours=5), gt=timedelta(0))
+    auto_land: bool = True
+    inspection_fail: bool = False
