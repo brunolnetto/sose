@@ -392,3 +392,30 @@ def test_insurance_odd_cent_partial_payout_is_restart_safe():
     assert payment is not None
     assert payment.state == "paid"
     assert payment.attributes["paid_amount"] == payment.attributes["amount"] == 100.01
+
+
+
+def test_credit_accepts_cent_aligned_binary_float_noise():
+    persistence = MemoryPersistence()
+    entities = seed_credit(
+        persistence,
+        principal=0.1 + 0.2,
+        installment_count=1,
+    )
+    application = persistence.entity("loan_application", entities.application_id)
+
+    assert application is not None
+    assert application.attributes["principal"] == 0.3
+
+
+def test_insurance_accepts_cent_aligned_binary_float_noise():
+    persistence = MemoryPersistence()
+    entities = seed_insurance(
+        persistence,
+        amount=0.1 + 0.2,
+        currency="USD",
+    )
+    claim = persistence.entity("insurance_claim", entities.claim_id)
+
+    assert claim is not None
+    assert claim.attributes["amount"] == 0.3
