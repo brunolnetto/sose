@@ -419,3 +419,51 @@ def test_insurance_accepts_cent_aligned_binary_float_noise():
 
     assert claim is not None
     assert claim.attributes["amount"] == 0.3
+
+def test_credit_accepts_large_cent_aligned_amount():
+    persistence = MemoryPersistence()
+    entities = seed_credit(
+        persistence,
+        principal=36556121.48,
+        installment_count=1,
+    )
+    application = persistence.entity("loan_application", entities.application_id)
+
+    assert application is not None
+    assert application.attributes["principal"] == 36556121.48
+
+
+def test_insurance_accepts_large_minor_unit_aligned_amount():
+    persistence = MemoryPersistence()
+    entities = seed_insurance(
+        persistence,
+        amount=36556121.48,
+        currency="USD",
+    )
+    claim = persistence.entity("insurance_claim", entities.claim_id)
+
+    assert claim is not None
+    assert claim.attributes["amount"] == 36556121.48
+
+
+def test_insurance_rejects_zero_value_partial_payout():
+    persistence, entities, engine, backend = _prepare_insurance_payment(
+        amount=0.01
+    )
+
+    with pytest.raises(ValueError, match="at least two minor units"):
+        reconcile_insurance_payment(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            partial=True,
+        )
+
+    payment = persistence.entity(
+        "insurance_payment",
+        insurance_payment_id(entities.claim_id),
+    )
+    assert payment is not None
+    assert payment.state == "due"
+    assert payment.attributes["paid_amount"] == 0.0
