@@ -436,9 +436,17 @@ The implementation deliberately keeps inventory projection and occurrence
 indexing in domain entities. No generic inventory-ledger primitive is promoted
 from one operational domain.
 
-### Subscription / SaaS
+### Subscription / SaaS — promoted without Money
 
-Defer until there is a specific semantic question worth testing.
+Subscription / SaaS is now a Reference implementation specifically for the
+non-monetary semantic question that justified reopening the frontier:
+commercial Subscription state versus Entitlement inventory, durable
+future-effective ChangeRequest ownership, cancellation-at-period-end, immutable
+change evidence, and restart reconciliation.
+
+Billing, pricing and proration remain deliberately excluded. The domain does
+not reopen Money and does not justify a new scheduler abstraction; the existing
+DurableScheduler owns reconstruction while ChangeRequest owns business meaning.
 
 ---
 
