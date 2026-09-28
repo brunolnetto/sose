@@ -17,7 +17,7 @@ from .materials import (
     seed_material,
     stage_material,
 )
-from .runtime import activity, build_runtime, seed_reference
+from .runtime import activity, build_runtime, inspection_id, seed_reference
 from .scheduling import schedule_planned_start
 
 
@@ -109,7 +109,7 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
     if current.state == "executing":
         cycle = "rework-1" if persistence.entity(
             "construction_inspection",
-            f"{entities.activity_id}:inspection:1",
+            inspection_id(entities.activity_id, 1),
         ) is not None else "initial"
         finish_execution(
             persistence,
@@ -127,7 +127,7 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
                 for item in (
                     persistence.entity(
                         "construction_inspection",
-                        f"{entities.activity_id}:inspection:1",
+                        inspection_id(entities.activity_id, 1),
                     ),
                 )
                 if item is not None
