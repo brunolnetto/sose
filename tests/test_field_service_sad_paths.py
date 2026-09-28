@@ -134,7 +134,7 @@ def test_no_access_preserves_visit_and_part_then_creates_replacement():
         entities=entities,
         appointment_id_value=first.id,
         sequence=1,
-        outcome="no_access_recorded",
+        outcome="no_access",
     )
 
     work_order = persistence.entity("field_work_order", entities.work_order_id)
@@ -195,7 +195,7 @@ def test_visit_identity_cannot_change_outcome():
         entities=entities,
         appointment_id_value=appointment.id,
         sequence=7,
-        outcome="no_access_recorded",
+        outcome="no_access",
     )
     persisted = persistence.entity(
         "field_visit_occurrence",
