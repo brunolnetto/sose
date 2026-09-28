@@ -40,11 +40,15 @@ records to remain untouched.
 
 A transaction:
 
-1. loads the current record set;
-2. runs the same MemoryUnitOfWork validation semantics;
-3. diffs pre/post semantic state;
-4. applies only upserts/deletes;
-5. commits atomically.
+1. checks the durable database revision;
+2. reloads/decodes records only when another connection has committed;
+3. runs the same MemoryUnitOfWork validation semantics;
+4. diffs pre/post semantic state;
+5. applies only upserts/deletes;
+6. atomically advances the durable revision when changes commit.
+
+Normal reads use the same revision cache: one scalar revision check replaces a
+full record reload when durable truth is unchanged.
 
 The benchmark suite compares this adapter directly with snapshot SQLite.
 

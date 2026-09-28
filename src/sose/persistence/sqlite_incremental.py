@@ -10,7 +10,7 @@ from .memory import MemoryPersistence, MemoryUnitOfWork, _State
 from .records import StateRecord, diff_state_records, records_to_state
 
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
 
 
 class SQLiteIncrementalPersistence(MemoryPersistence):
@@ -33,7 +33,8 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             """
             CREATE TABLE IF NOT EXISTS sose_record_meta (
                 singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-                schema_version INTEGER NOT NULL
+                schema_version INTEGER NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 0
             )
             """
         )
@@ -48,20 +49,54 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             )
             """
         )
+        columns = {
+            str(row[1])
+            for row in self._connection.execute(
+                "PRAGMA table_info(sose_record_meta)"
+            ).fetchall()
+        }
         row = self._connection.execute(
             "SELECT schema_version FROM sose_record_meta WHERE singleton = 1"
         ).fetchone()
         if row is None:
             self._connection.execute(
-                "INSERT INTO sose_record_meta(singleton, schema_version) VALUES (1, ?)",
+                """
+                INSERT INTO sose_record_meta(singleton, schema_version, revision)
+                VALUES (1, ?, 0)
+                """,
                 (_SCHEMA_VERSION,),
             )
-        elif int(row[0]) != _SCHEMA_VERSION:
-            raise RuntimeError(
-                "unsupported SQLiteIncrementalPersistence schema version: "
-                f"{row[0]}"
-            )
-        self._refresh_from_db()
+        else:
+            version = int(row[0])
+            if version == 1:
+                self._connection.execute("BEGIN IMMEDIATE")
+                try:
+                    if "revision" not in columns:
+                        self._connection.execute(
+                            """
+                            ALTER TABLE sose_record_meta
+                            ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
+                            """
+                        )
+                    self._connection.execute(
+                        """
+                        UPDATE sose_record_meta
+                        SET schema_version = 2
+                        WHERE singleton = 1
+                        """
+                    )
+                    self._connection.commit()
+                except Exception:
+                    self._connection.rollback()
+                    raise
+            elif version != _SCHEMA_VERSION:
+                raise RuntimeError(
+                    "unsupported SQLiteIncrementalPersistence schema version: "
+                    f"{version}"
+                )
+
+        self._revision = -1
+        self._refresh_from_db(force=True)
 
     def close(self) -> None:
         self._connection.close()
@@ -72,7 +107,19 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
-    def _refresh_from_db(self) -> None:
+    def _database_revision(self) -> int:
+        row = self._connection.execute(
+            "SELECT revision FROM sose_record_meta WHERE singleton = 1"
+        ).fetchone()
+        if row is None:
+            return 0
+        return int(row[0])
+
+    def _refresh_from_db(self, *, force: bool = False) -> None:
+        revision = self._database_revision()
+        if not force and revision == self._revision:
+            return
+
         rows = self._connection.execute(
             """
             SELECT collection, record_key, position, payload
@@ -90,6 +137,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             for collection, record_key, position, payload in rows
         )
         self._state = records_to_state(records)
+        self._revision = revision
 
     def _apply_changes(self, before: _State, after: _State) -> int:
         changes = diff_state_records(before, after)
@@ -133,8 +181,21 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             yield uow
             if not uow._closed:
                 uow.commit()
-            self._apply_changes(before, self._state)
+            changed = self._apply_changes(before, self._state)
+            if changed:
+                next_revision = self._revision + 1
+                self._connection.execute(
+                    """
+                    UPDATE sose_record_meta
+                    SET revision = ?
+                    WHERE singleton = 1
+                    """,
+                    (next_revision,),
+                )
+            else:
+                next_revision = self._revision
             self._connection.commit()
+            self._revision = next_revision
         except Exception:
             self._connection.rollback()
             self._state = before
