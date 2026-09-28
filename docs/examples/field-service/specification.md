@@ -83,7 +83,7 @@ the same selected part remains owned rather than being consumed twice.
 A no-access visit:
 
 1. commits immutable VisitOccurrence evidence;
-2. ends the active Appointment as `no_access`;
+2. ends the active Appointment as `no_access_recorded`;
 3. moves WorkOrder to `reschedule_required`;
 4. releases technician execution capacity;
 5. preserves the part selection;
