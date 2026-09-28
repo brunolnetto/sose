@@ -21,6 +21,7 @@ class SimulationJobState:
     last_triggered_at: datetime | None = None
     active_trigger_id: str | None = None
     last_completed_trigger_id: str | None = None
+    phase: str = "idle"
     last_error: str | None = None
 
     def __post_init__(self) -> None:
@@ -36,3 +37,5 @@ class SimulationJobState:
             raise ValueError("run_count must be >= 0")
         if self.status not in {"ready", "running", "paused", "failed"}:
             raise ValueError(f"unsupported job status: {self.status}")
+        if self.phase not in {"idle", "advance", "reconcile"}:
+            raise ValueError(f"unsupported job phase: {self.phase}")
