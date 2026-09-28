@@ -31,7 +31,8 @@ from sose.persistence.jsonl_journal import JSONLJournalPersistence
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
-from sose.jobs import JobTickResult, SimulationJob, SimulationJobState
+from sose.jobs.model import SimulationJobState
+from sose.jobs.runner import JobTickResult, SimulationJob
 from sose.probability import probabilistic, probabilistic_transitions
 from sose.scenarios import (
     AttributeEffect,
