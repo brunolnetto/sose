@@ -340,5 +340,32 @@ REFERENCE_CATALOG = (
                 "tests/test_energy_utilities_restart_equivalence.py",
             ),
         ),
-    ),
+    ),,
+    ReferenceContract(
+        domain="Public Transit / Rail",
+        package="sose.examples.transit",
+        docs_dir="docs/examples/transit",
+        runtime_entrypoints=("build_runtime", "seed_reference"),
+        capabilities=frozenset({
+            C.STATECHARTS, C.HAPPY_PATH, C.SAD_PATHS, C.RESTART_EQUIVALENCE,
+            C.SCENARIOS, C.SCHEDULED_WORK, C.ILLEGAL_PREREQUISITES,
+            C.IMMUTABLE_OCCURRENCES,
+        }),
+        evidence=_evidence(
+            statecharts=("tests/test_transit_statecharts.py",),
+            happy_path=("tests/test_transit_happy_path.py",),
+            sad_paths=("tests/test_transit_sad_paths.py",),
+            restart_equivalence=("tests/test_transit_restart_equivalence.py",),
+            scenarios=("tests/test_transit_scenarios.py",),
+            scheduled_work=(
+                "tests/test_transit_sad_paths.py",
+                "tests/test_transit_restart_equivalence.py",
+            ),
+            illegal_prerequisites=("tests/test_transit_sad_paths.py",),
+            immutable_occurrences=(
+                "tests/test_transit_sad_paths.py",
+                "tests/test_transit_restart_equivalence.py",
+            ),
+        ),
+    )
 )
