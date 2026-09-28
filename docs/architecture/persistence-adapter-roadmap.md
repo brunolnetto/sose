@@ -90,3 +90,14 @@ A new persistence adapter is "supported" only when:
 4. diagnostics can inspect the adapter's durable truth;
 5. benchmark workloads can measure it;
 6. compatibility limitations are documented.
+
+
+## Implemented incremental experiment
+
+`SQLiteIncrementalPersistence` and `JSONLJournalPersistence` now share a
+backend-neutral record/delta projection. The benchmark suite compares snapshot
+SQLite, incremental SQLite, and append-only JSONL under the same scheduled and
+reopen workloads.
+
+The next decision should use these measurements before selecting PostgreSQL.
+See [Persistence sinks](persistence-sinks.md).

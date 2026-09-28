@@ -4,6 +4,9 @@
 
 ### Added
 
+- incremental SQLite persistence using backend-neutral record deltas;
+- append-only JSONL journal persistence using the same record-delta contract;
+- benchmark comparison across snapshot SQLite, incremental SQLite, and JSONL;
 - v0.9 adoption/operations roadmap, persistence adapter decision criteria, and
   explicit SOSE 1.0 readiness checklist;
 - reproducible runtime benchmark harness with JSON output, CI smoke execution,
