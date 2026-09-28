@@ -206,3 +206,25 @@ def test_service_restores_only_after_all_open_incidents_are_closed():
     service = persistence.entity("telecom_subscription_service", service_id)
     assert service is not None and service.state == "active"
     assert service.attributes["open_incident_keys"] == []
+
+@pytest.mark.parametrize("quantity", [float("nan"), float("inf"), float("-inf")])
+def test_usage_rejects_non_finite_quantities(quantity):
+    persistence, entities, engine, _ = _active_service()
+
+    with pytest.raises(ValueError, match="finite and positive"):
+        record_usage(
+            persistence,
+            engine,
+            entities=entities,
+            sequence=101,
+            quantity=quantity,
+        )
+
+    service_id = subscription_service_id(entities.product_order_id)
+    assert persistence.entity(
+        "telecom_usage_record",
+        __import__(
+            "sose.examples.telecom.simulation",
+            fromlist=["usage_record_id"],
+        ).usage_record_id(service_id, 101),
+    ) is None
