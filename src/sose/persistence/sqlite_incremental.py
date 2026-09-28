@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from copy import deepcopy
 from pathlib import Path
 import sqlite3
+from time import monotonic, sleep
 from typing import Iterator
 
 from .memory import MemoryPersistence, MemoryUnitOfWork, _State
@@ -28,75 +29,117 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             timeout=30.0,
         )
         self._connection.execute("PRAGMA foreign_keys = ON")
-        self._connection.execute("PRAGMA journal_mode = WAL")
-        self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sose_record_meta (
-                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-                schema_version INTEGER NOT NULL,
-                revision INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
-        self._connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS sose_record (
-                collection TEXT NOT NULL,
-                record_key TEXT NOT NULL,
-                position INTEGER NOT NULL,
-                payload TEXT NOT NULL,
-                PRIMARY KEY (collection, record_key)
-            )
-            """
-        )
-        columns = {
-            str(row[1])
-            for row in self._connection.execute(
-                "PRAGMA table_info(sose_record_meta)"
-            ).fetchall()
-        }
-        row = self._connection.execute(
-            "SELECT schema_version FROM sose_record_meta WHERE singleton = 1"
-        ).fetchone()
-        if row is None:
+        self._connection.execute("PRAGMA busy_timeout = 30000")
+
+        # Schema creation, singleton bootstrap, and migrations share one
+        # BEGIN IMMEDIATE lock. Concurrent constructors therefore serialize
+        # before any metadata is inspected or mutated.
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
             self._connection.execute(
                 """
-                INSERT INTO sose_record_meta(singleton, schema_version, revision)
-                VALUES (1, ?, 0)
-                """,
-                (_SCHEMA_VERSION,),
+                CREATE TABLE IF NOT EXISTS sose_record_meta (
+                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                    schema_version INTEGER NOT NULL,
+                    revision INTEGER NOT NULL DEFAULT 0
+                )
+                """
             )
-        else:
+            self._connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS sose_record (
+                    collection TEXT NOT NULL,
+                    record_key TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    payload TEXT NOT NULL,
+                    PRIMARY KEY (collection, record_key)
+                )
+                """
+            )
+
+            columns = {
+                str(row[1])
+                for row in self._connection.execute(
+                    "PRAGMA table_info(sose_record_meta)"
+                ).fetchall()
+            }
+            row = self._connection.execute(
+                "SELECT schema_version FROM sose_record_meta WHERE singleton = 1"
+            ).fetchone()
+
+            if row is None:
+                self._connection.execute(
+                    """
+                    INSERT OR IGNORE INTO sose_record_meta(
+                        singleton,
+                        schema_version,
+                        revision
+                    )
+                    VALUES (1, ?, 0)
+                    """,
+                    (_SCHEMA_VERSION,),
+                )
+                row = self._connection.execute(
+                    """
+                    SELECT schema_version
+                    FROM sose_record_meta
+                    WHERE singleton = 1
+                    """
+                ).fetchone()
+
+            if row is None:  # pragma: no cover - defensive database invariant
+                raise RuntimeError("SQLite incremental metadata bootstrap failed")
+
             version = int(row[0])
             if version == 1:
-                self._connection.execute("BEGIN IMMEDIATE")
-                try:
-                    if "revision" not in columns:
-                        self._connection.execute(
-                            """
-                            ALTER TABLE sose_record_meta
-                            ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
-                            """
-                        )
+                if "revision" not in columns:
                     self._connection.execute(
                         """
-                        UPDATE sose_record_meta
-                        SET schema_version = 2
-                        WHERE singleton = 1
+                        ALTER TABLE sose_record_meta
+                        ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
                         """
                     )
-                    self._connection.commit()
-                except Exception:
-                    self._connection.rollback()
-                    raise
+                self._connection.execute(
+                    """
+                    UPDATE sose_record_meta
+                    SET schema_version = 2
+                    WHERE singleton = 1
+                    """
+                )
             elif version != _SCHEMA_VERSION:
                 raise RuntimeError(
                     "unsupported SQLiteIncrementalPersistence schema version: "
                     f"{version}"
                 )
 
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
+
+        self._ensure_wal()
         self._revision = -1
         self._refresh_from_db(force=True)
+
+    def _ensure_wal(self) -> None:
+        """Enable WAL safely when multiple constructors race on one database."""
+
+        deadline = monotonic() + 30.0
+        while True:
+            try:
+                row = self._connection.execute(
+                    "PRAGMA journal_mode = WAL"
+                ).fetchone()
+                mode = "" if row is None else str(row[0]).lower()
+                if mode != "wal":
+                    raise RuntimeError(
+                        "SQLiteIncrementalPersistence requires WAL journal mode"
+                    )
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or monotonic() >= deadline:
+                    raise
+                sleep(0.01)
 
     def close(self) -> None:
         self._connection.close()

@@ -4,6 +4,9 @@
 
 ### Added
 
+- incremental SQLite concurrency semantics covering independent readers,
+  alternating writers, stale-cache refresh, lock contention, and conflicting
+  Engine commands;
 - persistence scaling curves at 10/100/1,000/10,000 durable entities for
   snapshot SQLite, incremental SQLite, JSONL, and DuckDB;
 - UnitOfWork dirty-record tracking so record-oriented sinks encode only touched
