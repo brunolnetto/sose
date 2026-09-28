@@ -412,4 +412,28 @@ REFERENCE_CATALOG = (
             ),
         ),
     ),
+    ReferenceContract(
+        domain="Warehouse / Fulfillment",
+        package="sose.examples.warehouse_fulfillment",
+        docs_dir="docs/examples/warehouse-fulfillment",
+        runtime_entrypoints=("build_runtime", "seed_reference"),
+        capabilities=frozenset({
+            C.STATECHARTS, C.HAPPY_PATH, C.SAD_PATHS, C.RESTART_EQUIVALENCE,
+            C.ILLEGAL_PREREQUISITES, C.IMMUTABLE_OCCURRENCES,
+        }),
+        evidence=_evidence(
+            statecharts=("tests/test_warehouse_fulfillment_statecharts.py",),
+            happy_path=("tests/test_warehouse_fulfillment_happy_path.py",),
+            sad_paths=("tests/test_warehouse_fulfillment_sad_paths.py",),
+            restart_equivalence=(
+                "tests/test_warehouse_fulfillment_restart_equivalence.py",
+            ),
+            illegal_prerequisites=("tests/test_warehouse_fulfillment_sad_paths.py",),
+            immutable_occurrences=(
+                "tests/test_warehouse_fulfillment_happy_path.py",
+                "tests/test_warehouse_fulfillment_sad_paths.py",
+                "tests/test_warehouse_fulfillment_restart_equivalence.py",
+            ),
+        ),
+    ),
 )

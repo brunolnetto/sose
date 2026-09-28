@@ -425,10 +425,16 @@ RoomBooking lifecycle. The comparison therefore does not yet justify a shared
 temporal-capacity primitive; the overlap relation is common, but the ownership
 and terminal semantics remain domain-specific.
 
-### Warehouse / Fulfillment
+### Warehouse / Fulfillment — promoted
 
-Use when we want to challenge inventory projection versus immutable movement
-history.
+Warehouse / Fulfillment is now a Reference implementation for atomic
+multi-lot allocation, explicit substitution, allocation ownership versus
+physical on-hand projection, immutable pick/pack/ship/correction evidence, and
+restart after a partially committed pick.
+
+The implementation deliberately keeps inventory projection and occurrence
+indexing in domain entities. No generic inventory-ledger primitive is promoted
+from one operational domain.
 
 ### Subscription / SaaS
 
