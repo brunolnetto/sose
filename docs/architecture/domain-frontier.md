@@ -11,9 +11,9 @@ The selection rule is:
 
 > prefer domains that can falsify current architecture assumptions.
 
-This document records the next domain frontier after the first seventeen
+This document records the next domain frontier after the first eighteen
 References, the Money audit, and the Telecommunications, Energy / Utilities,
-and Public Transit / Rail promotions. The remaining
+Public Transit / Rail, and Field Service / Workforce promotions. The remaining
 frontier is ordered by the new semantic pressure each domain can place on the
 architecture.
 
@@ -61,6 +61,15 @@ References add additional dimensions:
 - immutable TripUpdate and VehiclePosition evidence;
 - observation-time staleness semantics;
 - delay propagation across one physical vehicle block.
+
+**Field Service / Workforce:**
+
+- time-and-place Appointment ownership;
+- skill + territory + interval technician eligibility;
+- domain selection separated from core Resource lifecycle;
+- required-part Store selection ownership;
+- immutable no-access/success visit evidence;
+- replacement Appointment lineage.
 
 ## Selection principles
 
@@ -203,7 +212,7 @@ Whether SOSE cleanly separates:
 
 ---
 
-## Frontier 3 — Field Service / Workforce
+## Promoted — Field Service / Workforce
 
 ### Why it is high value
 
@@ -404,11 +413,14 @@ occurrences, schedule-versus-projection separation, vehicle-block delay
 propagation, stale observation handling, bounded ServiceAlert windows, finite
 realtime outages, and restart equivalence.
 
-### Field Service — next
+### Field Service / Workforce — promoted
 
-Adds multi-dimensional resource eligibility, location, and appointment windows.
+Field Service is now a Reference implementation for skill/territory/window
+eligibility, future appointment ownership, technician-specific Resource
+acquisition, durable part selection, immutable VisitOccurrence evidence, and
+no-access replacement lineage.
 
-### Hospitality / Reservations
+### Hospitality / Reservations — next
 
 Use specifically to test interval ownership and expiring holds.
 
