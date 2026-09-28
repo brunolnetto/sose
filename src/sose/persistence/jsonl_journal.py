@@ -138,7 +138,7 @@ class JSONLJournalPersistence(MemoryPersistence):
     @contextmanager
     def transaction(self) -> Iterator[MemoryUnitOfWork]:
         self._refresh_from_journal()
-        before = fork_state(self._state)
+        before = self._state
         try:
             uow = MemoryUnitOfWork(fork_state(self._state), self)
             yield uow
