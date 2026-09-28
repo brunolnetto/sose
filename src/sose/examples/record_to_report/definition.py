@@ -40,12 +40,12 @@ def _seed(persistence: Persistence, config: RecordToReportConfig):
 
 
 def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
-    journal = persistence.entity("r2r_journal", entities.journal_id)
+    journal = persistence.entity("journal_entry", entities.journal_id)
     item = persistence.entity(
-        "r2r_reconciliation_item",
+        "reconciliation_item",
         entities.reconciliation_id,
     )
-    task = persistence.entity("r2r_close_task", entities.close_task_id)
+    task = persistence.entity("close_task", entities.close_task_id)
     if journal is None or item is None or task is None:
         raise RuntimeError("R2R reference entities were not persisted")
 
