@@ -125,7 +125,7 @@ def seed_reference(
     trip_duration: timedelta = timedelta(hours=1),
     layover: timedelta = timedelta(minutes=15),
 ) -> TransitEntities:
-    context, _ = build_runtime(persistence, now=now)
+    context, engine = build_runtime(persistence, now=now)
     first_start = now + first_trip_delay
     first_end = first_start + trip_duration
     second_start = first_end + layover
@@ -178,11 +178,19 @@ def seed_reference(
         for entity in (vehicle, trip_a, trip_b):
             uow.save_entity(entity)
 
-    return TransitEntities(
+    entities = TransitEntities(
         vehicle_id=vehicle.id,
         trip_a_id=trip_a.id,
         trip_b_id=trip_b.id,
     )
+    # Recurring jobs must own trip boundaries before the first tick advances.
+    # run_happy_path may call this again; the helper is intentionally idempotent.
+    schedule_reference_block(
+        persistence,
+        engine,
+        entities=entities,
+    )
+    return entities
 
 
 def _entity(
