@@ -213,6 +213,9 @@ def test_simultaneous_constructors_safely_bootstrap_new_database(tmp_path):
         """
     ).fetchone()
     assert row == (2, 0)
+    assert persistence._connection.execute(
+        "PRAGMA journal_mode"
+    ).fetchone()[0].lower() == "wal"
     persistence.close()
 
 
@@ -256,4 +259,7 @@ def test_simultaneous_constructors_safely_migrate_v1_database(tmp_path):
         """
     ).fetchone()
     assert row == (2, 0)
+    assert persistence._connection.execute(
+        "PRAGMA journal_mode"
+    ).fetchone()[0].lower() == "wal"
     persistence.close()
