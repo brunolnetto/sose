@@ -16,6 +16,7 @@ from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.randomness import RandomSource
+from sose.core.scheduler import Scheduler
 from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.base import Persistence, UnitOfWork
@@ -48,6 +49,7 @@ __all__ = [
     "ResourceBackend",
     "SQLitePersistence",
     "Scenario",
+    "Scheduler",
     "ScheduledTrigger",
     "SimulationClock",
     "SimulationContext",
