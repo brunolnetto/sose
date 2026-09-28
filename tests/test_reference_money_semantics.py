@@ -470,8 +470,8 @@ def test_insurance_rejects_zero_value_partial_payout():
     assert persistence.resource_demands() == ()
     assert persistence.resource_reservations() == ()
 
-def test_credit_rejects_amount_beyond_cent_safe_float_precision():
-    with pytest.raises(ValueError, match="cent-safe float precision"):
+def test_credit_rejects_true_half_cent_even_at_large_float_magnitude():
+    with pytest.raises(ValueError, match="fractional cents"):
         seed_credit(
             MemoryPersistence(),
             principal=11258999068426.244,
@@ -479,8 +479,8 @@ def test_credit_rejects_amount_beyond_cent_safe_float_precision():
         )
 
 
-def test_insurance_rejects_amount_beyond_cent_safe_float_precision():
-    with pytest.raises(ValueError, match="cent-safe float precision"):
+def test_insurance_rejects_true_half_minor_unit_even_at_large_float_magnitude():
+    with pytest.raises(ValueError, match="fractional minor units"):
         seed_insurance(
             MemoryPersistence(),
             amount=11258999068426.244,
@@ -514,3 +514,49 @@ def test_insurance_accepts_large_computed_minor_unit_aligned_float():
     assert claim is not None
     assert claim.attributes["amount"] == 100_000_000.01
 
+
+
+def test_credit_accepts_cent_aligned_float_beyond_old_ulp_cutoff():
+    principal = 10_000_000_000.0 + 0.01
+    persistence = MemoryPersistence()
+    entities = seed_credit(
+        persistence,
+        principal=principal,
+        installment_count=1,
+    )
+    application = persistence.entity("loan_application", entities.application_id)
+
+    assert application is not None
+    assert application.attributes["principal"] == 10_000_000_000.01
+
+
+def test_insurance_accepts_minor_unit_aligned_float_beyond_old_ulp_cutoff():
+    amount = 10_000_000_000.0 + 0.01
+    persistence = MemoryPersistence()
+    entities = seed_insurance(
+        persistence,
+        amount=amount,
+        currency="USD",
+    )
+    claim = persistence.entity("insurance_claim", entities.claim_id)
+
+    assert claim is not None
+    assert claim.attributes["amount"] == 10_000_000_000.01
+
+
+def test_credit_rejects_large_computed_half_cent():
+    with pytest.raises(ValueError, match="fractional cents"):
+        seed_credit(
+            MemoryPersistence(),
+            principal=10_000_000_000.005,
+            installment_count=1,
+        )
+
+
+def test_insurance_rejects_large_computed_half_minor_unit():
+    with pytest.raises(ValueError, match="fractional minor units"):
+        seed_insurance(
+            MemoryPersistence(),
+            amount=10_000_000_000.005,
+            currency="USD",
+        )
