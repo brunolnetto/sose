@@ -42,6 +42,21 @@ This validates:
 - persistence adapter name;
 - runtime backend name.
 
+## Apply edited configuration
+
+Editing the file alone does not mutate an existing durable job.
+
+Apply the desired domain parameters explicitly:
+
+```bash
+sose apply --config sose.toml
+```
+
+The command increments `config_revision` only when the effective domain
+configuration changed. Repeating the same apply is a no-op.
+
+A real change is rejected while another trigger owns an unresolved tick.
+
 ## Run one durable tick
 
 ```bash
