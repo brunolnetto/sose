@@ -469,3 +469,21 @@ def test_insurance_rejects_zero_value_partial_payout():
     assert payment.attributes["paid_amount"] == 0.0
     assert persistence.resource_demands() == ()
     assert persistence.resource_reservations() == ()
+
+def test_credit_rejects_extreme_fractional_cent_even_when_float_ulp_is_large():
+    with pytest.raises(ValueError, match="fractional cents"):
+        seed_credit(
+            MemoryPersistence(),
+            principal=11258999068426.244,
+            installment_count=1,
+        )
+
+
+def test_insurance_rejects_extreme_fractional_minor_unit():
+    with pytest.raises(ValueError, match="fractional minor units"):
+        seed_insurance(
+            MemoryPersistence(),
+            amount=11258999068426.244,
+            currency="USD",
+        )
+
