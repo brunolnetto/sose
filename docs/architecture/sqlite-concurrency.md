@@ -4,6 +4,16 @@
 same SQLite file, but its guarantees are deliberately narrower than a
 networked multi-writer database contract.
 
+## Concurrent construction
+
+Adapter bootstrap and v1 -> v2 migration acquire the same `BEGIN IMMEDIATE`
+writer lock used by normal transactions. Concurrent constructors therefore
+serialize metadata initialization/migration instead of racing on the singleton
+metadata row.
+
+Executable tests open four adapters simultaneously against both a brand-new
+database and a legacy v1 database.
+
 ## Read visibility
 
 Each adapter keeps a cached semantic state plus the durable global revision.
