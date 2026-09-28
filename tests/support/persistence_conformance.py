@@ -54,6 +54,8 @@ class PersistenceConformanceSuite:
             next_tick=3,
             run_count=2,
             bootstrap_state={"entity_id": "entity-1"},
+            active_trigger_id="trigger-1",
+            phase="reconcile",
         )
 
         with store.transaction() as uow:

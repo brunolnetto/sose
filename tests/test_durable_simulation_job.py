@@ -1,3 +1,4 @@
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -236,8 +237,9 @@ def test_overlapping_trigger_is_rejected_while_job_is_claimed():
     assert result.logical_tick == 1
     assert result.trigger_id == "overlap-A"
     assert overlap_errors
-    assert "already running" in overlap_errors[0]
+    assert "unresolved trigger" in overlap_errors[0]
     assert "overlap-A" in overlap_errors[0]
+    assert "phase='advance'" in overlap_errors[0]
 
 
 def test_trigger_identity_survives_sqlite_reopen(tmp_path):
@@ -268,3 +270,166 @@ def test_trigger_identity_survives_sqlite_reopen(tmp_path):
     assert reopened.simulation_position().logical_tick == 1
     assert resumed.state().last_completed_trigger_id == "external-42"
     reopened.close()
+
+
+def test_failed_before_advance_can_recover_same_trigger():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    attempts = {"count": 0}
+
+    def flaky_backend(origin):
+        attempts["count"] += 1
+        if attempts["count"] == 1:
+            raise RuntimeError("backend unavailable")
+        return SimPyBackend(origin=origin)
+
+    job = SimulationJob(
+        job_id="recover-before-advance",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=flaky_backend,
+    )
+    job.initialize()
+
+    with pytest.raises(RuntimeError, match="backend unavailable"):
+        job.run_tick(trigger_id="retry-advance")
+
+    failed = job.state()
+    assert failed.status == "failed"
+    assert failed.phase == "advance"
+    assert failed.active_trigger_id == "retry-advance"
+    assert persistence.simulation_position() is None
+
+    result = job.run_tick(
+        trigger_id="retry-advance",
+        recover=True,
+    )
+
+    assert result.logical_tick == 1
+    assert result.trigger_id == "retry-advance"
+    assert job.state().status == "ready"
+    assert job.state().phase == "idle"
+
+
+def test_different_trigger_cannot_bypass_failed_owned_phase():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+
+    def fail_backend(origin):
+        raise RuntimeError("boom")
+
+    job = SimulationJob(
+        job_id="failed-owned-trigger",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=fail_backend,
+    )
+    job.initialize()
+
+    with pytest.raises(RuntimeError, match="boom"):
+        job.run_tick(trigger_id="original-trigger")
+
+    with pytest.raises(RuntimeError, match="unresolved trigger"):
+        job.run_tick(trigger_id="different-trigger")
+
+    with pytest.raises(RuntimeError, match="unresolved"):
+        job.update_config({"random_seed": 99})
+
+    with pytest.raises(RuntimeError, match="must be recovered"):
+        job.resume()
+
+
+def test_reconcile_failure_recovers_without_advancing_second_tick():
+    persistence = MemoryPersistence()
+    base = builtin_catalog().get("tutorial_job")
+    calls = {"count": 0}
+
+    def flaky_reconcile(persistence, engine, backend, config, bootstrap):
+        calls["count"] += 1
+        if calls["count"] == 1:
+            raise RuntimeError("reconcile interrupted")
+        assert base.reconcile_tick is not None
+        base.reconcile_tick(
+            persistence,
+            engine,
+            backend,
+            config,
+            bootstrap,
+        )
+
+    definition = replace(base, reconcile_tick=flaky_reconcile)
+    job = SimulationJob(
+        job_id="recover-reconcile",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+    )
+    state = job.initialize({"complete_after": timedelta(hours=3)})
+
+    with pytest.raises(RuntimeError, match="reconcile interrupted"):
+        job.run_tick(trigger_id="reconcile-trigger")
+
+    failed = job.state()
+    assert failed.status == "failed"
+    assert failed.phase == "reconcile"
+    assert failed.next_tick == 1
+    assert persistence.simulation_position().logical_tick == 1
+
+    result = job.run_tick(
+        trigger_id="reconcile-trigger",
+        recover=True,
+    )
+
+    assert result.logical_tick == 1
+    assert result.run_count == 1
+    assert persistence.simulation_position().logical_tick == 1
+    entity = persistence.entity("tutorial_job", state.bootstrap_state.id)
+    assert entity is not None and entity.state == "running"
+
+
+def test_recovery_infers_reconcile_when_position_committed_before_phase_checkpoint():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    job = SimulationJob(
+        job_id="crash-window",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+    )
+    state = job.initialize({"complete_after": timedelta(hours=3)})
+
+    claimed = replace(
+        state,
+        status="running",
+        phase="advance",
+        active_trigger_id="crash-trigger",
+    )
+    with persistence.transaction() as uow:
+        uow.save_job_state(claimed)
+
+    config = definition.config_model.model_validate_json(claimed.config_json)
+    context, engine = definition.build_runtime(
+        persistence,
+        config,
+        config.start_at,
+        0,
+    )
+    backend = _backend(config.start_at)
+    engine.rebuild_backend(backend)
+    engine.advance_tick()
+    backend.run_until(context.clock.now)
+
+    # Simulates process death here: SimulationPosition committed, job phase did not.
+    assert persistence.simulation_position().logical_tick == 1
+    assert job.state().phase == "advance"
+    assert job.state().next_tick == 0
+
+    result = job.run_tick(
+        trigger_id="crash-trigger",
+        recover=True,
+    )
+
+    assert result.logical_tick == 1
+    assert result.run_count == 1
+    assert job.state().phase == "idle"
+    assert job.state().last_completed_trigger_id == "crash-trigger"
