@@ -2,19 +2,61 @@
 
 ## Unreleased
 
+## 0.8.0 — 2026-09-28
+
+### Added
+
+- `sose.api` as the compatibility-relevant domain-author facade;
+- SQLitePersistence as the first external transactional persistence adapter;
+- tagged-JSON durable serialization without pickle;
+- built wheel/source-distribution validation in CI;
+- release-candidate workflow with tag/version/release-note checks;
+- minimal restart-safe getting-started domain and tutorial;
+- repeated-restart helper and semantic hardening stress tests;
+- Reference conformance and horizontal anti-drift gates across 21 promoted domains;
+- Telecommunications, Energy / Utilities, Public Transit / Rail, Field Service,
+  Hospitality, Warehouse / Fulfillment, and Subscription / SaaS References.
+
 ### Changed
 
-- development direction now targets v0.8 library stabilization rather than
-  continued domain-frontier expansion;
-- release documentation now separates chronological changes, milestone closure,
-  compatibility policy, and planned release gates.
+- development direction shifts from domain-frontier expansion to library
+  stabilization and adoption;
+- public/advanced/compatibility/internal API tiers are now documented;
+- release documentation separates chronological changes, milestone closure,
+  compatibility policy, and planned gates;
+- durable lifecycle patterns for scheduling, Store selection, resources, and
+  restart testing were consolidated across References;
+- monetary References now preserve currency provenance and enforce explicit
+  minor-unit arithmetic where arithmetic actually occurs;
+- float-facing minor-unit validation uses ULP-aware tolerance capped strictly
+  below half a minor unit instead of an arbitrary magnitude cutoff.
 
-### Documentation
+### Fixed
 
-- added a minimal restart-safe domain tutorial and getting-started path;
-- added a release index and pre-1.0 release policy;
-- added the v0.8.0 stabilization plan covering public API, SQLite persistence,
-  distribution, adoption, and hardening gates.
+- restart/race defects found through cross-domain review, including resource and
+  ScheduledWork lifecycle duplication, Store selection ownership, overlapping
+  incident restoration, captured usage replay, appointment expiry cleanup,
+  inventory selection eligibility, and monetary odd-cent/zero-partial behavior.
+
+### Compatibility
+
+- new domain/integration code should prefer `sose.api`;
+- `context.schedules` remains the durable scheduling contract;
+- `context.scheduler` remains compatibility-only;
+- concrete optional backends remain explicit imports;
+- SQLite persisted dataclass/enum module paths are persistence compatibility
+  concerns before 1.0.
+
+### Architectural decisions
+
+- no core Money primitive yet;
+- no generic TemporalCapacity primitive yet;
+- no generic QualifiedResource primitive yet;
+- no generic inventory-ledger primitive yet.
+
+The v0.8 milestone is complete when the release commit passes the Python
+3.12/3.13/3.14 matrix, coverage, distribution build/install smoke, and release
+candidate metadata validation.
 
 ## 0.7.0 — 2026-09-26
 
