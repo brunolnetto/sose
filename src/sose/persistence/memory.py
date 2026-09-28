@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from copy import deepcopy
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from typing import Iterator
 
@@ -60,6 +60,27 @@ class _State:
     preemptive_resource_release_intents: dict[str, PreemptiveResourceReleaseIntent] = field(default_factory=dict)
     resource_preemption_results: dict[str, ResourcePreemptionResult] = field(default_factory=dict)
     committed_tick: int = -1
+
+
+def fork_state(state: _State) -> _State:
+    """Create a transaction-local structural copy of durable state.
+
+    Top-level mutable collections are copied, while existing record objects are
+    shared until a UnitOfWork explicitly reads/saves them through methods that
+    already deepcopy values. This avoids an O(total object graph) deepcopy at
+    transaction entry without weakening rollback isolation.
+    """
+
+    values: dict[str, object] = {}
+    for field_info in fields(_State):
+        value = getattr(state, field_info.name)
+        if isinstance(value, dict):
+            values[field_info.name] = dict(value)
+        elif isinstance(value, list):
+            values[field_info.name] = list(value)
+        else:
+            values[field_info.name] = value
+    return _State(**values)
 
 
 class MemoryUnitOfWork:
@@ -479,7 +500,7 @@ class MemoryPersistence:
 
     @contextmanager
     def transaction(self) -> Iterator[MemoryUnitOfWork]:
-        uow = MemoryUnitOfWork(deepcopy(self._state), self)
+        uow = MemoryUnitOfWork(fork_state(self._state), self)
         try:
             yield uow
             if not uow._closed:
