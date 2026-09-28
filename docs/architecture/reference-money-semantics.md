@@ -138,6 +138,28 @@ Cards & Payments, O2C, and R2R do not currently perform arithmetic that can
 create sub-minor-unit values, so this audit deliberately does not add synthetic
 rounding rules to them.
 
+### Float-facing boundary rule
+
+The current Insurance and Credit & Loans Reference APIs still accept Python
+`float` inputs. Their minor-unit adapters therefore need to distinguish normal
+IEEE-754 representation noise from an actual fractional minor unit without
+inventing a magnitude-specific cutoff.
+
+The conformance rule is now:
+
+1. scale the float into the Reference minor unit;
+2. compare it with the nearest integer minor unit;
+3. tolerate ordinary binary error using a small ULP-aware window;
+4. cap that window strictly below half a minor unit.
+
+This admits large values that are still represented exactly at a cent boundary
+even when their ULP exceeds the old conservative threshold, while a represented
+half-cent remains invalid. It does **not** claim that arbitrary decimal intent
+can always be recovered from an IEEE-754 float at extreme magnitudes. If future
+References need stronger guarantees, that is evidence for an exact external
+representation such as integer minor units or Decimal at the API boundary—not
+for a generic core Money type by itself.
+
 ## Stopping decision
 
 The Money investigation is complete for the current Reference set.

@@ -45,14 +45,14 @@ def _reference_minor_units(value: float) -> int:
     if not math.isfinite(scaled):
         raise ValueError("Reference payout amount must be finite")
 
-    # Float inputs are accepted only while their representation is precise
-    # enough to distinguish a cent from a true sub-cent amount. Within that
-    # envelope, tolerate ordinary binary noise around the nearest cent.
+    # Float-facing References tolerate representational noise around an exact
+    # minor-unit boundary, but never enough to reinterpret a true half-minor
+    # value as integral. This avoids an arbitrary magnitude cutoff while keeping
+    # the acceptance region strictly narrower than half a minor unit.
     ulp = math.ulp(scaled)
-    if ulp > 1e-4:
-        raise ValueError("Reference payout amount exceeds cent-safe float precision")
     nearest = round(scaled)
-    tolerance = max(1e-7, 2 * ulp)
+    half_minor_cap = math.nextafter(0.5, 0.0)
+    tolerance = min(max(1e-7, 2 * ulp), half_minor_cap)
     if abs(scaled - nearest) > tolerance:
         raise ValueError("Reference payout amount must not contain fractional minor units")
     return int(nearest)
