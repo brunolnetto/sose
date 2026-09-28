@@ -112,12 +112,44 @@ for:
 - idempotent application across retry/restart boundaries;
 - no inference of currency from process context alone.
 
-## Follow-up
+## Minor-unit conformance result
 
-The next focused design task is to test fractional-minor-unit inputs and rounding
-behavior across the five money-bearing References. That evidence should decide
-whether SOSE needs:
+The focused rounding pass adds executable evidence where arithmetic actually
+occurs rather than imposing arithmetic rules on References that only carry
+amounts through lifecycle transitions.
 
-- only stronger Reference-level contracts,
-- a small value-object in domain support,
-- or a true core `Money` primitive.
+Credit & Loans now:
+
+- rejects USD principal/payment inputs below the cent scale;
+- allocates principal in integer cents;
+- assigns allocation remainder deterministically to the final installment;
+- preserves exact principal minor units for odd-cent totals.
+
+Insurance now:
+
+- rejects claim/reserve values below the Reference's two-decimal minor-unit
+  scale;
+- computes partial payout in integer minor units;
+- leaves an odd-cent remainder for final completion rather than persisting a
+  fractional cent;
+- proves the partial-then-complete result survives runtime rebuild.
+
+Cards & Payments, O2C, and R2R do not currently perform arithmetic that can
+create sub-minor-unit values, so this audit deliberately does not add synthetic
+rounding rules to them.
+
+## Stopping decision
+
+The Money investigation is complete for the current Reference set.
+
+The evidence supports Reference-level contracts for currency provenance,
+minor-unit boundaries where arithmetic occurs, deterministic allocation, and
+restart-safe application. It does **not** show a repeated cross-domain
+arithmetic protocol strong enough to justify a core `Money` primitive.
+
+A future domain may reopen this decision only if it introduces repeated
+requirements such as currency-specific scale, FX conversion, rated usage,
+tax allocation, or immutable ledger posting that cannot be expressed cleanly
+with the existing domain-local contracts.
+
+Until then, adding a core Money value object is explicitly out of scope.
