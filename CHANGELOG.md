@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- development direction now targets v0.8 library stabilization rather than
+  continued domain-frontier expansion;
+- release documentation now separates chronological changes, milestone closure,
+  compatibility policy, and planned release gates.
+
+### Documentation
+
+- added a release index and pre-1.0 release policy;
+- added the v0.8.0 stabilization plan covering public API, SQLite persistence,
+  distribution, adoption, and hardening gates.
+
 ## 0.7.0 — 2026-09-26
 
 ### Added
