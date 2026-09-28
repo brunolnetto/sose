@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from decimal import Decimal
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
@@ -45,11 +44,11 @@ COLLECTION_FOLLOWUP = timedelta(hours=1)
 
 
 def _usd_cents(value: float) -> int:
-    decimal = Decimal(str(value))
-    cents = decimal * 100
-    if cents != cents.to_integral_value():
+    scaled = float(value) * 100
+    nearest = round(scaled)
+    if abs(scaled - nearest) > 1e-7:
         raise ValueError("USD amount must not contain fractional cents")
-    return int(cents)
+    return int(nearest)
 
 
 @dataclass(frozen=True, slots=True)
