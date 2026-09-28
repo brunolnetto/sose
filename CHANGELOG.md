@@ -4,6 +4,8 @@
 
 ### Added
 
+- reproducible runtime benchmark harness with JSON output, CI smoke execution,
+  and weekly/manual full benchmark workflow;
 - read-only runtime diagnostics with durable counts, recovery position, and
   stable consistency issue codes;
 - transactional SQLite schema migrations with independent schema/codec
