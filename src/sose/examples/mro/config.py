@@ -19,3 +19,4 @@ class MROConfig(DomainConfig):
     maintenance_bay_capacity: int = Field(default=1, ge=1)
     spare_part_store_capacity: int = Field(default=10, ge=1)
     release_delay: timedelta = Field(default=timedelta(hours=1), gt=timedelta(0))
+    auto_seed_spare_parts: bool = True
