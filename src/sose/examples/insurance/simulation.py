@@ -138,6 +138,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    now: datetime = ORIGIN,
     severity: int = 50,
     amount: float = 5000.0,
     claim_type: str = "property",
@@ -149,7 +150,7 @@ def seed_reference(
     amount = amount_units / 100
     if not currency:
         raise ValueError("currency must be non-empty")
-    context, engine = build_runtime(persistence)
+    context, engine = build_runtime(persistence, now=now)
     policy = context.entities.create(
         Policy,
         key=("insurance-reference", "policy-1"),

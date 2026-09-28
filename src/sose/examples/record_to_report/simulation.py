@@ -99,6 +99,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    now: datetime = ORIGIN,
     amount: float = 1000.0,
     currency: str = "USD",
 ) -> R2REntities:
@@ -106,7 +107,7 @@ def seed_reference(
         raise ValueError("amount must be positive")
     if not currency:
         raise ValueError("currency must be non-empty")
-    context, _ = build_runtime(persistence)
+    context, _ = build_runtime(persistence, now=now)
     period = context.entities.create(
         AccountingPeriod,
         key=("r2r-reference", "period-2026-09"),

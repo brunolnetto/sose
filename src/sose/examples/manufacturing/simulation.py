@@ -73,10 +73,11 @@ def _validate_quantity(quantity: float) -> None:
 def seed_happy_path(
     persistence: MemoryPersistence,
     *,
+    now: datetime = ORIGIN,
     quantity: float = 10.0,
 ) -> ManufacturingEntities:
     _validate_quantity(quantity)
-    context, engine = build_runtime(persistence)
+    context, engine = build_runtime(persistence, now=now)
     correlation_id = flow_correlation_id()
 
     order = context.entities.create(
@@ -116,7 +117,7 @@ def seed_happy_path(
         command = context.commands.create(
             trigger,
             target=entity,
-            due_at=ORIGIN + offset,
+            due_at=now + offset,
             caused_by=previous,
             correlation_id=correlation_id,
             key=("manufacturing-reference", entity.entity_type, entity.id, trigger),

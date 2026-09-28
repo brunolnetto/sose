@@ -4,6 +4,12 @@
 
 ### Added
 
+- recurring tick reconciliation across every builtin Reference plus the tutorial
+  domain, with state-aware idempotent progression instead of end-to-end-only
+  execution;
+- recurring operational controls for Construction, Manufacturing, P2P,
+  Record-to-Report, Transit, Aviation, Credit & Loans, Energy / Utilities,
+  Insurance, and Order-to-Cash;
 - recurring durable-job reconciliation for ITSM, Hospitals, Field Service,
   Hospitality, and Airports, including configurable capacities and temporal
   boundaries;

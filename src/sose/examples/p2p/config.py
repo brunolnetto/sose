@@ -1,3 +1,4 @@
+from typing import Literal
 from datetime import datetime, timedelta
 from pydantic import Field
 from sose.domain.config import DomainConfig
@@ -8,3 +9,5 @@ class P2PConfig(DomainConfig):
     tick_step: timedelta = timedelta(hours=1)
     random_seed: int = 42
     quantity: float = Field(default=10.0, gt=0)
+    receipt_outcome: Literal["accepted", "partial", "rejected"] = "accepted"
+    auto_consume_inventory: bool = True
