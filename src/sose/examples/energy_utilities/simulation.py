@@ -240,15 +240,8 @@ def record_meter_reading(
             raise ValueError("corrected reading requires supersedes_reading_id")
         if quality != "corrected":
             raise ValueError("correction lineage requires corrected quality")
-    if not engine.context.scenarios.attribute("energy.metering.available", True):
-        return None
-
-    meter = _meter(persistence, entities)
-    if meter.state != "active":
-        raise RuntimeError("meter reading requires active meter")
-
     rid = reading_id(
-        meter.id,
+        entities.meter_id,
         interval_end,
         correction_ordinal=correction_ordinal,
     )
@@ -277,6 +270,13 @@ def record_meter_reading(
                 existing.id,
             )
         return existing
+
+    if not engine.context.scenarios.attribute("energy.metering.available", True):
+        return None
+
+    meter = _meter(persistence, entities)
+    if meter.state != "active":
+        raise RuntimeError("meter reading requires active meter")
 
     if supersedes_reading_id is not None:
         superseded = _entity(
