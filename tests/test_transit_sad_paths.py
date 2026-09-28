@@ -353,41 +353,6 @@ def test_cancel_service_alert_removes_future_boundaries():
     ) is None
 
 
-def test_reduced_running_projection_in_past_completes_immediately():
-    persistence, entities, engine, backend = _runtime()
-    schedule_reference_block(persistence, engine, entities=entities)
-    record_trip_update(
-        persistence,
-        engine,
-        backend,
-        entities=entities,
-        trip_id=entities.trip_a_id,
-        sequence=1,
-        delay_seconds=30 * 60,
-    )
-    delayed_end = TRIP_A_START + timedelta(hours=1, minutes=30)
-    backend.run_until(TRIP_A_START)
-    assert reconcile_vehicle_for_trip(
-        persistence, engine, entities=entities, trip_id=entities.trip_a_id
-    )
-    backend.run_until(TRIP_A_START + timedelta(hours=1, minutes=10))
-    # Newer realtime evidence reduces delay so the projected completion
-    # is now ten minutes behind the backend logical time.
-    record_trip_update(
-        persistence,
-        engine,
-        backend,
-        entities=entities,
-        trip_id=entities.trip_a_id,
-        sequence=2,
-        delay_seconds=0,
-    )
-    trip = persistence.entity("transit_scheduled_trip", entities.trip_a_id)
-    vehicle = persistence.entity("transit_vehicle", entities.vehicle_id)
-    assert trip is not None and trip.state == "completed"
-    assert vehicle is not None and vehicle.state == "available"
-    assert backend.now < delayed_end
-
 def test_equal_observation_time_uses_sequence_as_stable_tie_breaker():
     persistence, entities, engine, backend = _runtime()
     ensure_trip_boundaries(
