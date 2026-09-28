@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Iterator
 
 from .memory import MemoryPersistence, MemoryUnitOfWork, _State
-from .records import StateRecord, StateRecordChange, diff_state_records, records_to_state
+from .records import (
+    StateRecord,
+    StateRecordChange,
+    changes_for_dirty_records,
+    records_to_state,
+)
 
 
 _SCHEMA_VERSION = 1
