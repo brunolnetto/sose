@@ -241,6 +241,7 @@ def ensure_fulfillment_entities(
                 "access_technology": order.attributes["access_technology"],
                 "sim_type": order.attributes["sim_type"],
                 "subscriber_id": "subscriber-1",
+                "open_incident_keys": [],
             },
         )
 
@@ -452,8 +453,8 @@ def record_usage(
     if quantity <= 0:
         raise ValueError("quantity must be positive")
     service = _service(persistence, entities.product_order_id)
-    if service is None or service.state != "active":
-        raise RuntimeError("usage requires active subscription service")
+    if service is None:
+        raise RuntimeError("usage requires provisioned subscription service")
 
     uid = usage_record_id(service.id, sequence)
     existing = persistence.entity("telecom_usage_record", uid)
@@ -463,7 +464,23 @@ def record_usage(
             or existing.attributes["unit"] != unit
         ):
             raise ValueError("usage identity already exists with different measurement")
+        if existing.state == "captured":
+            _dispatch(
+                engine,
+                existing,
+                "commit",
+                key=("telecom-usage", existing.id, "commit"),
+                correlation_id=flow_correlation_id(entities.product_order_id),
+            )
+            existing = _entity(
+                persistence,
+                "telecom_usage_record",
+                existing.id,
+            )
         return existing
+
+    if service.state != "active":
+        raise RuntimeError("usage requires active subscription service")
 
     usage = engine.context.entities.create(
         UsageRecord,
@@ -538,12 +555,22 @@ def raise_service_alarm(
         if persistence.entity("telecom_trouble_ticket", ticket.id) is None:
             uow.save_entity(ticket)
 
+    alarm = _entity(persistence, "telecom_network_alarm", alarm.id)
+    ticket = _entity(persistence, "telecom_trouble_ticket", ticket.id)
+    unresolved = alarm.state != "cleared" or ticket.state != "closed"
+
     service = _entity(
         persistence,
         "telecom_subscription_service",
         service.id,
     )
-    if service.state == "active":
+    open_incidents = list(service.attributes.get("open_incident_keys", []))
+    if unresolved and incident_key not in open_incidents:
+        open_incidents.append(incident_key)
+        service.attributes["open_incident_keys"] = open_incidents
+        with persistence.transaction() as uow:
+            uow.save_entity(service)
+    if unresolved and service.state == "active":
         _dispatch(
             engine,
             service,
@@ -644,12 +671,33 @@ def restore_service(
             key=("telecom-ticket", ticket.id, "close"),
             correlation_id=correlation_id,
         )
+    alarm = _entity(persistence, "telecom_network_alarm", alarm.id)
+    ticket = _entity(persistence, "telecom_trouble_ticket", ticket.id)
     service = _entity(
         persistence,
         "telecom_subscription_service",
         service.id,
     )
-    if service.state == "suspended":
+    if alarm.state == "cleared" and ticket.state == "closed":
+        open_incidents = [
+            key
+            for key in service.attributes.get("open_incident_keys", [])
+            if key != incident_key
+        ]
+        if open_incidents != service.attributes.get("open_incident_keys", []):
+            service.attributes["open_incident_keys"] = open_incidents
+            with persistence.transaction() as uow:
+                uow.save_entity(service)
+            service = _entity(
+                persistence,
+                "telecom_subscription_service",
+                service.id,
+            )
+
+    if (
+        service.state == "suspended"
+        and not service.attributes.get("open_incident_keys", [])
+    ):
         _dispatch(
             engine,
             service,
