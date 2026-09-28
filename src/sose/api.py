@@ -20,6 +20,7 @@ from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.base import Persistence, UnitOfWork
 from sose.persistence.memory import MemoryPersistence
+from sose.persistence.sqlite import SQLitePersistence
 from sose.probability import probabilistic, probabilistic_transitions
 from sose.scenarios import (
     AttributeEffect,
@@ -45,6 +46,7 @@ __all__ = [
     "PreemptiveResourceBackend",
     "RandomSource",
     "ResourceBackend",
+    "SQLitePersistence",
     "Scenario",
     "ScheduledTrigger",
     "SimulationClock",
