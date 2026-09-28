@@ -67,16 +67,28 @@ class MemoryUnitOfWork:
         self._working = working
         self._owner = owner
         self._closed = False
+        self._dirty_records: set[tuple[str, object]] = set()
+
+    @property
+    def dirty_records(self) -> frozenset[tuple[str, object]]:
+        """Internal record identities touched by this unit of work."""
+        return frozenset(self._dirty_records)
+
+    def _mark_dirty(self, collection: str, key: object) -> None:
+        self._dirty_records.add((collection, key))
 
     def get_entity(self, entity_type: str, entity_id: str) -> Entity | None:
         value = self._working.entities.get((entity_type, entity_id))
         return deepcopy(value) if value else None
 
     def save_entity(self, entity: Entity) -> None:
-        self._working.entities[(entity.entity_type, entity.id)] = deepcopy(entity)
+        key = (entity.entity_type, entity.id)
+        self._working.entities[key] = deepcopy(entity)
+        self._mark_dirty("entities", key)
 
     def append_event(self, event: DomainEvent) -> None:
         self._working.events.append(deepcopy(event))
+        self._mark_dirty("events", len(self._working.events) - 1)
 
     def get_command(self, command_id: str) -> Command | None:
         value = self._working.commands.get(command_id)
@@ -84,9 +96,11 @@ class MemoryUnitOfWork:
 
     def save_command(self, command: Command) -> None:
         self._working.commands[command.command_id] = deepcopy(command)
+        self._mark_dirty("commands", command.command_id)
 
     def delete_command(self, command_id: str) -> None:
         self._working.commands.pop(command_id, None)
+        self._mark_dirty("commands", command_id)
 
     def get_scheduled_work(self, work_id: str) -> ScheduledWork | None:
         value = self._working.scheduled_work.get(work_id)
@@ -96,15 +110,19 @@ class MemoryUnitOfWork:
         if work.command_id not in self._working.commands:
             raise KeyError(f"unknown scheduled command: {work.command_id}")
         self._working.scheduled_work[work.work_id] = deepcopy(work)
+        self._mark_dirty("scheduled_work", work.work_id)
 
     def delete_scheduled_work(self, work_id: str) -> None:
         self._working.scheduled_work.pop(work_id, None)
+        self._mark_dirty("scheduled_work", work_id)
 
     def set_simulation_position(self, position: SimulationPosition) -> None:
         self._working.simulation_position = deepcopy(position)
+        self._mark_dirty("simulation_position", "__scalar__")
 
     def set_scenario_state(self, state: ScenarioRuntimeState) -> None:
         self._working.scenario_state = deepcopy(state)
+        self._mark_dirty("scenario_state", "__scalar__")
 
     def get_resource_demand(self, request_id: str) -> ResourceDemand | None:
         value = self._working.resource_demands.get(request_id)
@@ -115,6 +133,7 @@ class MemoryUnitOfWork:
         if existing is not None and existing != definition:
             raise ValueError(f"resource definition already exists: {definition.name}")
         self._working.resource_definitions[definition.name] = deepcopy(definition)
+        self._mark_dirty("resource_definitions", definition.name)
 
     def save_resource_demand(self, demand: ResourceDemand) -> None:
         if demand.resource_name not in self._working.resource_definitions:
@@ -128,9 +147,11 @@ class MemoryUnitOfWork:
         if existing is not None and existing != demand:
             raise ValueError(f"resource demand already exists: {demand.request_id}")
         self._working.resource_demands[demand.request_id] = deepcopy(demand)
+        self._mark_dirty("resource_demands", demand.request_id)
 
     def delete_resource_demand(self, request_id: str) -> None:
         self._working.resource_demands.pop(request_id, None)
+        self._mark_dirty("resource_demands", request_id)
 
     def get_resource_reservation(self, reservation_id: str) -> ResourceReservation | None:
         value = self._working.resource_reservations.get(reservation_id)
@@ -148,9 +169,11 @@ class MemoryUnitOfWork:
         ):
             raise ValueError(f"resource request already reserved: {reservation.request_id}")
         self._working.resource_reservations[reservation.reservation_id] = deepcopy(reservation)
+        self._mark_dirty("resource_reservations", reservation.reservation_id)
 
     def delete_resource_reservation(self, reservation_id: str) -> None:
         self._working.resource_reservations.pop(reservation_id, None)
+        self._mark_dirty("resource_reservations", reservation_id)
 
     def get_resource_release_intent(self, intent_id: str) -> ResourceReleaseIntent | None:
         value = self._working.resource_release_intents.get(intent_id)
@@ -163,9 +186,11 @@ class MemoryUnitOfWork:
         if existing is not None and existing != intent:
             raise ValueError(f"resource release intent already exists: {intent.intent_id}")
         self._working.resource_release_intents[intent.intent_id] = deepcopy(intent)
+        self._mark_dirty("resource_release_intents", intent.intent_id)
 
     def delete_resource_release_intent(self, intent_id: str) -> None:
         self._working.resource_release_intents.pop(intent_id, None)
+        self._mark_dirty("resource_release_intents", intent_id)
 
 
     def get_store_item(self, item_id: str) -> DurableStoreItem | None:
@@ -189,6 +214,7 @@ class MemoryUnitOfWork:
         if existing is not None and existing != definition:
             raise ValueError(f"store definition already exists: {definition.name}")
         self._working.store_definitions[definition.name] = deepcopy(definition)
+        self._mark_dirty("store_definitions", definition.name)
 
     def save_store_item(self, item: DurableStoreItem) -> None:
         if item.store_name not in self._working.store_definitions:
@@ -199,9 +225,11 @@ class MemoryUnitOfWork:
         if existing is not None and existing != item:
             raise ValueError(f"store item already exists: {item.item_id}")
         self._working.store_items[item.item_id] = deepcopy(item)
+        self._mark_dirty("store_items", item.item_id)
 
     def delete_store_item(self, item_id: str) -> None:
         self._working.store_items.pop(item_id, None)
+        self._mark_dirty("store_items", item_id)
 
     def save_store_put_intent(self, intent: StorePutIntent) -> None:
         if intent.store_name not in self._working.store_definitions:
@@ -212,9 +240,11 @@ class MemoryUnitOfWork:
         if existing is not None and existing != intent:
             raise ValueError(f"store put intent already exists: {intent.item_id}")
         self._working.store_put_intents[intent.item_id] = deepcopy(intent)
+        self._mark_dirty("store_put_intents", intent.item_id)
 
     def delete_store_put_intent(self, item_id: str) -> None:
         self._working.store_put_intents.pop(item_id, None)
+        self._mark_dirty("store_put_intents", item_id)
 
     def save_store_get_request(self, request: StoreGetRequest) -> None:
         if request.store_name not in self._working.store_definitions:
@@ -225,9 +255,11 @@ class MemoryUnitOfWork:
         if existing is not None and existing != request:
             raise ValueError(f"store get request already exists: {request.request_id}")
         self._working.store_get_requests[request.request_id] = deepcopy(request)
+        self._mark_dirty("store_get_requests", request.request_id)
 
     def delete_store_get_request(self, request_id: str) -> None:
         self._working.store_get_requests.pop(request_id, None)
+        self._mark_dirty("store_get_requests", request_id)
 
     def save_store_get_result(self, result: StoreGetResult) -> None:
         if result.store_name not in self._working.store_definitions:
@@ -241,6 +273,7 @@ class MemoryUnitOfWork:
         if existing is not None and existing != result:
             raise ValueError(f"store get result already exists: {result.request_id}")
         self._working.store_get_results[result.request_id] = deepcopy(result)
+        self._mark_dirty("store_get_results", result.request_id)
 
 
     def get_container_state(self, name: str) -> ContainerState | None:
@@ -264,6 +297,7 @@ class MemoryUnitOfWork:
         if existing is not None and existing != definition:
             raise ValueError(f"container definition already exists: {definition.name}")
         self._working.container_definitions[definition.name] = deepcopy(definition)
+        self._mark_dirty("container_definitions", definition.name)
 
     def save_container_state(self, state: ContainerState) -> None:
         definition = self._working.container_definitions.get(state.name)
@@ -272,6 +306,7 @@ class MemoryUnitOfWork:
         if state.level > definition.capacity:
             raise ValueError(f"container level exceeds capacity: {state.name}")
         self._working.container_states[state.name] = deepcopy(state)
+        self._mark_dirty("container_states", state.name)
 
     def save_container_operation_intent(self, intent: ContainerOperationIntent) -> None:
         if intent.container_name not in self._working.container_definitions:
@@ -282,9 +317,11 @@ class MemoryUnitOfWork:
         if existing is not None and existing != intent:
             raise ValueError(f"container request already exists: {intent.request_id}")
         self._working.container_operation_intents[intent.request_id] = deepcopy(intent)
+        self._mark_dirty("container_operation_intents", intent.request_id)
 
     def delete_container_operation_intent(self, request_id: str) -> None:
         self._working.container_operation_intents.pop(request_id, None)
+        self._mark_dirty("container_operation_intents", request_id)
 
     def save_container_operation_result(self, result: ContainerOperationResult) -> None:
         intent = self._working.container_operation_intents.get(result.request_id)
@@ -296,6 +333,7 @@ class MemoryUnitOfWork:
         if existing is not None and existing != result:
             raise ValueError(f"container result already exists: {result.request_id}")
         self._working.container_operation_results[result.request_id] = deepcopy(result)
+        self._mark_dirty("container_operation_results", result.request_id)
 
     def get_preemptive_resource_demand(
         self, request_id: str
@@ -328,6 +366,7 @@ class MemoryUnitOfWork:
         if existing is not None and existing != definition:
             raise ValueError(f"preemptive resource definition already exists: {definition.name}")
         self._working.preemptive_resource_definitions[definition.name] = deepcopy(definition)
+        self._mark_dirty("preemptive_resource_definitions", definition.name)
 
     def save_preemptive_resource_demand(self, demand: PreemptiveResourceDemand) -> None:
         if demand.resource_name not in self._working.preemptive_resource_definitions:
@@ -341,9 +380,11 @@ class MemoryUnitOfWork:
         if existing is not None and existing != demand:
             raise ValueError(f"preemptive resource demand already exists: {demand.request_id}")
         self._working.preemptive_resource_demands[demand.request_id] = deepcopy(demand)
+        self._mark_dirty("preemptive_resource_demands", demand.request_id)
 
     def delete_preemptive_resource_demand(self, request_id: str) -> None:
         self._working.preemptive_resource_demands.pop(request_id, None)
+        self._mark_dirty("preemptive_resource_demands", request_id)
 
     def save_preemptive_resource_reservation(
         self, reservation: PreemptiveResourceReservation
@@ -367,9 +408,14 @@ class MemoryUnitOfWork:
         self._working.preemptive_resource_reservations[reservation.reservation_id] = deepcopy(
             reservation
         )
+        self._mark_dirty(
+            "preemptive_resource_reservations",
+            reservation.reservation_id,
+        )
 
     def delete_preemptive_resource_reservation(self, reservation_id: str) -> None:
         self._working.preemptive_resource_reservations.pop(reservation_id, None)
+        self._mark_dirty("preemptive_resource_reservations", reservation_id)
 
     def save_preemptive_resource_release_intent(
         self, intent: PreemptiveResourceReleaseIntent
@@ -384,9 +430,14 @@ class MemoryUnitOfWork:
                 f"preemptive resource release intent already exists: {intent.intent_id}"
             )
         self._working.preemptive_resource_release_intents[intent.intent_id] = deepcopy(intent)
+        self._mark_dirty(
+            "preemptive_resource_release_intents",
+            intent.intent_id,
+        )
 
     def delete_preemptive_resource_release_intent(self, intent_id: str) -> None:
         self._working.preemptive_resource_release_intents.pop(intent_id, None)
+        self._mark_dirty("preemptive_resource_release_intents", intent_id)
 
     def save_resource_preemption_result(self, result: ResourcePreemptionResult) -> None:
         successor = self._working.preemptive_resource_reservations.get(
@@ -408,9 +459,11 @@ class MemoryUnitOfWork:
         if existing is not None and existing != result:
             raise ValueError(f"resource preemption result already exists: {result.result_id}")
         self._working.resource_preemption_results[result.result_id] = deepcopy(result)
+        self._mark_dirty("resource_preemption_results", result.result_id)
 
     def set_committed_tick(self, tick: int) -> None:
         self._working.committed_tick = tick
+        self._mark_dirty("committed_tick", "__scalar__")
 
     def commit(self) -> None:
         self._owner._state = self._working

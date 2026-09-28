@@ -130,3 +130,31 @@ DuckDB into a core dependency.
 PostgreSQL remains evidence-triggered. Incremental record persistence should be
 measured first so a PostgreSQL adapter tests remote/concurrent database behavior,
 not the already-known cost of full-state serialization.
+
+
+## UnitOfWork dirty tracking
+
+Record-oriented sinks no longer infer changed records by serializing and
+diffing the complete durable state after every transaction.
+
+`MemoryUnitOfWork` now records the semantic identities touched by its mutator
+methods. Record sinks then compare/encode only those identities.
+
+This changes the incremental cost model from approximately:
+
+```text
+transaction cost ~ total durable state
+```
+
+toward:
+
+```text
+transaction cost ~ touched durable records
+```
+
+The dirty set is internal persistence evidence, not a public domain API.
+MemoryPersistence behavior is unchanged.
+
+An idempotent save may still mark an identity as touched; the record encoder
+compares the before/after Python values and emits no write if semantic truth did
+not actually change.

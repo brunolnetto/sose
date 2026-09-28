@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Iterator
 
 from .memory import MemoryPersistence, MemoryUnitOfWork, _State
-from .records import StateRecord, StateRecordChange, diff_state_records, records_to_state
+from .records import (
+    StateRecord,
+    StateRecordChange,
+    changes_for_dirty_records,
+    records_to_state,
+)
 
 
 _SCHEMA_VERSION = 1
@@ -139,7 +144,11 @@ class JSONLJournalPersistence(MemoryPersistence):
             yield uow
             if not uow._closed:
                 uow.commit()
-            changes = diff_state_records(before, self._state)
+            changes = changes_for_dirty_records(
+                before,
+                self._state,
+                uow.dirty_records,
+            )
             self._append_transaction(changes)
         except Exception:
             self._state = before
