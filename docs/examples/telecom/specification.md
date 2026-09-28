@@ -147,12 +147,19 @@ A network incident produces two related but independent durable facts:
 - NetworkAlarm: network/fault evidence;
 - TroubleTicket: operational/customer issue-management evidence.
 
-Raising an alarm against an active service suspends the SubscriptionService.
-Acknowledgement is explicit on both alarm and ticket. Restoration requires:
+Raising an unresolved alarm against an active service suspends the
+SubscriptionService. The service durably owns the set of open incident keys so
+overlapping incidents compose instead of racing each other. A replay of an
+already-cleared/closed incident does not reopen that ownership or resuspend the
+service.
+
+Acknowledgement is explicit on both alarm and ticket. Restoration of one
+incident requires:
 
 1. alarm clearance;
 2. ticket resolution and closure;
-3. explicit SubscriptionService restore transition.
+3. removal of that incident from durable open-incident ownership;
+4. explicit SubscriptionService restore only when no unresolved incidents remain.
 
 The service is not restored merely because a ticket string changed or because a
 backend callback fired.
@@ -185,6 +192,9 @@ TEL-10 — An active service is suspended when its modeled incident is raised.
 TEL-11 — Restoration requires durable alarm/ticket reconciliation rather than
 backend state.
 
+TEL-11A — SubscriptionService remains suspended while any durably owned incident
+is unresolved; replay of a terminal incident is idempotent.
+
 TEL-12 — Scenario effects change prerequisite availability, not business state
 directly.
 
@@ -210,7 +220,9 @@ Executable restart evidence covers:
 1. SubscriptionService(provisioning) with activation ScheduledWork pending;
 2. backend rebuild before the scheduled activation command fires;
 3. activation-ready state followed by normal resource acquisition;
-4. committed UsageRecord followed by rebuild and replay of the same occurrence.
+4. UsageRecord(captured) saved before commit dispatch, followed by rebuild and
+   replay that completes the same occurrence;
+5. committed UsageRecord followed by rebuild and replay of the same occurrence.
 
 A future extension should add post-activation crash boundaries around assurance
 reconciliation if that path gains scarce resources or delayed work.
