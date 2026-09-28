@@ -12,6 +12,7 @@ from sose.examples.transit.simulation import (
     ensure_trip_boundaries,
     record_trip_update,
     record_vehicle_position,
+    realtime_vehicle_view,
     reconcile_vehicle_for_trip,
     schedule_reference_block,
     schedule_service_alert,
@@ -81,7 +82,6 @@ def test_stale_position_is_kept_as_evidence_but_not_current_projection():
     assert reconcile_vehicle_for_trip(
         persistence,
         engine,
-        _,
         entities=entities,
         trip_id=entities.trip_a_id,
     )
@@ -89,7 +89,6 @@ def test_stale_position_is_kept_as_evidence_but_not_current_projection():
     newer = record_vehicle_position(
         persistence,
         engine,
-        _,
         entities=entities,
         trip_id=entities.trip_a_id,
         sequence=1,
@@ -101,7 +100,6 @@ def test_stale_position_is_kept_as_evidence_but_not_current_projection():
     stale = record_vehicle_position(
         persistence,
         engine,
-        _,
         entities=entities,
         trip_id=entities.trip_a_id,
         sequence=2,
@@ -134,7 +132,7 @@ def test_trip_update_identity_is_idempotent_but_conflict_is_rejected():
     second = record_trip_update(
         persistence,
         engine,
-        _,
+        backend,
         entities=entities,
         trip_id=entities.trip_a_id,
         sequence=7,
@@ -156,7 +154,7 @@ def test_trip_update_identity_is_idempotent_but_conflict_is_rejected():
 
 
 def test_position_requires_running_trip_and_vehicle_ownership():
-    persistence, entities, engine, _ = _runtime()
+    persistence, entities, engine, backend = _runtime()
 
     with pytest.raises(RuntimeError, match="running trip"):
         record_vehicle_position(
@@ -217,7 +215,7 @@ def test_direct_downstream_delay_is_not_erased_by_upstream_block_update():
     propagated = record_trip_update(
         persistence,
         engine,
-        _,
+        backend,
         entities=entities,
         trip_id=entities.trip_a_id,
         sequence=1,
@@ -233,7 +231,7 @@ def test_direct_downstream_delay_is_not_erased_by_upstream_block_update():
 
 
 def test_service_alert_replay_rejects_conflicting_time_range():
-    persistence, entities, engine, _ = _runtime()
+    persistence, entities, engine, backend = _runtime()
     start_at = ORIGIN + timedelta(minutes=30)
     end_at = ORIGIN + timedelta(hours=2)
     first = schedule_service_alert(
@@ -545,3 +543,41 @@ def test_reduced_running_projection_completes_trip_when_new_end_is_past():
     assert vehicle is not None and vehicle.state == "available"
     assert vehicle.attributes["active_trip_id"] is None
 
+
+
+def test_realtime_view_suppresses_position_after_freshness_window():
+    persistence, entities, engine, backend = _runtime()
+    ensure_trip_boundaries(persistence, engine, trip_id=entities.trip_a_id)
+    backend.run_until(TRIP_A_START)
+    assert reconcile_vehicle_for_trip(
+        persistence, engine, entities=entities, trip_id=entities.trip_a_id
+    )
+    observed_at = TRIP_A_START + timedelta(minutes=1)
+    position = record_vehicle_position(
+        persistence,
+        engine,
+        entities=entities,
+        trip_id=entities.trip_a_id,
+        sequence=91,
+        observed_at=observed_at,
+        stop_sequence=2,
+        latitude=-16.68,
+        longitude=-49.25,
+    )
+    assert position is not None
+
+    fresh = realtime_vehicle_view(
+        persistence,
+        entities=entities,
+        as_of=observed_at + timedelta(seconds=90),
+    )
+    stale = realtime_vehicle_view(
+        persistence,
+        entities=entities,
+        as_of=observed_at + timedelta(seconds=91),
+    )
+    assert fresh["stale"] is False
+    assert fresh["position"] is not None
+    assert stale["stale"] is True
+    assert stale["position"] is None
+    assert persistence.entity("transit_vehicle_position", position.id) is not None
