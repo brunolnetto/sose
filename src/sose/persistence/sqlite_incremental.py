@@ -49,51 +49,73 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             )
             """
         )
-        columns = {
-            str(row[1])
-            for row in self._connection.execute(
-                "PRAGMA table_info(sose_record_meta)"
-            ).fetchall()
-        }
-        row = self._connection.execute(
-            "SELECT schema_version FROM sose_record_meta WHERE singleton = 1"
-        ).fetchone()
-        if row is None:
-            self._connection.execute(
-                """
-                INSERT INTO sose_record_meta(singleton, schema_version, revision)
-                VALUES (1, ?, 0)
-                """,
-                (_SCHEMA_VERSION,),
-            )
-        else:
+        # Bootstrap and migration share the same writer lock as normal
+        # transactions. This makes simultaneous adapter construction safe and
+        # removes the check-then-insert / check-then-migrate races.
+        self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            columns = {
+                str(row[1])
+                for row in self._connection.execute(
+                    "PRAGMA table_info(sose_record_meta)"
+                ).fetchall()
+            }
+            row = self._connection.execute(
+                "SELECT schema_version FROM sose_record_meta WHERE singleton = 1"
+            ).fetchone()
+
+            if row is None:
+                # A constructor holding BEGIN IMMEDIATE is the only writer, so
+                # the singleton insert is deterministic. OR IGNORE remains
+                # defensive for databases created by older tooling.
+                self._connection.execute(
+                    """
+                    INSERT OR IGNORE INTO sose_record_meta(
+                        singleton,
+                        schema_version,
+                        revision
+                    )
+                    VALUES (1, ?, 0)
+                    """,
+                    (_SCHEMA_VERSION,),
+                )
+                row = self._connection.execute(
+                    """
+                    SELECT schema_version
+                    FROM sose_record_meta
+                    WHERE singleton = 1
+                    """
+                ).fetchone()
+
+            if row is None:  # pragma: no cover - defensive database invariant
+                raise RuntimeError("SQLite incremental metadata bootstrap failed")
+
             version = int(row[0])
             if version == 1:
-                self._connection.execute("BEGIN IMMEDIATE")
-                try:
-                    if "revision" not in columns:
-                        self._connection.execute(
-                            """
-                            ALTER TABLE sose_record_meta
-                            ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
-                            """
-                        )
+                if "revision" not in columns:
                     self._connection.execute(
                         """
-                        UPDATE sose_record_meta
-                        SET schema_version = 2
-                        WHERE singleton = 1
+                        ALTER TABLE sose_record_meta
+                        ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
                         """
                     )
-                    self._connection.commit()
-                except Exception:
-                    self._connection.rollback()
-                    raise
+                self._connection.execute(
+                    """
+                    UPDATE sose_record_meta
+                    SET schema_version = 2
+                    WHERE singleton = 1
+                    """
+                )
             elif version != _SCHEMA_VERSION:
                 raise RuntimeError(
                     "unsupported SQLiteIncrementalPersistence schema version: "
                     f"{version}"
                 )
+
+            self._connection.commit()
+        except Exception:
+            self._connection.rollback()
+            raise
 
         self._revision = -1
         self._refresh_from_db(force=True)
