@@ -18,6 +18,8 @@ EXPECTED_PUBLIC_API = {
     "JSONLJournalPersistence",
     "MemoryPersistence",
     "Persistence",
+    "PersistenceAdapter",
+    "PersistenceRegistry",
     "PreemptiveResourceBackend",
     "RandomSource",
     "RuntimeCounts",
@@ -25,6 +27,7 @@ EXPECTED_PUBLIC_API = {
     "ResourceBackend",
     "SQLiteIncrementalPersistence",
     "SQLitePersistence",
+    "SOSEConfig",
     "Scenario",
     "Scheduler",
     "ScheduledTrigger",
@@ -38,7 +41,11 @@ EXPECTED_PUBLIC_API = {
     "TransitionWeightEffect",
     "UnitOfWork",
     "probabilistic",
+    "build_job_from_config",
+    "build_job_from_file",
+    "builtin_persistence_registry",
     "collect_runtime_diagnostics",
+    "load_sose_config",
     "probabilistic_transitions",
 }
 

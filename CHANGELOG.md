@@ -4,6 +4,10 @@
 
 ### Added
 
+- declarative sose.toml job configuration with domain parameters, persistence
+  adapter selection, runtime backend, and durable job identity;
+- persistence adapter registry for memory, SQLite, incremental SQLite, JSONL,
+  and optional DuckDB;
 - durable recurring SimulationJob orchestration with one logical tick per external trigger, persisted config revisions, pause/resume, and crash-safe position recovery;
 
 - structural copy-on-write UnitOfWork state forks that avoid deep-copying untouched durable records at transaction entry;
