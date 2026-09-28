@@ -467,3 +467,5 @@ def test_insurance_rejects_zero_value_partial_payout():
     assert payment is not None
     assert payment.state == "due"
     assert payment.attributes["paid_amount"] == 0.0
+    assert persistence.resource_demands() == ()
+    assert persistence.resource_reservations() == ()
