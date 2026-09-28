@@ -1,3 +1,4 @@
+from typing import Literal
 from datetime import datetime, timedelta
 from pydantic import Field
 from sose.domain.config import DomainConfig
@@ -11,4 +12,4 @@ class ConstructionConfig(DomainConfig):
     predecessor_completed: bool = True
     auto_seed_material: bool = True
     planned_start_delay: timedelta = Field(default=timedelta(hours=1), gt=timedelta(0))
-    inspection_outcome: str = "pass"
+    inspection_outcome: Literal["pass", "fail"] = "pass"
