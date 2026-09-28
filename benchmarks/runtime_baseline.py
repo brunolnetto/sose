@@ -22,8 +22,10 @@ from sose.examples.tutorial_job.simulation import (
     seed_job,
     start_and_schedule_completion,
 )
+from sose.persistence.jsonl_journal import JSONLJournalPersistence
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
+from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,12 +78,12 @@ def _memory_scheduled_batch(count: int) -> None:
         raise RuntimeError("memory scheduled benchmark left pending work")
 
 
-def _sqlite_scheduled_batch(count: int) -> None:
+def _file_sink_scheduled_batch(count: int, factory, filename: str, prefix: str) -> None:
     with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / "benchmark.sqlite3"
-        persistence = SQLitePersistence(path)
+        path = Path(directory) / filename
+        persistence = factory(path)
         jobs = [
-            seed_job(persistence, job_key=f"sqlite-{index}")
+            seed_job(persistence, job_key=f"{prefix}-{index}")
             for index in range(count)
         ]
         _, engine = build_runtime(persistence)
@@ -98,16 +100,18 @@ def _sqlite_scheduled_batch(count: int) -> None:
             )
         backend.run_until(due_at)
         if persistence.scheduled_work():
-            raise RuntimeError("SQLite scheduled benchmark left pending work")
-        persistence.close()
+            raise RuntimeError(f"{prefix} scheduled benchmark left pending work")
+        close = getattr(persistence, "close", None)
+        if callable(close):
+            close()
 
 
-def _sqlite_reopen(count: int) -> None:
+def _file_sink_reopen(count: int, factory, filename: str, prefix: str) -> None:
     with tempfile.TemporaryDirectory() as directory:
-        path = Path(directory) / "reopen.sqlite3"
-        persistence = SQLitePersistence(path)
+        path = Path(directory) / filename
+        persistence = factory(path)
         jobs = [
-            seed_job(persistence, job_key=f"reopen-{index}")
+            seed_job(persistence, job_key=f"{prefix}-reopen-{index}")
             for index in range(count)
         ]
         _, engine = build_runtime(persistence)
@@ -121,15 +125,73 @@ def _sqlite_reopen(count: int) -> None:
                 job_id=job.id,
                 complete_at=due_at,
             )
-        persistence.close()
+        close = getattr(persistence, "close", None)
+        if callable(close):
+            close()
 
-        reopened = SQLitePersistence(path)
+        reopened = factory(path)
         _, rebuilt = build_runtime(reopened, now=ORIGIN)
         new_backend = SimPyBackend(origin=ORIGIN)
         rebuilt.rebuild_backend(new_backend)
         if len(reopened.scheduled_work()) != count:
-            raise RuntimeError("SQLite reopen benchmark lost scheduled work")
-        reopened.close()
+            raise RuntimeError(f"{prefix} reopen benchmark lost scheduled work")
+        close = getattr(reopened, "close", None)
+        if callable(close):
+            close()
+
+
+def _sqlite_scheduled_batch(count: int) -> None:
+    _file_sink_scheduled_batch(
+        count,
+        SQLitePersistence,
+        "snapshot.sqlite3",
+        "sqlite-snapshot",
+    )
+
+
+def _sqlite_incremental_scheduled_batch(count: int) -> None:
+    _file_sink_scheduled_batch(
+        count,
+        SQLiteIncrementalPersistence,
+        "incremental.sqlite3",
+        "sqlite-incremental",
+    )
+
+
+def _jsonl_scheduled_batch(count: int) -> None:
+    _file_sink_scheduled_batch(
+        count,
+        JSONLJournalPersistence,
+        "journal.jsonl",
+        "jsonl-journal",
+    )
+
+
+def _sqlite_reopen(count: int) -> None:
+    _file_sink_reopen(
+        count,
+        SQLitePersistence,
+        "snapshot-reopen.sqlite3",
+        "sqlite-snapshot",
+    )
+
+
+def _sqlite_incremental_reopen(count: int) -> None:
+    _file_sink_reopen(
+        count,
+        SQLiteIncrementalPersistence,
+        "incremental-reopen.sqlite3",
+        "sqlite-incremental",
+    )
+
+
+def _jsonl_reopen(count: int) -> None:
+    _file_sink_reopen(
+        count,
+        JSONLJournalPersistence,
+        "journal-reopen.jsonl",
+        "jsonl-journal",
+    )
 
 
 def _diagnostics_collection(count: int) -> None:
@@ -219,7 +281,11 @@ def run_suite(*, quick: bool) -> dict[str, object]:
     sizes = {
         "memory_scheduled_batch": 24 if quick else 500,
         "sqlite_scheduled_batch": 8 if quick else 100,
+        "sqlite_incremental_scheduled_batch": 8 if quick else 100,
+        "jsonl_scheduled_batch": 8 if quick else 100,
         "sqlite_reopen": 8 if quick else 100,
+        "sqlite_incremental_reopen": 8 if quick else 100,
+        "jsonl_reopen": 8 if quick else 100,
         "diagnostics_collection": 24 if quick else 500,
         "resource_contention": 32 if quick else 500,
         "priority_store_selection": 32 if quick else 500,
@@ -234,8 +300,24 @@ def run_suite(*, quick: bool) -> dict[str, object]:
             _sqlite_scheduled_batch,
         ),
         (
+            "sqlite_incremental_scheduled_batch",
+            _sqlite_incremental_scheduled_batch,
+        ),
+        (
+            "jsonl_scheduled_batch",
+            _jsonl_scheduled_batch,
+        ),
+        (
             "sqlite_reopen",
             _sqlite_reopen,
+        ),
+        (
+            "sqlite_incremental_reopen",
+            _sqlite_incremental_reopen,
+        ),
+        (
+            "jsonl_reopen",
+            _jsonl_reopen,
         ),
         (
             "diagnostics_collection",
@@ -255,7 +337,7 @@ def run_suite(*, quick: bool) -> dict[str, object]:
         for name, fn in cases
     ]
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "mode": "quick" if quick else "full",
         "environment": {
             "python": sys.version,
