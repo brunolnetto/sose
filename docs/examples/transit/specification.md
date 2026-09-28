@@ -126,7 +126,13 @@ It also records `observed_at`, which is the measurement timestamp.
 
 Occurrence arrival order does not define current truth. A late-arriving older
 measurement is committed to history but does not replace
-`Vehicle.latest_position_id` or `current_stop_sequence`.
+`Vehicle.latest_position_id` or `current_stop_sequence`. Equal observation
+timestamps are resolved deterministically by occurrence sequence (and stable
+identity as the final tie-breaker).
+
+The externally useful realtime view has a 90-second freshness boundary. A stale
+latest observation remains durable evidence but its position is suppressed from
+that view rather than presented as current truth.
 
 New position evidence requires:
 
@@ -179,8 +185,8 @@ runtime rebuild.
 
 TRN-06 — VehiclePositionOccurrence is immutable evidence.
 
-TRN-07 — Observation time, not ingestion order, determines the latest vehicle
-position projection.
+TRN-07 — Observation time, then deterministic occurrence ordering, determines
+the latest vehicle position projection; ingestion order is not authoritative.
 
 TRN-08 — New position evidence requires a running trip and durable vehicle
 ownership.
@@ -196,6 +202,16 @@ state directly.
 
 TRN-12 — One physical vehicle may serve ordered trips over time without
 duplicating vehicle identity.
+
+TRN-13 — Trip and ServiceAlert cancellation remove their pending ScheduledWork
+before entering a final state.
+
+TRN-14 — Realtime position freshness is a read projection; stale observations
+remain immutable durable evidence.
+
+TRN-15 — A newer delay correction whose projected completion is already behind
+the active backend time completes the running trip immediately and releases
+vehicle ownership rather than scheduling work in the past.
 
 ## 10. Happy path
 
@@ -213,7 +229,11 @@ duplicating vehicle identity.
 - trip A delay exceeds its planned inter-trip gap and propagates to trip B;
 - duplicate TripUpdate identity with conflicting delay is rejected;
 - stale VehiclePositionOccurrence is retained without rolling projection back;
+- equal-timestamp observations use deterministic sequence ordering;
+- stale (>90s) position is suppressed from the realtime view without deleting evidence;
 - position evidence before trip/vehicle ownership is rejected;
+- trip/alert cancellation removes future durable boundaries;
+- a reduced projection that moves a running trip's end into the past catches up immediately;
 - finite realtime feed outage blocks new evidence without changing trip state;
 - ServiceAlert activation/clear follows its own time range.
 
