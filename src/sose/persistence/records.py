@@ -139,3 +139,90 @@ def diff_state_records(
         )
 
     return tuple(changes)
+
+
+def changes_for_dirty_records(
+    before: _State,
+    after: _State,
+    dirty_records: Iterable[tuple[str, object]],
+) -> tuple[StateRecordChange, ...]:
+    """Encode only record identities explicitly touched by a UnitOfWork."""
+
+    template = _State()
+    changes: list[StateRecordChange] = []
+
+    for collection, raw_key in sorted(
+        dirty_records,
+        key=lambda item: (item[0], dumps(item[1])),
+    ):
+        before_value = getattr(before, collection)
+        after_value = getattr(after, collection)
+
+        if isinstance(after_value, dict):
+            before_item = before_value.get(raw_key)
+            exists_after = raw_key in after_value
+            after_item = after_value.get(raw_key)
+            if before_item == after_item and (raw_key in before_value) == exists_after:
+                continue
+            encoded_key = dumps(raw_key)
+            if not exists_after:
+                changes.append(
+                    StateRecordChange(
+                        operation="delete",
+                        collection=collection,
+                        key=encoded_key,
+                    )
+                )
+                continue
+            position = list(after_value).index(raw_key)
+            changes.append(
+                StateRecordChange(
+                    operation="upsert",
+                    collection=collection,
+                    key=encoded_key,
+                    position=position,
+                    payload=dumps(after_item),
+                )
+            )
+            continue
+
+        if isinstance(after_value, list):
+            index = int(raw_key)
+            before_item = before_value[index] if index < len(before_value) else None
+            after_item = after_value[index] if index < len(after_value) else None
+            if before_item == after_item and index < len(before_value) == (index < len(after_value)):
+                continue
+            if index >= len(after_value):
+                changes.append(
+                    StateRecordChange(
+                        operation="delete",
+                        collection=collection,
+                        key=str(index),
+                    )
+                )
+                continue
+            changes.append(
+                StateRecordChange(
+                    operation="upsert",
+                    collection=collection,
+                    key=str(index),
+                    position=index,
+                    payload=dumps(after_item),
+                )
+            )
+            continue
+
+        default_value = getattr(template, collection)
+        if before_value == after_value:
+            continue
+        changes.append(
+            StateRecordChange(
+                operation="upsert",
+                collection=collection,
+                key="__scalar__",
+                position=0,
+                payload=dumps(after_value if after_value is not None else default_value),
+            )
+        )
+
+    return tuple(changes)
