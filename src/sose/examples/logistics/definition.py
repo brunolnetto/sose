@@ -8,7 +8,15 @@ def _build(persistence: Persistence, config: LogisticsConfig, now: datetime, tic
     return build_runtime(persistence, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
 
 def _seed(persistence: Persistence, config: LogisticsConfig):
-    return seed_reference(persistence)
+    return seed_reference(
+        persistence,
+        now=config.start_at,
+        service_level=config.service_level,
+        route=config.route,
+        resource_capacity=config.resource_capacity,
+        hub_queue_capacity=config.hub_queue_capacity,
+        pickup_delay=config.pickup_delay,
+    )
 
 definition = DomainDefinition(
     name="logistics",
