@@ -40,6 +40,8 @@ DR_DURATION = timedelta(hours=3)
 class EnergyEntities:
     service_point_id: str
     meter_id: str
+    secondary_service_point_id: str | None = None
+    secondary_meter_id: str | None = None
 
 
 def flow_correlation_id(service_point_id: str) -> str:
@@ -127,34 +129,47 @@ def build_runtime(
 
 def seed_reference(persistence: MemoryPersistence) -> EnergyEntities:
     context, _ = build_runtime(persistence)
-    service_point = context.entities.create(
-        ServicePoint,
-        key=("energy-reference", "service-point-1"),
-        state="energized",
-        attributes={
-            "customer_id": "customer-1",
-            "premise_id": "premise-1",
-            "open_outage_keys": [],
-        },
-    )
-    meter = context.entities.create(
-        Meter,
-        key=("energy-reference", service_point.id, "meter-1"),
-        state="active",
-        attributes={
-            "service_point_id": service_point.id,
-            "serial_number": "MTR-SOSE-001",
-            "quantity_kind": "energy",
-            "unit": "kWh",
-        },
-    )
-    service_point.attributes["meter_id"] = meter.id
+
+    def create_point(ordinal: int) -> tuple[ServicePoint, Meter]:
+        service_point = context.entities.create(
+            ServicePoint,
+            key=("energy-reference", f"service-point-{ordinal}"),
+            state="energized",
+            attributes={
+                "customer_id": f"customer-{ordinal}",
+                "premise_id": f"premise-{ordinal}",
+                "open_outage_keys": [],
+            },
+        )
+        meter = context.entities.create(
+            Meter,
+            key=("energy-reference", service_point.id, f"meter-{ordinal}"),
+            state="active",
+            attributes={
+                "service_point_id": service_point.id,
+                "serial_number": f"MTR-SOSE-{ordinal:03d}",
+                "quantity_kind": "energy",
+                "unit": "kWh",
+            },
+        )
+        service_point.attributes["meter_id"] = meter.id
+        return service_point, meter
+
+    primary_point, primary_meter = create_point(1)
+    secondary_point, secondary_meter = create_point(2)
     with persistence.transaction() as uow:
-        uow.save_entity(service_point)
-        uow.save_entity(meter)
+        for entity in (
+            primary_point,
+            primary_meter,
+            secondary_point,
+            secondary_meter,
+        ):
+            uow.save_entity(entity)
     return EnergyEntities(
-        service_point_id=service_point.id,
-        meter_id=meter.id,
+        service_point_id=primary_point.id,
+        meter_id=primary_meter.id,
+        secondary_service_point_id=secondary_point.id,
+        secondary_meter_id=secondary_meter.id,
     )
 
 
