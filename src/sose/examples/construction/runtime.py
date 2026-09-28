@@ -83,13 +83,14 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    now: datetime = ORIGIN,
     quantity: float = 10.0,
     predecessor_completed: bool = True,
 ) -> ConstructionEntities:
     if quantity <= 0 or quantity > MATERIAL_CAPACITY:
         raise ValueError("quantity must fit construction material capacity")
 
-    context, engine = build_runtime(persistence)
+    context, engine = build_runtime(persistence, now=now)
     predecessor = context.entities.create(
         ConstructionActivity,
         key=("construction-reference", "predecessor"),
