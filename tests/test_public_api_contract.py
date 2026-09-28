@@ -5,6 +5,7 @@ EXPECTED_PUBLIC_API = {
     "AttributeEffect",
     "CompositeEffect",
     "ContainerBackend",
+    "DiagnosticIssue",
     "DomainRegistry",
     "Engine",
     "Entity",
@@ -14,6 +15,8 @@ EXPECTED_PUBLIC_API = {
     "Persistence",
     "PreemptiveResourceBackend",
     "RandomSource",
+    "RuntimeCounts",
+    "RuntimeDiagnostics",
     "ResourceBackend",
     "SQLitePersistence",
     "Scenario",
@@ -27,6 +30,7 @@ EXPECTED_PUBLIC_API = {
     "TransitionWeightEffect",
     "UnitOfWork",
     "probabilistic",
+    "collect_runtime_diagnostics",
     "probabilistic_transitions",
 }
 
