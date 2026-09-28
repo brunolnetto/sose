@@ -395,11 +395,17 @@ def check_in(
     engine: Engine,
     *,
     reservation_id_value: str,
+    at: datetime | None = None,
 ) -> Reservation:
     reservation = _reservation(persistence, reservation_id_value)
     booking = _booking(persistence, reservation.id)
     if reservation.state != "confirmed" or booking.state != "confirmed":
         raise RuntimeError("check-in requires confirmed reservation and room booking")
+    at = engine.context.clock.now if at is None else at
+    arrival_at = _at(reservation.attributes["arrival_at"])
+    departure_at = _at(reservation.attributes["departure_at"])
+    if at < arrival_at or at >= departure_at:
+        raise ValueError("check-in must occur during the booked stay interval")
 
     engine.scheduler.cancel_pending(
         entity_type="hospitality_reservation",
@@ -431,11 +437,15 @@ def check_out(
     engine: Engine,
     *,
     reservation_id_value: str,
+    at: datetime | None = None,
 ) -> Reservation:
     reservation = _reservation(persistence, reservation_id_value)
     booking = _booking(persistence, reservation.id)
     if reservation.state != "checked_in" or booking.state != "occupied":
         raise RuntimeError("check-out requires occupied room booking")
+    at = engine.context.clock.now if at is None else at
+    if at < _at(reservation.attributes["arrival_at"]):
+        raise ValueError("check-out cannot occur before arrival")
     _dispatch(
         engine,
         reservation,
@@ -555,10 +565,12 @@ def run_happy_path() -> tuple[MemoryPersistence, HospitalityEntities]:
         persistence,
         engine,
         reservation_id_value=reservation.id,
+        at=ORIGIN + timedelta(days=1),
     )
     check_out(
         persistence,
         engine,
         reservation_id_value=reservation.id,
+        at=ORIGIN + timedelta(days=2),
     )
     return persistence, entities
