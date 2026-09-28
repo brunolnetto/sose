@@ -368,4 +368,26 @@ REFERENCE_CATALOG = (
             ),
         ),
     )
+    ReferenceContract(
+        domain="Field Service / Workforce",
+        package="sose.examples.field_service",
+        docs_dir="docs/examples/field-service",
+        runtime_entrypoints=("build_runtime", "seed_reference"),
+        capabilities=frozenset({
+            C.STATECHARTS, C.HAPPY_PATH, C.SAD_PATHS, C.RESTART_EQUIVALENCE,
+            C.SCENARIOS, C.RESOURCES, C.SCHEDULED_WORK, C.STORE_SELECTION,
+            C.IMMUTABLE_OCCURRENCES,
+        }),
+        evidence=_evidence(
+            statecharts=("tests/test_field_service_statecharts.py",),
+            happy_path=("tests/test_field_service_happy_path.py",),
+            sad_paths=("tests/test_field_service_sad_paths.py",),
+            restart_equivalence=("tests/test_field_service_restart_equivalence.py",),
+            scenarios=("tests/test_field_service_scenarios.py",),
+            resources=("tests/test_field_service_happy_path.py",),
+            scheduled_work=("tests/test_field_service_restart_equivalence.py",),
+            store_selection=("tests/test_field_service_happy_path.py",),
+            immutable_occurrences=("tests/test_field_service_sad_paths.py",),
+        ),
+    ),
 )
