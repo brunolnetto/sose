@@ -9,3 +9,5 @@ class RecordToReportConfig(DomainConfig):
     random_seed: int = 420
     amount: float = Field(default=1000.0, gt=0)
     currency: str = "USD"
+    reconciliation_outcome: str = "match"
+    close_delay: timedelta = Field(default=timedelta(hours=2), gt=timedelta(0))
