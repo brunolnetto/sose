@@ -109,7 +109,15 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         current = self.state()
         if current is None:
             raise RuntimeError(f"job is not initialized: {self.job_id}")
-        resolved = self.definition.parse_config(config)
+        if isinstance(config, dict):
+            previous = self.definition.config_model.model_validate_json(
+                current.config_json
+            )
+            merged = previous.model_dump(mode="python")
+            merged.update(config)
+            resolved = self.definition.parse_config(merged)
+        else:
+            resolved = self.definition.parse_config(config)
         updated = replace(
             current,
             config_json=resolved.model_dump_json(),
@@ -214,7 +222,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                 status="ready",
                 logical_time=committed.logical_time,
                 next_tick=committed.logical_tick,
-                run_count=state.run_count + 1,
+                run_count=max(state.run_count + 1, committed.logical_tick),
                 last_error=None,
             )
             with self.persistence.transaction() as uow:
