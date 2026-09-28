@@ -93,3 +93,42 @@ def restart_reference_runtime(
         restarted_at=restarted_at,
         logical_tick=tick,
     )
+
+
+def restart_reference_runtime_repeated(
+    persistence,
+    build_runtime: RuntimeBuilder,
+    backend_before,
+    *,
+    backend_factory: BackendFactory,
+    count: int,
+    tick: int | None = None,
+    runtime_kwargs: Mapping[str, object] | None = None,
+    drain_boundary: bool = True,
+) -> ReferenceRuntime:
+    """Rebuild the same durable boundary repeatedly.
+
+    This helper is a hardening primitive rather than a domain assertion. It is
+    useful for detecting reconstruction logic that accidentally depends on
+    one-shot backend state or mutates durable truth during rebuild.
+    """
+
+    if count < 1:
+        raise ValueError("repeated restart count must be >= 1")
+
+    current_backend = backend_before
+    result: ReferenceRuntime | None = None
+    for _ in range(count):
+        result = restart_reference_runtime(
+            persistence,
+            build_runtime,
+            current_backend,
+            backend_factory=backend_factory,
+            tick=tick,
+            runtime_kwargs=runtime_kwargs,
+            drain_boundary=drain_boundary,
+        )
+        current_backend = result.backend
+
+    assert result is not None
+    return result
