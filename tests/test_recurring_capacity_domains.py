@@ -2,6 +2,7 @@ from datetime import timedelta
 
 from sose.backends.simpy import SimPyBackend
 from sose.examples.catalog import builtin_catalog
+from sose.examples.hospitality.simulation import reservation_id
 from sose.jobs.runner import SimulationJob
 from sose.persistence.memory import MemoryPersistence
 
@@ -126,21 +127,14 @@ def test_hospitality_recurring_job_follows_arrival_and_departure_boundaries():
     assert len(hotel.attributes["booking_ids"]) == 1
 
     second = job.run_tick(trigger_id="hospitality-2")
-    reservation_id = builtin_catalog().get("hospitality").name
-    reservations = [
-        entity
-        for entity in job.persistence._state.entities.values()
-        if entity.entity_type == "hospitality_reservation"
-    ]
-    assert len(reservations) == 1
+    rid = reservation_id(1)
+    reservation = job.persistence.entity("hospitality_reservation", rid)
+    assert reservation is not None
     assert second.logical_tick == 2
-    assert reservations[0].state == "checked_in"
+    assert reservation.state == "checked_in"
 
     third = job.run_tick(trigger_id="hospitality-3")
-    reservation = job.persistence.entity(
-        "hospitality_reservation",
-        reservations[0].id,
-    )
+    reservation = job.persistence.entity("hospitality_reservation", rid)
     assert third.logical_tick == 3
     assert reservation.state == "checked_out"
 
