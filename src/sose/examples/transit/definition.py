@@ -28,7 +28,7 @@ def _build(
 
 
 def _seed(persistence: Persistence, config: TransitConfig):
-    return seed_reference(
+    entities = seed_reference(
         persistence,
         now=config.start_at,
         vehicle_key=config.vehicle_key,
@@ -37,6 +37,18 @@ def _seed(persistence: Persistence, config: TransitConfig):
         trip_duration=config.trip_duration,
         layover=config.layover,
     )
+    _, engine = build_runtime(
+        persistence,
+        now=config.start_at,
+        step=config.tick_step,
+        random_seed=config.random_seed,
+    )
+    schedule_reference_block(
+        persistence,
+        engine,
+        entities=entities,
+    )
+    return entities
 
 
 def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
