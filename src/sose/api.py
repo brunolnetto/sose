@@ -1,0 +1,59 @@
+"""Stable domain-author API for SOSE.
+
+The symbols exported here are the compatibility-relevant surface for domain
+authors during the v0.8 stabilization line. Lower-level modules remain
+importable, but are classified separately in docs/architecture/public-api.md.
+"""
+
+from sose.backends.base import (
+    ContainerBackend,
+    PreemptiveResourceBackend,
+    ResourceBackend,
+    StoreBackend,
+    TemporalBackend,
+)
+from sose.core.clock import SimulationClock
+from sose.core.context import SimulationContext
+from sose.core.engine import Engine
+from sose.core.randomness import RandomSource
+from sose.domain.entity import Entity
+from sose.domain.registry import DomainRegistry, EntityType
+from sose.persistence.base import Persistence, UnitOfWork
+from sose.persistence.memory import MemoryPersistence
+from sose.probability import probabilistic, probabilistic_transitions
+from sose.scenarios import (
+    AttributeEffect,
+    CompositeEffect,
+    EventTrigger,
+    Scenario,
+    ScheduledTrigger,
+    TickTrigger,
+    TransitionWeightEffect,
+)
+
+__all__ = [
+    "AttributeEffect",
+    "CompositeEffect",
+    "ContainerBackend",
+    "DomainRegistry",
+    "Engine",
+    "Entity",
+    "EntityType",
+    "EventTrigger",
+    "MemoryPersistence",
+    "Persistence",
+    "PreemptiveResourceBackend",
+    "RandomSource",
+    "ResourceBackend",
+    "Scenario",
+    "ScheduledTrigger",
+    "SimulationClock",
+    "SimulationContext",
+    "StoreBackend",
+    "TemporalBackend",
+    "TickTrigger",
+    "TransitionWeightEffect",
+    "UnitOfWork",
+    "probabilistic",
+    "probabilistic_transitions",
+]
