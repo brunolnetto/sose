@@ -31,8 +31,15 @@ from sose.persistence.jsonl_journal import JSONLJournalPersistence
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+from sose.jobs.config import SOSEConfig, load_sose_config
+from sose.jobs.factory import build_job_from_config, build_job_from_file
 from sose.jobs.model import SimulationJobState
 from sose.jobs.runner import JobTickResult, SimulationJob
+from sose.persistence.registry import (
+    PersistenceAdapter,
+    PersistenceRegistry,
+    builtin_persistence_registry,
+)
 from sose.probability import probabilistic, probabilistic_transitions
 from sose.scenarios import (
     AttributeEffect,
@@ -61,6 +68,8 @@ __all__ = [
     "JSONLJournalPersistence",
     "MemoryPersistence",
     "Persistence",
+    "PersistenceAdapter",
+    "PersistenceRegistry",
     "PreemptiveResourceBackend",
     "RandomSource",
     "RuntimeCounts",
@@ -68,6 +77,7 @@ __all__ = [
     "ResourceBackend",
     "SQLiteIncrementalPersistence",
     "SQLitePersistence",
+    "SOSEConfig",
     "Scenario",
     "Scheduler",
     "ScheduledTrigger",
@@ -80,7 +90,11 @@ __all__ = [
     "TickTrigger",
     "TransitionWeightEffect",
     "UnitOfWork",
+    "build_job_from_config",
+    "build_job_from_file",
+    "builtin_persistence_registry",
     "collect_runtime_diagnostics",
+    "load_sose_config",
     "probabilistic",
     "probabilistic_transitions",
 ]
