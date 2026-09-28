@@ -8,7 +8,15 @@ def _build(persistence: Persistence, config: TransitConfig, now: datetime, tick:
     return build_runtime(persistence, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
 
 def _seed(persistence: Persistence, config: TransitConfig):
-    return seed_reference(persistence)
+    return seed_reference(
+        persistence,
+        now=config.start_at,
+        vehicle_key=config.vehicle_key,
+        block_id=config.block_id,
+        first_trip_delay=config.first_trip_delay,
+        trip_duration=config.trip_duration,
+        layover=config.layover,
+    )
 
 definition = DomainDefinition(
     name="transit",
