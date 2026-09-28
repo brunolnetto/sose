@@ -1,3 +1,4 @@
+from typing import Literal
 from datetime import datetime, timedelta
 from pydantic import Field
 from sose.domain.config import DomainConfig
@@ -9,4 +10,4 @@ class ManufacturingConfig(DomainConfig):
     random_seed: int = 84
     quantity: float = Field(default=10.0, gt=0)
     auto_seed_material: bool = True
-    quality_outcome: str = "pass"
+    quality_outcome: Literal["pass", "hold"] = "pass"
