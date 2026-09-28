@@ -139,7 +139,7 @@ class DuckDBPersistence(MemoryPersistence):
     def transaction(self) -> Iterator[MemoryUnitOfWork]:
         self._connection.execute("BEGIN TRANSACTION")
         self._refresh_from_db()
-        before = fork_state(self._state)
+        before = self._state
         try:
             uow = MemoryUnitOfWork(fork_state(self._state), self)
             yield uow
