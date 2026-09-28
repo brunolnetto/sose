@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import math
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
@@ -45,8 +46,18 @@ COLLECTION_FOLLOWUP = timedelta(hours=1)
 
 def _usd_cents(value: float) -> int:
     scaled = float(value) * 100
+    if not math.isfinite(scaled):
+        raise ValueError("USD amount must be finite")
+
+    # Float inputs are accepted only while their representation is precise
+    # enough to distinguish a cent from a true sub-cent amount. Within that
+    # envelope, tolerate ordinary binary noise around the nearest cent.
+    ulp = math.ulp(scaled)
+    if ulp > 1e-4:
+        raise ValueError("USD amount exceeds cent-safe float precision")
     nearest = round(scaled)
-    if abs(scaled - nearest) > 1e-7:
+    tolerance = max(1e-7, 2 * ulp)
+    if abs(scaled - nearest) > tolerance:
         raise ValueError("USD amount must not contain fractional cents")
     return int(nearest)
 

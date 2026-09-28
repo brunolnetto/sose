@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import math
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
@@ -450,8 +451,8 @@ def record_usage(
 ) -> UsageRecord:
     if sequence <= 0:
         raise ValueError("sequence must be positive")
-    if quantity <= 0:
-        raise ValueError("quantity must be positive")
+    if not math.isfinite(float(quantity)) or quantity <= 0:
+        raise ValueError("quantity must be finite and positive")
     service = _service(persistence, entities.product_order_id)
     if service is None:
         raise RuntimeError("usage requires active subscription service")

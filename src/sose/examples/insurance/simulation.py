@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import math
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
@@ -41,8 +42,18 @@ PAYMENT_DELAY = timedelta(hours=2)
 
 def _reference_minor_units(value: float) -> int:
     scaled = float(value) * 100
+    if not math.isfinite(scaled):
+        raise ValueError("Reference payout amount must be finite")
+
+    # Float inputs are accepted only while their representation is precise
+    # enough to distinguish a cent from a true sub-cent amount. Within that
+    # envelope, tolerate ordinary binary noise around the nearest cent.
+    ulp = math.ulp(scaled)
+    if ulp > 1e-4:
+        raise ValueError("Reference payout amount exceeds cent-safe float precision")
     nearest = round(scaled)
-    if abs(scaled - nearest) > 1e-7:
+    tolerance = max(1e-7, 2 * ulp)
+    if abs(scaled - nearest) > tolerance:
         raise ValueError("Reference payout amount must not contain fractional minor units")
     return int(nearest)
 
@@ -739,6 +750,12 @@ def reconcile_payment(
         engine.resources.withdraw(backend, request_id)
         return False
 
+    partial_units = None
+    if partial and payment.state == "due":
+        partial_units = _reference_minor_units(float(payment.attributes["amount"]))
+        if partial_units < 2:
+            raise ValueError("partial payout requires at least two minor units")
+
     reservation = engine.resources.ensure_requested(
         backend,
         resource_name="payment_processor",
@@ -751,8 +768,8 @@ def reconcile_payment(
     correlation_id = flow_correlation_id(claim.id)
     payment = _entity(persistence, "insurance_payment", payment.id)
     if partial and payment.state == "due":
-        total_units = _reference_minor_units(float(payment.attributes["amount"]))
-        payment.attributes["paid_amount"] = (total_units // 2) / 100
+        assert partial_units is not None
+        payment.attributes["paid_amount"] = (partial_units // 2) / 100
         with persistence.transaction() as uow:
             uow.save_entity(payment)
         _dispatch(
