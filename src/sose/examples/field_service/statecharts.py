@@ -32,15 +32,15 @@ class AppointmentChart(StateChart):
     confirmed = State()
     in_progress = State()
     completed = State(final=True)
-    no_access = State(final=True)
+    no_access_recorded = State(final=True)
     missed = State(final=True)
     cancelled = State(final=True)
 
     confirm = proposed.to(confirmed)
     start = confirmed.to(in_progress)
     complete = in_progress.to(completed)
-    no_access = in_progress.to(no_access)
-    miss = confirmed.to(missed) | in_progress.to(no_access)
+    no_access = in_progress.to(no_access_recorded)
+    miss = confirmed.to(missed) | in_progress.to(no_access_recorded)
     cancel = proposed.to(cancelled) | confirmed.to(cancelled)
 
 
