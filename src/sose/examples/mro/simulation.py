@@ -47,10 +47,12 @@ def build_runtime(
     now: datetime = ORIGIN,
     tick: int = 0,
     scenarios=(),
+    step: timedelta = timedelta(hours=1),
+    random_seed: int = 42,
 ) -> tuple[SimulationContext, Engine]:
     context = SimulationContext(
-        clock=SimulationClock(now=now, step=timedelta(hours=1), tick=tick),
-        random=RandomSource(root_seed=42),
+        clock=SimulationClock(now=now, step=step, tick=tick),
+        random=RandomSource(root_seed=random_seed),
         scheduler=Scheduler(),
     )
     registry = DomainRegistry()
@@ -68,6 +70,10 @@ def seed_reference(
     persistence: MemoryPersistence,
     *,
     quantity: float = 1.0,
+    technician_capacity: int = 1,
+    maintenance_bay_capacity: int = 1,
+    spare_part_store_capacity: int = 10,
+    release_delay: timedelta = timedelta(hours=1),
 ) -> MROEntities:
     if quantity <= 0 or quantity > PART_CAPACITY:
         raise ValueError("quantity must fit spare-parts capacity")
@@ -88,12 +94,23 @@ def seed_reference(
     with persistence.transaction() as uow:
         uow.save_entity(wo)
         uow.save_entity(demand)
-        uow.save_resource_definition(ResourceDefinition("technician", capacity=1))
+        uow.save_resource_definition(
+            ResourceDefinition("technician", capacity=technician_capacity)
+        )
 
     engine.preemptive_resources.define(
-        PreemptiveResourceDefinition("maintenance_bay", capacity=1)
+        PreemptiveResourceDefinition(
+            "maintenance_bay",
+            capacity=maintenance_bay_capacity,
+        )
     )
-    engine.stores.define(StoreDefinition("spare_part_lots", kind="fifo", capacity=10))
+    engine.stores.define(
+        StoreDefinition(
+            "spare_part_lots",
+            kind="fifo",
+            capacity=spare_part_store_capacity,
+        )
+    )
     engine.containers.define(
         ContainerDefinition("spare_parts", capacity=PART_CAPACITY, initial=0.0)
     )
@@ -101,7 +118,7 @@ def seed_reference(
     release = context.commands.create(
         "release",
         target=wo,
-        due_at=ORIGIN + timedelta(hours=1),
+        due_at=ORIGIN + release_delay,
         correlation_id=flow_correlation_id(),
         key=("mro-reference", wo.id, "release"),
     )
