@@ -154,6 +154,7 @@ def seed_reference(persistence: MemoryPersistence) -> TransitEntities:
                 "block_delay_seconds": 0,
                 "current_delay_seconds": 0,
                 "latest_update_sequence": 0,
+                "projection_revision": 0,
             },
         )
 
@@ -234,7 +235,13 @@ def _ensure_boundary(
         target=trip,
         due_at=due_at,
         correlation_id=flow_correlation_id(str(trip.attributes["block_id"])),
-        key=("transit-trip", trip.id, name, due_at.isoformat()),
+        key=(
+            "transit-trip",
+            trip.id,
+            name,
+            due_at.isoformat(),
+            int(trip.attributes.get("projection_revision", 0)),
+        ),
     )
     engine.context.schedules.at(due_at, command=command)
 
@@ -462,6 +469,10 @@ def _apply_trip_projection(
     trip.attributes["current_delay_seconds"] = effective
     trip.attributes["projected_start_at"] = projected_start.isoformat()
     trip.attributes["projected_end_at"] = projected_end.isoformat()
+    if projection_changed:
+        trip.attributes["projection_revision"] = (
+            int(trip.attributes.get("projection_revision", 0)) + 1
+        )
     if latest_update_sequence is not None:
         trip.attributes["latest_update_sequence"] = int(latest_update_sequence)
     with persistence.transaction() as uow:
@@ -538,6 +549,8 @@ def _apply_trip_projection(
             _reschedule_trip_boundaries(
                 persistence,
                 engine,
+                backend,
+                entities=entities,
                 trip_id=trip.id,
             )
     return _trip(persistence, trip.id)
@@ -718,6 +731,7 @@ def _reconcile_vehicle_position_projection(
             return
     vehicle.attributes["latest_position_id"] = position.id
     vehicle.attributes["latest_position_observed_at"] = observed_at.isoformat()
+    vehicle.attributes["latest_position_sequence"] = int(position.attributes["sequence"])
     vehicle.attributes["current_stop_sequence"] = int(
         position.attributes["stop_sequence"]
     )
