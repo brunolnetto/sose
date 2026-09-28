@@ -741,6 +741,12 @@ def reconcile_payment(
         engine.resources.withdraw(backend, request_id)
         return False
 
+    partial_units = None
+    if partial and payment.state == "due":
+        partial_units = _reference_minor_units(float(payment.attributes["amount"]))
+        if partial_units < 2:
+            raise ValueError("partial payout requires at least two minor units")
+
     reservation = engine.resources.ensure_requested(
         backend,
         resource_name="payment_processor",
@@ -753,10 +759,8 @@ def reconcile_payment(
     correlation_id = flow_correlation_id(claim.id)
     payment = _entity(persistence, "insurance_payment", payment.id)
     if partial and payment.state == "due":
-        total_units = _reference_minor_units(float(payment.attributes["amount"]))
-        if total_units < 2:
-            raise ValueError("partial payout requires at least two minor units")
-        payment.attributes["paid_amount"] = (total_units // 2) / 100
+        assert partial_units is not None
+        payment.attributes["paid_amount"] = (partial_units // 2) / 100
         with persistence.transaction() as uow:
             uow.save_entity(payment)
         _dispatch(
