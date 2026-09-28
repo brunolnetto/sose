@@ -22,6 +22,7 @@ def test_realtime_outage_blocks_new_update_without_faking_trip_state():
     assert record_trip_update(
         persistence,
         engine,
+        backend,
         entities=entities,
         trip_id=entities.trip_a_id,
         sequence=1,
@@ -39,6 +40,7 @@ def test_realtime_outage_blocks_new_update_without_faking_trip_state():
     update = record_trip_update(
         persistence,
         engine,
+        backend,
         entities=entities,
         trip_id=entities.trip_a_id,
         sequence=1,
