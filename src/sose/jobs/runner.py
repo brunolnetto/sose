@@ -20,6 +20,7 @@ class JobTickResult:
     logical_time: datetime
     logical_tick: int
     run_count: int
+    trigger_id: str | None = None
 
 
 class SimulationJob(Generic[ConfigT, SeedT]):
@@ -150,10 +151,25 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             uow.save_job_state(updated)
         return updated
 
+    def _result_from_state(
+        self,
+        state: SimulationJobState,
+    ) -> JobTickResult:
+        return JobTickResult(
+            job_id=self.job_id,
+            domain_name=self.definition.name,
+            config_revision=state.config_revision,
+            logical_time=state.logical_time,
+            logical_tick=state.next_tick,
+            run_count=state.run_count,
+            trigger_id=state.last_completed_trigger_id,
+        )
+
     def run_tick(
         self,
         *,
         triggered_at: datetime | None = None,
+        trigger_id: str | None = None,
     ) -> JobTickResult:
         state = self.state()
         if state is None:
@@ -161,11 +177,40 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         elif not state.initialized:
             state = self._finish_initialization(state)
 
-        if state.status == "paused":
-            raise RuntimeError(f"job is paused: {self.job_id}")
+        effective_trigger_id = trigger_id or (
+            f"{self.job_id}:tick:{state.next_tick}:run:{state.run_count + 1}"
+        )
+
+        # Claim the external trigger durably before reconstructing/running the
+        # backend. Independent workers therefore cannot execute the same job
+        # concurrently, and a repeated completed trigger is idempotent.
+        with self.persistence.transaction() as uow:
+            latest = uow.get_job_state(self.job_id)
+            if latest is None:
+                raise RuntimeError(f"job disappeared before trigger claim: {self.job_id}")
+
+            if latest.last_completed_trigger_id == effective_trigger_id:
+                return self._result_from_state(latest)
+
+            if latest.status == "paused":
+                raise RuntimeError(f"job is paused: {self.job_id}")
+            if latest.status == "running":
+                raise RuntimeError(
+                    f"job is already running: {self.job_id} "
+                    f"(trigger={latest.active_trigger_id!r})"
+                )
+
+            claimed = replace(
+                latest,
+                status="running",
+                active_trigger_id=effective_trigger_id,
+                last_triggered_at=triggered_at or latest.logical_time,
+                last_error=None,
+            )
+            uow.save_job_state(claimed)
 
         config = self.definition.config_model.model_validate_json(
-            state.config_json
+            claimed.config_json
         )
 
         # Durable simulation position wins over job metadata after a crash. A
@@ -177,14 +222,14 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         logical_tick = 0 if position is None else position.logical_tick
 
         running = replace(
-            state,
-            status="running",
+            claimed,
             logical_time=logical_time,
             next_tick=logical_tick,
-            last_triggered_at=triggered_at or logical_time,
-            last_error=None,
         )
         with self.persistence.transaction() as uow:
+            latest = uow.get_job_state(self.job_id)
+            if latest is None or latest.active_trigger_id != effective_trigger_id:
+                raise RuntimeError(f"job trigger ownership was lost: {self.job_id}")
             uow.save_job_state(running)
 
         try:
@@ -208,7 +253,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                     engine,
                     backend,
                     config,
-                    state.bootstrap_state,
+                    running.bootstrap_state,
                 )
                 if callable(run_until):
                     run_until(context.clock.now)
@@ -222,20 +267,18 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                 status="ready",
                 logical_time=committed.logical_time,
                 next_tick=committed.logical_tick,
-                run_count=max(state.run_count + 1, committed.logical_tick),
+                run_count=max(running.run_count + 1, committed.logical_tick),
+                active_trigger_id=None,
+                last_completed_trigger_id=effective_trigger_id,
                 last_error=None,
             )
             with self.persistence.transaction() as uow:
+                latest = uow.get_job_state(self.job_id)
+                if latest is None or latest.active_trigger_id != effective_trigger_id:
+                    raise RuntimeError(f"job trigger ownership was lost: {self.job_id}")
                 uow.save_job_state(completed)
 
-            return JobTickResult(
-                job_id=self.job_id,
-                domain_name=self.definition.name,
-                config_revision=completed.config_revision,
-                logical_time=completed.logical_time,
-                logical_tick=completed.next_tick,
-                run_count=completed.run_count,
-            )
+            return self._result_from_state(completed)
         except Exception as exc:
             latest = self.state() or running
             failed = replace(
