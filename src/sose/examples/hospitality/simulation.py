@@ -325,7 +325,7 @@ def create_hold(
     return reservation
 
 
-def confirm_reservation_entity(
+def confirm_reservation(
     persistence: MemoryPersistence,
     engine: Engine,
     *,
@@ -461,7 +461,7 @@ def check_out(
     return _reservation_entity(persistence, reservation.id)
 
 
-def cancel_reservation_entity(
+def cancel_reservation(
     persistence: MemoryPersistence,
     engine: Engine,
     *,
@@ -556,7 +556,7 @@ def run_happy_path() -> tuple[MemoryPersistence, HospitalityEntities]:
         arrival_at=ORIGIN + timedelta(days=1),
         departure_at=ORIGIN + timedelta(days=2),
     )
-    confirm_reservation_entity(
+    confirm_reservation(
         persistence,
         engine,
         reservation_id_value=reservation.id,
