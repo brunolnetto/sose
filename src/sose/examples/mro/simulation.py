@@ -70,6 +70,7 @@ def seed_reference(
     persistence: MemoryPersistence,
     *,
     quantity: float = 1.0,
+    now: datetime = ORIGIN,
     technician_capacity: int = 1,
     maintenance_bay_capacity: int = 1,
     spare_part_store_capacity: int = 10,
@@ -78,7 +79,7 @@ def seed_reference(
     if quantity <= 0 or quantity > PART_CAPACITY:
         raise ValueError("quantity must fit spare-parts capacity")
 
-    context, engine = build_runtime(persistence)
+    context, engine = build_runtime(persistence, now=now)
     wo = context.entities.create(
         WorkOrder,
         key=("mro-reference", "wo-1"),
@@ -118,7 +119,7 @@ def seed_reference(
     release = context.commands.create(
         "release",
         target=wo,
-        due_at=ORIGIN + release_delay,
+        due_at=now + release_delay,
         correlation_id=flow_correlation_id(),
         key=("mro-reference", wo.id, "release"),
     )
