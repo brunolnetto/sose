@@ -114,6 +114,7 @@ jobs:
           assert "Engine" in sose.api.__all__
           print(f"validated installed sose {sose.__version__}")
           PY
+          /tmp/sose-wheel-smoke/bin/sose --help >/dev/null
 
       - name: Upload distributions
         uses: actions/upload-artifact@v7
