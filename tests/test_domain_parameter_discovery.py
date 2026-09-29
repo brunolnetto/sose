@@ -142,6 +142,7 @@ def test_builtin_parameter_discovery_exposes_runtime_vs_bootstrap_mutability():
     assert by_name["random_seed"]["mutability"] == "runtime"
     assert by_name["start_at"]["mutability"] == "bootstrap"
     assert by_name["quantity"]["mutability"] == "bootstrap"
+    assert by_name["auto_seed_spare_parts"]["mutability"] == "runtime"
 
 
 def test_runtime_mutable_fields_must_exist_on_config_model():
