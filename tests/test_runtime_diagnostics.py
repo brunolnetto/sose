@@ -114,3 +114,61 @@ def test_diagnostics_are_deterministic_for_same_durable_truth():
     )
 
     assert engine.diagnostics() == engine.diagnostics()
+
+
+def test_diagnostics_reports_failed_sink_delivery():
+    from sose.jobs.model import SimulationJobState
+    from sose.sinks.model import AnalyticalBatch, SinkDelivery
+    from sose.core.events import DomainEvent
+
+    persistence = MemoryPersistence()
+    event = DomainEvent(
+        event_id="sink-event",
+        name="changed",
+        entity_type="demo",
+        entity_id="1",
+        occurred_at=ORIGIN,
+        tick=1,
+    )
+    batch = AnalyticalBatch(
+        batch_id="batch-failed",
+        job_id="job-1",
+        domain_name="demo",
+        config_revision=1,
+        logical_tick=1,
+        logical_time=ORIGIN,
+        from_event_offset=0,
+        to_event_offset=1,
+        events=(event,),
+    )
+    with persistence.transaction() as uow:
+        uow.save_job_state(
+            SimulationJobState(
+                job_id="job-1",
+                domain_name="demo",
+                config_json='{"start_at":"2026-01-01T00:00:00Z"}',
+                config_revision=1,
+                status="ready",
+                initialized=True,
+                logical_time=ORIGIN,
+                next_tick=1,
+            )
+        )
+        uow.save_sink_delivery(
+            SinkDelivery(
+                delivery_id="delivery-failed",
+                sink_name="warehouse",
+                batch=batch,
+                attempts=1,
+                last_error="RuntimeError: unavailable",
+            )
+        )
+
+    diagnostics = collect_runtime_diagnostics(persistence)
+
+    assert not diagnostics.healthy
+    assert diagnostics.counts.sink_deliveries_pending == 1
+    assert diagnostics.counts.sink_deliveries_failed == 1
+    assert [issue.code for issue in diagnostics.issues] == [
+        "sink.delivery_failed",
+    ]
