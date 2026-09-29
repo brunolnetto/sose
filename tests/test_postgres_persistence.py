@@ -65,9 +65,15 @@ def test_postgres_independent_connections_commit_disjoint_records_concurrently()
     seed.close()
 
     barrier = Barrier(2)
+    after_commit = Barrier(2)
     errors: list[BaseException] = []
+    cross_observations: dict[str, object] = {}
 
-    def worker(entity_id: str, worker_name: str) -> None:
+    def worker(
+        entity_id: str,
+        worker_name: str,
+        other_entity_id: str,
+    ) -> None:
         persistence = PostgresPersistence(DSN, namespace=namespace)
         try:
             with persistence.transaction() as uow:
@@ -77,13 +83,24 @@ def test_postgres_independent_connections_commit_disjoint_records_concurrently()
                 entity.attributes["worker"] = worker_name
                 entity.version += 1
                 uow.save_entity(entity)
+
+            after_commit.wait(timeout=10)
+            other = persistence.entity("postgres_test", other_entity_id)
+            assert other is not None
+            cross_observations[worker_name] = other.attributes["worker"]
         except BaseException as exc:  # pragma: no cover - surfaced below
             errors.append(exc)
         finally:
             persistence.close()
 
-    left = Thread(target=worker, args=("entity-1", "left"))
-    right = Thread(target=worker, args=("entity-2", "right"))
+    left = Thread(
+        target=worker,
+        args=("entity-1", "left", "entity-2"),
+    )
+    right = Thread(
+        target=worker,
+        args=("entity-2", "right", "entity-1"),
+    )
     left.start()
     right.start()
     left.join(timeout=20)
@@ -92,6 +109,10 @@ def test_postgres_independent_connections_commit_disjoint_records_concurrently()
     assert not left.is_alive()
     assert not right.is_alive()
     assert errors == []
+    assert cross_observations == {
+        "left": "right",
+        "right": "left",
+    }
 
     reopened = PostgresPersistence(DSN, namespace=namespace)
     first = reopened.entity("postgres_test", "entity-1")
