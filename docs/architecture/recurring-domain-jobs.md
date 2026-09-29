@@ -113,3 +113,29 @@ presence of the hook and representative multi-trigger progression.
 
 End-to-end helpers remain useful as compact specifications and regression
 fixtures. They are no longer the only way to execute a Reference operationally.
+
+
+## Runtime configuration between triggers
+
+A recurring job resolves the latest durable `config_json` at each trigger.
+Therefore a successful `sose apply` between completed triggers changes the
+configuration used by the next `reconcile_tick()` without reseeding the
+domain or resetting `SimulationPosition`.
+
+Only fields declared in `DomainDefinition.runtime_mutable_fields` may change
+after initialization. This distinction is intentionally stricter than allowing
+arbitrary configuration replacement:
+
+```text
+bootstrap field change
+    -> rejected
+
+runtime field change
+    -> config_revision + 1
+    -> next trigger uses new value
+    -> existing durable truth preserved
+```
+
+A domain-level `auto_progress_*` control pauses that domain reconciler while
+the generic job may continue advancing logical time. `job.pause()`, by
+contrast, stops the recurring job itself. These are different controls.
