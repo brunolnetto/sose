@@ -1,14 +1,5 @@
-from .base import AnalyticalSink, SinkBinding
-from .jsonl import JSONLAnalyticalSink
-from .model import AnalyticalBatch, SinkCheckpoint, SinkDelivery
-from .outbox import SinkOutbox
+"""Analytical output sink package.
 
-__all__ = [
-    "AnalyticalBatch",
-    "AnalyticalSink",
-    "JSONLAnalyticalSink",
-    "SinkBinding",
-    "SinkCheckpoint",
-    "SinkDelivery",
-    "SinkOutbox",
-]
+Concrete sinks and the durable outbox are imported explicitly to keep the
+persistence protocol free of package-initialization cycles.
+"""
