@@ -3,6 +3,8 @@ import sose.api as api
 
 EXPECTED_PUBLIC_API = {
     "AttributeEffect",
+    "AnalyticalSink",
+    "AnalyticalBatch",
     "CompositeEffect",
     "ContainerBackend",
     "DiagnosticIssue",
@@ -39,6 +41,9 @@ EXPECTED_PUBLIC_API = {
     "SimulationJob",
     "SimulationJobState",
     "SimulationContext",
+    "SinkAdapter",
+    "SinkBinding",
+    "SinkRegistry",
     "StoreBackend",
     "TemporalBackend",
     "TickTrigger",
@@ -48,6 +53,7 @@ EXPECTED_PUBLIC_API = {
     "build_job_from_config",
     "build_job_from_file",
     "builtin_persistence_registry",
+    "builtin_sink_registry",
     "collect_runtime_diagnostics",
     "inspect_job_file_health",
     "inspect_job_health",
