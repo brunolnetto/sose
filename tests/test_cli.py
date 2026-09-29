@@ -216,3 +216,22 @@ id = "sink-validation"
     assert run_cli(["validate", "--config", str(config)]) == 2
     captured = capsys.readouterr()
     assert "unknown sink adapter" in captured.err
+
+
+def test_cli_describes_domain_parameters(capsys):
+    assert run_cli(["domains", "--name", "mro"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["name"] == "mro"
+    assert payload["config_model"] == "MROConfig"
+    assert payload["defaults"]["quantity"] == 1.0
+    by_name = {item["name"]: item for item in payload["parameters"]}
+    assert by_name["quantity"]["schema"]["exclusiveMinimum"] == 0
+    assert by_name["technician_capacity"]["schema"]["minimum"] == 1
+
+
+def test_cli_domain_parameter_discovery_rejects_unknown_domain(capsys):
+    assert run_cli(["domains", "--name", "does-not-exist"]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "unknown domain" in captured.err

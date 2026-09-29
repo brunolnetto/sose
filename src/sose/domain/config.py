@@ -65,6 +65,60 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
             return value
         return self.config_model.model_validate(value)
 
+    def describe_config(self) -> dict[str, object]:
+        """Return JSON-serializable parameter metadata for discovery/UIs."""
+
+        # Discovery describes values that callers may submit back through
+        # model_validate(), so use Pydantic's validation-side aliases for the
+        # schema. Serialization aliases can intentionally differ.
+        schema = self.config_model.model_json_schema(
+            mode="validation",
+            by_alias=True,
+        )
+        required = set(schema.get("required", ()))
+        properties = schema.get("properties", {})
+
+        # model_dump(by_alias=True) follows serialization aliases and therefore
+        # cannot be joined directly to a validation-mode schema. Preserve field
+        # order and pair each schema property with the field's Python attribute
+        # value instead. Pydantic emits model properties in model-field order.
+        instance = self.default_config()
+        model_field_names = tuple(self.config_model.model_fields)
+        property_names = tuple(properties)
+        if len(model_field_names) != len(property_names):
+            raise RuntimeError(
+                "domain config discovery cannot align model fields with JSON schema"
+            )
+        field_defaults = instance.model_dump(mode="json")
+        defaults = {
+            property_name: field_defaults[field_name]
+            for field_name, property_name in zip(
+                model_field_names,
+                property_names,
+                strict=True,
+            )
+        }
+
+        parameters: list[dict[str, object]] = []
+        for name, field_schema in properties.items():
+            parameters.append(
+                {
+                    "name": name,
+                    "required": name in required,
+                    "default": defaults.get(name),
+                    "schema": field_schema,
+                }
+            )
+
+        return {
+            "name": self.name,
+            "description": self.description,
+            "config_model": self.config_model.__name__,
+            "defaults": defaults,
+            "parameters": parameters,
+            "$defs": schema.get("$defs", {}),
+        }
+
 
 class DomainCatalog:
     def __init__(self) -> None:
