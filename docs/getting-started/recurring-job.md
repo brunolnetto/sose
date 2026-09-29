@@ -36,6 +36,8 @@ backend = "simpy"
 
 [job]
 id = "mro-recurring"
+ticks_per_trigger = 1
+max_ticks_per_trigger = 100
 ```
 
 Load and run exactly one tick:
@@ -44,10 +46,28 @@ Load and run exactly one tick:
 from sose.api import build_job_from_file
 
 job = build_job_from_file("sose.toml")
-result = job.run_tick(trigger_id="scheduler-run-2026-09-28T18:00")
+result = job.run_tick(trigger_id="manual-tick-001")
 ```
 
-A scheduler should invoke the same job again for the next tick.
+For recurring orchestration, prefer a durable trigger batch:
+
+```python
+result = job.run_trigger(
+    trigger_id="airflow-run-2026-09-28T18:00",
+)
+```
+
+The batch advances `ticks_per_trigger` logical ticks from `sose.toml`.
+`max_ticks_per_trigger` is an explicit safety bound. A caller may override
+the batch size for one trigger with `ticks=N`, but never above that bound.
+
+The same operation is available from the CLI:
+
+```bash
+sose trigger \
+  --config sose.toml \
+  --trigger-id airflow-run-2026-09-28T18:00
+```
 
 The job does not require one long-lived Python process. Its durable
 `SimulationJobState`, domain state, ScheduledWork, and SimulationPosition are
@@ -174,86 +194,3 @@ job.run_tick(
 
 This prevents two scheduler invocations from unintentionally advancing the same
 job twice.
-
-
-## Doctor
-
-Before advancing a production job, inspect the declarative configuration and
-durable checkpoint without mutating either:
-
-```bash
-sose doctor --config sose.toml
-```
-
-The command checks:
-
-- domain configuration validity;
-- persistence adapter resolution;
-- durable job/domain identity;
-- declarative-vs-durable config drift;
-- job status and unresolved trigger ownership;
-- SimulationJobState vs SimulationPosition tick/time coherence;
-- runtime diagnostic issue codes.
-
-A fresh valid configuration with no initialized job is healthy.
-
-If `sose.toml` differs from the durable configuration revision, doctor reports
-`job.config_drift`. Apply the change explicitly:
-
-```bash
-sose apply --config sose.toml
-```
-
-Then rerun doctor.
-
-A non-healthy doctor report exits with status 1. Configuration/loading failures
-still use the normal CLI error status 2.
-
-## Minimal operational loop
-
-SOSE itself intentionally advances **one durable tick per invocation**:
-
-```text
-external scheduler
-      |
-      v
-sose doctor
-      |
-      v
-sose run --trigger-id <stable scheduler run id>
-      |
-      v
-checkpoint and process exit
-```
-
-This makes scheduler ownership explicit. Cron, Airflow, Databricks Jobs,
-Kubernetes CronJobs, or another orchestrator owns wall-clock recurrence; SOSE
-owns logical tick progression and idempotent recovery.
-
-
-## Persistence capability requirements
-
-A job can make its storage assumptions explicit:
-
-```toml
-[persistence]
-adapter = "sqlite_incremental"
-require = [
-  "process_durable",
-  "transactional_commits",
-  "incremental_updates",
-]
-```
-
-`sose validate`, `sose doctor`, and job construction all enforce these
-requirements.
-
-List the tested capability surface of the installed adapters with:
-
-```bash
-sose persistence
-```
-
-This becomes especially important when selecting remote warehouses. A job that
-requires concurrent writers must not silently run on a target whose adapter only
-supports serialized writers.
