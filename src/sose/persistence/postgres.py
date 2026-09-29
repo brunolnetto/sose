@@ -220,7 +220,11 @@ class PostgresPersistence(MemoryPersistence):
                     next_revision = int(row[0])
                 else:
                     next_revision = self._revision
-            self._revision = next_revision
+            # A concurrent writer may have committed records that were not
+            # present in this transaction's in-memory snapshot before our
+            # revision increment. Never claim the local cache represents the
+            # returned global revision; force the next read to refresh.
+            self._revision = -1 if changed else next_revision
         except Exception:
             if before is not None:
                 self._state = before
