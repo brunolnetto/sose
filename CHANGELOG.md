@@ -4,6 +4,9 @@
 
 ### Added
 
+- persistence capability contract and declarative capability requirements for
+  storage targets;
+- CLI persistence metadata describing tested adapter guarantees;
 - read-only `sose doctor` command for config drift, durable checkpoint,
   unresolved-trigger, and runtime consistency checks;
 - end-to-end recurring-job acceptance flow from scaffolded MRO config through

@@ -44,6 +44,7 @@ from sose.jobs.runner import JobTickResult, SimulationJob
 from sose.jobs.scaffold import render_sose_toml, write_sose_toml
 from sose.persistence.registry import (
     PersistenceAdapter,
+    PersistenceCapabilities,
     PersistenceRegistry,
     builtin_persistence_registry,
 )
@@ -78,6 +79,7 @@ __all__ = [
     "MemoryPersistence",
     "Persistence",
     "PersistenceAdapter",
+    "PersistenceCapabilities",
     "PersistenceRegistry",
     "PreemptiveResourceBackend",
     "RandomSource",

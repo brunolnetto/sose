@@ -54,6 +54,10 @@ def inspect_job_health(
     resolved = definition.parse_config(config.domain.parameters)
 
     registry = persistence_registry or builtin_persistence_registry()
+    registry.require(
+        config.persistence.adapter,
+        *config.persistence.require,
+    )
     persistence = registry.create(
         config.persistence.adapter,
         config.persistence.options,
