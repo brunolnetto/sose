@@ -119,3 +119,23 @@ This is evidence for a future PostgreSQL adapter only when real adoption needs
 sustained concurrent writers, remote durability, row-level concurrency, or HA.
 It is not evidence that PostgreSQL should redefine the Persistence semantic
 contract.
+
+
+## PostgreSQL implemented
+
+The product requirement to select PostgreSQL as an operational store now
+provides the concrete adoption evidence that previously triggered the adapter.
+
+The implementation qualifies through:
+
+- unchanged PersistenceConformanceSuite;
+- remote process-independent durability;
+- close/reopen + backend reconstruction;
+- dirty-record incremental writes;
+- revision-cache invalidation across independent connections;
+- overlapping disjoint-record writers on a real PostgreSQL CI service.
+
+Same-record optimistic concurrency is intentionally still outside the shared
+Persistence contract. PostgreSQL currently uses last-writer-wins for stale
+same-record writes, matching the documented boundary rather than inventing a
+database-specific CAS rule.
