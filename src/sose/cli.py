@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 
 from sose.jobs.config import load_sose_config
+from sose.jobs.doctor import inspect_job_file_health
 from sose.jobs.factory import build_job_from_file
 from sose.persistence.registry import builtin_persistence_registry
 
@@ -141,6 +142,12 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         _close_persistence(persistence)
 
 
+def _cmd_doctor(args: argparse.Namespace) -> int:
+    report = inspect_job_file_health(args.config)
+    print(_json(report.to_dict()))
+    return 0 if report.healthy else 1
+
+
 def _cmd_domains(args: argparse.Namespace) -> int:
     from sose.examples.catalog import builtin_catalog
 
@@ -223,6 +230,13 @@ def build_parser() -> argparse.ArgumentParser:
     )
     inspect.add_argument("--config", default="sose.toml")
     inspect.set_defaults(handler=_cmd_inspect)
+
+    doctor = subparsers.add_parser(
+        "doctor",
+        help="Validate config and inspect durable job/runtime consistency.",
+    )
+    doctor.add_argument("--config", default="sose.toml")
+    doctor.set_defaults(handler=_cmd_doctor)
 
     domains = subparsers.add_parser(
         "domains",
