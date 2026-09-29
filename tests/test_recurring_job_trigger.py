@@ -219,3 +219,155 @@ def test_old_completed_batch_trigger_remains_idempotent_after_later_batches():
     assert replayed == first
     assert job.state().next_tick == 4
     assert len(job.state().completed_batch_triggers) == 2
+
+
+
+def test_paused_job_cannot_be_poisoned_by_batch_claim():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    job = SimulationJob(
+        job_id="paused-batch",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+    )
+    job.initialize()
+    job.pause()
+
+    with pytest.raises(RuntimeError, match="not idle"):
+        job.run_trigger(trigger_id="scheduler-paused")
+
+    state = job.state()
+    assert state.status == "paused"
+    assert state.active_batch_trigger_id is None
+
+
+def test_unresolved_direct_tick_blocks_batch_claim_without_poisoning_state():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    job = SimulationJob(
+        job_id="direct-before-batch",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+    )
+    job.initialize()
+
+    with persistence.transaction() as uow:
+        current = uow.get_job_state(job.job_id)
+        assert current is not None
+        uow.save_job_state(
+            replace(
+                current,
+                status="failed",
+                phase="advance",
+                active_trigger_id="direct-trigger",
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="not idle"):
+        job.run_trigger(trigger_id="batch-trigger")
+
+    state = job.state()
+    assert state.active_trigger_id == "direct-trigger"
+    assert state.active_batch_trigger_id is None
+
+
+def test_completed_history_is_rechecked_atomically_before_batch_claim(monkeypatch):
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    job = SimulationJob(
+        job_id="atomic-history",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+        ticks_per_trigger=1,
+    )
+    job.initialize({"complete_after": timedelta(hours=5)})
+    completed = job.run_trigger(trigger_id="scheduler-old")
+    current = job.state()
+    stale = replace(
+        current,
+        completed_batch_triggers=(),
+        last_completed_batch_trigger_id=None,
+        last_completed_batch_ticks=0,
+    )
+    monkeypatch.setattr(job, "state", lambda: stale)
+
+    replayed = job.run_trigger(trigger_id="scheduler-old")
+
+    assert replayed == completed
+    assert persistence.simulation_position().logical_tick == 1
+
+
+def test_recovery_uses_persisted_batch_size_after_policy_change():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    attempts = {"count": 0}
+
+    def fail_second(origin):
+        attempts["count"] += 1
+        if attempts["count"] == 2:
+            raise RuntimeError("stop")
+        return SimPyBackend(origin=origin)
+
+    first = SimulationJob(
+        job_id="persisted-batch-size",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=fail_second,
+        ticks_per_trigger=3,
+        max_ticks_per_trigger=3,
+    )
+    first.initialize({"complete_after": timedelta(hours=6)})
+
+    with pytest.raises(RuntimeError, match="stop"):
+        first.run_trigger(trigger_id="scheduler-size")
+
+    resumed = SimulationJob(
+        job_id="persisted-batch-size",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+        ticks_per_trigger=1,
+        max_ticks_per_trigger=1,
+    )
+    recovered = resumed.run_trigger(
+        trigger_id="scheduler-size",
+        recover=True,
+    )
+
+    assert recovered.requested_ticks == 3
+    assert recovered.completed_ticks == 3
+    assert recovered.end_tick == 3
+
+
+def test_active_batch_accepts_only_exact_next_child_trigger_id():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    job = SimulationJob(
+        job_id="exact-child",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+    )
+    job.initialize()
+
+    with persistence.transaction() as uow:
+        current = uow.get_job_state(job.job_id)
+        assert current is not None
+        uow.save_job_state(
+            replace(
+                current,
+                active_batch_trigger_id="batch",
+                active_batch_total_ticks=2,
+                active_batch_completed_ticks=0,
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="expected_child"):
+        job.run_tick(trigger_id="batch:tick:999")
+
+    assert persistence.simulation_position() is None
+    state = job.state()
+    assert state.active_batch_completed_ticks == 0
