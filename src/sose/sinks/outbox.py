@@ -172,8 +172,8 @@ class SinkOutbox:
                     "an earlier delivery is unresolved"
                 )
 
-            uow.save_sink_delivery(completed)
             uow.save_sink_checkpoint(checkpoint)
+            uow.delete_sink_delivery(delivery.delivery_id)
         return completed
 
     def flush(
