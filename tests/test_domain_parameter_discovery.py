@@ -69,3 +69,29 @@ def test_description_preserves_referenced_schema_definitions():
     }
     assert schemas["mode"]["$ref"] == "#/$defs/Mode"
     assert schemas["nested"]["$ref"] == "#/$defs/Nested"
+
+
+def test_description_uses_aliases_consistently_for_defaults_and_schema():
+    from pydantic import Field
+
+    class AliasConfig(DomainConfig):
+        start_at: str = "2026-01-01T00:00:00Z"
+        internal_name: int = Field(default=7, alias="externalName")
+
+    definition = DomainDefinition(
+        name="alias",
+        description="alias discovery test",
+        config_model=AliasConfig,
+        build_runtime=lambda persistence, config, now, tick: (None, None),
+        seed=lambda persistence, config: None,
+    )
+
+    description = definition.describe_config()
+    assert description["defaults"]["externalName"] == 7
+    assert "internal_name" not in description["defaults"]
+
+    by_name = {
+        item["name"]: item
+        for item in description["parameters"]
+    }
+    assert by_name["externalName"]["default"] == 7
