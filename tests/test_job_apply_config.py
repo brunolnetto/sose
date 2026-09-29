@@ -164,3 +164,24 @@ def test_apply_config_rejects_bootstrap_only_change_after_initialization():
     assert state is not None
     assert state.config_revision == 1
     assert json.loads(state.config_json)["complete_after"] == "PT2H"
+
+
+def test_mro_runtime_policy_can_change_but_bootstrap_quantity_cannot():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("mro")
+    job = SimulationJob(
+        job_id="mro-config-mutability",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+    )
+    initial = job.initialize()
+
+    changed = job.update_config({"auto_seed_spare_parts": False})
+    assert changed.config_revision == initial.config_revision + 1
+    assert json.loads(changed.config_json)["auto_seed_spare_parts"] is False
+
+    with pytest.raises(ValueError, match="bootstrap-only.*quantity"):
+        job.update_config({"quantity": 2.0})
+
+    assert job.state().config_revision == changed.config_revision
