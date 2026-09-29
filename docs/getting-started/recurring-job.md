@@ -333,3 +333,54 @@ PostgreSQL is an optional extra:
 ```bash
 pip install "sose[postgres]"
 ```
+
+
+## Inspect and edit domain parameters
+
+The declarative file remains the source of desired configuration.
+
+Use:
+
+```bash
+sose config show --config sose.toml
+```
+
+to see the effective values plus each parameter's `runtime` or `bootstrap`
+mutability.
+
+Edit one validated parameter without hand-editing TOML:
+
+```bash
+sose config set auto_complete false --config sose.toml
+sose config set random_seed 99 --config sose.toml
+```
+
+Values are interpreted as JSON when possible, otherwise as strings. This makes
+booleans and numbers ergonomic while still allowing Pydantic-supported strings
+such as ISO-8601 durations.
+
+`config set` changes only the declarative file. It never mutates a durable job
+implicitly.
+
+For an initialized job:
+
+```text
+sose config set ...
+        |
+        v
+sose.toml desired state
+        |
+        | explicit
+        v
+sose apply
+        |
+        v
+durable config revision
+        |
+        v
+next trigger / reconcile_tick
+```
+
+A bootstrap-only field may be edited in the file, but `sose apply` rejects
+that change after initialization. Runtime fields advance `config_revision`
+and affect the next completed-trigger boundary.
