@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Callable, Generic, TypeVar
 
 from sose.domain.config import ConfigT, DomainDefinition, SeedT
-from sose.jobs.model import SimulationJobState
+from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.persistence.base import Persistence
 
 
@@ -265,18 +265,26 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         elif not state.initialized:
             state = self._finish_initialization(state)
 
-        if state.last_completed_batch_trigger_id == trigger_id:
+        completed_record = next(
+            (
+                item
+                for item in state.completed_batch_triggers
+                if item.trigger_id == trigger_id
+            ),
+            None,
+        )
+        if completed_record is not None:
             return JobTriggerResult(
                 job_id=self.job_id,
                 domain_name=self.definition.name,
-                trigger_id=trigger_id,
-                requested_ticks=state.last_completed_batch_ticks,
-                completed_ticks=state.last_completed_batch_ticks,
-                start_tick=state.next_tick - state.last_completed_batch_ticks,
-                end_tick=state.next_tick,
-                config_revision=state.config_revision,
-                logical_time=state.logical_time,
-                run_count=state.run_count,
+                trigger_id=completed_record.trigger_id,
+                requested_ticks=completed_record.requested_ticks,
+                completed_ticks=completed_record.requested_ticks,
+                start_tick=completed_record.start_tick,
+                end_tick=completed_record.end_tick,
+                config_revision=completed_record.config_revision,
+                logical_time=completed_record.logical_time,
+                run_count=completed_record.run_count,
             )
 
         with self.persistence.transaction() as uow:
@@ -348,6 +356,15 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                 raise RuntimeError(
                     f"batch trigger ownership was lost: {self.job_id}"
                 )
+            completed_record = CompletedJobTrigger(
+                trigger_id=trigger_id,
+                requested_ticks=requested_ticks,
+                start_tick=start_tick,
+                end_tick=latest.next_tick,
+                config_revision=latest.config_revision,
+                logical_time=latest.logical_time,
+                run_count=latest.run_count,
+            )
             finished = replace(
                 latest,
                 active_batch_trigger_id=None,
@@ -355,6 +372,10 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                 active_batch_completed_ticks=0,
                 last_completed_batch_trigger_id=trigger_id,
                 last_completed_batch_ticks=requested_ticks,
+                completed_batch_triggers=(
+                    *latest.completed_batch_triggers,
+                    completed_record,
+                ),
             )
             uow.save_job_state(finished)
 
