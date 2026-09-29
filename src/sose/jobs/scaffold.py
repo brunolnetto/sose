@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 import json
 from pathlib import Path
 
@@ -58,15 +59,25 @@ def render_sose_toml(
     ]
     if persistence_adapter == "postgres":
         namespace = "".join(
-            character if character.isalnum() or character == "_" else "_"
+            character
+            if (
+                "A" <= character <= "Z"
+                or "a" <= character <= "z"
+                or "0" <= character <= "9"
+                or character == "_"
+            )
+            else "_"
             for character in resolved_job_id
         )
         if not namespace or namespace[0].isdigit():
             namespace = f"job_{namespace}"
+        if len(namespace) > 40:
+            suffix = sha256(resolved_job_id.encode("utf-8")).hexdigest()[:8]
+            namespace = f"{namespace[:31]}_{suffix}"
         persistence_options.extend(
             [
                 'dsn_env = "SOSE_DATABASE_URL"',
-                f"namespace = {_toml_value(namespace[:40])}",
+                f"namespace = {_toml_value(namespace)}",
             ]
         )
     else:
