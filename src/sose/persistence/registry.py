@@ -16,9 +16,38 @@ PersistenceFactory = Callable[[dict[str, object], Path], Persistence]
 
 
 @dataclass(frozen=True, slots=True)
+class PersistenceCapabilities:
+    process_durable: bool
+    transactional_commits: bool
+    incremental_updates: bool
+    concurrent_writers: bool
+    remote: bool
+    analytical_reads: bool
+    append_only: bool
+    schema_migrations: bool
+
+    def names(self) -> tuple[str, ...]:
+        return tuple(
+            name
+            for name in (
+                "process_durable",
+                "transactional_commits",
+                "incremental_updates",
+                "concurrent_writers",
+                "remote",
+                "analytical_reads",
+                "append_only",
+                "schema_migrations",
+            )
+            if getattr(self, name)
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class PersistenceAdapter:
     name: str
     factory: PersistenceFactory
+    capabilities: PersistenceCapabilities
     optional_extra: str | None = None
 
 
@@ -34,6 +63,33 @@ class PersistenceRegistry:
     def names(self) -> tuple[str, ...]:
         return tuple(sorted(self._adapters))
 
+    def adapter(self, name: str) -> PersistenceAdapter:
+        try:
+            return self._adapters[name]
+        except KeyError as exc:
+            raise KeyError(f"unknown persistence adapter: {name}") from exc
+
+    def capabilities(self, name: str) -> PersistenceCapabilities:
+        return self.adapter(name).capabilities
+
+    def describe(self) -> tuple[PersistenceAdapter, ...]:
+        return tuple(self._adapters[name] for name in self.names())
+
+    def require(self, name: str, *capabilities: str) -> PersistenceAdapter:
+        adapter = self.adapter(name)
+        missing = [
+            capability
+            for capability in capabilities
+            if not hasattr(adapter.capabilities, capability)
+            or not getattr(adapter.capabilities, capability)
+        ]
+        if missing:
+            raise ValueError(
+                f"persistence adapter {name!r} lacks required capabilities: "
+                + ", ".join(sorted(missing))
+            )
+        return adapter
+
     def create(
         self,
         name: str,
@@ -41,10 +97,7 @@ class PersistenceRegistry:
         *,
         base_dir: Path,
     ) -> Persistence:
-        try:
-            adapter = self._adapters[name]
-        except KeyError as exc:
-            raise KeyError(f"unknown persistence adapter: {name}") from exc
+        adapter = self.adapter(name)
         try:
             return adapter.factory(options or {}, base_dir)
         except ModuleNotFoundError as exc:
@@ -70,6 +123,16 @@ def builtin_persistence_registry() -> PersistenceRegistry:
         PersistenceAdapter(
             "memory",
             lambda options, base_dir: MemoryPersistence(),
+            capabilities=PersistenceCapabilities(
+                process_durable=False,
+                transactional_commits=True,
+                incremental_updates=True,
+                concurrent_writers=False,
+                remote=False,
+                analytical_reads=False,
+                append_only=False,
+                schema_migrations=False,
+            ),
         )
     )
     registry.register(
@@ -77,6 +140,16 @@ def builtin_persistence_registry() -> PersistenceRegistry:
             "sqlite",
             lambda options, base_dir: SQLitePersistence(
                 _resolve_path(options, base_dir, default="sose.sqlite3")
+            ),
+            capabilities=PersistenceCapabilities(
+                process_durable=True,
+                transactional_commits=True,
+                incremental_updates=False,
+                concurrent_writers=False,
+                remote=False,
+                analytical_reads=False,
+                append_only=False,
+                schema_migrations=True,
             ),
         )
     )
@@ -86,6 +159,16 @@ def builtin_persistence_registry() -> PersistenceRegistry:
             lambda options, base_dir: SQLiteIncrementalPersistence(
                 _resolve_path(options, base_dir, default="sose.sqlite3")
             ),
+            capabilities=PersistenceCapabilities(
+                process_durable=True,
+                transactional_commits=True,
+                incremental_updates=True,
+                concurrent_writers=False,
+                remote=False,
+                analytical_reads=False,
+                append_only=False,
+                schema_migrations=True,
+            ),
         )
     )
     registry.register(
@@ -93,6 +176,16 @@ def builtin_persistence_registry() -> PersistenceRegistry:
             "jsonl",
             lambda options, base_dir: JSONLJournalPersistence(
                 _resolve_path(options, base_dir, default="sose.jsonl")
+            ),
+            capabilities=PersistenceCapabilities(
+                process_durable=True,
+                transactional_commits=True,
+                incremental_updates=True,
+                concurrent_writers=False,
+                remote=False,
+                analytical_reads=False,
+                append_only=True,
+                schema_migrations=False,
             ),
         )
     )
@@ -108,6 +201,16 @@ def builtin_persistence_registry() -> PersistenceRegistry:
         PersistenceAdapter(
             "duckdb",
             duckdb_factory,
+            capabilities=PersistenceCapabilities(
+                process_durable=True,
+                transactional_commits=True,
+                incremental_updates=True,
+                concurrent_writers=False,
+                remote=False,
+                analytical_reads=True,
+                append_only=False,
+                schema_migrations=False,
+            ),
             optional_extra="duckdb",
         )
     )

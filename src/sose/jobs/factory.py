@@ -37,6 +37,10 @@ def build_job_from_config(
     domains = builtin_catalog()
     definition = domains.get(config.domain.name)
     registry = persistence_registry or builtin_persistence_registry()
+    registry.require(
+        config.persistence.adapter,
+        *config.persistence.require,
+    )
     persistence = registry.create(
         config.persistence.adapter,
         config.persistence.options,

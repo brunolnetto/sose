@@ -32,12 +32,19 @@ from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 from sose.jobs.config import SOSEConfig, load_sose_config
+from sose.jobs.doctor import (
+    JobDoctorIssue,
+    JobDoctorReport,
+    inspect_job_file_health,
+    inspect_job_health,
+)
 from sose.jobs.factory import build_job_from_config, build_job_from_file
 from sose.jobs.model import SimulationJobState
 from sose.jobs.runner import JobTickResult, JobTriggerResult, SimulationJob
 from sose.jobs.scaffold import render_sose_toml, write_sose_toml
 from sose.persistence.registry import (
     PersistenceAdapter,
+    PersistenceCapabilities,
     PersistenceRegistry,
     builtin_persistence_registry,
 )
@@ -65,12 +72,15 @@ __all__ = [
     "Entity",
     "EntityType",
     "EventTrigger",
+    "JobDoctorIssue",
+    "JobDoctorReport",
     "JobTickResult",
     "JobTriggerResult",
     "JSONLJournalPersistence",
     "MemoryPersistence",
     "Persistence",
     "PersistenceAdapter",
+    "PersistenceCapabilities",
     "PersistenceRegistry",
     "PreemptiveResourceBackend",
     "RandomSource",
@@ -96,6 +106,8 @@ __all__ = [
     "build_job_from_file",
     "builtin_persistence_registry",
     "collect_runtime_diagnostics",
+    "inspect_job_file_health",
+    "inspect_job_health",
     "load_sose_config",
     "probabilistic",
     "probabilistic_transitions",
