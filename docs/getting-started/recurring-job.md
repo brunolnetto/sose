@@ -433,3 +433,81 @@ one bounded tick batch
 
 Timezone-naive timestamps are rejected because they cannot provide a globally
 stable occurrence identity.
+
+
+## MRO runtime configuration across triggers
+
+A durable job may revise **runtime-mutable domain policy** without rewriting the
+already-materialized business world.
+
+For example, initialize MRO without automatic spare-part seeding:
+
+```bash
+sose init \
+  --domain mro \
+  --job-id plant-maintenance \
+  --persistence sqlite_incremental
+
+sose config set quantity 2.0
+sose config set auto_seed_spare_parts false
+```
+
+Run the first scheduler occurrence:
+
+```bash
+sose trigger \
+  --scheduled-for 2026-03-01T09:00:00Z
+```
+
+The scheduled release boundary is committed, but the same durable work order
+waits for material because automatic supply is disabled.
+
+Change desired policy explicitly:
+
+```bash
+sose config set auto_seed_spare_parts true
+sose apply
+```
+
+`sose apply` advances the durable `config_revision`; it does not reseed or
+replace the work order.
+
+The next process/scheduler occurrence:
+
+```bash
+sose trigger \
+  --scheduled-for 2026-03-01T10:00:00Z
+```
+
+reopens persistence, reconstructs runtime from the committed
+`SimulationPosition`, uses the new configuration revision during
+`reconcile_tick`, seeds/consumes the required material, and advances the
+**same** work order.
+
+This is the intended operational contract:
+
+```text
+durable domain truth
+        +
+durable job checkpoint
+        +
+config revision N
+        |
+        v
+scheduler trigger
+        |
+        v
+one bounded logical progression
+        |
+        v
+process exits
+
+config revision N+1
+        |
+        v
+next trigger observes new future policy
+without rewriting prior durable truth
+```
+
+Bootstrap-only parameters such as initial quantity/capacity remain immutable
+after initialization unless a domain defines an explicit migration semantic.
