@@ -251,19 +251,26 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         if not trigger_id:
             raise ValueError("trigger_id cannot be empty")
 
-        requested_ticks = self.ticks_per_trigger if ticks is None else ticks
-        if requested_ticks < 1:
-            raise ValueError("ticks must be >= 1")
-        if requested_ticks > self.max_ticks_per_trigger:
-            raise ValueError(
-                f"ticks exceeds max_ticks_per_trigger={self.max_ticks_per_trigger}"
-            )
-
         state = self.state()
         if state is None:
             state = self.initialize()
         elif not state.initialized:
             state = self._finish_initialization(state)
+
+        if state.active_batch_trigger_id == trigger_id:
+            requested_ticks = state.active_batch_total_ticks
+            if ticks is not None and ticks != requested_ticks:
+                raise RuntimeError(
+                    "cannot recover batch trigger with a different tick count"
+                )
+        else:
+            requested_ticks = self.ticks_per_trigger if ticks is None else ticks
+            if requested_ticks < 1:
+                raise ValueError("ticks must be >= 1")
+            if requested_ticks > self.max_ticks_per_trigger:
+                raise ValueError(
+                    f"ticks exceeds max_ticks_per_trigger={self.max_ticks_per_trigger}"
+                )
 
         completed_record = next(
             (
@@ -294,13 +301,36 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                     f"job disappeared before batch trigger claim: {self.job_id}"
                 )
 
+            completed_record = next(
+                (
+                    item
+                    for item in latest.completed_batch_triggers
+                    if item.trigger_id == trigger_id
+                ),
+                None,
+            )
+            if completed_record is not None:
+                return JobTriggerResult(
+                    job_id=self.job_id,
+                    domain_name=self.definition.name,
+                    trigger_id=completed_record.trigger_id,
+                    requested_ticks=completed_record.requested_ticks,
+                    completed_ticks=completed_record.requested_ticks,
+                    start_tick=completed_record.start_tick,
+                    end_tick=completed_record.end_tick,
+                    config_revision=completed_record.config_revision,
+                    logical_time=completed_record.logical_time,
+                    run_count=completed_record.run_count,
+                )
+
             if latest.active_batch_trigger_id is not None:
                 if latest.active_batch_trigger_id != trigger_id:
                     raise RuntimeError(
                         f"job has unresolved batch trigger: {self.job_id} "
                         f"(trigger={latest.active_batch_trigger_id!r})"
                     )
-                if latest.active_batch_total_ticks != requested_ticks:
+                requested_ticks = latest.active_batch_total_ticks
+                if ticks is not None and ticks != requested_ticks:
                     raise RuntimeError(
                         "cannot recover batch trigger with a different tick count"
                     )
@@ -310,6 +340,16 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                     )
                 claimed = latest
             else:
+                if (
+                    latest.status != "ready"
+                    or latest.phase != "idle"
+                    or latest.active_trigger_id is not None
+                ):
+                    raise RuntimeError(
+                        f"job is not idle for batch trigger: {self.job_id} "
+                        f"(status={latest.status!r}, phase={latest.phase!r}, "
+                        f"trigger={latest.active_trigger_id!r})"
+                    )
                 claimed = replace(
                     latest,
                     active_batch_trigger_id=trigger_id,
@@ -410,16 +450,17 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             f"{self.job_id}:tick:{state.next_tick}:run:{state.run_count + 1}"
         )
 
-        if (
-            state.active_batch_trigger_id is not None
-            and not effective_trigger_id.startswith(
+        if state.active_batch_trigger_id is not None:
+            expected_child_id = (
                 f"{state.active_batch_trigger_id}:tick:"
+                f"{state.active_batch_completed_ticks + 1}"
             )
-        ):
-            raise RuntimeError(
-                f"job has unresolved batch trigger: {self.job_id} "
-                f"(trigger={state.active_batch_trigger_id!r})"
-            )
+            if effective_trigger_id != expected_child_id:
+                raise RuntimeError(
+                    f"job has unresolved batch trigger: {self.job_id} "
+                    f"(trigger={state.active_batch_trigger_id!r}, "
+                    f"expected_child={expected_child_id!r})"
+                )
 
         # Claim or explicitly recover one durable trigger. Recovery is opt-in so
         # SOSE never guesses that a currently running external worker is dead.
