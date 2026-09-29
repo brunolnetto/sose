@@ -90,6 +90,14 @@ The same metadata is available through
 `DomainDefinition.describe_config()`, including referenced `$defs` for enums
 and nested models.
 
+Every parameter also reports `mutability`:
+
+- `runtime` can be changed with `sose apply` between completed triggers;
+- `bootstrap` is fixed after initialization because it already contributed to
+  durable domain state.
+
+Generated `sose.toml` files include this mutability directly in comments.
+
 For example, MRO owns parameters such as:
 
 - quantity;
