@@ -21,6 +21,8 @@ def test_cli_lists_domains_and_persistence(capsys):
     assert "process_durable" in by_name["sqlite_incremental"]["capabilities"]
     assert "incremental_updates" in by_name["sqlite_incremental"]["capabilities"]
     assert "analytical_reads" in by_name["duckdb"]["capabilities"]
+    assert "remote" in by_name["postgres"]["capabilities"]
+    assert "concurrent_writers" in by_name["postgres"]["capabilities"]
 
 
 def test_cli_validate_and_run_one_tick(tmp_path, capsys):
