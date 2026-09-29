@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tomllib
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class DomainSection(BaseModel):
@@ -31,6 +31,16 @@ class JobSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
+    ticks_per_trigger: int = Field(default=1, ge=1)
+    max_ticks_per_trigger: int = Field(default=100, ge=1)
+
+    @model_validator(mode="after")
+    def validate_trigger_bounds(self) -> "JobSection":
+        if self.ticks_per_trigger > self.max_ticks_per_trigger:
+            raise ValueError(
+                "ticks_per_trigger cannot exceed max_ticks_per_trigger"
+            )
+        return self
 
 
 class SOSEConfig(BaseModel):

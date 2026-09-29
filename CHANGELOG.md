@@ -4,6 +4,10 @@
 
 ### Added
 
+- bounded recurring job trigger batches with durable parent ownership, partial
+  recovery, historical trigger idempotency, and configurable ticks per trigger;
+- horizontal config contract requiring every builtin domain to expose
+  domain-specific customizable parameters;
 - persistence capability contract and declarative capability requirements for
   storage targets;
 - CLI persistence metadata describing tested adapter guarantees;

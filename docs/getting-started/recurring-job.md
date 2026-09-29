@@ -36,6 +36,8 @@ backend = "simpy"
 
 [job]
 id = "mro-recurring"
+ticks_per_trigger = 1
+max_ticks_per_trigger = 100
 ```
 
 Load and run exactly one tick:
@@ -44,10 +46,28 @@ Load and run exactly one tick:
 from sose.api import build_job_from_file
 
 job = build_job_from_file("sose.toml")
-result = job.run_tick(trigger_id="scheduler-run-2026-09-28T18:00")
+result = job.run_tick(trigger_id="manual-tick-001")
 ```
 
-A scheduler should invoke the same job again for the next tick.
+For recurring orchestration, prefer a durable trigger batch:
+
+```python
+result = job.run_trigger(
+    trigger_id="airflow-run-2026-09-28T18:00",
+)
+```
+
+The batch advances `ticks_per_trigger` logical ticks from `sose.toml`.
+`max_ticks_per_trigger` is an explicit safety bound. A caller may override
+the batch size for one trigger with `ticks=N`, but never above that bound.
+
+The same operation is available from the CLI:
+
+```bash
+sose trigger \
+  --config sose.toml \
+  --trigger-id airflow-run-2026-09-28T18:00
+```
 
 The job does not require one long-lived Python process. Its durable
 `SimulationJobState`, domain state, ScheduledWork, and SimulationPosition are
@@ -211,24 +231,27 @@ still use the normal CLI error status 2.
 
 ## Minimal operational loop
 
-SOSE itself intentionally advances **one durable tick per invocation**:
+SOSE exposes two explicit operational primitives:
 
 ```text
-external scheduler
-      |
-      v
-sose doctor
-      |
-      v
-sose run --trigger-id <stable scheduler run id>
-      |
-      v
-checkpoint and process exit
+sose run
+    -> exactly one durable tick
+
+sose trigger --trigger-id <stable external id>
+    -> bounded durable batch of ticks
+    -> size = ticks_per_trigger
 ```
 
-This makes scheduler ownership explicit. Cron, Airflow, Databricks Jobs,
-Kubernetes CronJobs, or another orchestrator owns wall-clock recurrence; SOSE
-owns logical tick progression and idempotent recovery.
+A recurring trigger has its own durable ownership and progress. If a process
+fails after completing only part of the batch, retry the **same** trigger id
+with `--recover`; SOSE resumes from the first unfinished child tick.
+
+Completed trigger ids remain durably recorded, so replaying an older scheduler
+run after later runs have completed does not advance logical time again.
+
+Cron, Airflow, Databricks Jobs, Kubernetes CronJobs, or another orchestrator
+owns wall-clock recurrence; SOSE owns logical tick progression, bounded catch-up,
+checkpointing, and idempotent recovery.
 
 
 ## Persistence capability requirements

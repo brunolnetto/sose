@@ -17,6 +17,7 @@ EXPECTED_PUBLIC_API = {
     "JobDoctorIssue",
     "JobDoctorReport",
     "JobTickResult",
+    "JobTriggerResult",
     "JSONLJournalPersistence",
     "MemoryPersistence",
     "Persistence",

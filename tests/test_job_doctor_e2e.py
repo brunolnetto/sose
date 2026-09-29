@@ -206,3 +206,52 @@ def test_scaffolded_mro_product_flow_init_tick_inspect_apply_reopen_tick(
     second = json.loads(capsys.readouterr().out)
     assert second["logical_tick"] == 2
     assert second["run_count"] == 2
+
+
+def test_doctor_reports_unresolved_batch_trigger(tmp_path):
+    from dataclasses import replace
+
+    from sose.jobs.factory import build_job_from_file
+
+    config = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[persistence]
+adapter = "sqlite_incremental"
+
+[persistence.options]
+path = "state.sqlite3"
+
+[job]
+id = "doctor-batch"
+ticks_per_trigger = 3
+""".strip(),
+    )
+
+    job = build_job_from_file(config)
+    try:
+        state = job.state()
+        assert state is not None
+        with job.persistence.transaction() as uow:
+            current = uow.get_job_state(job.job_id)
+            assert current is not None
+            uow.save_job_state(
+                replace(
+                    current,
+                    active_batch_trigger_id="scheduler-17",
+                    active_batch_total_ticks=3,
+                    active_batch_completed_ticks=1,
+                )
+            )
+    finally:
+        job.persistence.close()
+
+    report = inspect_job_file_health(config)
+
+    assert not report.healthy
+    by_code = {issue.code: issue for issue in report.issues}
+    assert "job.batch_trigger_unresolved" in by_code
+    assert "1/3 ticks" in by_code["job.batch_trigger_unresolved"].message
