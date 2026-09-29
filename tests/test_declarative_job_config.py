@@ -197,3 +197,70 @@ id = "bad-backend"
     )
     with pytest.raises(KeyError, match="unknown runtime backend"):
         build_job_from_file(unknown_backend)
+
+
+def test_declarative_job_writes_configured_analytical_sink(tmp_path):
+    path = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[persistence]
+adapter = "sqlite_incremental"
+
+[persistence.options]
+path = "state/job.sqlite3"
+
+[[sinks]]
+name = "warehouse"
+adapter = "jsonl"
+
+[sinks.options]
+path = "analytics/events.jsonl"
+
+[runtime]
+backend = "simpy"
+
+[job]
+id = "tutorial-with-sink"
+""".strip(),
+    )
+
+    job = build_job_from_file(path)
+    result = job.run_tick(trigger_id="scheduler-001")
+
+    assert result.logical_tick == 1
+    assert job.pending_sink_deliveries() == ()
+    sink_path = tmp_path / "analytics/events.jsonl"
+    assert sink_path.exists()
+    lines = sink_path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 1
+
+    import json
+
+    payload = json.loads(lines[0])
+    assert payload["job_id"] == "tutorial-with-sink"
+    assert payload["domain_name"] == "tutorial_job"
+    assert payload["to_event_offset"] > payload["from_event_offset"]
+    job.persistence.close()
+
+
+def test_sink_config_rejects_unknown_adapter(tmp_path):
+    path = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[[sinks]]
+name = "warehouse"
+adapter = "does_not_exist"
+
+[job]
+id = "bad-sink"
+""".strip(),
+    )
+
+    with pytest.raises(KeyError, match="unknown sink adapter"):
+        build_job_from_file(path)
