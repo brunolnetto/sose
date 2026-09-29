@@ -5,7 +5,6 @@ from pathlib import Path
 import re
 from typing import Any
 
-from sose.examples.catalog import builtin_catalog
 from sose.jobs.config import load_sose_config
 from sose.jobs.scaffold import _toml_value
 
@@ -20,6 +19,8 @@ def parse_cli_value(raw: str) -> object:
 
 
 def describe_domain_config(path: str | Path) -> dict[str, object]:
+    from sose.examples.catalog import builtin_catalog
+
     config, _ = load_sose_config(path)
     definition = builtin_catalog().get(config.domain.name)
     resolved = definition.parse_config(config.domain.parameters)
@@ -50,6 +51,8 @@ def set_domain_parameter(
     value: object,
 ) -> dict[str, object]:
     """Validate and update one [domain.parameters] value in a SOSE TOML file."""
+
+    from sose.examples.catalog import builtin_catalog
 
     config_path = Path(path)
     config, _ = load_sose_config(config_path)
