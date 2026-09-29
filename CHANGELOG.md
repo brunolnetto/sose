@@ -4,6 +4,10 @@
 
 ### Added
 
+- domain-specific runtime controls across every builtin Reference, including
+  pause/resume progression controls for otherwise fully automatic reconcilers;
+- horizontal conformance that requires each builtin domain to expose at least
+  one safe runtime-mutable operational parameter;
 - runtime-vs-bootstrap parameter mutability metadata and enforcement for durable
   domain configuration revisions;
 - optional Databricks and Snowflake analytical event sinks using idempotent SQL MERGE batches over the durable analytical outbox;
