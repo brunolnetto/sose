@@ -4,6 +4,8 @@
 
 ### Added
 
+- domain parameter discovery through `DomainDefinition.describe_config()` and `sose domains --name <domain>`, including JSON-schema `$defs` for nested/enumerated parameters;
+
 - optional PostgreSQL remote persistence adapter using the shared incremental
   record/delta contract, with real-service CI conformance, restart, revision,
   and concurrent-writer tests;
