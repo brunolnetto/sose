@@ -169,6 +169,22 @@ class DuckDBPersistence(MemoryPersistence):
         self._fresh()
         return super().job_state(job_id)
 
+    def sink_delivery(self, delivery_id: str):
+        self._fresh()
+        return super().sink_delivery(delivery_id)
+
+    def sink_deliveries(self, *, job_id=None, sink_name=None):
+        self._fresh()
+        return super().sink_deliveries(job_id=job_id, sink_name=sink_name)
+
+    def sink_checkpoint(self, job_id: str, sink_name: str):
+        self._fresh()
+        return super().sink_checkpoint(job_id, sink_name)
+
+    def sink_checkpoints(self, *, job_id=None):
+        self._fresh()
+        return super().sink_checkpoints(job_id=job_id)
+
     def job_states(self):
         self._fresh()
         return super().job_states()
