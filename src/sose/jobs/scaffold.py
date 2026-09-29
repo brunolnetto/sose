@@ -48,20 +48,41 @@ def render_sose_toml(
     for key, value in defaults.items():
         lines.append(f"{key} = {_toml_value(value)}")
 
+    resolved_job_id = job_id or f"{definition.name}-job"
+    persistence_options = [
+        "",
+        "[persistence]",
+        f"adapter = {_toml_value(persistence_adapter)}",
+        "",
+        "[persistence.options]",
+    ]
+    if persistence_adapter == "postgres":
+        namespace = "".join(
+            character if character.isalnum() or character == "_" else "_"
+            for character in resolved_job_id
+        )
+        if not namespace or namespace[0].isdigit():
+            namespace = f"job_{namespace}"
+        persistence_options.extend(
+            [
+                'dsn_env = "SOSE_DATABASE_URL"',
+                f"namespace = {_toml_value(namespace[:40])}",
+            ]
+        )
+    else:
+        persistence_options.append(
+            f"path = {_toml_value(persistence_path)}"
+        )
+
     lines.extend(
-        [
-            "",
-            "[persistence]",
-            f"adapter = {_toml_value(persistence_adapter)}",
-            "",
-            "[persistence.options]",
-            f"path = {_toml_value(persistence_path)}",
+        persistence_options
+        + [
             "",
             "[runtime]",
             f"backend = {_toml_value(runtime_backend)}",
             "",
             "[job]",
-            f"id = {_toml_value(job_id or f'{definition.name}-job')}",
+            f"id = {_toml_value(resolved_job_id)}",
             "",
         ]
     )
