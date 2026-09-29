@@ -105,6 +105,9 @@ def render_sose_toml(
         if isinstance(field_schema, dict):
             for comment in _schema_comment(field_schema, defs):
                 lines.append(f"# {comment}")
+        mutability = metadata.get("mutability")
+        if isinstance(mutability, str):
+            lines.append(f"# mutability={mutability}")
         lines.append(f"{key} = {_toml_value(value)}")
 
     resolved_job_id = job_id or f"{definition.name}-job"
