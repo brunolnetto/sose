@@ -108,6 +108,20 @@ def _cmd_run(args: argparse.Namespace) -> int:
         _close_persistence(job.persistence)
 
 
+def _cmd_trigger(args: argparse.Namespace) -> int:
+    job = build_job_from_file(args.config)
+    try:
+        result = job.run_trigger(
+            trigger_id=args.trigger_id,
+            ticks=args.ticks,
+            recover=args.recover,
+        )
+        print(_json(asdict(result)))
+        return 0
+    finally:
+        _close_persistence(job.persistence)
+
+
 def _cmd_inspect(args: argparse.Namespace) -> int:
     config, base_dir = load_sose_config(args.config)
     registry = builtin_persistence_registry()
@@ -216,6 +230,28 @@ def build_parser() -> argparse.ArgumentParser:
         help="Recover the same unresolved trigger explicitly.",
     )
     run.set_defaults(handler=_cmd_run)
+
+    trigger = subparsers.add_parser(
+        "trigger",
+        help="Execute one durable recurring trigger using the configured tick batch.",
+    )
+    trigger.add_argument("--config", default="sose.toml")
+    trigger.add_argument(
+        "--trigger-id",
+        required=True,
+        help="Stable id from the external scheduler/run attempt.",
+    )
+    trigger.add_argument(
+        "--ticks",
+        type=int,
+        help="Override ticks_per_trigger for this trigger.",
+    )
+    trigger.add_argument(
+        "--recover",
+        action="store_true",
+        help="Resume this same partially completed trigger explicitly.",
+    )
+    trigger.set_defaults(handler=_cmd_trigger)
 
     inspect = subparsers.add_parser(
         "inspect",
