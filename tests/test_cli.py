@@ -184,3 +184,35 @@ id = "apply-cli"
     repeated = json.loads(capsys.readouterr().out)
     assert repeated["changed"] is False
     assert repeated["config_revision"] == 2
+
+
+def test_cli_lists_analytical_sink_adapters(capsys):
+    assert run_cli(["sinks"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    adapters = {item["name"]: item for item in payload["adapters"]}
+    assert set(adapters) == {"databricks", "jsonl", "snowflake"}
+    assert adapters["databricks"]["optional_extra"] == "databricks"
+    assert adapters["snowflake"]["optional_extra"] == "snowflake"
+
+
+def test_cli_validate_rejects_unknown_analytical_sink(tmp_path, capsys):
+    config = tmp_path / "sose.toml"
+    config.write_text(
+        """
+[domain]
+name = "tutorial_job"
+
+[[sinks]]
+name = "warehouse"
+adapter = "unknown"
+
+[job]
+id = "sink-validation"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    assert run_cli(["validate", "--config", str(config)]) == 2
+    captured = capsys.readouterr()
+    assert "unknown sink adapter" in captured.err
