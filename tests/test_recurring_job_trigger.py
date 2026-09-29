@@ -1,11 +1,11 @@
 from dataclasses import replace
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
 from sose.backends.simpy import SimPyBackend
 from sose.examples.catalog import builtin_catalog
-from sose.jobs.runner import SimulationJob
+from sose.jobs.runner import SimulationJob, scheduled_trigger_id
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
@@ -406,3 +406,75 @@ def test_tick_rechecks_batch_ownership_inside_claim_transaction(monkeypatch):
     assert durable is not None
     assert durable.active_batch_trigger_id == "batch-race"
     assert durable.active_batch_completed_ticks == 0
+
+
+
+def test_scheduled_trigger_id_normalizes_same_instant_to_utc():
+    utc = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+    offset = datetime.fromisoformat("2026-09-29T09:00:00-03:00")
+
+    assert scheduled_trigger_id("job-a", utc) == scheduled_trigger_id(
+        "job-a",
+        offset,
+    )
+    assert scheduled_trigger_id("job-a", utc) == (
+        "job-a:scheduled:2026-09-29T12:00:00Z"
+    )
+
+
+def test_scheduled_trigger_id_rejects_naive_datetime():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        scheduled_trigger_id(
+            "job-a",
+            datetime(2026, 9, 29, 12),
+        )
+
+
+def test_same_scheduled_occurrence_is_idempotent():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    job = SimulationJob(
+        job_id="scheduled-idempotent",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+        ticks_per_trigger=2,
+    )
+    job.initialize({"complete_after": timedelta(hours=5)})
+    occurrence = datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+
+    first = job.run_scheduled_trigger(scheduled_for=occurrence)
+    repeated = job.run_scheduled_trigger(
+        scheduled_for=datetime.fromisoformat("2026-09-29T09:00:00-03:00")
+    )
+
+    assert repeated == first
+    assert first.trigger_id == (
+        "scheduled-idempotent:scheduled:2026-09-29T12:00:00Z"
+    )
+    assert job.state().next_tick == 2
+
+
+def test_distinct_scheduled_occurrences_advance_distinct_batches():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    job = SimulationJob(
+        job_id="scheduled-sequence",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+        ticks_per_trigger=1,
+    )
+    job.initialize({"complete_after": timedelta(hours=5)})
+
+    first = job.run_scheduled_trigger(
+        scheduled_for=datetime(2026, 9, 29, 12, tzinfo=timezone.utc)
+    )
+    second = job.run_scheduled_trigger(
+        scheduled_for=datetime(2026, 9, 29, 13, tzinfo=timezone.utc)
+    )
+
+    assert first.end_tick == 1
+    assert second.end_tick == 2
+    assert first.trigger_id != second.trigger_id
+    assert job.state().next_tick == 2

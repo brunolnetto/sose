@@ -40,7 +40,12 @@ from sose.jobs.doctor import (
 )
 from sose.jobs.factory import build_job_from_config, build_job_from_file
 from sose.jobs.model import SimulationJobState
-from sose.jobs.runner import JobTickResult, JobTriggerResult, SimulationJob
+from sose.jobs.runner import (
+    JobTickResult,
+    JobTriggerResult,
+    SimulationJob,
+    scheduled_trigger_id,
+)
 from sose.jobs.scaffold import render_sose_toml, write_sose_toml
 from sose.persistence.registry import (
     PersistenceAdapter,
@@ -120,6 +125,7 @@ __all__ = [
     "load_sose_config",
     "probabilistic",
     "probabilistic_transitions",
+    "scheduled_trigger_id",
     "render_sose_toml",
     "write_sose_toml",
 ]

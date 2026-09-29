@@ -500,3 +500,82 @@ id = "config-bootstrap"
     assert run_cli(["apply", "--config", str(config)]) == 2
     captured = capsys.readouterr()
     assert "bootstrap-only" in captured.err
+
+
+
+def test_cli_trigger_accepts_scheduled_occurrence_and_replays_idempotently(
+    tmp_path,
+    capsys,
+):
+    config = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[domain.parameters]
+complete_after = "PT4H"
+
+[persistence]
+adapter = "sqlite_incremental"
+
+[persistence.options]
+path = "scheduled-trigger.sqlite3"
+
+[job]
+id = "scheduled-cli"
+ticks_per_trigger = 2
+""".strip(),
+    )
+
+    args = [
+        "trigger",
+        "--config",
+        str(config),
+        "--scheduled-for",
+        "2026-09-29T09:00:00-03:00",
+    ]
+    assert run_cli(args) == 0
+    first = json.loads(capsys.readouterr().out)
+
+    assert first["trigger_id"] == (
+        "scheduled-cli:scheduled:2026-09-29T12:00:00Z"
+    )
+    assert first["end_tick"] == 2
+
+    replay = [
+        "trigger",
+        "--config",
+        str(config),
+        "--scheduled-for",
+        "2026-09-29T12:00:00Z",
+    ]
+    assert run_cli(replay) == 0
+    repeated = json.loads(capsys.readouterr().out)
+
+    assert repeated == first
+
+
+def test_cli_trigger_rejects_naive_scheduled_occurrence(tmp_path, capsys):
+    config = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[job]
+id = "scheduled-naive"
+""".strip(),
+    )
+
+    assert run_cli(
+        [
+            "trigger",
+            "--config",
+            str(config),
+            "--scheduled-for",
+            "2026-09-29T12:00:00",
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert "timezone-aware" in captured.err

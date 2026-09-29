@@ -384,3 +384,52 @@ next trigger / reconcile_tick
 A bootstrap-only field may be edited in the file, but `sose apply` rejects
 that change after initialization. Runtime fields advance `config_revision`
 and affect the next completed-trigger boundary.
+
+
+## Scheduler-friendly trigger identity
+
+External schedulers should prefer passing the scheduled occurrence timestamp
+instead of inventing their own trigger id.
+
+For example:
+
+```bash
+sose trigger \
+  --config sose.toml \
+  --scheduled-for 2026-09-29T12:00:00Z
+```
+
+SOSE derives:
+
+```text
+<job-id>:scheduled:<UTC scheduled instant>
+```
+
+The identity is normalized to UTC, so these represent the same occurrence:
+
+```text
+2026-09-29T12:00:00Z
+2026-09-29T09:00:00-03:00
+```
+
+Retrying the same scheduled occurrence is therefore idempotent. A different
+scheduled occurrence receives a different durable batch identity.
+
+This is the preferred integration contract for cron, Airflow, Databricks Jobs,
+Kubernetes CronJob, Azure schedulers, and similar systems:
+
+```text
+scheduler occurrence timestamp
+            |
+            v
+SOSE deterministic trigger identity
+            |
+            v
+durable run_trigger ownership
+            |
+            v
+one bounded tick batch
+```
+
+Timezone-naive timestamps are rejected because they cannot provide a globally
+stable occurrence identity.

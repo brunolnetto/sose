@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Generic, TypeVar
 
 from sose.domain.config import ConfigT, DomainDefinition, SeedT
@@ -12,6 +12,18 @@ from sose.sinks.outbox import SinkOutbox
 
 
 BackendFactory = Callable[[datetime], object]
+
+
+def scheduled_trigger_id(job_id: str, scheduled_for: datetime) -> str:
+    """Return a stable trigger identity for one external scheduler occurrence."""
+
+    if not job_id:
+        raise ValueError("job_id cannot be empty")
+    if scheduled_for.tzinfo is None or scheduled_for.utcoffset() is None:
+        raise ValueError("scheduled_for must be timezone-aware")
+    normalized = scheduled_for.astimezone(timezone.utc)
+    timestamp = normalized.isoformat().replace("+00:00", "Z")
+    return f"{job_id}:scheduled:{timestamp}"
 
 
 @dataclass(frozen=True, slots=True)
@@ -277,6 +289,23 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             run_count=state.run_count,
             trigger_id=state.last_completed_trigger_id,
         )
+
+    def run_scheduled_trigger(
+        self,
+        *,
+        scheduled_for: datetime,
+        ticks: int | None = None,
+        recover: bool = False,
+    ) -> JobTriggerResult:
+        """Run one scheduler occurrence using a deterministic timestamp identity."""
+
+        return self.run_trigger(
+            trigger_id=scheduled_trigger_id(self.job_id, scheduled_for),
+            ticks=ticks,
+            triggered_at=scheduled_for,
+            recover=recover,
+        )
+
 
     def run_trigger(
         self,
