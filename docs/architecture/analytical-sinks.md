@@ -115,8 +115,104 @@ The first sink mode exports committed DomainEvents.
 Snapshot/entity projection modes should be added as separate explicit contracts,
 not inferred from the event sink.
 
-The current built-in analytical adapter is:
+Built-in analytical adapters are:
 
-- `jsonl`.
+- `jsonl`;
+- `databricks` (optional extra `sose[databricks]`);
+- `snowflake` (optional extra `sose[snowflake]`).
 
-Databricks and Snowflake should implement the same batch/idempotency contract.
+## Databricks
+
+The Databricks adapter uses the Databricks SQL Connector and writes to Delta
+tables through idempotent `MERGE` operations.
+
+```toml
+[[sinks]]
+name = "lakehouse"
+adapter = "databricks"
+
+[sinks.options]
+server_hostname_env = "DATABRICKS_SERVER_HOSTNAME"
+http_path_env = "DATABRICKS_HTTP_PATH"
+access_token_env = "DATABRICKS_TOKEN"
+events_table = "main.sose.events"
+batches_table = "main.sose.batches"
+```
+
+Install with:
+
+```bash
+pip install "sose[databricks]"
+```
+
+The SQL Connector uses positional native parameters; SOSE validates table
+identifiers separately because SQL identifiers cannot be value-bound.
+
+## Snowflake
+
+The Snowflake sink uses the GA 4.x Python connector line.
+
+```toml
+[[sinks]]
+name = "warehouse"
+adapter = "snowflake"
+
+[sinks.options]
+account_env = "SNOWFLAKE_ACCOUNT"
+user_env = "SNOWFLAKE_USER"
+password_env = "SNOWFLAKE_PASSWORD"
+warehouse_env = "SNOWFLAKE_WAREHOUSE"
+database_env = "SNOWFLAKE_DATABASE"
+schema_env = "SNOWFLAKE_SCHEMA"
+events_table = "SOSE_EVENTS"
+batches_table = "SOSE_BATCHES"
+```
+
+Alternatively, provide `connection_name` to use a Snowflake connector connection
+definition.
+
+Install with:
+
+```bash
+pip install "sose[snowflake]"
+```
+
+## Warehouse table contract
+
+Both SQL warehouse sinks materialize:
+
+```text
+sose_events
+  event_id
+  batch_id
+  job_id
+  domain_name
+  config_revision
+  logical_tick
+  logical_time
+  event_name
+  entity_type
+  entity_id
+  occurred_at
+  event_tick
+  payload_json
+  causation_id
+  correlation_id
+
+sose_batches
+  batch_id
+  job_id
+  domain_name
+  config_revision
+  logical_tick
+  logical_time
+  event_count
+```
+
+Events are merged by `event_id`. The batch marker is merged only after event
+writes. A partial failure can therefore replay the same deterministic batch
+without duplicating events.
+
+These sinks remain downstream analytical copies; neither Databricks nor
+Snowflake becomes authoritative operational truth merely by being configured as
+a sink.

@@ -315,3 +315,44 @@ PostgreSQL is an optional extra:
 ```bash
 pip install "sose[postgres]"
 ```
+
+
+## Analytical warehouse sinks
+
+List the available downstream analytical adapters:
+
+```bash
+sose sinks
+```
+
+The operational `[persistence]` target remains authoritative. Configure one or
+more downstream event sinks independently:
+
+```toml
+[[sinks]]
+name = "lakehouse"
+adapter = "databricks"
+
+[sinks.options]
+server_hostname_env = "DATABRICKS_SERVER_HOSTNAME"
+http_path_env = "DATABRICKS_HTTP_PATH"
+access_token_env = "DATABRICKS_TOKEN"
+events_table = "main.sose.events"
+batches_table = "main.sose.batches"
+```
+
+or:
+
+```toml
+[[sinks]]
+name = "warehouse"
+adapter = "snowflake"
+
+[sinks.options]
+connection_name = "myconnection"
+events_table = "SOSE_EVENTS"
+batches_table = "SOSE_BATCHES"
+```
+
+Sink failures remain in the durable outbox and do not roll back a committed
+simulation tick.
