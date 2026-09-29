@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from datetime import datetime, timezone
 
 from sose.core.identity import deterministic_id
 from sose.jobs.model import SimulationJobState
@@ -141,7 +140,7 @@ class SinkOutbox:
             status="delivered",
             attempts=delivery.attempts + 1,
             last_error=None,
-            delivered_at=datetime.now(timezone.utc),
+            delivered_at=delivery.batch.logical_time,
         )
         checkpoint = SinkCheckpoint(
             job_id=delivery.batch.job_id,
