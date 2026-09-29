@@ -32,6 +32,7 @@ from sose.core.runtime import (
 from sose.domain.entity import Entity
 from sose.scenarios.model import ScenarioRuntimeState
 from sose.jobs.model import SimulationJobState
+from sose.sinks.model import SinkCheckpoint, SinkDelivery
 
 
 @dataclass
@@ -61,6 +62,8 @@ class _State:
     preemptive_resource_release_intents: dict[str, PreemptiveResourceReleaseIntent] = field(default_factory=dict)
     resource_preemption_results: dict[str, ResourcePreemptionResult] = field(default_factory=dict)
     job_states: dict[str, SimulationJobState] = field(default_factory=dict)
+    sink_deliveries: dict[str, SinkDelivery] = field(default_factory=dict)
+    sink_checkpoints: dict[tuple[str, str], SinkCheckpoint] = field(default_factory=dict)
     committed_tick: int = -1
 
 
@@ -114,6 +117,32 @@ class MemoryUnitOfWork:
             )
         self._working.job_states[state.job_id] = deepcopy(state)
         self._mark_dirty("job_states", state.job_id)
+
+
+    def get_sink_delivery(self, delivery_id: str) -> SinkDelivery | None:
+        value = self._working.sink_deliveries.get(delivery_id)
+        return deepcopy(value) if value else None
+
+    def save_sink_delivery(self, delivery: SinkDelivery) -> None:
+        self._working.sink_deliveries[delivery.delivery_id] = deepcopy(delivery)
+        self._mark_dirty("sink_deliveries", delivery.delivery_id)
+
+    def delete_sink_delivery(self, delivery_id: str) -> None:
+        self._working.sink_deliveries.pop(delivery_id, None)
+        self._mark_dirty("sink_deliveries", delivery_id)
+
+    def get_sink_checkpoint(
+        self,
+        job_id: str,
+        sink_name: str,
+    ) -> SinkCheckpoint | None:
+        value = self._working.sink_checkpoints.get((job_id, sink_name))
+        return deepcopy(value) if value else None
+
+    def save_sink_checkpoint(self, checkpoint: SinkCheckpoint) -> None:
+        key = (checkpoint.job_id, checkpoint.sink_name)
+        self._working.sink_checkpoints[key] = deepcopy(checkpoint)
+        self._mark_dirty("sink_checkpoints", key)
 
     def get_entity(self, entity_type: str, entity_id: str) -> Entity | None:
         value = self._working.entities.get((entity_type, entity_id))
@@ -535,6 +564,47 @@ class MemoryPersistence:
         return tuple(
             deepcopy(self._state.job_states[job_id])
             for job_id in sorted(self._state.job_states)
+        )
+
+    def sink_delivery(self, delivery_id: str) -> SinkDelivery | None:
+        value = self._state.sink_deliveries.get(delivery_id)
+        return deepcopy(value) if value else None
+
+    def sink_deliveries(
+        self,
+        *,
+        job_id: str | None = None,
+        sink_name: str | None = None,
+    ) -> tuple[SinkDelivery, ...]:
+        values = self._state.sink_deliveries.values()
+        return tuple(
+            deepcopy(delivery)
+            for delivery in sorted(values, key=lambda item: item.delivery_id)
+            if (job_id is None or delivery.batch.job_id == job_id)
+            and (sink_name is None or delivery.sink_name == sink_name)
+        )
+
+    def sink_checkpoint(
+        self,
+        job_id: str,
+        sink_name: str,
+    ) -> SinkCheckpoint | None:
+        value = self._state.sink_checkpoints.get((job_id, sink_name))
+        return deepcopy(value) if value else None
+
+    def sink_checkpoints(
+        self,
+        *,
+        job_id: str | None = None,
+    ) -> tuple[SinkCheckpoint, ...]:
+        values = self._state.sink_checkpoints.values()
+        return tuple(
+            deepcopy(checkpoint)
+            for checkpoint in sorted(
+                values,
+                key=lambda item: (item.job_id, item.sink_name),
+            )
+            if job_id is None or checkpoint.job_id == job_id
         )
 
     def committed_tick(self) -> int:
