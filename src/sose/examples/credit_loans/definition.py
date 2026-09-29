@@ -152,4 +152,5 @@ definition = DomainDefinition(
     build_runtime=_build,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
+    runtime_mutable_fields=frozenset(["tick_step","random_seed","approve_application","auto_pay_due_installments","first_due_delay","installment_interval","overdue_grace"]),
 )
