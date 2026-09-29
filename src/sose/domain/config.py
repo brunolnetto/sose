@@ -65,6 +65,34 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
             return value
         return self.config_model.model_validate(value)
 
+    def describe_config(self) -> dict[str, object]:
+        """Return JSON-serializable parameter metadata for discovery/UIs."""
+
+        schema = self.config_model.model_json_schema()
+        defaults = self.default_config().model_dump(mode="json", by_alias=True)
+        required = set(schema.get("required", ()))
+        properties = schema.get("properties", {})
+
+        parameters: list[dict[str, object]] = []
+        for name, field_schema in properties.items():
+            parameters.append(
+                {
+                    "name": name,
+                    "required": name in required,
+                    "default": defaults.get(name),
+                    "schema": field_schema,
+                }
+            )
+
+        return {
+            "name": self.name,
+            "description": self.description,
+            "config_model": self.config_model.__name__,
+            "defaults": defaults,
+            "parameters": parameters,
+            "$defs": schema.get("$defs", {}),
+        }
+
 
 class DomainCatalog:
     def __init__(self) -> None:
