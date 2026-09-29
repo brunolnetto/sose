@@ -69,7 +69,7 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
         """Return JSON-serializable parameter metadata for discovery/UIs."""
 
         schema = self.config_model.model_json_schema()
-        defaults = self.default_config().model_dump(mode="json")
+        defaults = self.default_config().model_dump(mode="json", by_alias=True)
         required = set(schema.get("required", ()))
         properties = schema.get("properties", {})
 
