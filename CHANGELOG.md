@@ -4,6 +4,10 @@
 
 ### Added
 
+- read-only `sose doctor` command for config drift, durable checkpoint,
+  unresolved-trigger, and runtime consistency checks;
+- end-to-end recurring-job acceptance flow from scaffolded MRO config through
+  tick, inspect, reopen, and subsequent tick;
 - recurring tick reconciliation across every builtin Reference plus the tutorial
   domain, with state-aware idempotent progression instead of end-to-end-only
   execution;
