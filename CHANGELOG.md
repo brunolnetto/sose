@@ -4,6 +4,8 @@
 
 ### Added
 
+- validated `sose config show` / `sose config set` commands for inspecting
+  and editing declarative domain parameters without implicitly mutating durable jobs;
 - domain-specific runtime controls across every builtin Reference, including
   pause/resume progression controls for otherwise fully automatic reconcilers;
 - horizontal conformance that requires each builtin domain to expose at least

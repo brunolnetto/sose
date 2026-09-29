@@ -7,6 +7,11 @@ from pathlib import Path
 import sys
 
 from sose.jobs.config import load_sose_config
+from sose.jobs.config_edit import (
+    describe_domain_config,
+    parse_cli_value,
+    set_domain_parameter,
+)
 from sose.jobs.doctor import inspect_job_file_health
 from sose.jobs.factory import build_job_from_file
 from sose.persistence.registry import builtin_persistence_registry
@@ -84,6 +89,21 @@ def _cmd_init(args: argparse.Namespace) -> int:
 def _cmd_validate(args: argparse.Namespace) -> int:
     validated = _validate_config(args.config)
     print(_json(validated))
+    return 0
+
+
+def _cmd_config_show(args: argparse.Namespace) -> int:
+    print(_json(describe_domain_config(args.config)))
+    return 0
+
+
+def _cmd_config_set(args: argparse.Namespace) -> int:
+    result = set_domain_parameter(
+        args.config,
+        name=args.name,
+        value=parse_cli_value(args.value),
+    )
+    print(_json(result))
     return 0
 
 
@@ -271,6 +291,31 @@ def build_parser() -> argparse.ArgumentParser:
     )
     validate.add_argument("--config", default="sose.toml")
     validate.set_defaults(handler=_cmd_validate)
+
+    config_cmd = subparsers.add_parser(
+        "config",
+        help="Inspect or edit validated domain parameters in sose.toml.",
+    )
+    config_subparsers = config_cmd.add_subparsers(
+        dest="config_command",
+        required=True,
+    )
+
+    config_show = config_subparsers.add_parser(
+        "show",
+        help="Show effective domain parameters and mutability.",
+    )
+    config_show.add_argument("--config", default="sose.toml")
+    config_show.set_defaults(handler=_cmd_config_show)
+
+    config_set = config_subparsers.add_parser(
+        "set",
+        help="Validate and edit one [domain.parameters] value.",
+    )
+    config_set.add_argument("name")
+    config_set.add_argument("value")
+    config_set.add_argument("--config", default="sose.toml")
+    config_set.set_defaults(handler=_cmd_config_set)
 
     apply = subparsers.add_parser(
         "apply",
