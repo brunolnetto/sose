@@ -172,6 +172,10 @@ def _cmd_domains(args: argparse.Namespace) -> int:
     from sose.examples.catalog import builtin_catalog
 
     catalog = builtin_catalog()
+    if args.name:
+        print(_json(catalog.get(args.name).describe_config()))
+        return 0
+
     payload = [
         {
             "name": definition.name,
@@ -295,7 +299,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     domains = subparsers.add_parser(
         "domains",
-        help="List builtin executable domains.",
+        help="List builtin domains or inspect one domain's parameters.",
+    )
+    domains.add_argument(
+        "--name",
+        help="Show defaults, types, and constraints for one domain.",
     )
     domains.set_defaults(handler=_cmd_domains)
 
