@@ -159,7 +159,10 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         current = self.state()
         if current is None:
             raise RuntimeError(f"job is not initialized: {self.job_id}")
-        if current.active_trigger_id is not None:
+        if (
+            current.active_trigger_id is not None
+            or current.active_batch_trigger_id is not None
+        ):
             raise RuntimeError(
                 f"cannot change config while trigger is unresolved: {self.job_id}"
             )
@@ -199,9 +202,9 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         current = self.state()
         if current is None:
             raise RuntimeError(f"job is not initialized: {self.job_id}")
-        if current.status == "running":
+        if current.status == "running" or current.active_batch_trigger_id is not None:
             raise RuntimeError(
-                f"cannot change status while job is running: {self.job_id}"
+                f"cannot change status while job trigger is active: {self.job_id}"
             )
         if (
             status == "ready"
@@ -385,6 +388,17 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         effective_trigger_id = trigger_id or (
             f"{self.job_id}:tick:{state.next_tick}:run:{state.run_count + 1}"
         )
+
+        if (
+            state.active_batch_trigger_id is not None
+            and not effective_trigger_id.startswith(
+                f"{state.active_batch_trigger_id}:tick:"
+            )
+        ):
+            raise RuntimeError(
+                f"job has unresolved batch trigger: {self.job_id} "
+                f"(trigger={state.active_batch_trigger_id!r})"
+            )
 
         # Claim or explicitly recover one durable trigger. Recovery is opt-in so
         # SOSE never guesses that a currently running external worker is dead.
