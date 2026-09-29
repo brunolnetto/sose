@@ -22,6 +22,8 @@ def _seed(persistence: Persistence, config: SubscriptionSaaSConfig):
     )
 
 def _reconcile_tick(persistence, engine, backend, config, entities):
+    if not config.auto_progress_plan_change:
+        return
     subscription = persistence.entity(
         "saas_subscription",
         entities.subscription_id,
@@ -72,4 +74,5 @@ definition = DomainDefinition(
     build_runtime=_build,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
+    runtime_mutable_fields=frozenset(["tick_step","random_seed","auto_progress_plan_change","target_plan","plan_change_after"]),
 )
