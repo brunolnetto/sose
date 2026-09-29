@@ -95,3 +95,37 @@ def test_description_uses_aliases_consistently_for_defaults_and_schema():
         for item in description["parameters"]
     }
     assert by_name["externalName"]["default"] == 7
+
+
+def test_description_prefers_validation_alias_when_serialization_alias_differs():
+    from pydantic import Field
+
+    class SplitAliasConfig(DomainConfig):
+        start_at: str = "2026-01-01T00:00:00Z"
+        internal_name: int = Field(
+            default=11,
+            validation_alias="inputName",
+            serialization_alias="outputName",
+        )
+
+    definition = DomainDefinition(
+        name="split-alias",
+        description="split alias discovery test",
+        config_model=SplitAliasConfig,
+        build_runtime=lambda persistence, config, now, tick: (None, None),
+        seed=lambda persistence, config: None,
+    )
+
+    description = definition.describe_config()
+    by_name = {
+        item["name"]: item
+        for item in description["parameters"]
+    }
+
+    assert "inputName" in by_name
+    assert "outputName" not in by_name
+    assert by_name["inputName"]["default"] == 11
+    assert description["defaults"]["inputName"] == 11
+
+    parsed = definition.parse_config({"inputName": 17})
+    assert parsed.internal_name == 17
