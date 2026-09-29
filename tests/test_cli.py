@@ -16,7 +16,11 @@ def test_cli_lists_domains_and_persistence(capsys):
 
     assert run_cli(["persistence"]) == 0
     adapters = json.loads(capsys.readouterr().out)
-    assert "sqlite_incremental" in adapters["adapters"]
+    by_name = {item["name"]: item for item in adapters["adapters"]}
+    assert "sqlite_incremental" in by_name
+    assert "process_durable" in by_name["sqlite_incremental"]["capabilities"]
+    assert "incremental_updates" in by_name["sqlite_incremental"]["capabilities"]
+    assert "analytical_reads" in by_name["duckdb"]["capabilities"]
 
 
 def test_cli_validate_and_run_one_tick(tmp_path, capsys):
