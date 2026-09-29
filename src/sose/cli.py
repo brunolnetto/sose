@@ -7,7 +7,6 @@ from pathlib import Path
 import sys
 
 from sose.jobs.config import load_sose_config
-from sose.jobs.doctor import inspect_job_file_health
 from sose.jobs.factory import build_job_from_file
 from sose.persistence.registry import builtin_persistence_registry
 
@@ -30,16 +29,11 @@ def _validate_config(path: str | Path) -> dict[str, object]:
     definition = domains.get(config.domain.name)
     resolved = definition.parse_config(config.domain.parameters)
 
-    persistence_registry = builtin_persistence_registry()
-    persistence_names = persistence_registry.names()
+    persistence_names = builtin_persistence_registry().names()
     if config.persistence.adapter not in persistence_names:
         raise KeyError(
             f"unknown persistence adapter: {config.persistence.adapter}"
         )
-    persistence_registry.require(
-        config.persistence.adapter,
-        *config.persistence.require,
-    )
     if config.runtime.backend != "simpy":
         raise KeyError(f"unknown runtime backend: {config.runtime.backend}")
 
@@ -48,7 +42,6 @@ def _validate_config(path: str | Path) -> dict[str, object]:
         "domain": definition.name,
         "domain_parameters": resolved.model_dump(mode="json"),
         "persistence": config.persistence.adapter,
-        "persistence_require": list(config.persistence.require),
         "runtime_backend": config.runtime.backend,
     }
 
@@ -115,6 +108,20 @@ def _cmd_run(args: argparse.Namespace) -> int:
         _close_persistence(job.persistence)
 
 
+def _cmd_trigger(args: argparse.Namespace) -> int:
+    job = build_job_from_file(args.config)
+    try:
+        result = job.run_trigger(
+            trigger_id=args.trigger_id,
+            ticks=args.ticks,
+            recover=args.recover,
+        )
+        print(_json(asdict(result)))
+        return 0
+    finally:
+        _close_persistence(job.persistence)
+
+
 def _cmd_inspect(args: argparse.Namespace) -> int:
     config, base_dir = load_sose_config(args.config)
     registry = builtin_persistence_registry()
@@ -148,12 +155,6 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         _close_persistence(persistence)
 
 
-def _cmd_doctor(args: argparse.Namespace) -> int:
-    report = inspect_job_file_health(args.config)
-    print(_json(report.to_dict()))
-    return 0 if report.healthy else 1
-
-
 def _cmd_domains(args: argparse.Namespace) -> int:
     from sose.examples.catalog import builtin_catalog
 
@@ -172,20 +173,7 @@ def _cmd_domains(args: argparse.Namespace) -> int:
 
 def _cmd_persistence(args: argparse.Namespace) -> int:
     registry = builtin_persistence_registry()
-    print(
-        _json(
-            {
-                "adapters": [
-                    {
-                        "name": adapter.name,
-                        "optional_extra": adapter.optional_extra,
-                        "capabilities": list(adapter.capabilities.names()),
-                    }
-                    for adapter in registry.describe()
-                ]
-            }
-        )
-    )
+    print(_json({"adapters": list(registry.names())}))
     return 0
 
 
@@ -243,19 +231,34 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.set_defaults(handler=_cmd_run)
 
+    trigger = subparsers.add_parser(
+        "trigger",
+        help="Execute one durable recurring trigger using the configured tick batch.",
+    )
+    trigger.add_argument("--config", default="sose.toml")
+    trigger.add_argument(
+        "--trigger-id",
+        required=True,
+        help="Stable id from the external scheduler/run attempt.",
+    )
+    trigger.add_argument(
+        "--ticks",
+        type=int,
+        help="Override ticks_per_trigger for this trigger.",
+    )
+    trigger.add_argument(
+        "--recover",
+        action="store_true",
+        help="Resume this same partially completed trigger explicitly.",
+    )
+    trigger.set_defaults(handler=_cmd_trigger)
+
     inspect = subparsers.add_parser(
         "inspect",
         help="Inspect durable job checkpoint without advancing it.",
     )
     inspect.add_argument("--config", default="sose.toml")
     inspect.set_defaults(handler=_cmd_inspect)
-
-    doctor = subparsers.add_parser(
-        "doctor",
-        help="Validate config and inspect durable job/runtime consistency.",
-    )
-    doctor.add_argument("--config", default="sose.toml")
-    doctor.set_defaults(handler=_cmd_doctor)
 
     domains = subparsers.add_parser(
         "domains",
