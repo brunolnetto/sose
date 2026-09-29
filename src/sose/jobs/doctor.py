@@ -200,3 +200,14 @@ def _check_job_state(
                 f"in phase {state.phase!r}",
             )
         )
+
+    if state.active_batch_trigger_id is not None:
+        issues.append(
+            JobDoctorIssue(
+                "job.batch_trigger_unresolved",
+                f"batch trigger {state.active_batch_trigger_id!r} remains owned "
+                f"after {state.active_batch_completed_ticks}/"
+                f"{state.active_batch_total_ticks} ticks",
+            )
+        )
+
