@@ -4,6 +4,11 @@
 
 ### Added
 
+- optional PostgreSQL remote persistence adapter using the shared incremental
+  record/delta contract, with real-service CI conformance, restart, revision,
+  and concurrent-writer tests;
+- PostgreSQL-aware `sose init` scaffold using `SOSE_DATABASE_URL` rather
+  than embedding credentials in sose.toml;
 - bounded recurring job trigger batches with durable parent ownership, partial
   recovery, historical trigger idempotency, and configurable ticks per trigger;
 - horizontal config contract requiring every builtin domain to expose

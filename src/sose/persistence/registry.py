@@ -190,6 +190,50 @@ def builtin_persistence_registry() -> PersistenceRegistry:
         )
     )
 
+    def postgres_factory(options: dict[str, object], base_dir: Path) -> Persistence:
+        import os
+
+        from sose.persistence.postgres import PostgresPersistence
+
+        raw_dsn = options.get("dsn")
+        if raw_dsn is not None and (not isinstance(raw_dsn, str) or not raw_dsn):
+            raise ValueError("PostgreSQL dsn must be a non-empty string")
+
+        dsn_env = options.get("dsn_env", "SOSE_DATABASE_URL")
+        if not isinstance(dsn_env, str) or not dsn_env:
+            raise ValueError("PostgreSQL dsn_env must be a non-empty string")
+
+        dsn = raw_dsn or os.environ.get(dsn_env)
+        if not dsn:
+            raise ValueError(
+                "PostgreSQL connection string is missing; set "
+                f"{dsn_env!r} or persistence.options.dsn"
+            )
+
+        namespace = options.get("namespace", "sose")
+        if not isinstance(namespace, str) or not namespace:
+            raise ValueError("PostgreSQL namespace must be a non-empty string")
+
+        return PostgresPersistence(dsn, namespace=namespace)
+
+    registry.register(
+        PersistenceAdapter(
+            "postgres",
+            postgres_factory,
+            capabilities=PersistenceCapabilities(
+                process_durable=True,
+                transactional_commits=True,
+                incremental_updates=True,
+                concurrent_writers=True,
+                remote=True,
+                analytical_reads=False,
+                append_only=False,
+                schema_migrations=False,
+            ),
+            optional_extra="postgres",
+        )
+    )
+
     def duckdb_factory(options: dict[str, object], base_dir: Path) -> Persistence:
         from sose.persistence.duckdb import DuckDBPersistence
 

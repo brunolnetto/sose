@@ -121,3 +121,28 @@ def test_cli_trigger_uses_persisted_batch_policy(tmp_path, capsys):
     ) == 0
     replayed = json.loads(capsys.readouterr().out)
     assert replayed == payload
+
+
+def test_cli_init_generates_postgres_environment_config(tmp_path, capsys):
+    output = tmp_path / "sose.toml"
+
+    assert run_cli(
+        [
+            "init",
+            "--domain",
+            "mro",
+            "--output",
+            str(output),
+            "--job-id",
+            "plant-maintenance",
+            "--persistence",
+            "postgres",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    parsed, _ = load_sose_config(output)
+    assert parsed.persistence.adapter == "postgres"
+    assert parsed.persistence.options["dsn_env"] == "SOSE_DATABASE_URL"
+    assert parsed.persistence.options["namespace"] == "plant_maintenance"
+    assert "path" not in parsed.persistence.options

@@ -24,9 +24,13 @@ simpy = [
 duckdb = [
   "duckdb>=1.5.5,<2",
 ]
+postgres = [
+  "psycopg[binary]>=3.3.6,<4",
+]
 dev = [
   "simpy>=4.1.1,<5",
   "duckdb>=1.5.5,<2",
+  "psycopg[binary]>=3.3.6,<4",
   "pytest>=8,<10",
   "pytest-cov>=6,<8",
   "ruff>=0.11,<1",
@@ -47,6 +51,7 @@ line-length = 100
 [dependency-groups]
 dev = [
     "duckdb>=1.5.5,<2",
+    "psycopg[binary]>=3.3.6,<4",
     "codebase-stats>=0.0.3",
     "simpy>=4.1.1,<5",
 ]
