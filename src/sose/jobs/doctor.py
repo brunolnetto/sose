@@ -5,7 +5,6 @@ import json
 from pathlib import Path
 
 from sose.core.diagnostics import collect_runtime_diagnostics
-from sose.examples.catalog import builtin_catalog
 from sose.jobs.config import SOSEConfig, load_sose_config
 from sose.jobs.model import SimulationJobState
 from sose.persistence.base import Persistence
@@ -47,6 +46,8 @@ def inspect_job_health(
     persistence_registry: PersistenceRegistry | None = None,
 ) -> JobDoctorReport:
     """Validate declarative config and inspect durable job/runtime truth read-only."""
+
+    from sose.examples.catalog import builtin_catalog
 
     domains = builtin_catalog()
     definition = domains.get(config.domain.name)
