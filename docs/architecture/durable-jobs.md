@@ -1,9 +1,10 @@
 # Durable recurring simulation jobs
 
-SOSE supports two execution styles:
+SOSE supports three execution styles:
 
 1. end-to-end execution for examples/tests;
-2. recurring durable jobs that advance exactly one logical tick per trigger.
+2. manual durable execution that advances exactly one logical tick;
+3. recurring external triggers that execute a bounded batch of logical ticks.
 
 The recurring model is the intended orchestration boundary for production-style
 jobs.
@@ -327,3 +328,98 @@ The rule remains: reconciliation consumes **current eligibility**. It must not
 invent artificial delays solely to spread a happy path over multiple triggers.
 If business meaning requires waiting, that wait must be represented as durable
 time or durable capacity ownership.
+
+
+## Recurring trigger batches
+
+A scheduler invocation is not required to map one-to-one to a logical tick.
+
+`SimulationJob.run_trigger()` creates a durable parent trigger that owns a
+bounded number of child ticks:
+
+```text
+external trigger A
+      |
+      +-- A:tick:1
+      +-- A:tick:2
+      +-- A:tick:3
+```
+
+The batch size defaults to `ticks_per_trigger` and is bounded by
+`max_ticks_per_trigger`.
+
+This lets an orchestrator choose operational cadence independently from the
+domain's logical `tick_step` without conflating wall-clock and simulation
+time.
+
+### Parent trigger checkpoint
+
+`SimulationJobState` persists:
+
+- active parent trigger id;
+- requested tick count;
+- completed child tick count;
+- completed parent trigger history.
+
+A child tick still uses the existing durable advance/reconcile phases.
+
+If the process fails during child 2 of a 3-tick batch, the state may look like:
+
+```text
+batch trigger = scheduler-42
+requested     = 3
+completed     = 1
+child trigger = scheduler-42:tick:2
+phase         = advance | reconcile
+```
+
+Recovery uses the same parent trigger id with `recover=True`. Already completed
+children are not executed again.
+
+### Historical idempotency
+
+Completed batch trigger identities are durable, not merely cached as the last
+run.
+
+Therefore:
+
+```text
+trigger A -> complete
+trigger B -> complete
+retry A   -> return A's recorded result
+```
+
+The retry does not advance simulation time.
+
+This is useful for schedulers that can replay an older run after later runs have
+already completed.
+
+### Ownership boundaries
+
+While a parent batch is active:
+
+- a different parent batch is rejected;
+- an unrelated direct `run_tick()` is rejected;
+- configuration changes are rejected;
+- pause/resume changes are rejected.
+
+This closes the otherwise dangerous idle-looking window between child ticks.
+
+### CLI
+
+```bash
+sose trigger \
+  --config sose.toml \
+  --trigger-id airflow-dagrun-2026-09-28T18:00Z
+```
+
+To recover the same partially completed external run:
+
+```bash
+sose trigger \
+  --config sose.toml \
+  --trigger-id airflow-dagrun-2026-09-28T18:00Z \
+  --recover
+```
+
+For manual/debugging use, `sose run` remains exactly one tick.
