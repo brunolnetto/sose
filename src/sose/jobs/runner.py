@@ -472,6 +472,23 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             if latest.last_completed_trigger_id == effective_trigger_id:
                 return self._result_from_state(latest)
 
+            if latest.active_batch_trigger_id is not None:
+                expected_child_id = (
+                    f"{latest.active_batch_trigger_id}:tick:"
+                    f"{latest.active_batch_completed_ticks + 1}"
+                )
+                if effective_trigger_id != expected_child_id:
+                    raise RuntimeError(
+                        f"job has unresolved batch trigger: {self.job_id} "
+                        f"(trigger={latest.active_batch_trigger_id!r}, "
+                        f"expected_child={expected_child_id!r})"
+                    )
+            elif state.active_batch_trigger_id is not None:
+                raise RuntimeError(
+                    f"batch trigger ownership changed before tick claim: "
+                    f"{self.job_id}"
+                )
+
             if latest.status == "paused":
                 raise RuntimeError(f"job is paused: {self.job_id}")
 
