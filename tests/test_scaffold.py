@@ -26,6 +26,8 @@ def test_scaffold_roundtrips_every_builtin_domain(domain_name, tmp_path):
     assert parsed.domain.name == domain_name
     assert parsed.job.id == f"{domain_name}-test"
     assert parsed.persistence.adapter == "sqlite_incremental"
+    assert parsed.job.ticks_per_trigger == 1
+    assert parsed.job.max_ticks_per_trigger == 100
 
 
 def test_write_scaffold_refuses_overwrite_without_force(tmp_path):
