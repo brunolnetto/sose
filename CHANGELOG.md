@@ -4,6 +4,8 @@
 
 ### Added
 
+- optional Databricks and Snowflake analytical event sinks using idempotent SQL MERGE batches over the durable analytical outbox;
+
 - durable analytical sink outbox with per-sink checkpoints, idempotent event batches, declarative sink configuration, and JSONL reference adapter;
 
 - optional PostgreSQL remote persistence adapter using the shared incremental
