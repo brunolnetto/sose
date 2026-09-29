@@ -119,3 +119,28 @@ max_ticks_per_trigger = 7
 
     assert config.job.ticks_per_trigger == 3
     assert config.job.max_ticks_per_trigger == 7
+
+
+def test_job_section_rejects_ticks_per_trigger_above_max(tmp_path):
+    from pydantic import ValidationError
+    from sose.jobs.config import load_sose_config
+
+    path = tmp_path / "invalid-trigger.toml"
+    path.write_text(
+        """
+[domain]
+name = "tutorial_job"
+
+[persistence]
+adapter = "memory"
+
+[job]
+id = "invalid"
+ticks_per_trigger = 5
+max_ticks_per_trigger = 2
+""".strip(),
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValidationError, match="ticks_per_trigger"):
+        load_sose_config(path)
