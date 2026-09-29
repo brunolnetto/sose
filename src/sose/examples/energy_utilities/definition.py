@@ -77,4 +77,5 @@ definition = DomainDefinition(
     build_runtime=_build,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
+    runtime_mutable_fields=frozenset(["tick_step","random_seed","auto_meter_reading","meter_reading_quantity","demand_response_enabled"]),
 )
