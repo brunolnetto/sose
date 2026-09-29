@@ -89,6 +89,7 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
             "config_model": self.config_model.__name__,
             "defaults": defaults,
             "parameters": parameters,
+            "$defs": schema.get("$defs", {}),
         }
 
 
