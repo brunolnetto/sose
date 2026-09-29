@@ -89,19 +89,9 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
             raise RuntimeError(
                 "domain config discovery cannot align model fields with JSON schema"
             )
+        field_defaults = instance.model_dump(mode="json")
         defaults = {
-            property_name: getattr(instance, field_name)
-            for field_name, property_name in zip(
-                model_field_names,
-                property_names,
-                strict=True,
-            )
-        }
-        defaults = self.config_model.model_validate(
-            instance.model_dump(mode="python")
-        ).model_dump(mode="json")
-        defaults = {
-            property_name: defaults[field_name]
+            property_name: field_defaults[field_name]
             for field_name, property_name in zip(
                 model_field_names,
                 property_names,
