@@ -31,6 +31,8 @@ class RuntimeCounts:
     preemptive_resource_reservations: int
     preemptive_resource_release_intents: int
     resource_preemption_results: int
+    sink_deliveries_pending: int = 0
+    sink_deliveries_failed: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,6 +195,24 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
                 )
             )
 
+    sink_deliveries = persistence.sink_deliveries()
+    pending_sink_deliveries = tuple(
+        delivery for delivery in sink_deliveries if delivery.status == "pending"
+    )
+    failed_sink_deliveries = tuple(
+        delivery
+        for delivery in pending_sink_deliveries
+        if delivery.last_error is not None
+    )
+    for delivery in failed_sink_deliveries:
+        issues.append(
+            DiagnosticIssue(
+                "sink.delivery_failed",
+                f"sink delivery {delivery.delivery_id} to "
+                f"{delivery.sink_name!r} failed: {delivery.last_error}",
+            )
+        )
+
     scenario_state = persistence.scenario_state()
     counts = RuntimeCounts(
         events=len(persistence.events()),
@@ -216,6 +236,8 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
             persistence.preemptive_resource_release_intents()
         ),
         resource_preemption_results=len(persistence.resource_preemption_results()),
+        sink_deliveries_pending=len(pending_sink_deliveries),
+        sink_deliveries_failed=len(failed_sink_deliveries),
     )
     return RuntimeDiagnostics(
         position=persistence.simulation_position(),
