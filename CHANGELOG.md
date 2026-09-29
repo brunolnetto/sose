@@ -4,6 +4,10 @@
 
 ### Added
 
+- bounded recurring job trigger batches with durable parent ownership, partial
+  recovery, historical trigger idempotency, and configurable ticks per trigger;
+- horizontal config contract requiring every builtin domain to expose
+  domain-specific customizable parameters;
 - recurring tick reconciliation across every builtin Reference plus the tutorial
   domain, with state-aware idempotent progression instead of end-to-end-only
   execution;
