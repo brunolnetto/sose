@@ -5,6 +5,7 @@ from dataclasses import asdict
 import json
 from pathlib import Path
 import sys
+from datetime import datetime
 
 from sose.jobs.config import load_sose_config
 from sose.jobs.config_edit import (
@@ -148,11 +149,21 @@ def _cmd_run(args: argparse.Namespace) -> int:
 def _cmd_trigger(args: argparse.Namespace) -> int:
     job = build_job_from_file(args.config)
     try:
-        result = job.run_trigger(
-            trigger_id=args.trigger_id,
-            ticks=args.ticks,
-            recover=args.recover,
-        )
+        if args.scheduled_for is not None:
+            scheduled_for = datetime.fromisoformat(
+                args.scheduled_for.replace("Z", "+00:00")
+            )
+            result = job.run_scheduled_trigger(
+                scheduled_for=scheduled_for,
+                ticks=args.ticks,
+                recover=args.recover,
+            )
+        else:
+            result = job.run_trigger(
+                trigger_id=args.trigger_id,
+                ticks=args.ticks,
+                recover=args.recover,
+            )
         print(_json(asdict(result)))
         return 0
     finally:
@@ -342,10 +353,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Execute one durable recurring trigger using the configured tick batch.",
     )
     trigger.add_argument("--config", default="sose.toml")
-    trigger.add_argument(
+    trigger_identity = trigger.add_mutually_exclusive_group(required=True)
+    trigger_identity.add_argument(
         "--trigger-id",
-        required=True,
         help="Stable id from the external scheduler/run attempt.",
+    )
+    trigger_identity.add_argument(
+        "--scheduled-for",
+        help=(
+            "Timezone-aware scheduled occurrence (ISO-8601). "
+            "SOSE derives a stable trigger id from job id + UTC instant."
+        ),
     )
     trigger.add_argument(
         "--ticks",
