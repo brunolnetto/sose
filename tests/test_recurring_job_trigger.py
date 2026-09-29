@@ -196,3 +196,26 @@ def test_batch_trigger_progress_survives_sqlite_reopen(tmp_path):
     assert result.end_tick == 3
     assert resumed.state().last_completed_batch_trigger_id == "external-batch"
     reopened.close()
+
+
+def test_old_completed_batch_trigger_remains_idempotent_after_later_batches():
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    job = SimulationJob(
+        job_id="batch-history",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+        ticks_per_trigger=2,
+    )
+    job.initialize({"complete_after": timedelta(hours=10)})
+
+    first = job.run_trigger(trigger_id="scheduler-old")
+    second = job.run_trigger(trigger_id="scheduler-new")
+    replayed = job.run_trigger(trigger_id="scheduler-old")
+
+    assert first.end_tick == 2
+    assert second.end_tick == 4
+    assert replayed == first
+    assert job.state().next_tick == 4
+    assert len(job.state().completed_batch_triggers) == 2
