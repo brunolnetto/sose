@@ -209,3 +209,12 @@ def test_scaffold_comments_do_not_change_config_roundtrip(tmp_path):
     assert definition.parse_config(parsed.domain.parameters) == (
         definition.default_config()
     )
+
+
+def test_scaffold_marks_runtime_and_bootstrap_parameter_mutability():
+    rendered = render_sose_toml(builtin_catalog().get("mro"))
+
+    tick_block = rendered.split("tick_step =", 1)[0]
+    assert "# mutability=runtime" in tick_block
+    quantity_prefix = rendered.split("quantity =", 1)[0]
+    assert "# mutability=bootstrap" in quantity_prefix
