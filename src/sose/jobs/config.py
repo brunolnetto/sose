@@ -30,6 +30,8 @@ class JobSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     id: str
+    ticks_per_trigger: int = Field(default=1, ge=1)
+    max_ticks_per_trigger: int = Field(default=100, ge=1)
 
 
 class SOSEConfig(BaseModel):
