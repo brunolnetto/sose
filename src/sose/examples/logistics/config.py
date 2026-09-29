@@ -20,3 +20,4 @@ class LogisticsConfig(DomainConfig):
         default=timedelta(hours=1),
         gt=timedelta(0),
     )
+    auto_progress_shipment: bool = True
