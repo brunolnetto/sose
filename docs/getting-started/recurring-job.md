@@ -194,3 +194,61 @@ job.run_tick(
 
 This prevents two scheduler invocations from unintentionally advancing the same
 job twice.
+
+
+## Doctor
+
+Before advancing a production job, inspect the declarative configuration and
+durable checkpoint without mutating either:
+
+```bash
+sose doctor --config sose.toml
+```
+
+The command checks:
+
+- domain configuration validity;
+- persistence adapter resolution;
+- durable job/domain identity;
+- declarative-vs-durable config drift;
+- job status and unresolved trigger ownership;
+- SimulationJobState vs SimulationPosition tick/time coherence;
+- runtime diagnostic issue codes.
+
+A fresh valid configuration with no initialized job is healthy.
+
+If `sose.toml` differs from the durable configuration revision, doctor reports
+`job.config_drift`. Apply the change explicitly:
+
+```bash
+sose apply --config sose.toml
+```
+
+Then rerun doctor.
+
+A non-healthy doctor report exits with status 1. Configuration/loading failures
+still use the normal CLI error status 2.
+
+## Minimal operational loop
+
+SOSE exposes two explicit operational primitives:
+
+```text
+sose run
+    -> exactly one durable tick
+
+sose trigger --trigger-id <stable external id>
+    -> bounded durable batch of ticks
+    -> size = ticks_per_trigger
+```
+
+A recurring trigger has its own durable ownership and progress. If a process
+fails after completing only part of the batch, retry the **same** trigger id
+with `--recover`; SOSE resumes from the first unfinished child tick.
+
+Completed trigger ids remain durably recorded, so replaying an older scheduler
+run after later runs have completed does not advance logical time again.
+
+Cron, Airflow, Databricks Jobs, Kubernetes CronJobs, or another orchestrator
+owns wall-clock recurrence; SOSE owns logical tick progression, bounded catch-up,
+checkpointing, and idempotent recovery.
