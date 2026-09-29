@@ -7,6 +7,8 @@ from typing import Callable, Generic, TypeVar
 from sose.domain.config import ConfigT, DomainDefinition, SeedT
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.persistence.base import Persistence
+from sose.sinks.base import SinkBinding
+from sose.sinks.outbox import SinkOutbox
 
 
 BackendFactory = Callable[[datetime], object]
@@ -54,6 +56,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         backend_factory: BackendFactory,
         ticks_per_trigger: int = 1,
         max_ticks_per_trigger: int = 100,
+        sink_bindings: tuple[SinkBinding, ...] = (),
     ) -> None:
         if not job_id:
             raise ValueError("job_id cannot be empty")
@@ -71,9 +74,44 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         self.backend_factory = backend_factory
         self.ticks_per_trigger = ticks_per_trigger
         self.max_ticks_per_trigger = max_ticks_per_trigger
+        self.sink_bindings = sink_bindings
+        self.outbox = SinkOutbox(persistence)
 
     def state(self) -> SimulationJobState | None:
         return self.persistence.job_state(self.job_id)
+
+
+    def pending_sink_deliveries(self):
+        return tuple(
+            delivery
+            for delivery in self.persistence.sink_deliveries(job_id=self.job_id)
+            if delivery.status == "pending"
+        )
+
+    def flush_sinks(self) -> tuple[tuple[str, str | None], ...]:
+        """Best-effort drain of configured analytical sinks."""
+
+        if not self.sink_bindings:
+            return ()
+        state = self.state()
+        if state is None or not state.initialized:
+            return ()
+
+        results: list[tuple[str, str | None]] = []
+        for binding in self.sink_bindings:
+            try:
+                delivery = self.outbox.flush(binding, state)
+                results.append(
+                    (
+                        binding.name,
+                        None if delivery is None else delivery.delivery_id,
+                    )
+                )
+            except Exception as exc:
+                results.append(
+                    (binding.name, f"{type(exc).__name__}: {exc}")
+                )
+        return tuple(results)
 
     def initialize(
         self,
@@ -446,6 +484,10 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         elif not state.initialized:
             state = self._finish_initialization(state)
 
+        # Retry any previously prepared analytical delivery before advancing.
+        # Failures stay durable and never block operational semantic progress.
+        self.flush_sinks()
+
         effective_trigger_id = trigger_id or (
             f"{self.job_id}:tick:{state.next_tick}:run:{state.run_count + 1}"
         )
@@ -670,6 +712,9 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                     )
                 uow.save_job_state(completed)
 
+            # The operational checkpoint is already durable. Analytical delivery
+            # is retriable side-effect state and cannot roll this tick back.
+            self.flush_sinks()
             return self._result_from_state(completed)
         except Exception as exc:
             latest = self.state() or claimed
