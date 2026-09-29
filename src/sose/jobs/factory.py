@@ -37,10 +37,6 @@ def build_job_from_config(
     domains = builtin_catalog()
     definition = domains.get(config.domain.name)
     registry = persistence_registry or builtin_persistence_registry()
-    registry.require(
-        config.persistence.adapter,
-        *config.persistence.require,
-    )
     persistence = registry.create(
         config.persistence.adapter,
         config.persistence.options,
@@ -52,6 +48,8 @@ def build_job_from_config(
         definition=definition,
         persistence=persistence,
         backend_factory=_backend_factory(config.runtime.backend),
+        ticks_per_trigger=config.job.ticks_per_trigger,
+        max_ticks_per_trigger=config.job.max_ticks_per_trigger,
     )
     job.initialize(config.domain.parameters)
     return job
