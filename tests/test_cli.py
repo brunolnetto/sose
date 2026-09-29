@@ -293,3 +293,210 @@ def test_cli_domain_parameter_discovery_rejects_unknown_domain(capsys):
     captured = capsys.readouterr()
     assert captured.out == ""
     assert "unknown domain" in captured.err
+
+
+
+def test_cli_config_show_reports_effective_values_and_mutability(tmp_path, capsys):
+    config = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[domain.parameters]
+random_seed = 99
+complete_after = "PT3H"
+
+[job]
+id = "config-show"
+""".strip(),
+    )
+
+    assert run_cli(["config", "show", "--config", str(config)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    by_name = {item["name"]: item for item in payload["parameters"]}
+
+    assert payload["domain"] == "tutorial_job"
+    assert by_name["random_seed"]["value"] == 99
+    assert by_name["random_seed"]["mutability"] == "runtime"
+    assert by_name["complete_after"]["mutability"] == "bootstrap"
+    assert by_name["auto_complete"]["value"] is True
+
+
+def test_cli_config_set_validates_and_edits_runtime_parameter(tmp_path, capsys):
+    config = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[domain.parameters]
+random_seed = 1
+complete_after = "PT3H"
+
+[job]
+id = "config-set"
+""".strip(),
+    )
+
+    assert run_cli(
+        [
+            "config",
+            "set",
+            "random_seed",
+            "99",
+            "--config",
+            str(config),
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+
+    assert payload["name"] == "random_seed"
+    assert payload["value"] == 99
+    assert payload["mutability"] == "runtime"
+    assert payload["applied"] is False
+
+    assert run_cli(["validate", "--config", str(config)]) == 0
+    validated = json.loads(capsys.readouterr().out)
+    assert validated["domain_parameters"]["random_seed"] == 99
+
+
+def test_cli_config_set_can_add_missing_domain_parameters_section(tmp_path, capsys):
+    config = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[job]
+id = "config-insert"
+""".strip(),
+    )
+
+    assert run_cli(
+        [
+            "config",
+            "set",
+            "auto_complete",
+            "false",
+            "--config",
+            str(config),
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["value"] is False
+    assert "[domain.parameters]" in config.read_text(encoding="utf-8")
+
+    assert run_cli(["validate", "--config", str(config)]) == 0
+    validated = json.loads(capsys.readouterr().out)
+    assert validated["domain_parameters"]["auto_complete"] is False
+
+
+def test_cli_config_set_rejects_unknown_parameter_without_modifying_file(
+    tmp_path,
+    capsys,
+):
+    config = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[job]
+id = "config-unknown"
+""".strip(),
+    )
+    before = config.read_text(encoding="utf-8")
+
+    assert run_cli(
+        [
+            "config",
+            "set",
+            "does_not_exist",
+            "1",
+            "--config",
+            str(config),
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert "unknown domain parameter" in captured.err
+    assert config.read_text(encoding="utf-8") == before
+
+
+def test_cli_config_set_rejects_invalid_value_before_writing(tmp_path, capsys):
+    config = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "mro"
+
+[domain.parameters]
+technician_capacity = 2
+
+[job]
+id = "config-invalid"
+""".strip(),
+    )
+    before = config.read_text(encoding="utf-8")
+
+    assert run_cli(
+        [
+            "config",
+            "set",
+            "technician_capacity",
+            "0",
+            "--config",
+            str(config),
+        ]
+    ) == 2
+    captured = capsys.readouterr()
+    assert "greater than or equal to 1" in captured.err
+    assert config.read_text(encoding="utf-8") == before
+
+
+def test_cli_config_set_bootstrap_field_edits_file_but_apply_still_owns_runtime_guard(
+    tmp_path,
+    capsys,
+):
+    config = _write(
+        tmp_path / "sose.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[domain.parameters]
+complete_after = "PT3H"
+
+[persistence]
+adapter = "sqlite_incremental"
+
+[persistence.options]
+path = "config-bootstrap.sqlite3"
+
+[job]
+id = "config-bootstrap"
+""".strip(),
+    )
+
+    assert run_cli(
+        ["run", "--config", str(config), "--trigger-id", "config-bootstrap-1"]
+    ) == 0
+    capsys.readouterr()
+
+    assert run_cli(
+        [
+            "config",
+            "set",
+            "complete_after",
+            "PT1H",
+            "--config",
+            str(config),
+        ]
+    ) == 0
+    edited = json.loads(capsys.readouterr().out)
+    assert edited["mutability"] == "bootstrap"
+    assert edited["applied"] is False
+
+    assert run_cli(["apply", "--config", str(config)]) == 2
+    captured = capsys.readouterr()
+    assert "bootstrap-only" in captured.err
