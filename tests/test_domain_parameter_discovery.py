@@ -37,3 +37,42 @@ def test_every_builtin_domain_description_marks_domain_specific_fields():
         }
 
         assert domain_specific, definition.name
+
+
+def test_description_preserves_referenced_schema_definitions():
+    from enum import Enum
+    from pydantic import BaseModel
+
+    from sose.domain.config import DomainDefinition
+    from sose.persistence.memory import MemoryPersistence
+
+    class Mode(str, Enum):
+        normal = "normal"
+        urgent = "urgent"
+
+    class Nested(BaseModel):
+        threshold: int = 3
+
+    class CustomConfig(DomainConfig):
+        start_at: str = "2026-01-01T00:00:00Z"
+        mode: Mode = Mode.normal
+        nested: Nested = Nested()
+
+    definition = DomainDefinition(
+        name="custom",
+        description="custom discovery test",
+        config_model=CustomConfig,
+        build_runtime=lambda persistence, config, now, tick: (None, None),
+        seed=lambda persistence, config: None,
+    )
+
+    description = definition.describe_config()
+    assert "Mode" in description["$defs"]
+    assert "Nested" in description["$defs"]
+
+    schemas = {
+        item["name"]: item["schema"]
+        for item in description["parameters"]
+    }
+    assert schemas["mode"]["$ref"] == "#/$defs/Mode"
+    assert schemas["nested"]["$ref"] == "#/$defs/Nested"
