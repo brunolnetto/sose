@@ -5,6 +5,25 @@ from datetime import datetime
 
 
 @dataclass(frozen=True, slots=True)
+class CompletedJobTrigger:
+    trigger_id: str
+    requested_ticks: int
+    start_tick: int
+    end_tick: int
+    config_revision: int
+    logical_time: datetime
+    run_count: int
+
+    def __post_init__(self) -> None:
+        if not self.trigger_id:
+            raise ValueError("trigger_id cannot be empty")
+        if self.requested_ticks < 1:
+            raise ValueError("requested_ticks must be >= 1")
+        if self.start_tick < 0 or self.end_tick < self.start_tick:
+            raise ValueError("invalid completed trigger tick range")
+
+
+@dataclass(frozen=True, slots=True)
 class SimulationJobState:
     """Durable orchestration checkpoint for one recurring simulation job."""
 
@@ -26,6 +45,7 @@ class SimulationJobState:
     active_batch_completed_ticks: int = 0
     last_completed_batch_trigger_id: str | None = None
     last_completed_batch_ticks: int = 0
+    completed_batch_triggers: tuple[CompletedJobTrigger, ...] = ()
     phase: str = "idle"
     last_error: str | None = None
 
