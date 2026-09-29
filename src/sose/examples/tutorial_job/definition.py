@@ -39,6 +39,8 @@ def _reconcile_tick(
     config: TutorialJobConfig,
     job,
 ) -> None:
+    if not config.auto_complete:
+        return
     current = persistence.entity("tutorial_job", job.id)
     if current is None or current.state not in {"queued", "running"}:
         return
@@ -57,5 +59,5 @@ definition = DomainDefinition(
     build_runtime=_build,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
-    runtime_mutable_fields=frozenset(["tick_step","random_seed","complete_after"]),
+    runtime_mutable_fields=frozenset(["tick_step", "random_seed", "auto_complete"]),
 )
