@@ -35,6 +35,12 @@ def test_builtin_persistence_capabilities_are_explicit():
     assert duckdb.analytical_reads is True
     assert duckdb.remote is False
 
+    postgres = registry.capabilities("postgres")
+    assert postgres.process_durable is True
+    assert postgres.incremental_updates is True
+    assert postgres.concurrent_writers is True
+    assert postgres.remote is True
+
 
 def test_registry_require_accepts_supported_capabilities():
     registry = builtin_persistence_registry()
