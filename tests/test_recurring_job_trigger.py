@@ -371,3 +371,39 @@ def test_active_batch_accepts_only_exact_next_child_trigger_id():
     assert persistence.simulation_position() is None
     state = job.state()
     assert state.active_batch_completed_ticks == 0
+
+
+def test_tick_rechecks_batch_ownership_inside_claim_transaction(monkeypatch):
+    persistence = MemoryPersistence()
+    definition = builtin_catalog().get("tutorial_job")
+    job = SimulationJob(
+        job_id="atomic-child-claim",
+        definition=definition,
+        persistence=persistence,
+        backend_factory=_backend,
+    )
+    original = job.initialize()
+    stale = original
+
+    with persistence.transaction() as uow:
+        current = uow.get_job_state(job.job_id)
+        assert current is not None
+        uow.save_job_state(
+            replace(
+                current,
+                active_batch_trigger_id="batch-race",
+                active_batch_total_ticks=2,
+                active_batch_completed_ticks=0,
+            )
+        )
+
+    monkeypatch.setattr(job, "state", lambda: stale)
+
+    with pytest.raises(RuntimeError, match="unresolved batch trigger"):
+        job.run_tick(trigger_id="manual-race")
+
+    assert persistence.simulation_position() is None
+    durable = persistence.job_state(job.job_id)
+    assert durable is not None
+    assert durable.active_batch_trigger_id == "batch-race"
+    assert durable.active_batch_completed_ticks == 0
