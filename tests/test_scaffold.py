@@ -121,3 +121,69 @@ def test_cli_trigger_uses_persisted_batch_policy(tmp_path, capsys):
     ) == 0
     replayed = json.loads(capsys.readouterr().out)
     assert replayed == payload
+
+
+def test_cli_init_generates_postgres_environment_config(tmp_path, capsys):
+    output = tmp_path / "sose.toml"
+
+    assert run_cli(
+        [
+            "init",
+            "--domain",
+            "mro",
+            "--output",
+            str(output),
+            "--job-id",
+            "plant-maintenance",
+            "--persistence",
+            "postgres",
+        ]
+    ) == 0
+    capsys.readouterr()
+
+    parsed, _ = load_sose_config(output)
+    assert parsed.persistence.adapter == "postgres"
+    assert parsed.persistence.options["dsn_env"] == "SOSE_DATABASE_URL"
+    assert parsed.persistence.options["namespace"] == "plant_maintenance"
+    assert "path" not in parsed.persistence.options
+
+
+
+def test_postgres_namespace_is_ascii_safe_for_unicode_job_id(tmp_path):
+    definition = builtin_catalog().get("mro")
+    rendered = render_sose_toml(
+        definition,
+        job_id="münchen-maintenance",
+        persistence_adapter="postgres",
+    )
+    path = tmp_path / "unicode-postgres.toml"
+    path.write_text(rendered, encoding="utf-8")
+
+    parsed, _ = load_sose_config(path)
+    namespace = parsed.persistence.options["namespace"]
+
+    assert namespace == "m_nchen_maintenance"
+    assert namespace.isascii()
+
+
+def test_postgres_namespace_keeps_long_job_ids_distinct(tmp_path):
+    definition = builtin_catalog().get("mro")
+    prefix = "maintenance-production-line-" + ("x" * 30)
+    first_id = prefix + "-alpha"
+    second_id = prefix + "-beta"
+
+    namespaces = []
+    for ordinal, job_id in enumerate((first_id, second_id), start=1):
+        rendered = render_sose_toml(
+            definition,
+            job_id=job_id,
+            persistence_adapter="postgres",
+        )
+        path = tmp_path / f"long-postgres-{ordinal}.toml"
+        path.write_text(rendered, encoding="utf-8")
+        parsed, _ = load_sose_config(path)
+        namespaces.append(parsed.persistence.options["namespace"])
+
+    assert namespaces[0] != namespaces[1]
+    assert all(len(namespace) <= 40 for namespace in namespaces)
+    assert all(namespace.isascii() for namespace in namespaces)

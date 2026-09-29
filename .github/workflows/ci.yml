@@ -161,3 +161,45 @@ jobs:
             persistence-scaling-smoke.json
           if-no-files-found: error
           retention-days: 14
+
+  postgres:
+    name: postgres integration
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sose
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sose"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install PostgreSQL test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip check
+
+      - name: Run PostgreSQL conformance, restart, and concurrency tests
+        run: |
+          python -m pytest -q             tests/test_postgres_persistence.py             tests/test_postgres_persistence_restart.py

@@ -280,3 +280,38 @@ sose persistence
 This becomes especially important when selecting remote warehouses. A job that
 requires concurrent writers must not silently run on a target whose adapter only
 supports serialized writers.
+
+
+### PostgreSQL
+
+Generate a PostgreSQL-backed job:
+
+```bash
+sose init \
+  --domain mro \
+  --persistence postgres \
+  --job-id mro-production
+```
+
+The scaffold uses:
+
+```toml
+[persistence]
+adapter = "postgres"
+
+[persistence.options]
+dsn_env = "SOSE_DATABASE_URL"
+namespace = "mro_production"
+```
+
+Set the connection secret outside the file:
+
+```bash
+export SOSE_DATABASE_URL='postgresql://user:password@host/database'
+```
+
+PostgreSQL is an optional extra:
+
+```bash
+pip install "sose[postgres]"
+```

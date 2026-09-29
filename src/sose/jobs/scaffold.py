@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from hashlib import sha256
 import json
 from pathlib import Path
 
@@ -48,20 +49,51 @@ def render_sose_toml(
     for key, value in defaults.items():
         lines.append(f"{key} = {_toml_value(value)}")
 
+    resolved_job_id = job_id or f"{definition.name}-job"
+    persistence_options = [
+        "",
+        "[persistence]",
+        f"adapter = {_toml_value(persistence_adapter)}",
+        "",
+        "[persistence.options]",
+    ]
+    if persistence_adapter == "postgres":
+        namespace = "".join(
+            character
+            if (
+                "A" <= character <= "Z"
+                or "a" <= character <= "z"
+                or "0" <= character <= "9"
+                or character == "_"
+            )
+            else "_"
+            for character in resolved_job_id
+        )
+        if not namespace or namespace[0].isdigit():
+            namespace = f"job_{namespace}"
+        if len(namespace) > 40:
+            suffix = sha256(resolved_job_id.encode("utf-8")).hexdigest()[:8]
+            namespace = f"{namespace[:31]}_{suffix}"
+        persistence_options.extend(
+            [
+                'dsn_env = "SOSE_DATABASE_URL"',
+                f"namespace = {_toml_value(namespace)}",
+            ]
+        )
+    else:
+        persistence_options.append(
+            f"path = {_toml_value(persistence_path)}"
+        )
+
     lines.extend(
-        [
-            "",
-            "[persistence]",
-            f"adapter = {_toml_value(persistence_adapter)}",
-            "",
-            "[persistence.options]",
-            f"path = {_toml_value(persistence_path)}",
+        persistence_options
+        + [
             "",
             "[runtime]",
             f"backend = {_toml_value(runtime_backend)}",
             "",
             "[job]",
-            f"id = {_toml_value(job_id or f'{definition.name}-job')}",
+            f"id = {_toml_value(resolved_job_id)}",
             "ticks_per_trigger = 1",
             "max_ticks_per_trigger = 100",
             "",

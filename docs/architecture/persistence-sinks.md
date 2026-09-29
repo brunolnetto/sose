@@ -174,6 +174,7 @@ The current built-in matrix is:
 | sqlite_incremental | yes | yes | yes | no | no | no | no | yes |
 | jsonl | yes | yes | yes | no | no | no | yes | no |
 | duckdb | yes | yes | yes | no | no | yes | no | no |
+| postgres | yes | yes | yes | yes | yes | no | no | no |
 
 `concurrent_writers=no` does not mean the adapter cannot be opened from
 multiple processes/connections. It means SOSE does not claim simultaneous
@@ -210,3 +211,9 @@ adapter has executable evidence for.
 
 Capabilities describe tested SOSE adapter semantics, not generic marketing
 claims about the underlying database product.
+
+
+PostgreSQL is now the first adapter that proves the `remote` and
+`concurrent_writers` capabilities against a real database service in CI.
+
+See [PostgreSQL persistence](postgres-persistence.md).
