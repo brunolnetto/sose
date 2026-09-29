@@ -161,7 +161,7 @@ name = "tutorial_job"
 
 [domain.parameters]
 random_seed = 99
-complete_after = "PT1H"
+complete_after = "PT3H"
 
 [persistence]
 adapter = "sqlite_incremental"
@@ -184,6 +184,64 @@ id = "apply-cli"
     repeated = json.loads(capsys.readouterr().out)
     assert repeated["changed"] is False
     assert repeated["config_revision"] == 2
+
+
+def test_cli_apply_rejects_bootstrap_only_change_after_initialization(tmp_path, capsys):
+    config = _write(
+        tmp_path / "bootstrap.toml",
+        """
+[domain]
+name = "tutorial_job"
+
+[domain.parameters]
+complete_after = "PT3H"
+
+[persistence]
+adapter = "sqlite_incremental"
+
+[persistence.options]
+path = "bootstrap-state.sqlite3"
+
+[job]
+id = "apply-bootstrap-cli"
+""".strip(),
+    )
+
+    assert run_cli(
+        ["run", "--config", str(config), "--trigger-id", "bootstrap-run-1"]
+    ) == 0
+    capsys.readouterr()
+
+    _write(
+        config,
+        """
+[domain]
+name = "tutorial_job"
+
+[domain.parameters]
+complete_after = "PT1H"
+
+[persistence]
+adapter = "sqlite_incremental"
+
+[persistence.options]
+path = "bootstrap-state.sqlite3"
+
+[job]
+id = "apply-bootstrap-cli"
+""".strip(),
+    )
+
+    assert run_cli(["apply", "--config", str(config)]) == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "bootstrap-only" in captured.err
+    assert "complete_after" in captured.err
+
+    assert run_cli(["inspect", "--config", str(config)]) == 0
+    inspected = json.loads(capsys.readouterr().out)
+    assert inspected["job"]["config_revision"] == 1
+    assert inspected["config"]["complete_after"] == "PT3H"
 
 
 def test_cli_lists_analytical_sink_adapters(capsys):
