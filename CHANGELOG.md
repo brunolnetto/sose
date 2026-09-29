@@ -4,6 +4,8 @@
 
 ### Added
 
+- deterministic recurring-trigger identities derived from timezone-aware
+  scheduler occurrence timestamps, exposed through Python and CLI;
 - validated `sose config show` / `sose config set` commands for inspecting
   and editing declarative domain parameters without implicitly mutating durable jobs;
 - domain-specific runtime controls across every builtin Reference, including
