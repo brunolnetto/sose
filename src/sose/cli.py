@@ -30,11 +30,16 @@ def _validate_config(path: str | Path) -> dict[str, object]:
     definition = domains.get(config.domain.name)
     resolved = definition.parse_config(config.domain.parameters)
 
-    persistence_names = builtin_persistence_registry().names()
+    persistence_registry = builtin_persistence_registry()
+    persistence_names = persistence_registry.names()
     if config.persistence.adapter not in persistence_names:
         raise KeyError(
             f"unknown persistence adapter: {config.persistence.adapter}"
         )
+    persistence_registry.require(
+        config.persistence.adapter,
+        *config.persistence.require,
+    )
     if config.runtime.backend != "simpy":
         raise KeyError(f"unknown runtime backend: {config.runtime.backend}")
 
@@ -43,6 +48,7 @@ def _validate_config(path: str | Path) -> dict[str, object]:
         "domain": definition.name,
         "domain_parameters": resolved.model_dump(mode="json"),
         "persistence": config.persistence.adapter,
+        "persistence_require": list(config.persistence.require),
         "runtime_backend": config.runtime.backend,
     }
 
@@ -166,7 +172,20 @@ def _cmd_domains(args: argparse.Namespace) -> int:
 
 def _cmd_persistence(args: argparse.Namespace) -> int:
     registry = builtin_persistence_registry()
-    print(_json({"adapters": list(registry.names())}))
+    print(
+        _json(
+            {
+                "adapters": [
+                    {
+                        "name": adapter.name,
+                        "optional_extra": adapter.optional_extra,
+                        "capabilities": list(adapter.capabilities.names()),
+                    }
+                    for adapter in registry.describe()
+                ]
+            }
+        )
+    )
     return 0
 
 
