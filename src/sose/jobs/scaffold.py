@@ -62,6 +62,8 @@ def render_sose_toml(
             "",
             "[job]",
             f"id = {_toml_value(job_id or f'{definition.name}-job')}",
+            "ticks_per_trigger = 1",
+            "max_ticks_per_trigger = 100",
             "",
         ]
     )
