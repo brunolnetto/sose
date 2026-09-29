@@ -64,9 +64,25 @@ Domain configs are frozen Pydantic models. They are:
 - safe to store alongside a durable job definition;
 - replaceable between job runs through an explicit new configuration revision.
 
-A running tick must use one resolved configuration snapshot. Configuration
-changes take effect at the next orchestration boundary unless a domain models a
-business change as durable domain state.
+A running tick must use one resolved configuration snapshot.
+
+Parameter mutability is explicit:
+
+- `runtime` — may change between completed triggers and takes effect on the next
+  orchestration boundary;
+- `bootstrap` — contributes to already materialized durable truth and cannot be
+  changed after job initialization.
+
+By default, `tick_step` and `random_seed` are runtime-mutable while
+`start_at` and domain-specific parameters are bootstrap-only. A domain may
+opt individual domain parameters into runtime mutation only when changing them
+does not require rewriting already-created semantic state.
+
+For example, MRO allows `auto_seed_spare_parts` to change between ticks but
+keeps quantity, capacities, and release timing bootstrap-only.
+
+Business changes that belong to the simulated world should still be modeled as
+durable domain state/events rather than configuration mutation.
 
 ## Operational parameter depth
 

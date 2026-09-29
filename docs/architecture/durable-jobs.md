@@ -101,8 +101,15 @@ job.update_config({"technician_capacity": 3})
 Mapping updates are patches over the previous resolved config, so unspecified
 values remain unchanged.
 
-A tick uses one config snapshot. New configuration takes effect on the next
-trigger.
+A tick uses one config snapshot. Only fields declared runtime-mutable by the
+selected `DomainDefinition` may change after initialization. Bootstrap-only
+changes are rejected before a new config revision is committed.
+
+This prevents an apparently successful configuration update from silently
+disagreeing with already-seeded entities, capacities, or ScheduledWork.
+
+Use `sose domains --name <domain>` to inspect each parameter's
+`mutability`.
 
 Business changes that are part of the simulated world should still be modeled
 as domain state/events rather than configuration mutation.

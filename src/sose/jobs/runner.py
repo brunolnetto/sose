@@ -204,15 +204,22 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             raise RuntimeError(
                 f"cannot change config while trigger is unresolved: {self.job_id}"
             )
+        previous = self.definition.config_model.model_validate_json(
+            current.config_json
+        )
         if isinstance(config, dict):
-            previous = self.definition.config_model.model_validate_json(
-                current.config_json
-            )
             merged = previous.model_dump(mode="python")
             merged.update(config)
             resolved = self.definition.parse_config(merged)
         else:
             resolved = self.definition.parse_config(config)
+
+        if current.initialized:
+            self.definition.validate_runtime_config_change(
+                previous,
+                resolved,
+            )
+
         updated = replace(
             current,
             config_json=resolved.model_dump_json(),

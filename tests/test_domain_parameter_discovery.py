@@ -129,3 +129,34 @@ def test_description_prefers_validation_alias_when_serialization_alias_differs()
 
     parsed = definition.parse_config({"inputName": 17})
     assert parsed.internal_name == 17
+
+
+def test_builtin_parameter_discovery_exposes_runtime_vs_bootstrap_mutability():
+    mro = builtin_catalog().get("mro").describe_config()
+    by_name = {
+        item["name"]: item
+        for item in mro["parameters"]
+    }
+
+    assert by_name["tick_step"]["mutability"] == "runtime"
+    assert by_name["random_seed"]["mutability"] == "runtime"
+    assert by_name["start_at"]["mutability"] == "bootstrap"
+    assert by_name["quantity"]["mutability"] == "bootstrap"
+    assert by_name["auto_seed_spare_parts"]["mutability"] == "runtime"
+
+
+def test_runtime_mutable_fields_must_exist_on_config_model():
+    import pytest
+
+    class CustomConfig(DomainConfig):
+        start_at: str = "2026-01-01T00:00:00Z"
+
+    with pytest.raises(ValueError, match="runtime mutable fields"):
+        DomainDefinition(
+            name="invalid-mutable",
+            description="invalid mutability declaration",
+            config_model=CustomConfig,
+            build_runtime=lambda persistence, config, now, tick: (None, None),
+            seed=lambda persistence, config: None,
+            runtime_mutable_fields=frozenset({"does_not_exist"}),
+        )
