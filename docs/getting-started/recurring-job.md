@@ -80,6 +80,17 @@ The `[domain.parameters]` table is validated by the selected domain's own
 
 There is no giant global parameter schema.
 
+Inspect the available parameters, defaults, types, enums, and numeric/string
+constraints before editing a job:
+
+```bash
+sose domains --name mro
+```
+
+The same metadata is available programmatically through
+`DomainDefinition.describe_config()`, so UIs and higher-level tooling can
+render configuration forms without importing individual domain models.
+
 For example, MRO owns parameters such as:
 
 - quantity;
