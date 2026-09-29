@@ -10,6 +10,7 @@ from sose.jobs.config import load_sose_config
 from sose.jobs.doctor import inspect_job_file_health
 from sose.jobs.factory import build_job_from_file
 from sose.persistence.registry import builtin_persistence_registry
+from sose.sinks.registry import builtin_sink_registry
 
 
 def _json(value: object) -> str:
@@ -40,6 +41,11 @@ def _validate_config(path: str | Path) -> dict[str, object]:
         config.persistence.adapter,
         *config.persistence.require,
     )
+    sink_registry = builtin_sink_registry()
+    for sink in config.sinks:
+        if sink.adapter not in sink_registry.names():
+            raise KeyError(f"unknown sink adapter: {sink.adapter}")
+
     if config.runtime.backend != "simpy":
         raise KeyError(f"unknown runtime backend: {config.runtime.backend}")
 
@@ -50,6 +56,10 @@ def _validate_config(path: str | Path) -> dict[str, object]:
         "persistence": config.persistence.adapter,
         "persistence_require": list(config.persistence.require),
         "runtime_backend": config.runtime.backend,
+        "sinks": [
+            {"name": sink.name, "adapter": sink.adapter}
+            for sink in config.sinks
+        ],
     }
 
 
@@ -203,6 +213,27 @@ def _cmd_persistence(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_sinks(args: argparse.Namespace) -> int:
+    registry = builtin_sink_registry()
+    print(
+        _json(
+            {
+                "adapters": [
+                    {
+                        "name": adapter.name,
+                        "optional_extra": adapter.optional_extra,
+                    }
+                    for adapter in (
+                        registry.adapter(name)
+                        for name in registry.names()
+                    )
+                ]
+            }
+        )
+    )
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sose",
@@ -304,6 +335,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="List builtin persistence adapters.",
     )
     persistence.set_defaults(handler=_cmd_persistence)
+
+    sinks = subparsers.add_parser(
+        "sinks",
+        help="List builtin analytical sink adapters.",
+    )
+    sinks.set_defaults(handler=_cmd_sinks)
 
     return parser
 
