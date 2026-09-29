@@ -13,3 +13,4 @@ class TutorialJobConfig(DomainConfig):
     random_seed: int = 1701
     complete_after: timedelta = timedelta(hours=2)
     job_key: str = "example"
+    auto_complete: bool = True
