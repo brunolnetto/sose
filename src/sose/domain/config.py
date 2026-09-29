@@ -54,6 +54,20 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
         [Persistence, Engine, object, ConfigT, SeedT],
         None,
     ] | None = None
+    runtime_mutable_fields: frozenset[str] = frozenset(
+        {"tick_step", "random_seed"}
+    )
+
+    def __post_init__(self) -> None:
+        known = set(self.config_model.model_fields)
+        unknown = set(self.runtime_mutable_fields) - known
+        if unknown:
+            raise ValueError(
+                f"runtime mutable fields are not in {self.config_model.__name__}: "
+                f"{sorted(unknown)}"
+            )
+        if "start_at" in self.runtime_mutable_fields:
+            raise ValueError("start_at cannot be runtime mutable")
 
     def default_config(self) -> ConfigT:
         return self.config_model()
@@ -64,6 +78,31 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
         if isinstance(value, self.config_model):
             return value
         return self.config_model.model_validate(value)
+
+    def changed_config_fields(
+        self,
+        before: ConfigT,
+        after: ConfigT,
+    ) -> frozenset[str]:
+        return frozenset(
+            name
+            for name in self.config_model.model_fields
+            if getattr(before, name) != getattr(after, name)
+        )
+
+    def validate_runtime_config_change(
+        self,
+        before: ConfigT,
+        after: ConfigT,
+    ) -> frozenset[str]:
+        changed = self.changed_config_fields(before, after)
+        blocked = changed - self.runtime_mutable_fields
+        if blocked:
+            raise ValueError(
+                "configuration fields are bootstrap-only after initialization: "
+                + ", ".join(sorted(blocked))
+            )
+        return changed
 
     def describe_config(self) -> dict[str, object]:
         """Return JSON-serializable parameter metadata for discovery/UIs."""
@@ -90,22 +129,32 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
                 "domain config discovery cannot align model fields with JSON schema"
             )
         field_defaults = instance.model_dump(mode="json")
+        field_to_property = dict(
+            zip(model_field_names, property_names, strict=True)
+        )
+        property_to_field = {
+            property_name: field_name
+            for field_name, property_name in field_to_property.items()
+        }
         defaults = {
             property_name: field_defaults[field_name]
-            for field_name, property_name in zip(
-                model_field_names,
-                property_names,
-                strict=True,
-            )
+            for field_name, property_name in field_to_property.items()
         }
 
         parameters: list[dict[str, object]] = []
         for name, field_schema in properties.items():
+            field_name = property_to_field[name]
             parameters.append(
                 {
                     "name": name,
+                    "field_name": field_name,
                     "required": name in required,
                     "default": defaults.get(name),
+                    "mutability": (
+                        "runtime"
+                        if field_name in self.runtime_mutable_fields
+                        else "bootstrap"
+                    ),
                     "schema": field_schema,
                 }
             )
