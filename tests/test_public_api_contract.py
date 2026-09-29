@@ -59,6 +59,7 @@ EXPECTED_PUBLIC_API = {
     "inspect_job_health",
     "load_sose_config",
     "probabilistic_transitions",
+    "scheduled_trigger_id",
     "render_sose_toml",
     "write_sose_toml",
 }
