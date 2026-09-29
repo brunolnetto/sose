@@ -229,3 +229,31 @@ checkpoint and process exit
 This makes scheduler ownership explicit. Cron, Airflow, Databricks Jobs,
 Kubernetes CronJobs, or another orchestrator owns wall-clock recurrence; SOSE
 owns logical tick progression and idempotent recovery.
+
+
+## Persistence capability requirements
+
+A job can make its storage assumptions explicit:
+
+```toml
+[persistence]
+adapter = "sqlite_incremental"
+require = [
+  "process_durable",
+  "transactional_commits",
+  "incremental_updates",
+]
+```
+
+`sose validate`, `sose doctor`, and job construction all enforce these
+requirements.
+
+List the tested capability surface of the installed adapters with:
+
+```bash
+sose persistence
+```
+
+This becomes especially important when selecting remote warehouses. A job that
+requires concurrent writers must not silently run on a target whose adapter only
+supports serialized writers.
