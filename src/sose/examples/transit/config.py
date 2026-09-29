@@ -26,3 +26,4 @@ class TransitConfig(DomainConfig):
         default=timedelta(minutes=15),
         ge=timedelta(0),
     )
+    auto_reconcile_vehicle: bool = True

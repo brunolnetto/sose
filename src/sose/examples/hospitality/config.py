@@ -30,3 +30,4 @@ class HospitalityConfig(DomainConfig):
         default=timedelta(hours=2),
         gt=timedelta(0),
     )
+    auto_progress_reservation: bool = True

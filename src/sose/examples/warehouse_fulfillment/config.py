@@ -16,3 +16,4 @@ class WarehouseFulfillmentConfig(DomainConfig):
     primary_on_hand: float = Field(default=6.0, ge=0)
     substitute_on_hand: float = Field(default=5.0, ge=0)
     allow_substitute: bool = True
+    auto_progress_fulfillment: bool = True

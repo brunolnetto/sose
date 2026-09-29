@@ -24,6 +24,8 @@ def _seed(persistence: Persistence, config: HospitalityConfig):
     )
 
 def _reconcile_tick(persistence, engine, backend, config, entities):
+    if not config.auto_progress_reservation:
+        return
     rid = reservation_id(1)
     reservation = persistence.entity("hospitality_reservation", rid)
 
@@ -84,4 +86,5 @@ definition = DomainDefinition(
     build_runtime=_build,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
+    runtime_mutable_fields=frozenset(["tick_step","random_seed","auto_progress_reservation","arrival_after","stay_duration","hold_duration","no_show_grace"]),
 )

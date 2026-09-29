@@ -14,3 +14,4 @@ class HospitalsConfig(DomainConfig):
     clinical_team_capacity: int = Field(default=1, ge=1)
     procedure_suite_capacity: int = Field(default=1, ge=1)
     triage_queue_capacity: int = Field(default=100, ge=1)
+    auto_progress_patient_flow: bool = True

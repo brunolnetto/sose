@@ -52,6 +52,8 @@ def _seed(persistence: Persistence, config: TransitConfig):
 
 
 def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
+    if not config.auto_reconcile_vehicle:
+        return
     # Ensure projected start/end boundaries exist. advance_tick owns their
     # execution; this reconciler only aligns vehicle business state afterward.
     schedule_reference_block(
@@ -75,4 +77,5 @@ definition = DomainDefinition(
     build_runtime=_build,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
+    runtime_mutable_fields=frozenset(["tick_step","random_seed","auto_reconcile_vehicle"]),
 )

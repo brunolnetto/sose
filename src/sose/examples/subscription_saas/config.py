@@ -23,3 +23,4 @@ class SubscriptionSaaSConfig(DomainConfig):
         default=timedelta(days=5),
         gt=timedelta(0),
     )
+    auto_progress_plan_change: bool = True

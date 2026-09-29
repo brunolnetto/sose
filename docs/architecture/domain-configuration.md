@@ -74,12 +74,18 @@ Parameter mutability is explicit:
   changed after job initialization.
 
 By default, `tick_step` and `random_seed` are runtime-mutable while
-`start_at` and domain-specific parameters are bootstrap-only. A domain may
-opt individual domain parameters into runtime mutation only when changing them
-does not require rewriting already-created semantic state.
+`start_at` and structural domain parameters are bootstrap-only. Every builtin
+domain now also exposes at least one **domain-specific runtime control**.
 
-For example, MRO allows `auto_seed_spare_parts` to change between ticks but
-keeps quantity, capacities, and release timing bootstrap-only.
+Runtime controls are limited to policy/outcome/automation inputs that can safely
+affect future reconciliation without rewriting already-materialized durable
+truth. Examples include automatic supply seeding, approval/assessment outcomes,
+collection behavior, demand-response activation, settlement/close timing, and
+explicit `auto_progress_*` controls for otherwise fully automatic References.
+
+Identity, initial capacity, initial inventory, principal/amount inputs, and
+other bootstrap materialization inputs remain bootstrap-only unless a domain
+can prove a safe migration semantic.
 
 Business changes that belong to the simulated world should still be modeled as
 durable domain state/events rather than configuration mutation.
@@ -124,3 +130,25 @@ A Reference is considered configuration-ready when:
 2. its definition maps the knob into runtime/seed behavior;
 3. an executable test observes the changed durable truth;
 4. defaults reproduce the Reference's canonical scenario.
+
+
+## Runtime-control conformance
+
+The builtin catalog is horizontally tested so every domain must expose at least
+one domain-specific runtime-mutable field in addition to `tick_step` and
+`random_seed`.
+
+Parameter discovery reports each field as `runtime` or `bootstrap`.
+
+For fully automatic References, runtime progression can be paused/resumed
+without pausing the generic job:
+
+- Hospitals: `auto_progress_patient_flow`;
+- Logistics: `auto_progress_shipment`;
+- Transit: `auto_reconcile_vehicle`;
+- Warehouse / Fulfillment: `auto_progress_fulfillment`;
+- Hospitality: `auto_progress_reservation`;
+- Subscription / SaaS: `auto_progress_plan_change`.
+
+This makes configuration revision observable on the next recurring tick while
+preserving the durable world already created at bootstrap.

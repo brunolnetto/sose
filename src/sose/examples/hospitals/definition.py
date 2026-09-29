@@ -26,6 +26,8 @@ def _seed(persistence: Persistence, config: HospitalsConfig):
     )
 
 def _reconcile_tick(persistence, engine, backend, config, entities):
+    if not config.auto_progress_patient_flow:
+        return
     admission = persistence.entity("hospital_admission", entities.admission_id)
     if admission is None:
         raise RuntimeError("configured admission was not persisted")
@@ -65,4 +67,5 @@ definition = DomainDefinition(
     build_runtime=_build,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
+    runtime_mutable_fields=frozenset(["tick_step","random_seed","auto_progress_patient_flow"]),
 )

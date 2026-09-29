@@ -25,6 +25,8 @@ def _seed(persistence: Persistence, config: WarehouseFulfillmentConfig):
     )
 
 def _reconcile_tick(persistence, engine, backend, config, entities):
+    if not config.auto_progress_fulfillment:
+        return
     order = persistence.entity(
         "warehouse_fulfillment_order",
         entities.order_id,
@@ -67,4 +69,5 @@ definition = DomainDefinition(
     build_runtime=_build,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
+    runtime_mutable_fields=frozenset(["tick_step","random_seed","auto_progress_fulfillment"]),
 )
