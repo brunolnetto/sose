@@ -158,3 +158,55 @@ MemoryPersistence behavior is unchanged.
 An idempotent save may still mark an identity as touched; the record encoder
 compares the before/after Python values and emits no write if semantic truth did
 not actually change.
+
+
+## Capability contract
+
+Persistence targets advertise operational capabilities through
+`PersistenceCapabilities`.
+
+The current built-in matrix is:
+
+| Adapter | Process durable | Transactional commits | Incremental updates | Concurrent writers | Remote | Analytical reads | Append-only | Schema migrations |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| memory | no | yes | yes | no | no | no | no | no |
+| sqlite | yes | yes | no | no | no | no | no | yes |
+| sqlite_incremental | yes | yes | yes | no | no | no | no | yes |
+| jsonl | yes | yes | yes | no | no | no | yes | no |
+| duckdb | yes | yes | yes | no | no | yes | no | no |
+
+`concurrent_writers=no` does not mean the adapter cannot be opened from
+multiple processes/connections. It means SOSE does not claim simultaneous
+multi-writer execution as a supported capability. Incremental SQLite currently
+serializes writers through SQLite locking.
+
+Declarative jobs may require capabilities:
+
+```toml
+[persistence]
+adapter = "sqlite_incremental"
+require = [
+  "process_durable",
+  "transactional_commits",
+  "incremental_updates",
+]
+```
+
+The job is rejected before execution when the selected adapter does not satisfy
+the requirements.
+
+This prevents a future warehouse adapter from silently weakening a job's
+operational assumptions.
+
+### Future adapters
+
+A PostgreSQL adapter would reasonably be expected to advertise
+`process_durable`, `transactional_commits`, `incremental_updates`,
+`concurrent_writers`, and `remote` once those semantics are actually proven.
+
+Databricks or Snowflake may advertise `remote` and `analytical_reads`, but
+must only advertise transactional/concurrency capabilities that their SOSE
+adapter has executable evidence for.
+
+Capabilities describe tested SOSE adapter semantics, not generic marketing
+claims about the underlying database product.
