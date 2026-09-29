@@ -21,6 +21,7 @@ EXPECTED_PUBLIC_API = {
     "MemoryPersistence",
     "Persistence",
     "PersistenceAdapter",
+    "PersistenceCapabilities",
     "PersistenceRegistry",
     "PreemptiveResourceBackend",
     "RandomSource",
