@@ -4,6 +4,8 @@
 
 ### Added
 
+- durable analytical sink outbox with per-sink checkpoints, idempotent event batches, declarative sink configuration, and JSONL reference adapter;
+
 - optional PostgreSQL remote persistence adapter using the shared incremental
   record/delta contract, with real-service CI conformance, restart, revision,
   and concurrent-writer tests;
