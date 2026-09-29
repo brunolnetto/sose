@@ -17,6 +17,7 @@ class PersistenceSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     adapter: str = "sqlite_incremental"
+    require: list[str] = Field(default_factory=list)
     options: dict[str, object] = Field(default_factory=dict)
 
 
