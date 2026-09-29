@@ -8,6 +8,8 @@ from sose.persistence.registry import (
     PersistenceRegistry,
     builtin_persistence_registry,
 )
+from sose.sinks.base import SinkBinding
+from sose.sinks.registry import SinkRegistry, builtin_sink_registry
 
 
 def _backend_factory(name: str):
@@ -27,6 +29,7 @@ def build_job_from_config(
     *,
     base_dir: Path,
     persistence_registry: PersistenceRegistry | None = None,
+    sink_registry: SinkRegistry | None = None,
 ) -> SimulationJob:
     # Import the builtin examples only when a declarative job is actually
     # constructed. The stable sose.api facade must stay importable without
@@ -47,6 +50,19 @@ def build_job_from_config(
         base_dir=base_dir,
     )
 
+    sink_adapters = sink_registry or builtin_sink_registry()
+    sink_bindings = tuple(
+        SinkBinding(
+            name=section.name,
+            sink=sink_adapters.create(
+                section.adapter,
+                section.options,
+                base_dir=base_dir,
+            ),
+        )
+        for section in config.sinks
+    )
+
     job = SimulationJob(
         job_id=config.job.id,
         definition=definition,
@@ -54,6 +70,7 @@ def build_job_from_config(
         backend_factory=_backend_factory(config.runtime.backend),
         ticks_per_trigger=config.job.ticks_per_trigger,
         max_ticks_per_trigger=config.job.max_ticks_per_trigger,
+        sink_bindings=sink_bindings,
     )
     job.initialize(config.domain.parameters)
     return job
@@ -63,10 +80,12 @@ def build_job_from_file(
     path: str | Path = "sose.toml",
     *,
     persistence_registry: PersistenceRegistry | None = None,
+    sink_registry: SinkRegistry | None = None,
 ) -> SimulationJob:
     config, base_dir = load_sose_config(path)
     return build_job_from_config(
         config,
         base_dir=base_dir,
         persistence_registry=persistence_registry,
+        sink_registry=sink_registry,
     )

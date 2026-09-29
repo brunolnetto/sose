@@ -102,6 +102,25 @@ def inspect_open_job_health(
     ]
 
     if state is not None:
+        pending_deliveries = tuple(
+            delivery
+            for delivery in persistence.sink_deliveries(job_id=state.job_id)
+            if delivery.status == "pending"
+        )
+        for delivery in pending_deliveries:
+            issues.append(
+                JobDoctorIssue(
+                    "sink.delivery_pending",
+                    f"sink delivery {delivery.delivery_id} to "
+                    f"{delivery.sink_name!r} remains pending"
+                    + (
+                        ""
+                        if delivery.last_error is None
+                        else f": {delivery.last_error}"
+                    ),
+                )
+            )
+
         _check_job_state(
             config,
             state,

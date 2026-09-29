@@ -49,6 +49,9 @@ from sose.persistence.registry import (
     builtin_persistence_registry,
 )
 from sose.probability import probabilistic, probabilistic_transitions
+from sose.sinks.base import AnalyticalSink, SinkBinding
+from sose.sinks.model import AnalyticalBatch
+from sose.sinks.registry import SinkAdapter, SinkRegistry, builtin_sink_registry
 from sose.scenarios import (
     AttributeEffect,
     CompositeEffect,
@@ -61,6 +64,8 @@ from sose.scenarios import (
 
 __all__ = [
     "AttributeEffect",
+    "AnalyticalSink",
+    "AnalyticalBatch",
     "CompositeEffect",
     "ContainerBackend",
     "DiagnosticIssue",
@@ -97,6 +102,9 @@ __all__ = [
     "SimulationJob",
     "SimulationJobState",
     "SimulationContext",
+    "SinkAdapter",
+    "SinkBinding",
+    "SinkRegistry",
     "StoreBackend",
     "TemporalBackend",
     "TickTrigger",
@@ -105,6 +113,7 @@ __all__ = [
     "build_job_from_config",
     "build_job_from_file",
     "builtin_persistence_registry",
+    "builtin_sink_registry",
     "collect_runtime_diagnostics",
     "inspect_job_file_health",
     "inspect_job_health",

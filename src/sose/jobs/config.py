@@ -21,6 +21,14 @@ class PersistenceSection(BaseModel):
     options: dict[str, object] = Field(default_factory=dict)
 
 
+class SinkSection(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    adapter: str
+    options: dict[str, object] = Field(default_factory=dict)
+
+
 class RuntimeSection(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -49,6 +57,7 @@ class SOSEConfig(BaseModel):
     domain: DomainSection
     persistence: PersistenceSection = Field(default_factory=PersistenceSection)
     runtime: RuntimeSection = Field(default_factory=RuntimeSection)
+    sinks: list[SinkSection] = Field(default_factory=list)
     job: JobSection
 
 
