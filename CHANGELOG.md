@@ -4,6 +4,9 @@
 
 ### Added
 
+- domain parameter discovery through `DomainDefinition.describe_config()` and
+  `sose domains --name <domain>`, exposing validated defaults and JSON-schema
+  constraints for all builtin domains;
 - bounded recurring job trigger batches with durable parent ownership, partial
   recovery, historical trigger idempotency, and configurable ticks per trigger;
 - horizontal config contract requiring every builtin domain to expose
