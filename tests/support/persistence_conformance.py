@@ -8,6 +8,7 @@ import pytest
 from sose.core.events import Command, DomainEvent
 from sose.domain.entity import Entity
 from sose.jobs.model import SimulationJobState
+from sose.sinks.model import AnalyticalBatch, SinkCheckpoint, SinkDelivery
 from sose.scenarios import AttributeEffect
 from sose.scenarios.model import ScenarioActivation, ScenarioRuntimeState
 from sose.core.runtime import (
@@ -83,6 +84,66 @@ class PersistenceConformanceSuite:
                 raise RuntimeError("abort job")
 
         assert store.job_state("job-1") == state
+
+    def test_sink_outbox_round_trip_and_rollback_are_durable(self):
+        store = self.make_persistence()
+        event = DomainEvent(
+            event_id="event-sink-1",
+            name="changed",
+            entity_type="demo",
+            entity_id="1",
+            occurred_at=NOW,
+            tick=3,
+            payload={"value": 7},
+        )
+        batch = AnalyticalBatch(
+            batch_id="batch-1",
+            job_id="job-1",
+            domain_name="demo",
+            config_revision=2,
+            logical_tick=3,
+            logical_time=NOW,
+            from_event_offset=0,
+            to_event_offset=1,
+            events=(event,),
+        )
+        delivery = SinkDelivery(
+            delivery_id="delivery-1",
+            sink_name="analytics",
+            batch=batch,
+        )
+        checkpoint = SinkCheckpoint(
+            job_id="job-1",
+            sink_name="analytics",
+            event_offset=1,
+            last_delivery_id="delivery-1",
+        )
+
+        with store.transaction() as uow:
+            uow.save_sink_delivery(delivery)
+            uow.save_sink_checkpoint(checkpoint)
+            assert uow.get_sink_delivery("delivery-1") == delivery
+            assert uow.get_sink_checkpoint("job-1", "analytics") == checkpoint
+
+        assert store.sink_delivery("delivery-1") == delivery
+        assert store.sink_deliveries(job_id="job-1") == (delivery,)
+        assert store.sink_checkpoint("job-1", "analytics") == checkpoint
+        assert store.sink_checkpoints(job_id="job-1") == (checkpoint,)
+
+        with pytest.raises(RuntimeError, match="abort sink"):
+            with store.transaction() as uow:
+                uow.delete_sink_delivery("delivery-1")
+                uow.save_sink_checkpoint(
+                    SinkCheckpoint(
+                        job_id="job-1",
+                        sink_name="analytics",
+                        event_offset=99,
+                    )
+                )
+                raise RuntimeError("abort sink")
+
+        assert store.sink_delivery("delivery-1") == delivery
+        assert store.sink_checkpoint("job-1", "analytics") == checkpoint
 
     def test_transaction_commit_is_atomic_and_visible_after_exit(self):
         store = self.make_persistence()
