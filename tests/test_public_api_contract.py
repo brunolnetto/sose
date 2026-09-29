@@ -15,6 +15,7 @@ EXPECTED_PUBLIC_API = {
     "EntityType",
     "EventTrigger",
     "JobTickResult",
+    "JobTriggerResult",
     "JSONLJournalPersistence",
     "MemoryPersistence",
     "Persistence",
