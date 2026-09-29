@@ -23,6 +23,20 @@ class JobTickResult:
     trigger_id: str | None = None
 
 
+@dataclass(frozen=True, slots=True)
+class JobTriggerResult:
+    job_id: str
+    domain_name: str
+    trigger_id: str
+    requested_ticks: int
+    completed_ticks: int
+    start_tick: int
+    end_tick: int
+    config_revision: int
+    logical_time: datetime
+    run_count: int
+
+
 class SimulationJob(Generic[ConfigT, SeedT]):
     """Persistent one-tick-at-a-time simulation orchestration.
 
@@ -38,13 +52,25 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         definition: DomainDefinition[ConfigT, SeedT],
         persistence: Persistence,
         backend_factory: BackendFactory,
+        ticks_per_trigger: int = 1,
+        max_ticks_per_trigger: int = 100,
     ) -> None:
         if not job_id:
             raise ValueError("job_id cannot be empty")
         self.job_id = job_id
+        if ticks_per_trigger < 1:
+            raise ValueError("ticks_per_trigger must be >= 1")
+        if max_ticks_per_trigger < 1:
+            raise ValueError("max_ticks_per_trigger must be >= 1")
+        if ticks_per_trigger > max_ticks_per_trigger:
+            raise ValueError(
+                "ticks_per_trigger cannot exceed max_ticks_per_trigger"
+            )
         self.definition = definition
         self.persistence = persistence
         self.backend_factory = backend_factory
+        self.ticks_per_trigger = ticks_per_trigger
+        self.max_ticks_per_trigger = max_ticks_per_trigger
 
     def state(self) -> SimulationJobState | None:
         return self.persistence.job_state(self.job_id)
@@ -203,6 +229,145 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             run_count=state.run_count,
             trigger_id=state.last_completed_trigger_id,
         )
+
+    def run_trigger(
+        self,
+        *,
+        trigger_id: str,
+        ticks: int | None = None,
+        triggered_at: datetime | None = None,
+        recover: bool = False,
+    ) -> JobTriggerResult:
+        """Execute a bounded recurring trigger as one durable batch.
+
+        The external trigger owns a stable identity. Individual ticks receive
+        deterministic child trigger ids so replay after a timeout/crash can
+        resume at the first unfinished tick without duplicating committed work.
+        """
+
+        if not trigger_id:
+            raise ValueError("trigger_id cannot be empty")
+
+        requested_ticks = self.ticks_per_trigger if ticks is None else ticks
+        if requested_ticks < 1:
+            raise ValueError("ticks must be >= 1")
+        if requested_ticks > self.max_ticks_per_trigger:
+            raise ValueError(
+                f"ticks exceeds max_ticks_per_trigger={self.max_ticks_per_trigger}"
+            )
+
+        state = self.state()
+        if state is None:
+            state = self.initialize()
+        elif not state.initialized:
+            state = self._finish_initialization(state)
+
+        if state.last_completed_batch_trigger_id == trigger_id:
+            return JobTriggerResult(
+                job_id=self.job_id,
+                domain_name=self.definition.name,
+                trigger_id=trigger_id,
+                requested_ticks=state.last_completed_batch_ticks,
+                completed_ticks=state.last_completed_batch_ticks,
+                start_tick=state.next_tick - state.last_completed_batch_ticks,
+                end_tick=state.next_tick,
+                config_revision=state.config_revision,
+                logical_time=state.logical_time,
+                run_count=state.run_count,
+            )
+
+        with self.persistence.transaction() as uow:
+            latest = uow.get_job_state(self.job_id)
+            if latest is None:
+                raise RuntimeError(
+                    f"job disappeared before batch trigger claim: {self.job_id}"
+                )
+
+            if latest.active_batch_trigger_id is not None:
+                if latest.active_batch_trigger_id != trigger_id:
+                    raise RuntimeError(
+                        f"job has unresolved batch trigger: {self.job_id} "
+                        f"(trigger={latest.active_batch_trigger_id!r})"
+                    )
+                if latest.active_batch_total_ticks != requested_ticks:
+                    raise RuntimeError(
+                        "cannot recover batch trigger with a different tick count"
+                    )
+                if not recover and latest.active_batch_completed_ticks < requested_ticks:
+                    raise RuntimeError(
+                        f"batch trigger requires explicit recovery: {trigger_id}"
+                    )
+                claimed = latest
+            else:
+                claimed = replace(
+                    latest,
+                    active_batch_trigger_id=trigger_id,
+                    active_batch_total_ticks=requested_ticks,
+                    active_batch_completed_ticks=0,
+                )
+                uow.save_job_state(claimed)
+
+        start_tick = claimed.next_tick - claimed.active_batch_completed_ticks
+        completed = claimed.active_batch_completed_ticks
+
+        while completed < requested_ticks:
+            child_id = f"{trigger_id}:tick:{completed + 1}"
+            tick_result = self.run_tick(
+                triggered_at=triggered_at,
+                trigger_id=child_id,
+                recover=recover,
+            )
+            completed += 1
+
+            with self.persistence.transaction() as uow:
+                latest = uow.get_job_state(self.job_id)
+                if latest is None:
+                    raise RuntimeError(
+                        f"job disappeared during batch trigger: {self.job_id}"
+                    )
+                if latest.active_batch_trigger_id != trigger_id:
+                    raise RuntimeError(
+                        f"batch trigger ownership was lost: {self.job_id}"
+                    )
+                updated = replace(
+                    latest,
+                    active_batch_completed_ticks=completed,
+                )
+                uow.save_job_state(updated)
+
+        with self.persistence.transaction() as uow:
+            latest = uow.get_job_state(self.job_id)
+            if latest is None:
+                raise RuntimeError(
+                    f"job disappeared while completing batch trigger: {self.job_id}"
+                )
+            if latest.active_batch_trigger_id != trigger_id:
+                raise RuntimeError(
+                    f"batch trigger ownership was lost: {self.job_id}"
+                )
+            finished = replace(
+                latest,
+                active_batch_trigger_id=None,
+                active_batch_total_ticks=0,
+                active_batch_completed_ticks=0,
+                last_completed_batch_trigger_id=trigger_id,
+                last_completed_batch_ticks=requested_ticks,
+            )
+            uow.save_job_state(finished)
+
+        return JobTriggerResult(
+            job_id=self.job_id,
+            domain_name=self.definition.name,
+            trigger_id=trigger_id,
+            requested_ticks=requested_ticks,
+            completed_ticks=requested_ticks,
+            start_tick=start_tick,
+            end_tick=finished.next_tick,
+            config_revision=finished.config_revision,
+            logical_time=finished.logical_time,
+            run_count=finished.run_count,
+        )
+
 
     def run_tick(
         self,
