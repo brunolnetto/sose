@@ -27,6 +27,12 @@ duckdb = [
 postgres = [
   "psycopg[binary]>=3.3.6,<4",
 ]
+databricks = [
+  "databricks-sql-connector>=4,<5",
+]
+snowflake = [
+  "snowflake-connector-python>=4,<5",
+]
 dev = [
   "simpy>=4.1.1,<5",
   "duckdb>=1.5.5,<2",
