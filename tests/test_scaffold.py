@@ -26,6 +26,8 @@ def test_scaffold_roundtrips_every_builtin_domain(domain_name, tmp_path):
     assert parsed.domain.name == domain_name
     assert parsed.job.id == f"{domain_name}-test"
     assert parsed.persistence.adapter == "sqlite_incremental"
+    assert parsed.job.ticks_per_trigger == 1
+    assert parsed.job.max_ticks_per_trigger == 100
 
 
 def test_write_scaffold_refuses_overwrite_without_force(tmp_path):
@@ -79,3 +81,43 @@ def test_cli_init_output_validates_without_manual_repair(tmp_path, capsys):
     assert run_cli(["validate", "--config", str(output)]) == 0
     validated = json.loads(capsys.readouterr().out)
     assert validated["domain"] == "tutorial_job"
+
+
+def test_cli_trigger_uses_persisted_batch_policy(tmp_path, capsys):
+    output = tmp_path / "sose.toml"
+    assert run_cli(
+        ["init", "--domain", "tutorial_job", "--output", str(output)]
+    ) == 0
+    capsys.readouterr()
+
+    text = output.read_text(encoding="utf-8")
+    text = text.replace(
+        "ticks_per_trigger = 1",
+        "ticks_per_trigger = 2",
+    )
+    output.write_text(text, encoding="utf-8")
+
+    assert run_cli(
+        [
+            "trigger",
+            "--config",
+            str(output),
+            "--trigger-id",
+            "scheduler-001",
+        ]
+    ) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["completed_ticks"] == 2
+    assert payload["end_tick"] == 2
+
+    assert run_cli(
+        [
+            "trigger",
+            "--config",
+            str(output),
+            "--trigger-id",
+            "scheduler-001",
+        ]
+    ) == 0
+    replayed = json.loads(capsys.readouterr().out)
+    assert replayed == payload
