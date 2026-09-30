@@ -65,7 +65,7 @@ def test_incremental_sqlite_migrates_v1_meta_to_revision_schema(tmp_path):
     row = persistence._connection.execute(
         "SELECT schema_version, revision FROM sose_record_meta WHERE singleton = 1"
     ).fetchone()
-    assert row == (2, 0)
+    assert row == (3, 0)
     persistence.close()
 
 
