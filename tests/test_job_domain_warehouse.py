@@ -16,6 +16,9 @@ def test_simulation_job_owns_domain_warehouse_lifecycle():
         domain_warehouse=warehouse,
     )
     job.initialize()
+    assert persistence.entities() == ()
+    assert warehouse.entities() != ()
     result = job.run_tick()
     assert result.logical_tick == 1
     assert persistence.domain_deliveries() == ()
+    assert persistence.entities() == ()
