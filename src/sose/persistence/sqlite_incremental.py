@@ -286,16 +286,20 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         owner_epoch: int | None = None,
     ) -> Iterator[MemoryUnitOfWork]:
         self._connection.execute("BEGIN IMMEDIATE")
-        if owner_epoch is not None:
-            row = self._connection.execute(
-                "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
-            ).fetchone()
-            current_epoch = -1 if row is None else int(row[0])
-            if current_epoch != owner_epoch:
-                self._connection.rollback()
-                raise StaleWriterError(
-                    f"stale writer epoch {owner_epoch}; current epoch is {current_epoch}"
-                )
+        row = self._connection.execute(
+            "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
+        ).fetchone()
+        current_epoch = -1 if row is None else int(row[0])
+        if current_epoch > 0 and owner_epoch is None:
+            self._connection.rollback()
+            raise StaleWriterError(
+                f"writer fencing is active at epoch {current_epoch}; owner_epoch is required"
+            )
+        if owner_epoch is not None and current_epoch != owner_epoch:
+            self._connection.rollback()
+            raise StaleWriterError(
+                f"stale writer epoch {owner_epoch}; current epoch is {current_epoch}"
+            )
         self._refresh_from_db()
         before = self._state
         try:
