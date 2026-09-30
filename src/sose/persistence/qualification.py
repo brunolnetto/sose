@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 
@@ -41,7 +41,7 @@ class PersistenceQualification:
     tier: PersistenceTier
     suite_version: str
     passed_tests: frozenset[str] = frozenset()
-    concurrency: ConcurrencyEnvelope = ConcurrencyEnvelope()
+    concurrency: ConcurrencyEnvelope = field(default_factory=ConcurrencyEnvelope)
 
     def __post_init__(self) -> None:
         if not self.suite_version:
