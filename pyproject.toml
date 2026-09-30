@@ -24,6 +24,9 @@ simpy = [
 duckdb = [
   "duckdb>=1.5.5,<2",
 ]
+ducklake = [
+  "duckdb>=1.5.5,<2",
+]
 postgres = [
   "psycopg[binary]>=3.3.6,<4",
 ]
