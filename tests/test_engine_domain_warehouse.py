@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
@@ -23,7 +23,7 @@ def test_engine_can_transition_domain_entity_without_engine_entity_shadow():
     warehouse = MemoryDomainWarehouse()
     entity = Entity('wo-1', 'work_order', state='planned', version=1)
     warehouse.apply(DomainMutation('seed', entity))
-    context = SimulationContext(clock=SimulationClock(now=now), random=RandomSource(root_seed=1), scheduler=Scheduler())
+    context = SimulationContext(clock=SimulationClock(now=now, step=timedelta(hours=1)), random=RandomSource(root_seed=1), scheduler=Scheduler())
     registry = DomainRegistry()
     registry.register(EntityType('work_order', DemoChart))
     engine = Engine(context=context, registry=registry, persistence=persistence, domain_warehouse=warehouse)
