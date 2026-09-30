@@ -78,3 +78,12 @@ def test_qualification_uses_harness_concurrency_envelope():
     qualification = AuthoritativePersistenceConformanceSuite(harness).qualify(result)
 
     assert qualification.concurrency == harness.concurrency
+
+
+def test_qualification_rejects_evidence_from_another_harness():
+    first = Harness()
+    second = Harness()
+    result = AuthoritativePersistenceConformanceSuite(first).run()
+
+    with pytest.raises(RuntimeError, match="different harness or envelope"):
+        AuthoritativePersistenceConformanceSuite(second).qualify(result)
