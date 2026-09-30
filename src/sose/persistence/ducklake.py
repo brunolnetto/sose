@@ -65,7 +65,7 @@ class DuckLakePersistence(DuckDBPersistence):
         self._connection.execute(
             """
             CREATE TABLE IF NOT EXISTS sose_record_meta (
-                singleton INTEGER PRIMARY KEY,
+                singleton INTEGER NOT NULL,
                 schema_version INTEGER NOT NULL
             )
             """
