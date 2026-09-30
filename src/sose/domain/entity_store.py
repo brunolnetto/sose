@@ -29,5 +29,10 @@ class WarehouseBackedEntityStore:
                 candidates.append(entity)
         if not candidates:
             return None
-        latest = max(candidates, key=lambda item: item.version)
-        return deepcopy(latest)
+        max_version = max(item.version for item in candidates)
+        latest = [item for item in candidates if item.version == max_version]
+        if any(item != latest[0] for item in latest[1:]):
+            raise RuntimeError(
+                f"conflicting domain entity version: {entity_type}/{entity_id} v{max_version}"
+            )
+        return deepcopy(latest[0])
