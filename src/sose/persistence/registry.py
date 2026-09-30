@@ -25,6 +25,11 @@ class PersistenceCapabilities:
     analytical_reads: bool
     append_only: bool
     schema_migrations: bool
+    authoritative_read_after_commit: bool = False
+    conditional_writes: bool = False
+    durable_job_leases: bool = False
+    fencing: bool = False
+    restart_reconstructible: bool = False
 
     def names(self) -> tuple[str, ...]:
         return tuple(
@@ -38,6 +43,11 @@ class PersistenceCapabilities:
                 "analytical_reads",
                 "append_only",
                 "schema_migrations",
+                "authoritative_read_after_commit",
+                "conditional_writes",
+                "durable_job_leases",
+                "fencing",
+                "restart_reconstructible",
             )
             if getattr(self, name)
         )
