@@ -21,7 +21,13 @@ sose = "sose.cli:main"
 simpy = [
   "simpy>=4.1.1,<5",
 ]
-duckdb = [\n  "duckdb>=1.5.5,<2",\n]\nducklake = [\n  "duckdb>=1.5.5,<2",\n]\npostgres = [
+duckdb = [
+  "duckdb>=1.5.5,<2",
+]
+ducklake = [
+  "duckdb>=1.5.5,<2",
+]
+postgres = [
   "psycopg[binary]>=3.3.6,<4",
 ]
 databricks = [
