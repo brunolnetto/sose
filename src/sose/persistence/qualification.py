@@ -23,6 +23,18 @@ class ConcurrencyEnvelope:
 
 
 @dataclass(frozen=True, slots=True)
+REQUIRED_AUTHORITATIVE_TESTS = frozenset({
+    "atomic_uow",
+    "read_after_commit",
+    "conditional_ownership",
+    "stale_owner_fencing",
+    "fresh_process_reconstruction",
+    "deterministic_continuation",
+    "terminal_identity_monotonicity",
+    "schema_migration",
+})
+
+
 class PersistenceQualification:
     """Executable evidence earned by an adapter, distinct from capability claims."""
 
@@ -34,6 +46,13 @@ class PersistenceQualification:
     def __post_init__(self) -> None:
         if not self.suite_version:
             raise ValueError("suite_version must be non-empty")
+        if self.tier is PersistenceTier.AUTHORITATIVE:
+            missing = REQUIRED_AUTHORITATIVE_TESTS - self.passed_tests
+            if missing:
+                raise ValueError(
+                    "authoritative qualification requires conformance evidence: "
+                    + ", ".join(sorted(missing))
+                )
 
     @property
     def authoritative(self) -> bool:
