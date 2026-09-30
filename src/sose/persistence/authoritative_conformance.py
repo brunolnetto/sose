@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Protocol
 
 from .qualification import (
@@ -20,6 +20,8 @@ class ConformanceCheckUnsupported(RuntimeError):
 
 class AuthoritativePersistenceHarness(Protocol):
     """Executable evidence provider for one adapter/configuration envelope."""
+
+    concurrency: ConcurrencyEnvelope
 
     def atomic_uow(self) -> None: ...
     def read_after_commit(self) -> None: ...
@@ -51,7 +53,6 @@ class AuthoritativePersistenceConformanceSuite:
     """Run the authoritative promotion gate and issue evidence on success."""
 
     harness: AuthoritativePersistenceHarness
-    concurrency: ConcurrencyEnvelope = field(default_factory=ConcurrencyEnvelope)
 
     def run(self) -> ConformanceResult:
         passed: set[str] = set()
@@ -75,8 +76,7 @@ class AuthoritativePersistenceConformanceSuite:
             unsupported=frozenset(unsupported),
         )
 
-    def qualify(self) -> PersistenceQualification:
-        result = self.run()
+    def qualify(self, result: ConformanceResult) -> PersistenceQualification:
         if not result.authoritative:
             details = []
             if result.failed:
@@ -97,5 +97,5 @@ class AuthoritativePersistenceConformanceSuite:
             tier=PersistenceTier.AUTHORITATIVE,
             suite_version=SUITE_VERSION,
             passed_tests=result.passed,
-            concurrency=self.concurrency,
+            concurrency=self.harness.concurrency,
         )
