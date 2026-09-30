@@ -32,3 +32,13 @@ def test_newer_warehouse_version_wins_over_older_pending_delivery():
     current = WarehouseBackedEntityStore(engine, warehouse).entity('work_order', 'wo-1')
     assert current.version == 2
     assert current.state == 'released'
+
+def test_conflicting_same_version_is_rejected():
+    import pytest
+    engine = MemoryPersistence()
+    warehouse = MemoryDomainWarehouse()
+    warehouse.apply(DomainMutation('warehouse-v2', _entity(2, 'released')))
+    with engine.transaction() as uow:
+        uow.save_domain_delivery(DomainDelivery(DomainMutation('pending-v2', _entity(2, 'cancelled'))))
+    with pytest.raises(RuntimeError, match='conflicting domain entity version'):
+        WarehouseBackedEntityStore(engine, warehouse).entity('work_order', 'wo-1')
