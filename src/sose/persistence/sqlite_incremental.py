@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from copy import deepcopy
 from pathlib import Path
 import sqlite3
@@ -11,7 +12,18 @@ from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
-_SCHEMA_VERSION = 2
+_SCHEMA_VERSION = 3
+
+
+@dataclass(frozen=True, slots=True)
+class WriterLease:
+    owner_id: str
+    epoch: int
+
+
+class StaleWriterError(RuntimeError):
+    """Raised when a writer attempts to commit with an obsolete fencing epoch."""
+
 
 
 class SQLiteIncrementalPersistence(MemoryPersistence):
@@ -41,7 +53,9 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                 CREATE TABLE IF NOT EXISTS sose_record_meta (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                     schema_version INTEGER NOT NULL,
-                    revision INTEGER NOT NULL DEFAULT 0
+                    revision INTEGER NOT NULL DEFAULT 0,
+                    owner_id TEXT,
+                    owner_epoch INTEGER NOT NULL DEFAULT 0
                 )
                 """
             )
@@ -99,10 +113,23 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                         ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
                         """
                     )
+                version = 2
+            if version == 2:
+                if "owner_id" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE sose_record_meta ADD COLUMN owner_id TEXT"
+                    )
+                if "owner_epoch" not in columns:
+                    self._connection.execute(
+                        """
+                        ALTER TABLE sose_record_meta
+                        ADD COLUMN owner_epoch INTEGER NOT NULL DEFAULT 0
+                        """
+                    )
                 self._connection.execute(
                     """
                     UPDATE sose_record_meta
-                    SET schema_version = 2
+                    SET schema_version = 3
                     WHERE singleton = 1
                     """
                 )
@@ -219,9 +246,60 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                 )
         return len(changes)
 
-    @contextmanager
-    def transaction(self) -> Iterator[MemoryUnitOfWork]:
+    def claim_writer(self, owner_id: str, *, expected_epoch: int) -> WriterLease:
+        """Atomically acquire the next fencing epoch using compare-and-swap."""
+
+        if not owner_id:
+            raise ValueError("owner_id cannot be empty")
+        if expected_epoch < 0:
+            raise ValueError("expected_epoch must be >= 0")
+
         self._connection.execute("BEGIN IMMEDIATE")
+        try:
+            cursor = self._connection.execute(
+                """
+                UPDATE sose_record_meta
+                SET owner_id = ?, owner_epoch = owner_epoch + 1
+                WHERE singleton = 1 AND owner_epoch = ?
+                """,
+                (owner_id, expected_epoch),
+            )
+            if cursor.rowcount != 1:
+                raise StaleWriterError(
+                    f"writer claim lost: expected epoch {expected_epoch}"
+                )
+            row = self._connection.execute(
+                "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
+            ).fetchone()
+            if row is None:  # pragma: no cover
+                raise RuntimeError("writer metadata disappeared")
+            self._connection.commit()
+            return WriterLease(owner_id=owner_id, epoch=int(row[0]))
+        except Exception:
+            self._connection.rollback()
+            raise
+
+    @contextmanager
+    def transaction(
+        self,
+        *,
+        owner_epoch: int | None = None,
+    ) -> Iterator[MemoryUnitOfWork]:
+        self._connection.execute("BEGIN IMMEDIATE")
+        row = self._connection.execute(
+            "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
+        ).fetchone()
+        current_epoch = -1 if row is None else int(row[0])
+        if current_epoch > 0 and owner_epoch is None:
+            self._connection.rollback()
+            raise StaleWriterError(
+                f"writer fencing is active at epoch {current_epoch}; owner_epoch is required"
+            )
+        if owner_epoch is not None and current_epoch != owner_epoch:
+            self._connection.rollback()
+            raise StaleWriterError(
+                f"stale writer epoch {owner_epoch}; current epoch is {current_epoch}"
+            )
         self._refresh_from_db()
         before = self._state
         try:

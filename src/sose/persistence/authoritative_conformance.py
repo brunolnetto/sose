@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Protocol
 
 from .qualification import (
@@ -21,6 +21,8 @@ class ConformanceCheckUnsupported(RuntimeError):
 class AuthoritativePersistenceHarness(Protocol):
     """Executable evidence provider for one adapter/configuration envelope."""
 
+    concurrency: ConcurrencyEnvelope
+
     def atomic_uow(self) -> None: ...
     def read_after_commit(self) -> None: ...
     def conditional_ownership(self) -> None: ...
@@ -36,6 +38,8 @@ class ConformanceResult:
     passed: frozenset[str]
     failed: tuple[tuple[str, str], ...]
     unsupported: frozenset[str]
+    producer_id: int
+    concurrency: ConcurrencyEnvelope
 
     @property
     def authoritative(self) -> bool:
@@ -51,7 +55,6 @@ class AuthoritativePersistenceConformanceSuite:
     """Run the authoritative promotion gate and issue evidence on success."""
 
     harness: AuthoritativePersistenceHarness
-    concurrency: ConcurrencyEnvelope = field(default_factory=ConcurrencyEnvelope)
 
     def run(self) -> ConformanceResult:
         passed: set[str] = set()
@@ -73,10 +76,18 @@ class AuthoritativePersistenceConformanceSuite:
             passed=frozenset(passed),
             failed=tuple(failed),
             unsupported=frozenset(unsupported),
+            producer_id=id(self.harness),
+            concurrency=self.harness.concurrency,
         )
 
-    def qualify(self) -> PersistenceQualification:
-        result = self.run()
+    def qualify(self, result: ConformanceResult) -> PersistenceQualification:
+        if (
+            result.producer_id != id(self.harness)
+            or result.concurrency != self.harness.concurrency
+        ):
+            raise RuntimeError(
+                "conformance evidence was produced by a different harness or envelope"
+            )
         if not result.authoritative:
             details = []
             if result.failed:
@@ -97,5 +108,5 @@ class AuthoritativePersistenceConformanceSuite:
             tier=PersistenceTier.AUTHORITATIVE,
             suite_version=SUITE_VERSION,
             passed_tests=result.passed,
-            concurrency=self.concurrency,
+            concurrency=self.harness.concurrency,
         )

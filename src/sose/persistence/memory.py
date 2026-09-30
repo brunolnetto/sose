@@ -331,14 +331,16 @@ class MemoryUnitOfWork:
     def save_store_get_result(self, result: StoreGetResult) -> None:
         if result.store_name not in self._working.store_definitions:
             raise KeyError(f"unknown store definition: {result.store_name}")
+        existing = self._working.store_get_results.get(result.request_id)
+        if existing is not None:
+            if existing != result:
+                raise ValueError(f"store get result already exists: {result.request_id}")
+            return
         request = self._working.store_get_requests.get(result.request_id)
         if request is None:
             raise KeyError(f"unknown store get request: {result.request_id}")
         if request.store_name != result.store_name:
             raise ValueError(f"store get result targets wrong store: {result.request_id}")
-        existing = self._working.store_get_results.get(result.request_id)
-        if existing is not None and existing != result:
-            raise ValueError(f"store get result already exists: {result.request_id}")
         self._working.store_get_results[result.request_id] = deepcopy(result)
         self._mark_dirty("store_get_results", result.request_id)
 
@@ -391,14 +393,16 @@ class MemoryUnitOfWork:
         self._mark_dirty("container_operation_intents", request_id)
 
     def save_container_operation_result(self, result: ContainerOperationResult) -> None:
+        existing = self._working.container_operation_results.get(result.request_id)
+        if existing is not None:
+            if existing != result:
+                raise ValueError(f"container result already exists: {result.request_id}")
+            return
         intent = self._working.container_operation_intents.get(result.request_id)
         if intent is None:
             raise KeyError(f"unknown container operation intent: {result.request_id}")
         if intent.container_name != result.container_name or intent.operation != result.operation:
             raise ValueError(f"container result does not match intent: {result.request_id}")
-        existing = self._working.container_operation_results.get(result.request_id)
-        if existing is not None and existing != result:
-            raise ValueError(f"container result already exists: {result.request_id}")
         self._working.container_operation_results[result.request_id] = deepcopy(result)
         self._mark_dirty("container_operation_results", result.request_id)
 
@@ -533,6 +537,25 @@ class MemoryUnitOfWork:
         self._mark_dirty("committed_tick", "__scalar__")
 
     def commit(self) -> None:
+        store_overlap = (
+            self._working.store_get_requests.keys()
+            & self._working.store_get_results.keys()
+        )
+        if store_overlap:
+            request_id = sorted(store_overlap)[0]
+            raise ValueError(
+                f"store get identity cannot be pending and completed: {request_id}"
+            )
+        container_overlap = (
+            self._working.container_operation_intents.keys()
+            & self._working.container_operation_results.keys()
+        )
+        if container_overlap:
+            request_id = sorted(container_overlap)[0]
+            raise ValueError(
+                "container operation identity cannot be pending and completed: "
+                f"{request_id}"
+            )
         self._owner._state = self._working
         self._closed = True
 
