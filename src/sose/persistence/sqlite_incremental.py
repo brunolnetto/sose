@@ -246,6 +246,14 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                 )
         return len(changes)
 
+    def writer_epoch(self) -> int:
+        row = self._connection.execute(
+            "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("writer metadata disappeared")
+        return int(row[0])
+
     def claim_writer(self, owner_id: str, *, expected_epoch: int) -> WriterLease:
         """Atomically acquire the next fencing epoch using compare-and-swap."""
 

@@ -213,6 +213,16 @@ class PostgresPersistence(MemoryPersistence):
                 )
         return len(changes)
 
+    def writer_epoch(self) -> int:
+        row = self._connection.execute(
+            sql.SQL("SELECT owner_epoch FROM {} WHERE singleton = 1").format(
+                self._meta_table
+            )
+        ).fetchone()
+        if row is None:
+            raise RuntimeError("writer metadata disappeared")
+        return int(row[0])
+
     def claim_writer(self, owner_id: str, *, expected_epoch: int) -> WriterLease:
         if not owner_id:
             raise ValueError("owner_id cannot be empty")
