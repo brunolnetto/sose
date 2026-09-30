@@ -22,7 +22,6 @@ class ConcurrencyEnvelope:
             raise ValueError("max_writers must be positive or None")
 
 
-@dataclass(frozen=True, slots=True)
 REQUIRED_AUTHORITATIVE_TESTS = frozenset({
     "atomic_uow",
     "read_after_commit",
@@ -35,6 +34,7 @@ REQUIRED_AUTHORITATIVE_TESTS = frozenset({
 })
 
 
+@dataclass(frozen=True, slots=True)
 class PersistenceQualification:
     """Executable evidence earned by an adapter, distinct from capability claims."""
 
