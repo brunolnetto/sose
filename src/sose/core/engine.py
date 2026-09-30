@@ -4,6 +4,9 @@ from collections.abc import Callable, Iterable
 
 from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry
+from sose.domain.warehouse import DomainMutation, DomainWarehouse
+from sose.domain.entity_store import WarehouseBackedEntityStore
+from sose.core.identity import deterministic_id
 from sose.persistence.base import Persistence
 from sose.scenarios.model import Scenario
 from sose.scenarios.rules import ScenarioRule
@@ -36,10 +39,17 @@ class Engine:
         rules_for: Callable[[str], Iterable[ScenarioRule]] | None = None,
         scenarios: Iterable[Scenario] = (),
         store_filters=None,
+        domain_warehouse: DomainWarehouse | None = None,
     ) -> None:
         self.context = context
         self.registry = registry
         self.persistence = persistence
+        self.domain_warehouse = domain_warehouse
+        self.domain_entities = (
+            WarehouseBackedEntityStore(persistence, domain_warehouse)
+            if domain_warehouse is not None
+            else None
+        )
         self.rules_for = rules_for or (lambda _: ())
         self.resources = DurableResourceManager(persistence)
         self.preemptive_resources = DurablePreemptiveResourceManager(persistence)
@@ -50,11 +60,31 @@ class Engine:
         self.context.scenarios.register_many(scenarios)
         self.context.bind_statecharts(registry)
 
+    def _load_entity(self, uow, entity_type: str, entity_id: str) -> Entity | None:
+        if self.domain_entities is not None:
+            return self.domain_entities.entity(entity_type, entity_id)
+        return uow.get_entity(entity_type, entity_id)
+
+    def _save_entity(self, uow, entity: Entity) -> None:
+        if self.domain_warehouse is None:
+            self._save_entity(uow, entity)
+            return
+        mutation = DomainMutation(
+            deterministic_id('domain-entity-version', entity.entity_type, entity.id, entity.version),
+            entity,
+        )
+        existing = uow.get_domain_delivery(mutation.mutation_id)
+        if existing is not None and existing.mutation != mutation:
+            raise ValueError(f'domain mutation identity conflict: {mutation.mutation_id}')
+        if existing is None:
+            from sose.domain.delivery import DomainDelivery
+            uow.save_domain_delivery(DomainDelivery(mutation))
+
     def dispatch(self, command: Command) -> None:
         scenario_before = self.context.scenarios.snapshot_state()
         try:
             with self.persistence.transaction() as uow:
-                entity = uow.get_entity(command.entity_type, command.entity_id)
+                entity = self._load_entity(uow, command.entity_type, command.entity_id)
                 if entity is None:
                     raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
 
@@ -63,7 +93,7 @@ class Engine:
 
                 chart = self.context.statecharts.bind(entity, caused_by=command)
                 chart.send(command.name, **dict(command.payload))
-                uow.save_entity(entity)
+                self._save_entity(uow, entity)
                 emitted = self.context.drain_events()
                 for event in emitted:
                     uow.append_event(event)
@@ -92,7 +122,7 @@ class Engine:
             raise ValueError("scheduled work cannot execute before current logical time")
 
         self.context.clock.now = work.due_at
-        entity = uow.get_entity(command.entity_type, command.entity_id)
+        entity = self._load_entity(uow, command.entity_type, command.entity_id)
         if entity is None:
             raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
 
