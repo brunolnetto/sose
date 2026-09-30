@@ -15,6 +15,7 @@ from sose.jobs.config_edit import (
 )
 from sose.jobs.doctor import inspect_job_file_health
 from sose.jobs.factory import build_job_from_file
+from sose.jobs.job_edit import describe_job_policy, set_job_policy
 from sose.jobs.storage import build_storage_plan
 from sose.jobs.storage_edit import (
     add_analytical_sink,
@@ -231,6 +232,22 @@ def _cmd_domains(args: argparse.Namespace) -> int:
 
 
 
+
+def _cmd_job_show(args: argparse.Namespace) -> int:
+    print(_json(describe_job_policy(args.config)))
+    return 0
+
+
+def _cmd_job_set_policy(args: argparse.Namespace) -> int:
+    result = set_job_policy(
+        args.config,
+        ticks_per_trigger=args.ticks_per_trigger,
+        max_ticks_per_trigger=args.max_ticks_per_trigger,
+    )
+    print(_json(result))
+    return 0
+
+
 def _cmd_storage(args: argparse.Namespace) -> int:
     config, _ = load_sose_config(args.config)
     plan = build_storage_plan(
@@ -445,6 +462,31 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show defaults, types, and constraints for one domain.",
     )
     domains.set_defaults(handler=_cmd_domains)
+
+    job = subparsers.add_parser(
+        "job",
+        help="Inspect or edit durable recurring job policy.",
+    )
+    job_subparsers = job.add_subparsers(
+        dest="job_command",
+        required=True,
+    )
+
+    job_show = job_subparsers.add_parser(
+        "show",
+        help="Show logical tick policy for the recurring job.",
+    )
+    job_show.add_argument("--config", default="sose.toml")
+    job_show.set_defaults(handler=_cmd_job_show)
+
+    job_policy = job_subparsers.add_parser(
+        "set-policy",
+        help="Edit ticks-per-trigger bounds in sose.toml.",
+    )
+    job_policy.add_argument("--config", default="sose.toml")
+    job_policy.add_argument("--ticks-per-trigger", type=int)
+    job_policy.add_argument("--max-ticks-per-trigger", type=int)
+    job_policy.set_defaults(handler=_cmd_job_set_policy)
 
     storage = subparsers.add_parser(
         "storage",

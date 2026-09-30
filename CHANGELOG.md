@@ -4,6 +4,8 @@
 
 ### Added
 
+- recurring job policy CLI (`job show`, `job set-policy`) for declarative tick-batch configuration;
+
 - CLI storage editing commands (`storage set-authoritative`, `storage add-sink`, `storage remove-sink`) with validate-before-write behavior;
 
 - unified storage plan that classifies authoritative persistence and analytical sinks, validates required capabilities, and exposes a read-only `sose storage` inspection command;

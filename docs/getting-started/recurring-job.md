@@ -511,3 +511,44 @@ without rewriting prior durable truth
 
 Bootstrap-only parameters such as initial quantity/capacity remain immutable
 after initialization unless a domain defines an explicit migration semantic.
+
+
+## Configure trigger batch policy from the CLI
+
+SOSE keeps wall-clock recurrence outside the runtime, but the number of logical
+simulation ticks executed per external occurrence is declarative.
+
+Inspect the current policy:
+
+```bash
+sose job show --config sose.toml
+```
+
+Change it without editing TOML manually:
+
+```bash
+sose job set-policy \
+  --config sose.toml \
+  --ticks-per-trigger 4 \
+  --max-ticks-per-trigger 20
+```
+
+`ticks_per_trigger` is the default batch size for `sose trigger`.
+`max_ticks_per_trigger` is a safety bound for one scheduler occurrence.
+
+The external scheduler still owns wall-clock cadence:
+
+```text
+Airflow / cron / Databricks Job / Kubernetes
+                |
+                | trigger occurrence
+                v
+           SOSE batch
+                |
+                +-- logical tick 1
+                +-- logical tick 2
+                +-- ...
+```
+
+Changing this policy edits only the declarative job configuration. It does not
+advance the simulation or mutate durable domain state.
