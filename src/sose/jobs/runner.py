@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 from typing import Callable, Generic, TypeVar
 
 from sose.domain.config import ConfigT, DomainDefinition, SeedT
+from sose.domain.outbox import DomainMutationOutbox
+from sose.domain.warehouse import DomainWarehouse
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.persistence.base import Persistence
 from sose.sinks.base import SinkBinding
@@ -69,6 +71,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         ticks_per_trigger: int = 1,
         max_ticks_per_trigger: int = 100,
         sink_bindings: tuple[SinkBinding, ...] = (),
+        domain_warehouse: DomainWarehouse | None = None,
     ) -> None:
         if not job_id:
             raise ValueError("job_id cannot be empty")
@@ -87,11 +90,33 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         self.ticks_per_trigger = ticks_per_trigger
         self.max_ticks_per_trigger = max_ticks_per_trigger
         self.sink_bindings = sink_bindings
+        self.domain_warehouse = domain_warehouse
+        self.domain_outbox = (
+            DomainMutationOutbox(persistence, domain_warehouse)
+            if domain_warehouse is not None
+            else None
+        )
         self.outbox = SinkOutbox(persistence)
 
     def state(self) -> SimulationJobState | None:
         return self.persistence.job_state(self.job_id)
 
+
+    def flush_domain_warehouse(self) -> int:
+        """Drain committed business mutations before reading the next domain state."""
+
+        if self.domain_outbox is None:
+            return 0
+        return self.domain_outbox.flush()
+
+    def _attach_domain_warehouse(self, engine) -> None:
+        if self.domain_warehouse is None:
+            return
+        engine.domain_warehouse = self.domain_warehouse
+        from sose.domain.entity_store import WarehouseBackedEntityStore
+        engine.domain_entities = WarehouseBackedEntityStore(
+            self.persistence, self.domain_warehouse
+        )
 
     def pending_sink_deliveries(self):
         return tuple(
@@ -520,6 +545,9 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         elif not state.initialized:
             state = self._finish_initialization(state)
 
+        # Reconcile committed domain mutations before the next domain read.
+        self.flush_domain_warehouse()
+
         # Retry any previously prepared analytical delivery before advancing.
         # Failures stay durable and never block operational semantic progress.
         self.flush_sinks()
@@ -662,6 +690,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                     logical_time,
                     logical_tick,
                 )
+                self._attach_domain_warehouse(engine)
                 backend = self.backend_factory(logical_time)
                 engine.rebuild_backend(backend)
 
@@ -703,6 +732,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                     committed.logical_time,
                     committed.logical_tick,
                 )
+                self._attach_domain_warehouse(engine)
                 backend = self.backend_factory(committed.logical_time)
                 engine.rebuild_backend(backend)
                 run_until = getattr(backend, "run_until", None)
@@ -747,6 +777,10 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                         f"job trigger ownership was lost: {self.job_id}"
                     )
                 uow.save_job_state(completed)
+
+            # Business mutations are committed with operational progress and are
+            # delivered idempotently after that commit.
+            self.flush_domain_warehouse()
 
             # The operational checkpoint is already durable. Analytical delivery
             # is retriable side-effect state and cannot roll this tick back.
