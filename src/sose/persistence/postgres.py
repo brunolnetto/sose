@@ -229,6 +229,10 @@ class PostgresPersistence(MemoryPersistence):
         if expected_epoch < 0:
             raise ValueError("expected_epoch must be >= 0")
         with self._connection.transaction():
+            self._connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (self.namespace,),
+            )
             row = self._connection.execute(
                 sql.SQL(
                     """
@@ -255,9 +259,13 @@ class PostgresPersistence(MemoryPersistence):
         before: _State | None = None
         try:
             with self._connection.transaction():
+                self._connection.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtext(%s))",
+                    (self.namespace,),
+                )
                 owner_row = self._connection.execute(
                     sql.SQL(
-                        "SELECT owner_epoch FROM {} WHERE singleton = 1 FOR UPDATE"
+                        "SELECT owner_epoch FROM {} WHERE singleton = 1"
                     ).format(self._meta_table)
                 ).fetchone()
                 current_epoch = -1 if owner_row is None else int(owner_row[0])
