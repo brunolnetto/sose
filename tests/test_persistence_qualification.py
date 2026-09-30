@@ -3,15 +3,14 @@ import pytest
 from sose.persistence.qualification import (
     ConcurrencyEnvelope,
     PersistenceQualification,
-    PersistenceTier,
-)
+    PersistenceTier,\n    REQUIRED_AUTHORITATIVE_TESTS,\n)
 
 
 def test_authoritative_is_earned_by_qualification_not_inferred():
     qualification = PersistenceQualification(
         tier=PersistenceTier.AUTHORITATIVE,
         suite_version="1.0",
-        passed_tests=frozenset({"atomic_uow", "restart_equivalence"}),
+        passed_tests=REQUIRED_AUTHORITATIVE_TESTS,
         concurrency=ConcurrencyEnvelope(max_writers=1, distributed=False),
     )
 
@@ -32,3 +31,11 @@ def test_non_authoritative_qualification_is_explicit():
 def test_concurrency_envelope_rejects_invalid_writer_counts(max_writers):
     with pytest.raises(ValueError, match="max_writers"):
         ConcurrencyEnvelope(max_writers=max_writers)
+
+
+def test_authoritative_qualification_rejects_missing_evidence():
+    with pytest.raises(ValueError, match="conformance evidence"):
+        PersistenceQualification(
+            tier=PersistenceTier.AUTHORITATIVE,
+            suite_version="1.0",
+        )
