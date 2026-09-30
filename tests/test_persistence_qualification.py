@@ -3,7 +3,9 @@ import pytest
 from sose.persistence.qualification import (
     ConcurrencyEnvelope,
     PersistenceQualification,
-    PersistenceTier,\n    REQUIRED_AUTHORITATIVE_TESTS,\n)
+    PersistenceTier,
+    REQUIRED_AUTHORITATIVE_TESTS,
+)
 
 
 def test_authoritative_is_earned_by_qualification_not_inferred():
