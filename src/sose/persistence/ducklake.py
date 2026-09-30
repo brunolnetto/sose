@@ -4,7 +4,8 @@ from pathlib import Path
 
 import duckdb
 
-from .duckdb import DuckDBPersistence\nfrom .records import changes_for_dirty_records
+from .duckdb import DuckDBPersistence
+from .records import changes_for_dirty_records
 
 
 class DuckLakePersistence(DuckDBPersistence):
