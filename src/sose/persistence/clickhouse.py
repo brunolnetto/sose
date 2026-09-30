@@ -2,62 +2,55 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from typing import Iterator
+from uuid import uuid4
 
 from .memory import MemoryPersistence, MemoryUnitOfWork
 from .records import state_to_records
 
 
 class ClickHousePersistence(MemoryPersistence):
-    """ClickHouse analytical projection of the canonical SOSE record state.
+    """Append committed SOSE state projections to ClickHouse for analytics.
 
-    Runtime authority remains in memory. After each successful SOSE transaction,
-    the complete canonical record projection is published to ClickHouse for
-    analytical/replay inspection. This adapter intentionally does not claim
-    restart reconstruction or authoritative transaction semantics.
+    ClickHouse is intentionally not an operational source of truth here. The
+    runtime UnitOfWork remains in memory while every successful commit emits a
+    complete canonical StateRecord snapshot to ClickHouse.
     """
 
-    def __init__(
-        self,
-        *,
-        host: str,
-        database: str = "default",
-        table: str = "sose_record_snapshot",
-    ) -> None:
+    def __init__(self, *, host: str, database: str = "default") -> None:
         super().__init__()
         import clickhouse_connect
 
         self._client = clickhouse_connect.get_client(host=host, database=database)
-        self._table = table
         self._client.command(
-            f"""
-            CREATE TABLE IF NOT EXISTS {table} (
-                snapshot UInt64,
+            """
+            CREATE TABLE IF NOT EXISTS sose_record_snapshot (
+                snapshot_id String,
                 collection String,
                 record_key String,
                 position Int64,
                 payload String
             )
             ENGINE = MergeTree
-            ORDER BY (snapshot, collection, position, record_key)
+            ORDER BY (snapshot_id, collection, position, record_key)
             """
         )
-        self._snapshot = 0
 
     def close(self) -> None:
         self._client.close()
 
-    def _publish_snapshot(self) -> None:
-        self._snapshot += 1
+    def _append_snapshot(self) -> None:
+        snapshot_id = str(uuid4())
+        records = state_to_records(self._state).values()
         rows = [
-            [self._snapshot, record.collection, record.key, record.position, record.payload]
-            for record in state_to_records(self._state)
+            [snapshot_id, record.collection, record.key, record.position, record.payload]
+            for record in records
         ]
         if rows:
             self._client.insert(
-                self._table,
+                "sose_record_snapshot",
                 rows,
                 column_names=[
-                    "snapshot",
+                    "snapshot_id",
                     "collection",
                     "record_key",
                     "position",
@@ -69,4 +62,4 @@ class ClickHousePersistence(MemoryPersistence):
     def transaction(self) -> Iterator[MemoryUnitOfWork]:
         with super().transaction() as uow:
             yield uow
-        self._publish_snapshot()
+        self._append_snapshot()
