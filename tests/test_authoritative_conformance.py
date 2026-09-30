@@ -4,10 +4,12 @@ from sose.persistence.authoritative_conformance import (
     AuthoritativePersistenceConformanceSuite,
     ConformanceCheckUnsupported,
 )
-from sose.persistence.qualification import REQUIRED_AUTHORITATIVE_TESTS, PersistenceTier
+from sose.persistence.qualification import (ConcurrencyEnvelope, REQUIRED_AUTHORITATIVE_TESTS, PersistenceTier)
 
 
 class Harness:
+    concurrency = ConcurrencyEnvelope(max_writers=1, distributed=False)
+
     def __init__(self, *, unsupported=(), failing=()):
         self.unsupported = set(unsupported)
         self.failing = set(failing)
@@ -35,7 +37,7 @@ def test_suite_runs_every_required_check_and_issues_qualification():
     suite = AuthoritativePersistenceConformanceSuite(harness)
 
     result = suite.run()
-    qualification = suite.qualify()
+    qualification = suite.qualify(result)
 
     assert result.authoritative is True
     assert result.passed == REQUIRED_AUTHORITATIVE_TESTS
@@ -67,4 +69,12 @@ def test_suite_refuses_to_issue_authoritative_qualification_for_partial_evidence
     )
 
     with pytest.raises(RuntimeError, match="unsupported=conditional_ownership"):
-        suite.qualify()
+        suite.qualify(suite.run())
+
+
+def test_qualification_uses_harness_concurrency_envelope():
+    harness = Harness()
+    result = AuthoritativePersistenceConformanceSuite(harness).run()
+    qualification = AuthoritativePersistenceConformanceSuite(harness).qualify(result)
+
+    assert qualification.concurrency == harness.concurrency
