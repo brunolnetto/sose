@@ -6,6 +6,7 @@ from typing import Callable, Generic, TypeVar
 
 from sose.domain.config import ConfigT, DomainDefinition, SeedT
 from sose.domain.outbox import DomainMutationOutbox
+from sose.domain.storage import DomainPersistence
 from sose.domain.warehouse import DomainMutation
 from sose.core.identity import deterministic_id
 from sose.domain.warehouse import DomainWarehouse
@@ -93,6 +94,11 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         self.max_ticks_per_trigger = max_ticks_per_trigger
         self.sink_bindings = sink_bindings
         self.domain_warehouse = domain_warehouse
+        self.domain_persistence = (
+            DomainPersistence(persistence, domain_warehouse)
+            if domain_warehouse is not None
+            else persistence
+        )
         self.domain_outbox = (
             DomainMutationOutbox(persistence, domain_warehouse)
             if domain_warehouse is not None
@@ -189,17 +195,8 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         config = self.definition.config_model.model_validate_json(
             pending.config_json
         )
-        bootstrap_state = self.definition.seed(self.persistence, config)
-        if self.domain_warehouse is not None:
-            for entity in self.persistence.entities():
-                self.domain_warehouse.apply(
-                    DomainMutation(
-                        deterministic_id(
-                            'domain-seed', entity.entity_type, entity.id, entity.version
-                        ),
-                        entity,
-                    )
-                )
+        bootstrap_state = self.definition.seed(self.domain_persistence, config)
+        self.flush_domain_warehouse()
         initialized = replace(
             pending,
             initialized=True,
@@ -697,7 +694,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                     uow.save_job_state(running)
 
                 context, engine = self.definition.build_runtime(
-                    self.persistence,
+                    self.domain_persistence,
                     config,
                     logical_time,
                     logical_tick,
@@ -739,7 +736,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                         "reconcile phase requires durable simulation position"
                     )
                 context, engine = self.definition.build_runtime(
-                    self.persistence,
+                    self.domain_persistence,
                     config,
                     committed.logical_time,
                     committed.logical_tick,
@@ -753,7 +750,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
 
             if self.definition.reconcile_tick is not None:
                 self.definition.reconcile_tick(
-                    self.persistence,
+                    self.domain_persistence,
                     engine,
                     backend,
                     config,
