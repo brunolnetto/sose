@@ -16,7 +16,13 @@ class ClickHousePersistence(MemoryPersistence):
     complete canonical StateRecord snapshot to ClickHouse.
     """
 
-    def __init__(self, *, host: str, database: str = "default", table: str = "sose_record_snapshot") -> None:
+    def __init__(
+        self,
+        *,
+        host: str,
+        database: str = "default",
+        table: str = "sose_record_snapshot",
+    ) -> None:
         super().__init__()
         import clickhouse_connect
 
