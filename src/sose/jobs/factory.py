@@ -8,8 +8,8 @@ from sose.persistence.registry import (
     PersistenceRegistry,
     builtin_persistence_registry,
 )
-from sose.sinks.base import SinkBinding
 from sose.sinks.registry import SinkRegistry, builtin_sink_registry
+from sose.jobs.storage import build_storage_plan
 
 
 def _backend_factory(name: str):
@@ -40,27 +40,19 @@ def build_job_from_config(
     domains = builtin_catalog()
     definition = domains.get(config.domain.name)
     registry = persistence_registry or builtin_persistence_registry()
-    registry.require(
-        config.persistence.adapter,
-        *config.persistence.require,
+    sink_adapters = sink_registry or builtin_sink_registry()
+    storage = build_storage_plan(
+        config,
+        persistence_registry=registry,
+        sink_registry=sink_adapters,
     )
-    persistence = registry.create(
-        config.persistence.adapter,
-        config.persistence.options,
+    persistence = storage.create_authoritative(
+        registry=registry,
         base_dir=base_dir,
     )
-
-    sink_adapters = sink_registry or builtin_sink_registry()
-    sink_bindings = tuple(
-        SinkBinding(
-            name=section.name,
-            sink=sink_adapters.create(
-                section.adapter,
-                section.options,
-                base_dir=base_dir,
-            ),
-        )
-        for section in config.sinks
+    sink_bindings = storage.create_sink_bindings(
+        registry=sink_adapters,
+        base_dir=base_dir,
     )
 
     job = SimulationJob(

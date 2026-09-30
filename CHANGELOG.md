@@ -4,6 +4,8 @@
 
 ### Added
 
+- unified storage plan that classifies authoritative persistence and analytical sinks, validates required capabilities, and exposes a read-only `sose storage` inspection command;
+
 - deterministic recurring-trigger identities derived from timezone-aware
   scheduler occurrence timestamps, exposed through Python and CLI;
 - validated `sose config show` / `sose config set` commands for inspecting

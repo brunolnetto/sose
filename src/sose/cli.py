@@ -15,6 +15,7 @@ from sose.jobs.config_edit import (
 )
 from sose.jobs.doctor import inspect_job_file_health
 from sose.jobs.factory import build_job_from_file
+from sose.jobs.storage import build_storage_plan
 from sose.persistence.registry import builtin_persistence_registry
 from sose.sinks.registry import builtin_sink_registry
 
@@ -38,19 +39,12 @@ def _validate_config(path: str | Path) -> dict[str, object]:
     resolved = definition.parse_config(config.domain.parameters)
 
     persistence_registry = builtin_persistence_registry()
-    persistence_names = persistence_registry.names()
-    if config.persistence.adapter not in persistence_names:
-        raise KeyError(
-            f"unknown persistence adapter: {config.persistence.adapter}"
-        )
-    persistence_registry.require(
-        config.persistence.adapter,
-        *config.persistence.require,
-    )
     sink_registry = builtin_sink_registry()
-    for sink in config.sinks:
-        if sink.adapter not in sink_registry.names():
-            raise KeyError(f"unknown sink adapter: {sink.adapter}")
+    storage_plan = build_storage_plan(
+        config,
+        persistence_registry=persistence_registry,
+        sink_registry=sink_registry,
+    )
 
     if config.runtime.backend != "simpy":
         raise KeyError(f"unknown runtime backend: {config.runtime.backend}")
@@ -59,6 +53,7 @@ def _validate_config(path: str | Path) -> dict[str, object]:
         "job_id": config.job.id,
         "domain": definition.name,
         "domain_parameters": resolved.model_dump(mode="json"),
+        "storage": storage_plan.describe(),
         "persistence": config.persistence.adapter,
         "persistence_require": list(config.persistence.require),
         "runtime_backend": config.runtime.backend,
@@ -227,6 +222,18 @@ def _cmd_domains(args: argparse.Namespace) -> int:
     ]
     print(_json(payload))
     return 0
+
+
+
+def _cmd_storage(args: argparse.Namespace) -> int:
+    config, _ = load_sose_config(args.config)
+    plan = build_storage_plan(
+        config,
+        persistence_registry=builtin_persistence_registry(),
+        sink_registry=builtin_sink_registry(),
+    )
+    print(_json(plan.describe()))
+    return 0 if plan.healthy else 1
 
 
 def _cmd_persistence(args: argparse.Namespace) -> int:
@@ -400,6 +407,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show defaults, types, and constraints for one domain.",
     )
     domains.set_defaults(handler=_cmd_domains)
+
+    storage = subparsers.add_parser(
+        "storage",
+        help="Show authoritative persistence and analytical sink roles for a job.",
+    )
+    storage.add_argument("--config", default="sose.toml")
+    storage.set_defaults(handler=_cmd_storage)
 
     persistence = subparsers.add_parser(
         "persistence",
