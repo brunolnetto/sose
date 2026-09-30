@@ -16,14 +16,15 @@ class ClickHousePersistence(MemoryPersistence):
     complete canonical StateRecord snapshot to ClickHouse.
     """
 
-    def __init__(self, *, host: str, database: str = "default") -> None:
+    def __init__(self, *, host: str, database: str = "default", table: str = "sose_record_snapshot") -> None:
         super().__init__()
         import clickhouse_connect
 
         self._client = clickhouse_connect.get_client(host=host, database=database)
+        self._table = table
         self._client.command(
             """
-            CREATE TABLE IF NOT EXISTS sose_record_snapshot (
+            CREATE TABLE IF NOT EXISTS {table} (
                 snapshot_id String,
                 collection String,
                 record_key String,
@@ -32,7 +33,7 @@ class ClickHousePersistence(MemoryPersistence):
             )
             ENGINE = MergeTree
             ORDER BY (snapshot_id, collection, position, record_key)
-            """
+            """.format(table=self._table)
         )
 
     def close(self) -> None:
@@ -47,7 +48,7 @@ class ClickHousePersistence(MemoryPersistence):
         ]
         if rows:
             self._client.insert(
-                "sose_record_snapshot",
+                self._table,
                 rows,
                 column_names=[
                     "snapshot_id",
