@@ -24,6 +24,10 @@ class DuckLakePersistence(DuckDBPersistence):
     ) -> None:
         # Build the inherited object without opening its local DuckDB database.
         self.path = str(catalog)
+        catalog_path = Path(catalog)
+        catalog_path.parent.mkdir(parents=True, exist_ok=True)
+        data_path = Path(data_path)
+        data_path.mkdir(parents=True, exist_ok=True)
         self._connection = duckdb.connect(":memory:")
         self._connection.execute("INSTALL ducklake")
         self._connection.execute("LOAD ducklake")
