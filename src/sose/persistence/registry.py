@@ -272,7 +272,12 @@ def builtin_persistence_registry() -> PersistenceRegistry:
         from sose.persistence.ducklake import DuckLakePersistence
 
         catalog = _resolve_path(options, base_dir, default="sose.ducklake")
-        data_path = _resolve_path(options, base_dir, default="sose-ducklake-data")
+        raw_data_path = options.get("data_path", "sose-ducklake-data")
+        if not isinstance(raw_data_path, str) or not raw_data_path:
+            raise ValueError("DuckLake data_path must be a non-empty string")
+        data_path = Path(raw_data_path)
+        if not data_path.is_absolute():
+            data_path = base_dir / data_path
         alias = options.get("alias", "sose_ducklake")
         if not isinstance(alias, str) or not alias:
             raise ValueError("DuckLake alias must be a non-empty string")
