@@ -30,6 +30,9 @@ ducklake = [
 postgres = [
   "psycopg[binary]>=3.3.6,<4",
 ]
+clickhouse = [
+  "clickhouse-connect>=0.8,<1",
+]
 databricks = [
   "databricks-sql-connector>=4,<5",
 ]
