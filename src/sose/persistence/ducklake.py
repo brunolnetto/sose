@@ -4,7 +4,7 @@ from pathlib import Path
 
 import duckdb
 
-from .duckdb import DuckDBPersistence
+from .duckdb import DuckDBPersistence\nfrom .records import changes_for_dirty_records
 
 
 class DuckLakePersistence(DuckDBPersistence):
@@ -39,6 +39,27 @@ class DuckLakePersistence(DuckDBPersistence):
         self._initialize_schema()
         self._refresh_from_db()
 
+    def _apply_changes(self, before, after, dirty_records) -> int:
+        changes = changes_for_dirty_records(before, after, dirty_records)
+        for change in changes:
+            self._connection.execute(
+                "DELETE FROM sose_record WHERE collection = ? AND record_key = ?",
+                [change.collection, change.key],
+            )
+            if change.operation == "upsert":
+                if change.position is None or change.payload is None:
+                    raise RuntimeError("upsert change requires position and payload")
+                self._connection.execute(
+                    """
+                    INSERT INTO sose_record(collection, record_key, position, payload)
+                    VALUES (?, ?, ?, ?)
+                    """,
+                    [change.collection, change.key, change.position, change.payload],
+                )
+            elif change.operation != "delete":
+                raise RuntimeError(f"unknown state record operation: {change.operation}")
+        return len(changes)
+
     def _initialize_schema(self) -> None:
         self._connection.execute(
             """
@@ -55,7 +76,6 @@ class DuckLakePersistence(DuckDBPersistence):
                 record_key VARCHAR NOT NULL,
                 position BIGINT NOT NULL,
                 payload VARCHAR NOT NULL,
-                PRIMARY KEY (collection, record_key)
             )
             """
         )
