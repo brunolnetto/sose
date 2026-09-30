@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Protocol
 
 from .qualification import (
@@ -51,7 +51,7 @@ class AuthoritativePersistenceConformanceSuite:
     """Run the authoritative promotion gate and issue evidence on success."""
 
     harness: AuthoritativePersistenceHarness
-    concurrency: ConcurrencyEnvelope = ConcurrencyEnvelope()
+    concurrency: ConcurrencyEnvelope = field(default_factory=ConcurrencyEnvelope)
 
     def run(self) -> ConformanceResult:
         passed: set[str] = set()
