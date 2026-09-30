@@ -4,6 +4,8 @@
 
 ### Added
 
+- CLI storage editing commands (`storage set-authoritative`, `storage add-sink`, `storage remove-sink`) with validate-before-write behavior;
+
 - unified storage plan that classifies authoritative persistence and analytical sinks, validates required capabilities, and exposes a read-only `sose storage` inspection command;
 
 - deterministic recurring-trigger identities derived from timezone-aware
