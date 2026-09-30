@@ -268,6 +268,42 @@ def builtin_persistence_registry() -> PersistenceRegistry:
             optional_extra="duckdb",
         )
     )
+    def clickhouse_factory(options: dict[str, object], base_dir: Path) -> Persistence:
+        from sose.persistence.clickhouse import ClickHousePersistence
+
+        host = options.get("host", "localhost")
+        database = options.get("database", "default")
+        table = options.get("table", "sose_record_snapshot")
+        if not isinstance(host, str) or not host:
+            raise ValueError("ClickHouse host must be a non-empty string")
+        if not isinstance(database, str) or not database:
+            raise ValueError("ClickHouse database must be a non-empty string")
+        if not isinstance(table, str) or not table.replace("_", "").isalnum():
+            raise ValueError("ClickHouse table must be a simple identifier")
+        return ClickHousePersistence(host=host, database=database, table=table)
+
+    registry.register(
+        PersistenceAdapter(
+            "clickhouse",
+            clickhouse_factory,
+            capabilities=PersistenceCapabilities(
+                process_durable=False,
+                transactional_commits=False,
+                incremental_updates=False,
+                concurrent_writers=True,
+                remote=True,
+                analytical_reads=True,
+                append_only=False,
+                schema_migrations=False,
+                authoritative_read_after_commit=False,
+                conditional_writes=False,
+                durable_job_leases=False,
+                fencing=False,
+                restart_reconstructible=False,
+            ),
+            optional_extra="clickhouse",
+        )
+    )
     def ducklake_factory(options: dict[str, object], base_dir: Path) -> Persistence:
         from sose.persistence.ducklake import DuckLakePersistence
 
