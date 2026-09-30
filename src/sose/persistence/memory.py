@@ -533,6 +533,25 @@ class MemoryUnitOfWork:
         self._mark_dirty("committed_tick", "__scalar__")
 
     def commit(self) -> None:
+        store_overlap = (
+            self._working.store_get_requests.keys()
+            & self._working.store_get_results.keys()
+        )
+        if store_overlap:
+            request_id = sorted(store_overlap)[0]
+            raise ValueError(
+                f"store get identity cannot be pending and completed: {request_id}"
+            )
+        container_overlap = (
+            self._working.container_operation_intents.keys()
+            & self._working.container_operation_results.keys()
+        )
+        if container_overlap:
+            request_id = sorted(container_overlap)[0]
+            raise ValueError(
+                "container operation identity cannot be pending and completed: "
+                f"{request_id}"
+            )
         self._owner._state = self._working
         self._closed = True
 
