@@ -24,10 +24,7 @@ simpy = [
 duckdb = [
   "duckdb>=1.5.5,<2",
 ]
-postgres = [
-  "psycopg[binary]>=3.3.6,<4",
-]
-databricks = [
+postgres = [\n  "psycopg[binary]>=3.3.6,<4",\n]\nclickhouse = [\n  "clickhouse-connect>=0.8,<1",\n]\ndatabricks = [
   "databricks-sql-connector>=4,<5",
 ]
 snowflake = [
