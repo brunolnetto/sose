@@ -268,4 +268,36 @@ def builtin_persistence_registry() -> PersistenceRegistry:
             optional_extra="duckdb",
         )
     )
+    def ducklake_factory(options: dict[str, object], base_dir: Path) -> Persistence:
+        from sose.persistence.ducklake import DuckLakePersistence
+
+        catalog = _resolve_path(options, base_dir, default="sose.ducklake")
+        data_path = _resolve_path(options, base_dir, default="sose-ducklake-data")
+        alias = options.get("alias", "sose_ducklake")
+        if not isinstance(alias, str) or not alias:
+            raise ValueError("DuckLake alias must be a non-empty string")
+        return DuckLakePersistence(catalog, data_path=data_path, alias=alias)
+
+    registry.register(
+        PersistenceAdapter(
+            "ducklake",
+            ducklake_factory,
+            capabilities=PersistenceCapabilities(
+                process_durable=True,
+                transactional_commits=True,
+                incremental_updates=True,
+                concurrent_writers=True,
+                remote=False,
+                analytical_reads=True,
+                append_only=False,
+                schema_migrations=False,
+                authoritative_read_after_commit=True,
+                conditional_writes=False,
+                durable_job_leases=False,
+                fencing=False,
+                restart_reconstructible=True,
+            ),
+            optional_extra="ducklake",
+        )
+    )
     return registry
