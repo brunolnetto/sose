@@ -10,12 +10,12 @@ from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.domain.warehouse import DomainMutation, MemoryDomainWarehouse
 from sose.persistence.memory import MemoryPersistence
-from sose.statecharts import StateChart
+from statemachine import State, StateChart
 
 class DemoChart(StateChart):
-    initial = 'planned'
-    states = {'planned', 'released'}
-    transitions = {'release': {'planned': 'released'}}
+    planned = State(initial=True)
+    released = State(final=True)
+    release = planned.to(released)
 
 def test_engine_can_transition_domain_entity_without_engine_entity_shadow():
     now = datetime(2026, 1, 1, tzinfo=timezone.utc)
