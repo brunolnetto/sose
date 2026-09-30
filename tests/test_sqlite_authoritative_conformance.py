@@ -62,8 +62,9 @@ class SQLiteIncrementalHarness:
             writer.close()
 
     def conditional_ownership(self):
-        first = self._open()
-        second = self._open()
+        ownership_path = self.path.with_name("ownership.sqlite3")
+        first = SQLiteIncrementalPersistence(ownership_path)
+        second = SQLiteIncrementalPersistence(ownership_path)
         try:
             lease = first.claim_writer("worker-a", expected_epoch=0)
             assert lease.epoch == 1
@@ -74,12 +75,14 @@ class SQLiteIncrementalHarness:
             first.close()
 
     def stale_owner_fencing(self):
-        first = self._open()
-        second = self._open()
+        fencing_path = self.path.with_name("fencing.sqlite3")
+        first = SQLiteIncrementalPersistence(fencing_path)
+        second = SQLiteIncrementalPersistence(fencing_path)
         try:
-            current = sqlite3.connect(self.path).execute(
-                "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
-            ).fetchone()
+            with sqlite3.connect(fencing_path) as connection:
+                current = connection.execute(
+                    "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
+                ).fetchone()
             expected = int(current[0])
             lease_a = first.claim_writer("worker-a", expected_epoch=expected)
             lease_b = second.claim_writer("worker-b", expected_epoch=lease_a.epoch)
@@ -87,7 +90,12 @@ class SQLiteIncrementalHarness:
             with pytest.raises(StaleWriterError):
                 with first.transaction(owner_epoch=lease_a.epoch) as uow:
                     uow.set_committed_tick(99)
-            assert second.committed_tick() != 99
+            with pytest.raises(StaleWriterError, match="owner_epoch is required"):
+                with first.transaction() as uow:
+                    uow.set_committed_tick(100)
+            with second.transaction(owner_epoch=lease_b.epoch) as uow:
+                uow.set_committed_tick(101)
+            assert second.committed_tick() == 101
         finally:
             second.close()
             first.close()
@@ -197,7 +205,9 @@ class SQLiteIncrementalHarness:
             reopened = SQLiteIncrementalPersistence(path)
             try:
                 assert reopened.store_get_results() == (result,)
-                with pytest.raises(ValueError, match="pending and completed"):
+                with reopened.transaction() as uow:
+                    uow.save_store_get_result(result)
+                with pytest.raises(ValueError, match="already completed"):
                     with reopened.transaction() as uow:
                         uow.save_store_get_request(request)
             finally:
