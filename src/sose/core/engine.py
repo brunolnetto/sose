@@ -67,7 +67,7 @@ class Engine:
 
     def _save_entity(self, uow, entity: Entity) -> None:
         if self.domain_warehouse is None:
-            self._save_entity(uow, entity)
+            uow.save_entity(entity)
             return
         mutation = DomainMutation(
             deterministic_id('domain-entity-version', entity.entity_type, entity.id, entity.version),
