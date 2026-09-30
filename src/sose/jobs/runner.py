@@ -6,7 +6,8 @@ from typing import Callable, Generic, TypeVar
 
 from sose.domain.config import ConfigT, DomainDefinition, SeedT
 from sose.domain.outbox import DomainMutationOutbox
-from sose.domain.projector import DomainWarehouseProjector
+from sose.domain.warehouse import DomainMutation
+from sose.core.identity import deterministic_id
 from sose.domain.warehouse import DomainWarehouse
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.persistence.base import Persistence
@@ -190,22 +191,15 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         )
         bootstrap_state = self.definition.seed(self.persistence, config)
         if self.domain_warehouse is not None:
-            # Compatibility bridge while domain seeds migrate to DomainStorage:
-            # discover the identities named by the bootstrap result and publish
-            # their freshly seeded Engine OLTP shadows before the first tick.
-            identities: list[tuple[str, str]] = []
-            if hasattr(bootstrap_state, "__dataclass_fields__"):
-                for value in bootstrap_state.__dict__.values():
-                    if isinstance(value, str):
-                        # Entity type is not encoded in bootstrap ids; resolve
-                        # against the seed transaction's known registry types.
-                        for entity_type in self.definition.entity_types:
-                            if self.persistence.entity(entity_type, value) is not None:
-                                identities.append((entity_type, value))
-                                break
-            DomainWarehouseProjector(
-                self.persistence, self.domain_warehouse
-            ).sync_entities(identities)
+            for entity in self.persistence.entities():
+                self.domain_warehouse.apply(
+                    DomainMutation(
+                        deterministic_id(
+                            'domain-seed', entity.entity_type, entity.id, entity.version
+                        ),
+                        entity,
+                    )
+                )
         initialized = replace(
             pending,
             initialized=True,
