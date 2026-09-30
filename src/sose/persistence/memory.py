@@ -669,6 +669,9 @@ class MemoryPersistence:
         value = self._state.entities.get((entity_type, entity_id))
         return deepcopy(value) if value else None
 
+    def entities(self) -> tuple[Entity, ...]:
+        return tuple(deepcopy(tuple(self._state.entities.values())))
+
     def command(self, command_id: str) -> Command | None:
         value = self._state.commands.get(command_id)
         return deepcopy(value) if value else None
