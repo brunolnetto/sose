@@ -28,6 +28,9 @@ class AuthoritativePersistenceConformanceSuite(Generic[SemanticStateT]):
     def assert_restart_semantic_equivalence(self) -> None:
         reference = self.harness.continuous_reference()
         candidate = self.harness.restarted_faulted_run()
-        assert self.harness.semantic_projection(candidate) == self.harness.semantic_projection(
-            reference
-        )
+        candidate_projection = self.harness.semantic_projection(candidate)
+        reference_projection = self.harness.semantic_projection(reference)
+        if candidate_projection != reference_projection:
+            raise RuntimeError(
+                "authoritative persistence semantic equivalence failed"
+            )
