@@ -17,6 +17,7 @@ def test_builtin_persistence_registry_exposes_local_sinks(tmp_path):
 
     assert registry.names() == (
         "duckdb",
+        "ducklake",
         "jsonl",
         "memory",
         "postgres",
