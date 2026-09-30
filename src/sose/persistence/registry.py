@@ -243,7 +243,12 @@ def builtin_persistence_registry() -> PersistenceRegistry:
                 remote=True,
                 analytical_reads=False,
                 append_only=False,
-                schema_migrations=False,
+                schema_migrations=True,
+                authoritative_read_after_commit=True,
+                conditional_writes=True,
+                durable_job_leases=False,
+                fencing=True,
+                restart_reconstructible=True,
             ),
             optional_extra="postgres",
         )
