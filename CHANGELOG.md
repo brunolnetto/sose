@@ -4,6 +4,8 @@
 
 ### Added
 
+- read-only `sose plan` command resolving domain parameters, storage roles, runtime, and recurring job policy without opening external systems;
+
 - recurring job policy CLI (`job show`, `job set-policy`) for declarative tick-batch configuration;
 
 - CLI storage editing commands (`storage set-authoritative`, `storage add-sink`, `storage remove-sink`) with validate-before-write behavior;

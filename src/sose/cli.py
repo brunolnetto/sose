@@ -16,6 +16,7 @@ from sose.jobs.config_edit import (
 from sose.jobs.doctor import inspect_job_file_health
 from sose.jobs.factory import build_job_from_file
 from sose.jobs.job_edit import describe_job_policy, set_job_policy
+from sose.jobs.plan import build_execution_plan_from_file
 from sose.jobs.storage import build_storage_plan
 from sose.jobs.storage_edit import (
     add_analytical_sink,
@@ -231,6 +232,12 @@ def _cmd_domains(args: argparse.Namespace) -> int:
     return 0
 
 
+
+
+
+def _cmd_plan(args: argparse.Namespace) -> int:
+    print(_json(build_execution_plan_from_file(args.config)))
+    return 0
 
 
 def _cmd_job_show(args: argparse.Namespace) -> int:
@@ -462,6 +469,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="Show defaults, types, and constraints for one domain.",
     )
     domains.set_defaults(handler=_cmd_domains)
+
+    plan = subparsers.add_parser(
+        "plan",
+        help="Resolve the complete declarative execution plan without side effects.",
+    )
+    plan.add_argument("--config", default="sose.toml")
+    plan.set_defaults(handler=_cmd_plan)
 
     job = subparsers.add_parser(
         "job",
