@@ -28,7 +28,7 @@ postgres = [
   "psycopg[binary]>=3.3.6,<4",
 ]
 clickhouse = [
-  "clickhouse-connect>=0.8,<1",
+  "clickhouse-connect>=1.9,<2",
 ]
 databricks = [
   "databricks-sql-connector>=4,<5",
