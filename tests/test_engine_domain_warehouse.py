@@ -10,7 +10,7 @@ from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.domain.warehouse import DomainMutation, MemoryDomainWarehouse
 from sose.persistence.memory import MemoryPersistence
-from sose.statecharts.chart import StateChart
+from sose.statecharts import StateChart
 
 class DemoChart(StateChart):
     initial = 'planned'
