@@ -162,6 +162,14 @@ class JSONLJournalPersistence(MemoryPersistence):
         self._refresh_from_journal()
         return super().job_state(job_id)
 
+    def domain_delivery(self, mutation_id: str):
+        self._fresh()
+        return super().domain_delivery(mutation_id)
+
+    def domain_deliveries(self):
+        self._fresh()
+        return super().domain_deliveries()
+
     def sink_delivery(self, delivery_id: str):
         self._refresh_from_journal()
         return super().sink_delivery(delivery_id)
