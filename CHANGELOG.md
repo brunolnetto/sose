@@ -4,6 +4,8 @@
 
 ### Added
 
+- end-to-end recurring product contract covering domain configuration, persistent scheduler triggers, config revision, process reopen, and analytical sink delivery;
+
 - recurring job policy CLI (`job show`, `job set-policy`) for declarative tick-batch configuration;
 
 - CLI storage editing commands (`storage set-authoritative`, `storage add-sink`, `storage remove-sink`) with validate-before-write behavior;
