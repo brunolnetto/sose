@@ -4,6 +4,8 @@
 
 ### Added
 
+- end-to-end recurring product contract covering domain configuration, persistent scheduler triggers, config revision, process reopen, and analytical sink delivery;
+
 - read-only `sose plan` command resolving domain parameters, storage roles, runtime, and recurring job policy without opening external systems;
 
 - recurring job policy CLI (`job show`, `job set-policy`) for declarative tick-batch configuration;
