@@ -30,6 +30,7 @@ from sose.core.runtime import (
     SimulationPosition,
 )
 from sose.domain.entity import Entity
+from sose.domain.delivery import DomainDelivery
 from sose.scenarios.model import ScenarioRuntimeState
 from sose.jobs.model import SimulationJobState
 from sose.sinks.model import SinkCheckpoint, SinkDelivery
@@ -64,6 +65,7 @@ class _State:
     job_states: dict[str, SimulationJobState] = field(default_factory=dict)
     sink_deliveries: dict[str, SinkDelivery] = field(default_factory=dict)
     sink_checkpoints: dict[tuple[str, str], SinkCheckpoint] = field(default_factory=dict)
+    domain_deliveries: dict[str, DomainDelivery] = field(default_factory=dict)
     committed_tick: int = -1
 
 
@@ -118,6 +120,23 @@ class MemoryUnitOfWork:
         self._working.job_states[state.job_id] = deepcopy(state)
         self._mark_dirty("job_states", state.job_id)
 
+
+    def get_domain_delivery(self, mutation_id: str) -> DomainDelivery | None:
+        value = self._working.domain_deliveries.get(mutation_id)
+        return deepcopy(value) if value else None
+
+    def save_domain_delivery(self, delivery: DomainDelivery) -> None:
+        existing = self._working.domain_deliveries.get(delivery.mutation_id)
+        if existing is not None and existing.mutation != delivery.mutation:
+            raise ValueError(
+                f"domain mutation identity conflict: {delivery.mutation_id}"
+            )
+        self._working.domain_deliveries[delivery.mutation_id] = deepcopy(delivery)
+        self._mark_dirty("domain_deliveries", delivery.mutation_id)
+
+    def delete_domain_delivery(self, mutation_id: str) -> None:
+        self._working.domain_deliveries.pop(mutation_id, None)
+        self._mark_dirty("domain_deliveries", mutation_id)
 
     def get_sink_delivery(self, delivery_id: str) -> SinkDelivery | None:
         value = self._working.sink_deliveries.get(delivery_id)
@@ -587,6 +606,16 @@ class MemoryPersistence:
         return tuple(
             deepcopy(self._state.job_states[job_id])
             for job_id in sorted(self._state.job_states)
+        )
+
+    def domain_delivery(self, mutation_id: str) -> DomainDelivery | None:
+        value = self._state.domain_deliveries.get(mutation_id)
+        return deepcopy(value) if value else None
+
+    def domain_deliveries(self) -> tuple[DomainDelivery, ...]:
+        return tuple(
+            deepcopy(self._state.domain_deliveries[key])
+            for key in sorted(self._state.domain_deliveries)
         )
 
     def sink_delivery(self, delivery_id: str) -> SinkDelivery | None:
