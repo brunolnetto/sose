@@ -273,11 +273,14 @@ def builtin_persistence_registry() -> PersistenceRegistry:
 
         host = options.get("host", "localhost")
         database = options.get("database", "default")
+        table = options.get("table", "sose_record_snapshot")
         if not isinstance(host, str) or not host:
             raise ValueError("ClickHouse host must be a non-empty string")
         if not isinstance(database, str) or not database:
             raise ValueError("ClickHouse database must be a non-empty string")
-        return ClickHousePersistence(host=host, database=database)
+        if not isinstance(table, str) or not table.replace("_", "").isalnum():
+            raise ValueError("ClickHouse table must be a simple identifier")
+        return ClickHousePersistence(host=host, database=database, table=table)
 
     registry.register(
         PersistenceAdapter(
