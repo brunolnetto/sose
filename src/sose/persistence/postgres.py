@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 import re
 from typing import Iterator
 
@@ -11,7 +12,17 @@ from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
-_SCHEMA_VERSION = 1
+_SCHEMA_VERSION = 2
+
+@dataclass(frozen=True, slots=True)
+class WriterLease:
+    owner_id: str
+    epoch: int
+
+
+class StaleWriterError(RuntimeError):
+    """Raised when a PostgreSQL writer loses its fencing epoch."""
+
 _NAMESPACE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}$")
 
 
@@ -51,7 +62,9 @@ class PostgresPersistence(MemoryPersistence):
                     CREATE TABLE IF NOT EXISTS {} (
                         singleton SMALLINT PRIMARY KEY CHECK (singleton = 1),
                         schema_version INTEGER NOT NULL,
-                        revision BIGINT NOT NULL DEFAULT 0
+                        revision BIGINT NOT NULL DEFAULT 0,
+                        owner_id TEXT,
+                        owner_epoch BIGINT NOT NULL DEFAULT 0
                     )
                     """
                 ).format(self._meta_table)
@@ -87,6 +100,24 @@ class PostgresPersistence(MemoryPersistence):
             if row is None:  # pragma: no cover - defensive database invariant
                 raise RuntimeError("PostgresPersistence metadata bootstrap failed")
             version = int(row[0])
+            if version == 1:
+                self._connection.execute(
+                    sql.SQL("ALTER TABLE {} ADD COLUMN IF NOT EXISTS owner_id TEXT").format(
+                        self._meta_table
+                    )
+                )
+                self._connection.execute(
+                    sql.SQL(
+                        "ALTER TABLE {} ADD COLUMN IF NOT EXISTS "
+                        "owner_epoch BIGINT NOT NULL DEFAULT 0"
+                    ).format(self._meta_table)
+                )
+                self._connection.execute(
+                    sql.SQL("UPDATE {} SET schema_version = 2 WHERE singleton = 1").format(
+                        self._meta_table
+                    )
+                )
+                version = 2
             if version != _SCHEMA_VERSION:
                 raise RuntimeError(
                     "unsupported PostgresPersistence schema version: "
@@ -182,11 +213,61 @@ class PostgresPersistence(MemoryPersistence):
                 )
         return len(changes)
 
+    def claim_writer(self, owner_id: str, *, expected_epoch: int) -> WriterLease:
+        if not owner_id:
+            raise ValueError("owner_id cannot be empty")
+        if expected_epoch < 0:
+            raise ValueError("expected_epoch must be >= 0")
+        with self._connection.transaction():
+            self._connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (self.namespace,),
+            )
+            row = self._connection.execute(
+                sql.SQL(
+                    """
+                    UPDATE {}
+                    SET owner_id = %s, owner_epoch = owner_epoch + 1
+                    WHERE singleton = 1 AND owner_epoch = %s
+                    RETURNING owner_epoch
+                    """
+                ).format(self._meta_table),
+                (owner_id, expected_epoch),
+            ).fetchone()
+            if row is None:
+                raise StaleWriterError(
+                    f"writer claim lost: expected epoch {expected_epoch}"
+                )
+            return WriterLease(owner_id=owner_id, epoch=int(row[0]))
+
     @contextmanager
-    def transaction(self) -> Iterator[MemoryUnitOfWork]:
+    def transaction(
+        self,
+        *,
+        owner_epoch: int | None = None,
+    ) -> Iterator[MemoryUnitOfWork]:
         before: _State | None = None
         try:
             with self._connection.transaction():
+                self._connection.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtext(%s))",
+                    (self.namespace,),
+                )
+                owner_row = self._connection.execute(
+                    sql.SQL(
+                        "SELECT owner_epoch FROM {} WHERE singleton = 1"
+                    ).format(self._meta_table)
+                ).fetchone()
+                current_epoch = -1 if owner_row is None else int(owner_row[0])
+                if current_epoch > 0 and owner_epoch is None:
+                    raise StaleWriterError(
+                        f"writer fencing is active at epoch {current_epoch}; "
+                        "owner_epoch is required"
+                    )
+                if owner_epoch is not None and current_epoch != owner_epoch:
+                    raise StaleWriterError(
+                        f"stale writer epoch {owner_epoch}; current epoch is {current_epoch}"
+                    )
                 # Force a transaction-consistent refresh. Writers may overlap,
                 # and dirty-record persistence prevents unrelated updates from
                 # replacing one another.

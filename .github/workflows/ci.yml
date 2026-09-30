@@ -202,4 +202,4 @@ jobs:
 
       - name: Run PostgreSQL conformance, restart, and concurrency tests
         run: |
-          python -m pytest -q             tests/test_postgres_persistence.py             tests/test_postgres_persistence_restart.py
+          python -m pytest -q             tests/test_postgres_persistence.py             tests/test_postgres_persistence_restart.py             tests/test_postgres_authoritative_conformance.py
