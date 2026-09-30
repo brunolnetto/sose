@@ -16,6 +16,12 @@ from sose.jobs.config_edit import (
 from sose.jobs.doctor import inspect_job_file_health
 from sose.jobs.factory import build_job_from_file
 from sose.jobs.storage import build_storage_plan
+from sose.jobs.storage_edit import (
+    add_analytical_sink,
+    parse_key_value_options,
+    remove_analytical_sink,
+    set_authoritative_storage,
+)
 from sose.persistence.registry import builtin_persistence_registry
 from sose.sinks.registry import builtin_sink_registry
 
@@ -236,6 +242,38 @@ def _cmd_storage(args: argparse.Namespace) -> int:
     return 0 if plan.healthy else 1
 
 
+
+def _cmd_storage_set_authoritative(args: argparse.Namespace) -> int:
+    result = set_authoritative_storage(
+        args.config,
+        adapter=args.adapter,
+        options=parse_key_value_options(args.option),
+        require=tuple(args.require),
+    )
+    print(_json(result))
+    return 0
+
+
+def _cmd_storage_add_sink(args: argparse.Namespace) -> int:
+    result = add_analytical_sink(
+        args.config,
+        name=args.name,
+        adapter=args.adapter,
+        options=parse_key_value_options(args.option),
+    )
+    print(_json(result))
+    return 0
+
+
+def _cmd_storage_remove_sink(args: argparse.Namespace) -> int:
+    result = remove_analytical_sink(
+        args.config,
+        name=args.name,
+    )
+    print(_json(result))
+    return 0
+
+
 def _cmd_persistence(args: argparse.Namespace) -> int:
     registry = builtin_persistence_registry()
     print(
@@ -410,10 +448,60 @@ def build_parser() -> argparse.ArgumentParser:
 
     storage = subparsers.add_parser(
         "storage",
-        help="Show authoritative persistence and analytical sink roles for a job.",
+        help="Inspect or edit authoritative persistence and analytical sinks.",
     )
     storage.add_argument("--config", default="sose.toml")
     storage.set_defaults(handler=_cmd_storage)
+    storage_subparsers = storage.add_subparsers(
+        dest="storage_command",
+        required=False,
+    )
+
+    storage_authoritative = storage_subparsers.add_parser(
+        "set-authoritative",
+        help="Set the authoritative persistence adapter in sose.toml.",
+    )
+    storage_authoritative.add_argument("adapter")
+    storage_authoritative.add_argument(
+        "--option",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Adapter option. Repeat for multiple values.",
+    )
+    storage_authoritative.add_argument(
+        "--require",
+        action="append",
+        default=[],
+        metavar="CAPABILITY",
+        help="Required persistence capability. Repeat as needed.",
+    )
+    storage_authoritative.add_argument("--config", default="sose.toml")
+    storage_authoritative.set_defaults(handler=_cmd_storage_set_authoritative)
+
+    storage_add_sink = storage_subparsers.add_parser(
+        "add-sink",
+        help="Add one analytical sink to sose.toml.",
+    )
+    storage_add_sink.add_argument("name")
+    storage_add_sink.add_argument("adapter")
+    storage_add_sink.add_argument(
+        "--option",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Sink option. Repeat for multiple values.",
+    )
+    storage_add_sink.add_argument("--config", default="sose.toml")
+    storage_add_sink.set_defaults(handler=_cmd_storage_add_sink)
+
+    storage_remove_sink = storage_subparsers.add_parser(
+        "remove-sink",
+        help="Remove one analytical sink from sose.toml.",
+    )
+    storage_remove_sink.add_argument("name")
+    storage_remove_sink.add_argument("--config", default="sose.toml")
+    storage_remove_sink.set_defaults(handler=_cmd_storage_remove_sink)
 
     persistence = subparsers.add_parser(
         "persistence",
