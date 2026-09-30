@@ -38,6 +38,8 @@ class ConformanceResult:
     passed: frozenset[str]
     failed: tuple[tuple[str, str], ...]
     unsupported: frozenset[str]
+    producer_id: int
+    concurrency: ConcurrencyEnvelope
 
     @property
     def authoritative(self) -> bool:
@@ -74,9 +76,18 @@ class AuthoritativePersistenceConformanceSuite:
             passed=frozenset(passed),
             failed=tuple(failed),
             unsupported=frozenset(unsupported),
+            producer_id=id(self.harness),
+            concurrency=self.harness.concurrency,
         )
 
     def qualify(self, result: ConformanceResult) -> PersistenceQualification:
+        if (
+            result.producer_id != id(self.harness)
+            or result.concurrency != self.harness.concurrency
+        ):
+            raise RuntimeError(
+                "conformance evidence was produced by a different harness or envelope"
+            )
         if not result.authoritative:
             details = []
             if result.failed:
