@@ -3,7 +3,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from sose.jobs.config import SOSEConfig, load_sose_config
-from sose.jobs.job_edit import describe_job_policy
 from sose.jobs.storage import build_storage_plan
 
 
