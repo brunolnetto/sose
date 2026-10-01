@@ -52,7 +52,8 @@ def test_every_builtin_domain_continues_after_dual_store_restart(tmp_path, domai
         backend_factory=backend,
         domain_warehouse=warehouse,
     )
-    restarted.run_tick(trigger_id=f"{domain_name}:2")
+    resumed = restarted.run_tick(trigger_id=f"{domain_name}:2")
+    assert resumed.logical_tick == 2
     assert engine.entities() == ()
     assert engine.domain_deliveries() == ()
     assert warehouse.entities()
