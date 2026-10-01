@@ -24,4 +24,4 @@ Contended fork reservations are progressively released until all demand drains.
 This example demonstrates prevention by ordered acquisition; it does not intentionally enter and diagnose a deadlocked state.
 
 ## Evidence
-Protocol structure is asserted in `tests/test_canonical_examples.py`; restart equivalence is asserted in `tests/test_canonical_conformance.py`.
+Fork cardinality and capacity are asserted in `tests/test_canonical_examples.py`; restart equivalence is asserted in `tests/test_canonical_conformance.py`. Ordered-acquisition protocol coverage remains an explicit gap.
