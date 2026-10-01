@@ -287,6 +287,110 @@ def test_ensure_selection_rejects_mismatched_pending_request():
         )
 
 
+
+def test_ensure_put_returns_matching_consumed_item():
+    persistence = MemoryPersistence()
+    persistence._state.store_definitions["inbox"] = StoreDefinition("inbox")
+    consumed = _item("same", value="stable")
+    persistence._state.store_get_results["done"] = _get_result(
+        "done", item=consumed
+    )
+
+    result = DurableStoreManager(persistence).ensure_put(
+        object(),
+        store_name="inbox",
+        item_id="same",
+        value="stable",
+        requested_at=NOW,
+    )
+
+    assert result == consumed
+
+
+def test_commit_get_returns_concurrent_terminal_result(monkeypatch):
+    persistence = MemoryPersistence()
+    persistence._state.store_definitions["inbox"] = StoreDefinition("inbox")
+    request = _get("race")
+    item = _item("item")
+    terminal = _get_result("race", item=item)
+    persistence._state.store_get_requests["race"] = request
+    persistence._state.store_items["item"] = item
+    manager = DurableStoreManager(persistence)
+
+    class ConcurrentWinnerUow:
+        def get_store_get_request(self, request_id):
+            return None
+
+        def get_store_get_result(self, request_id):
+            return terminal
+
+    @contextmanager
+    def transaction():
+        yield ConcurrentWinnerUow()
+
+    monkeypatch.setattr(persistence, "transaction", transaction)
+
+    assert manager.commit_get(
+        "race",
+        StoreItem("item", "inbox", 1),
+        completed_at=NOW,
+    ) == terminal
+
+
+def test_commit_get_consumes_item_still_owned_by_pending_put_intent():
+    persistence = MemoryPersistence()
+    persistence._state.store_definitions["inbox"] = StoreDefinition("inbox")
+    persistence._state.store_get_requests["get"] = _get("get", sequence=2)
+    persistence._state.store_put_intents["item"] = _put(
+        "item", value="payload", sequence=1
+    )
+
+    result = DurableStoreManager(persistence).commit_get(
+        "get",
+        StoreItem("item", "inbox", "payload"),
+        completed_at=NOW,
+    )
+
+    assert result.item.item_id == "item"
+    assert persistence.store_put_intents() == ()
+    assert persistence.store_get_requests() == ()
+    assert persistence.store_get_results() == (result,)
+
+
+def test_store_put_invokes_durable_completion_callback():
+    persistence = MemoryPersistence()
+    manager = DurableStoreManager(persistence)
+    manager.define(StoreDefinition("inbox"))
+    observed = []
+
+    class ImmediateStoreBackend:
+        def put_store(
+            self,
+            name,
+            *,
+            item_id,
+            value,
+            priority=100,
+            on_stored=None,
+        ):
+            item = StoreItem(item_id, name, value, priority)
+            if on_stored is not None:
+                on_stored(item)
+            return item
+
+    manager.put(
+        ImmediateStoreBackend(),
+        store_name="inbox",
+        item_id="item",
+        value=1,
+        requested_at=NOW,
+        on_stored=observed.append,
+    )
+
+    assert [item.item_id for item in observed] == ["item"]
+    assert [item.item_id for item in persistence.store_items()] == ["item"]
+
+
 def _container_intent(
     request_id="op",
     container_name="fuel",
@@ -433,6 +537,64 @@ def test_container_commit_handles_terminal_missing_state_infeasible_and_unknown_
 
     with pytest.raises(KeyError, match="unknown container definition"):
         manager._definition("missing")
+
+
+
+def test_container_commit_handles_concurrent_winner_and_transaction_races(monkeypatch):
+    persistence = MemoryPersistence()
+    persistence._state.container_definitions["fuel"] = ContainerDefinition(
+        "fuel", 10.0, 1.0
+    )
+    state = ContainerState("fuel", 1.0)
+    intent = _container_intent("race")
+    persistence._state.container_states["fuel"] = state
+    persistence._state.container_operation_intents["race"] = intent
+    manager = DurableContainerManager(persistence)
+    terminal = _container_result("race")
+
+    class ConcurrentWinnerUow:
+        def get_container_operation_intent(self, request_id):
+            return None
+
+        def get_container_operation_result(self, request_id):
+            return terminal
+
+    @contextmanager
+    def concurrent_winner_transaction():
+        yield ConcurrentWinnerUow()
+
+    monkeypatch.setattr(persistence, "transaction", concurrent_winner_transaction)
+    assert manager.commit("race", completed_at=NOW) == terminal
+
+    class ChangedIntentUow:
+        def get_container_operation_intent(self, request_id):
+            return None
+
+        def get_container_operation_result(self, request_id):
+            return None
+
+    @contextmanager
+    def changed_intent_transaction():
+        yield ChangedIntentUow()
+
+    monkeypatch.setattr(persistence, "transaction", changed_intent_transaction)
+    with pytest.raises(RuntimeError, match="operation intent changed"):
+        manager.commit("race", completed_at=NOW)
+
+    class ChangedStateUow:
+        def get_container_operation_intent(self, request_id):
+            return intent
+
+        def get_container_state(self, name):
+            return ContainerState(name, 2.0)
+
+    @contextmanager
+    def changed_state_transaction():
+        yield ChangedStateUow()
+
+    monkeypatch.setattr(persistence, "transaction", changed_state_transaction)
+    with pytest.raises(RuntimeError, match="state changed before operation commit"):
+        manager.commit("race", completed_at=NOW)
 
 
 def _definition(name="crew", capacity=1):
