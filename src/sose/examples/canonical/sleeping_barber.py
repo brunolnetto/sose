@@ -29,9 +29,6 @@ def reconcile(persistence, engine, backend, config, case):
         for index in range(accepted):
             resources.ensure_requested(backend, resource_name="barber",
                 request_id=f"customer-{index}", requested_at=engine.context.clock.now)
-        current.attributes["accepted"] = accepted
-        current.attributes["abandoned"] = config.participants - accepted
-        engine._save_entity_direct(current)
         transition(engine, current, "advance")
     elif current.state == "active":
         reservations = list(persistence.resource_reservations())
