@@ -4,7 +4,7 @@ from sose.core.resources import DurableResourceManager
 from sose.core.runtime import ResourceDefinition
 from sose.domain.config import DomainDefinition
 
-from .common import CanonicalConfig, build_runtime, seed_case, transition
+from .common import CanonicalConfig, build_runtime, resolve_tick_action, seed_case, transition
 
 
 class DiningPhilosophersConfig(CanonicalConfig):
@@ -25,42 +25,79 @@ def reconcile(persistence, engine, backend, config, case):
         return
     current = persistence.entity("canonical_case", case.id)
     resources = engine.resources
+
     if current.state == "ready":
-        # Request only the lower-ranked fork first. The second request is
-        # admitted only after durable ownership of the first, implementing a
-        # real resource hierarchy rather than merely sorting simultaneous asks.
+        candidate = "ready"
+    elif current.state == "active":
+        target = "noop"
+        for philosopher in range(config.participants):
+            first, second = sorted((philosopher, (philosopher + 1) % config.participants))
+            first_id = f"p{philosopher}-fork-{first}"
+            second_id = f"p{philosopher}-fork-{second}"
+            if (
+                resources.reservation_for(first_id) is not None
+                or resources.reservation_for(second_id) is not None
+            ):
+                target = f"p{philosopher}"
+                break
+        candidate = f"active:{target}"
+    else:
+        candidate = "noop"
+
+    action = resolve_tick_action(
+        persistence,
+        backend,
+        canonical="dining_philosophers",
+        logical_tick=engine.context.clock.tick,
+        candidate=candidate,
+        requested_at=engine.context.clock.now,
+    )
+
+    if action == "ready":
+        if current.state != "ready":
+            return
         for philosopher in range(config.participants):
             first, _ = sorted((philosopher, (philosopher + 1) % config.participants))
-            resources.ensure_requested(backend, resource_name=f"fork-{first}",
-                request_id=f"p{philosopher}-fork-{first}", requested_at=engine.context.clock.now)
+            resources.ensure_requested(
+                backend,
+                resource_name=f"fork-{first}",
+                request_id=f"p{philosopher}-fork-{first}",
+                requested_at=engine.context.clock.now,
+            )
         transition(engine, current, "advance")
-    elif current.state == "active":
-        reservations = list(persistence.resource_reservations())
-        by_request = {reservation.request_id: reservation for reservation in reservations}
-        for philosopher in range(config.participants):
-            first, second = sorted((philosopher, (philosopher + 1) % config.participants))
-            first_id = f"p{philosopher}-fork-{first}"
-            second_id = f"p{philosopher}-fork-{second}"
-            if first_id in by_request and second_id not in by_request:
-                resources.ensure_requested(backend, resource_name=f"fork-{second}",
-                    request_id=second_id, requested_at=engine.context.clock.now)
+        return
 
-        reservations = list(persistence.resource_reservations())
-        by_request = {reservation.request_id: reservation for reservation in reservations}
-        for philosopher in range(config.participants):
+    if action.startswith("active:"):
+        if current.state != "active":
+            return
+        target = action.removeprefix("active:")
+        if target != "noop":
+            philosopher = int(target[1:])
             first, second = sorted((philosopher, (philosopher + 1) % config.participants))
             first_id = f"p{philosopher}-fork-{first}"
             second_id = f"p{philosopher}-fork-{second}"
-            if first_id in by_request and second_id in by_request:
-                resources.release(backend, by_request[first_id].reservation_id)
-                resources.release(backend, by_request[second_id].reservation_id)
-                break
-            if first_id not in by_request and second_id in by_request:
-                # Recovery after a crash between the two durable releases.
-                resources.release(backend, by_request[second_id].reservation_id)
-                break
+
+            first_reservation = resources.reservation_for(first_id)
+            second_reservation = resources.reservation_for(second_id)
+            if first_reservation is not None and not resources.has_request(second_id):
+                resources.ensure_requested(
+                    backend,
+                    resource_name=f"fork-{second}",
+                    request_id=second_id,
+                    requested_at=engine.context.clock.now,
+                )
+                second_reservation = resources.reservation_for(second_id)
+
+            if first_reservation is not None and second_reservation is not None:
+                resources.release(backend, first_reservation.reservation_id)
+                remaining_second = resources.reservation_for(second_id)
+                if remaining_second is not None:
+                    resources.release(backend, remaining_second.reservation_id)
+            elif first_reservation is None and second_reservation is not None:
+                resources.release(backend, second_reservation.reservation_id)
+
         if not persistence.resource_demands() and not persistence.resource_reservations():
-            transition(engine, persistence.entity("canonical_case", case.id), "finish")
+            transition(engine, current, "finish")
 
 
 definition = DomainDefinition(

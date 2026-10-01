@@ -140,6 +140,71 @@ class DurableStoreManager:
         self._submit_put_intent(backend, intent, on_stored=on_stored)
         return intent
 
+    def ensure_put(
+        self,
+        backend,
+        *,
+        store_name: str,
+        item_id: str,
+        value: object,
+        requested_at: datetime,
+        priority: int = 100,
+    ) -> DurableStoreItem | None:
+        """Ensure one logical Store item exists without duplicating retries."""
+        existing = next(
+            (item for item in self._persistence.store_items() if item.item_id == item_id),
+            None,
+        )
+        if existing is not None:
+            if existing.store_name != store_name or existing.value != value:
+                raise ValueError(f"store item identity conflict: {item_id}")
+            return existing
+
+        consumed = next(
+            (
+                result.item
+                for result in self._persistence.store_get_results()
+                if result.item.item_id == item_id
+            ),
+            None,
+        )
+        if consumed is not None:
+            if consumed.store_name != store_name or consumed.value != value:
+                raise ValueError(f"store item identity conflict: {item_id}")
+            return consumed
+
+        pending = next(
+            (
+                intent
+                for intent in self._persistence.store_put_intents()
+                if intent.item_id == item_id
+            ),
+            None,
+        )
+        if pending is None:
+            self.put(
+                backend,
+                store_name=store_name,
+                item_id=item_id,
+                value=value,
+                priority=priority,
+                requested_at=requested_at,
+            )
+        elif (
+            pending.store_name != store_name
+            or pending.value != value
+            or pending.priority != priority
+        ):
+            raise ValueError(f"store item identity conflict: {item_id}")
+
+        run_until = getattr(backend, "run_until", None)
+        if callable(run_until):
+            run_until(getattr(backend, "now", requested_at))
+        return next(
+            (item for item in self._persistence.store_items() if item.item_id == item_id),
+            None,
+        )
+
     def get(
         self,
         backend,

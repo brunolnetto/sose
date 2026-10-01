@@ -11,8 +11,11 @@ from sose.api import (
     RandomSource, Scheduler, SimulationClock, SimulationContext,
     probabilistic_transitions,
 )
+from sose.core.runtime import StoreDefinition
+from sose.core.stores import DurableStoreManager
 
 ORIGIN = datetime(2027, 1, 1, 9, tzinfo=timezone.utc)
+ACTION_STORE = "__canonical_actions__"
 
 
 @dataclass(slots=True)
@@ -50,6 +53,9 @@ def build_runtime(persistence, config: CanonicalConfig, now: datetime, tick: int
 
 
 def seed_case(persistence, *, name: str, attributes: dict[str, object]):
+    stores = DurableStoreManager(persistence)
+    if not any(definition.name == ACTION_STORE for definition in persistence.store_definitions()):
+        stores.define(StoreDefinition(ACTION_STORE))
     context, _ = build_runtime(persistence, CanonicalConfig(), ORIGIN, 0)
     case = context.entities.create(
         CanonicalCase,
@@ -61,6 +67,51 @@ def seed_case(persistence, *, name: str, attributes: dict[str, object]):
         uow.save_entity(case)
     return case
 
+
+
+def resolve_tick_action(
+    persistence,
+    backend,
+    *,
+    canonical: str,
+    logical_tick: int,
+    candidate: str,
+    requested_at: datetime,
+) -> str:
+    """Durably bind one semantic action to a logical tick before side effects."""
+    item_id = f"{canonical}:tick:{logical_tick}"
+    existing = next(
+        (
+            item
+            for item in persistence.store_items()
+            if item.store_name == ACTION_STORE and item.item_id == item_id
+        ),
+        None,
+    )
+    if existing is not None:
+        return str(existing.value["action"])
+
+    pending = next(
+        (
+            intent
+            for intent in persistence.store_put_intents()
+            if intent.store_name == ACTION_STORE and intent.item_id == item_id
+        ),
+        None,
+    )
+    if pending is not None:
+        return str(pending.value["action"])
+
+    value = {"action": candidate}
+    stores = DurableStoreManager(persistence)
+    stores.ensure_put(
+        backend,
+        store_name=ACTION_STORE,
+        item_id=item_id,
+        value=value,
+        requested_at=requested_at,
+    )
+    return candidate
 
 def transition(engine: Engine, case: CanonicalCase, event: str) -> None:
     command = engine.context.commands.create(

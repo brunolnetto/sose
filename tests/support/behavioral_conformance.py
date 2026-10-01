@@ -10,11 +10,24 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
 def operational_snapshot(persistence) -> dict[str, object]:
-    """Complete durable continuation truth used by restart-equivalence gates."""
+    """Complete durable continuation truth used by recovery and chaos gates."""
+    scheduled_work = persistence.scheduled_work()
+    entities = getattr(persistence, "entities", lambda: ())()
     return {
         "job": persistence.job_states(),
+        "committed_tick": persistence.committed_tick(),
         "position": persistence.simulation_position(),
-        "scheduled_work": persistence.scheduled_work(),
+        "events": persistence.events(),
+        "entities": entities,
+        "domain_deliveries": persistence.domain_deliveries(),
+        "sink_deliveries": persistence.sink_deliveries(),
+        "sink_checkpoints": persistence.sink_checkpoints(),
+        "scenario_state": persistence.scenario_state(),
+        "scheduled_work": scheduled_work,
+        "scheduled_commands": tuple(
+            (work.command_id, persistence.command(work.command_id))
+            for work in scheduled_work
+        ),
         "resource_definitions": persistence.resource_definitions(),
         "resource_demands": persistence.resource_demands(),
         "resource_reservations": persistence.resource_reservations(),

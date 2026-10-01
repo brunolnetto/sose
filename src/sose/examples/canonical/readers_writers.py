@@ -5,7 +5,7 @@ from sose.core.runtime import ResourceDefinition
 from sose.domain.config import DomainDefinition
 from pydantic import Field, model_validator
 
-from .common import CanonicalConfig, build_runtime, seed_case, transition
+from .common import CanonicalConfig, build_runtime, resolve_tick_action, seed_case, transition
 
 
 class ReadersWritersConfig(CanonicalConfig):
@@ -33,45 +33,92 @@ def reconcile(persistence, engine, backend, config, case):
         return
     current = persistence.entity("canonical_case", case.id)
     resources = engine.resources
+
     if current.state == "ready":
-        # Readers may coexist. The writer gate is requested first by every
-        # reader cohort and writer, making writer ownership exclusive while
-        # reader_slots exposes concurrent read capacity.
-        resources.ensure_requested(backend, resource_name="writer_gate",
-            request_id="reader-cohort-gate", requested_at=engine.context.clock.now, priority=10)
-        for index in range(config.readers):
-            resources.ensure_requested(backend, resource_name="reader_slots",
-                request_id=f"reader-{index}", requested_at=engine.context.clock.now, priority=10)
-        for index in range(config.participants - config.readers):
-            resources.ensure_requested(backend, resource_name="writer_gate",
-                request_id=f"writer-{index}", requested_at=engine.context.clock.now, priority=20)
-        transition(engine, current, "advance")
+        candidate = "ready"
     elif current.state == "active":
         reservations = list(persistence.resource_reservations())
-        reader_reservations = [
-            reservation for reservation in reservations
-            if reservation.resource_name == "reader_slots"
-        ]
+        reader_reservations = sorted(
+            (
+                reservation for reservation in reservations
+                if reservation.resource_name == "reader_slots"
+            ),
+            key=lambda reservation: (reservation.sequence, reservation.request_id),
+        )
         cohort_gate = next(
-            (reservation for reservation in reservations
-             if reservation.request_id == "reader-cohort-gate"),
+            (
+                reservation for reservation in reservations
+                if reservation.request_id == "reader-cohort-gate"
+            ),
             None,
         )
-        writer_reservations = [
-            reservation for reservation in reservations
-            if reservation.request_id.startswith("writer-")
-        ]
-        # Readers finish as a cohort before their gate is released. Writers
-        # therefore cannot overlap any active reader and are serialized by the
-        # same capacity-one gate.
+        writer_reservations = sorted(
+            (
+                reservation for reservation in reservations
+                if reservation.request_id.startswith("writer-")
+            ),
+            key=lambda reservation: (reservation.sequence, reservation.request_id),
+        )
         if reader_reservations:
-            resources.release(backend, reader_reservations[0].reservation_id)
+            target = reader_reservations[0].request_id
         elif cohort_gate is not None:
-            resources.release(backend, cohort_gate.reservation_id)
+            target = cohort_gate.request_id
         elif writer_reservations:
-            resources.release(backend, writer_reservations[0].reservation_id)
+            target = writer_reservations[0].request_id
+        else:
+            target = "noop"
+        candidate = f"active:{target}"
+    else:
+        candidate = "noop"
+
+    action = resolve_tick_action(
+        persistence,
+        backend,
+        canonical="readers_writers",
+        logical_tick=engine.context.clock.tick,
+        candidate=candidate,
+        requested_at=engine.context.clock.now,
+    )
+
+    if action == "ready":
+        if current.state != "ready":
+            return
+        resources.ensure_requested(
+            backend,
+            resource_name="writer_gate",
+            request_id="reader-cohort-gate",
+            requested_at=engine.context.clock.now,
+            priority=10,
+        )
+        for index in range(config.readers):
+            resources.ensure_requested(
+                backend,
+                resource_name="reader_slots",
+                request_id=f"reader-{index}",
+                requested_at=engine.context.clock.now,
+                priority=10,
+            )
+        for index in range(config.participants - config.readers):
+            resources.ensure_requested(
+                backend,
+                resource_name="writer_gate",
+                request_id=f"writer-{index}",
+                requested_at=engine.context.clock.now,
+                priority=20,
+            )
+        transition(engine, current, "advance")
+        return
+
+    if action.startswith("active:"):
+        if current.state != "active":
+            return
+        target = action.removeprefix("active:")
+        if target != "noop":
+            reservation = resources.reservation_for(target)
+            if reservation is not None:
+                resources.release(backend, reservation.reservation_id)
         if not persistence.resource_demands() and not persistence.resource_reservations():
-            transition(engine, persistence.entity("canonical_case", case.id), "finish")
+            transition(engine, current, "finish")
 
 
 definition = DomainDefinition(
