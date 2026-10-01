@@ -290,7 +290,8 @@ class SimPyBackend:
             raise ValueError("request_id cannot be empty")
         if request_id in self._store_request_ids:
             raise ValueError(f"store request already exists: {request_id}")
-        self._store_request_ids.add(request_id)
+        if filter is not None and state.kind != "filter":
+            raise ValueError("filters are supported only by filter stores")
 
         public_request = StoreRequest(
             request_id=request_id,
@@ -299,13 +300,12 @@ class SimPyBackend:
         )
 
         if filter is not None:
-            if state.kind != "filter":
-                raise ValueError("filters are supported only by filter stores")
             event = state.store.get(filter=lambda native: filter(
                 native.item if isinstance(native, _PriorityEnvelope) else native
             ))
         else:
             event = state.store.get()
+        self._store_request_ids.add(request_id)
 
         def received(completed: Event) -> None:
             native_item = completed.value
@@ -469,7 +469,7 @@ class SimPyBackend:
             raise ValueError("resource name cannot be empty")
         if capacity < 1:
             raise ValueError("resource capacity must be >= 1")
-        if name in self._resources:
+        if name in self._resources or name in self._preemptive_resources:
             raise ValueError(f"resource already exists: {name}")
         self._resources[name] = _ResourceState(
             resource=PriorityResource(self._env, capacity=capacity),
@@ -489,7 +489,12 @@ class SimPyBackend:
             raise ValueError("request_id cannot be empty")
         if (
             any(request_id in resource_state.requests for resource_state in self._resources.values())
+            or any(
+                request_id in resource_state.requests
+                for resource_state in self._preemptive_resources.values()
+            )
             or request_id in self._request_to_lease
+            or request_id in self._scheduled_preemptive_requests
         ):
             raise ValueError(f"resource request already exists: {request_id}")
 
