@@ -253,7 +253,7 @@ def validate_reference_contract(
     ):
         try:
             module = import_module(module_name)
-        except Exception as exc:  # pragma: no cover - detail returned to caller
+        except Exception as exc:
             issues.append(
                 ReferenceConformanceIssue(
                     contract.domain,
@@ -276,7 +276,7 @@ def validate_reference_contract(
     if ReferenceCapability.SCENARIOS in contract.capabilities:
         try:
             import_module(f"{contract.package}.scenarios")
-        except Exception as exc:  # pragma: no cover - detail returned to caller
+        except Exception as exc:
             issues.append(
                 ReferenceConformanceIssue(
                     contract.domain,
