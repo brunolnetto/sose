@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 from sose.core.resources import DurableResourceManager
-from sose.core.runtime import ResourceDefinition
+from sose.core.runtime import ResourceDefinition, StoreDefinition
 from sose.domain.config import DomainDefinition
+from sose.core.stores import DurableStoreManager
 from pydantic import Field
 
 from .common import CanonicalConfig, build_runtime, seed_case, transition
@@ -18,6 +19,9 @@ def seed(persistence, config):
     if not persistence.resource_definitions():
         with persistence.transaction() as uow:
             uow.save_resource_definition(ResourceDefinition("barber", config.capacity))
+    stores = DurableStoreManager(persistence)
+    if not any(d.name == "abandoned" for d in persistence.store_definitions()):
+        stores.define(StoreDefinition("abandoned"))
     return seed_case(persistence, name="sleeping_barber",
                      attributes={"customers": config.participants, "waiting_chairs": config.waiting_chairs})
 
@@ -29,6 +33,11 @@ def reconcile(persistence, engine, backend, config, case):
     resources = engine.resources
     if current.state == "ready":
         accepted = min(config.participants, config.waiting_chairs + config.capacity)
+        stores = DurableStoreManager(persistence)
+        for index in range(accepted, config.participants):
+            if not any(i.item_id == f"customer-{index}" for i in persistence.store_items()):
+                stores.put(backend, store_name="abandoned", item_id=f"customer-{index}",
+                           value={"customer": index}, requested_at=engine.context.clock.now)
         for index in range(accepted):
             resources.ensure_requested(backend, resource_name="barber",
                 request_id=f"customer-{index}", requested_at=engine.context.clock.now)

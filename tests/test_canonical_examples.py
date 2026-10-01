@@ -8,6 +8,7 @@ from sose.jobs.runner import SimulationJob
 from sose.backends.simpy import SimPyBackend
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 from sose.persistence.memory import MemoryPersistence
+from tests.support.behavioral_conformance import assert_conservation, assert_store_capacity, assert_unique_consumption
 
 
 CANONICALS = (
@@ -85,3 +86,37 @@ def test_dining_philosophers_has_one_exclusive_fork_per_participant():
     resources = persistence.resource_definitions()
     assert len(resources) == config.participants
     assert all(resource.capacity == 1 for resource in resources)
+
+def test_producer_consumer_preserves_capacity_and_unique_consumption(tmp_path):
+    definition = builtin_catalog().get("producer_consumer")
+    config = definition.default_config()
+    persistence = SQLiteIncrementalPersistence(tmp_path / "producer.sqlite3")
+    job = SimulationJob(job_id="producer-invariants", definition=definition,
+        persistence=persistence, backend_factory=lambda origin: SimPyBackend(origin=origin))
+    job.initialize()
+    for tick in range(1, 5):
+        job.run_tick(trigger_id=f"pc:{tick}")
+        assert_store_capacity(persistence, "buffer", config.capacity)
+        assert_unique_consumption(persistence, "buffer")
+    consumed = len(persistence.store_get_results())
+    buffered = len(persistence.store_items())
+    pending = len(persistence.store_put_intents())
+    assert_conservation(total=config.participants,
+        buckets={"consumed": consumed, "buffered": buffered, "pending": pending})
+    persistence.close()
+
+
+def test_sleeping_barber_records_abandonment_durably(tmp_path):
+    definition = builtin_catalog().get("sleeping_barber")
+    config = definition.default_config()
+    persistence = SQLiteIncrementalPersistence(tmp_path / "barber.sqlite3")
+    job = SimulationJob(job_id="barber-invariants", definition=definition,
+        persistence=persistence, backend_factory=lambda origin: SimPyBackend(origin=origin))
+    job.initialize()
+    job.run_tick(trigger_id="barber:1")
+    persistence.close()
+    persistence = SQLiteIncrementalPersistence(tmp_path / "barber.sqlite3")
+    abandoned = [i for i in persistence.store_items() if i.store_name == "abandoned"]
+    expected = max(0, config.participants - config.waiting_chairs - config.capacity)
+    assert len(abandoned) == expected
+    persistence.close()
