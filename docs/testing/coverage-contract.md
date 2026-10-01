@@ -63,5 +63,8 @@ each remaining miss:
 2. document why the path has no meaningful runtime execution and make the
    exclusion as narrow as possible.
 
-Once the measured reachable set reaches 100%, CI's `fail_under` is raised to
-100 and any future uncovered branch becomes a merge blocker.
+Coverage thresholds are ratcheted upward as evidence is added; they never move
+backward to make a change pass. The first authoritative combined baseline is
+88.36%, so CI now requires at least 88%. Once the measured reachable set reaches
+100%, `fail_under` is raised to 100 and any future uncovered branch becomes a
+merge blocker.
