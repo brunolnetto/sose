@@ -1,6 +1,11 @@
 from __future__ import annotations
 
 from sose.domain.config import DomainCatalog
+from sose.examples.canonical.producer_consumer import definition as producer_consumer
+from sose.examples.canonical.sleeping_barber import definition as sleeping_barber
+from sose.examples.canonical.dining_philosophers import definition as dining_philosophers
+from sose.examples.canonical.readers_writers import definition as readers_writers
+from sose.examples.canonical.job_shop import definition as job_shop
 from sose.examples.subscription_saas.definition import definition as subscription_saas
 from sose.examples.telecom.definition import definition as telecom
 from sose.examples.transit.definition import definition as transit
@@ -27,6 +32,11 @@ from sose.examples.tutorial_job.definition import definition as tutorial_job
 
 def builtin_catalog() -> DomainCatalog:
     catalog = DomainCatalog()
+    catalog.register(producer_consumer)
+    catalog.register(sleeping_barber)
+    catalog.register(dining_philosophers)
+    catalog.register(readers_writers)
+    catalog.register(job_shop)
     catalog.register(tutorial_job)
     catalog.register(subscription_saas)
     catalog.register(telecom)
