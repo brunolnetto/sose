@@ -203,3 +203,30 @@ def test_documentation_status_rejects_candidate_wording(tmp_path):
     assert not any(
         issue.code == "documentation-status-drift" for issue in issues
     )
+
+
+def test_scenario_module_import_failure_is_reported(tmp_path):
+    capabilities = frozenset({
+        *BASELINE_REFERENCE_CAPABILITIES,
+        ReferenceCapability.SCENARIOS,
+    })
+    contract = ReferenceContract(
+        domain="Broken scenarios",
+        package="missing.scenario_package",
+        docs_dir="docs/missing",
+        capabilities=capabilities,
+        evidence={
+            capability: ("tests/test_missing.py",)
+            for capability in capabilities
+        },
+    )
+
+    issues = validate_reference_contract(contract, repo_root=tmp_path)
+
+    scenario_issue = next(
+        issue
+        for issue in issues
+        if issue.code == "scenario-module-import-failed"
+    )
+    assert scenario_issue.domain == "Broken scenarios"
+    assert "missing.scenario_package.scenarios" in scenario_issue.message
