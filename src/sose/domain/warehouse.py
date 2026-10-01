@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass
+from enum import Enum
 from typing import Protocol
 
 from sose.domain.entity import Entity
@@ -27,13 +28,19 @@ class DomainMutation:
             raise ValueError("mutation_id cannot be empty")
 
 
+class DomainApplyResult(str, Enum):
+    APPLIED = "applied"
+    REPLAYED = "replayed"
+    SUPERSEDED = "superseded"
+
+
 class DomainWarehouse(Protocol):
     """Durable current-state boundary for domain entities."""
 
     def entity(self, entity_type: str, entity_id: str) -> Entity | None: ...
     def entities(self, entity_type: str | None = None) -> tuple[Entity, ...]: ...
-    def apply(self, mutation: DomainMutation) -> bool:
-        """Apply once; return False for an identical replay."""
+    def apply(self, mutation: DomainMutation) -> DomainApplyResult:
+        """Apply monotonically by entity version."""
 
 
 class MemoryDomainWarehouse:
@@ -58,18 +65,34 @@ class MemoryDomainWarehouse:
             for value in sorted(values, key=lambda item: (item.entity_type, item.id))
         )
 
-    def apply(self, mutation: DomainMutation) -> bool:
+    def apply(self, mutation: DomainMutation) -> DomainApplyResult:
         existing = self._mutations.get(mutation.mutation_id)
         if existing is not None:
             if existing != mutation:
                 raise ValueError(
                     f"domain mutation identity conflict: {mutation.mutation_id}"
                 )
-            return False
+            return DomainApplyResult.REPLAYED
+
         key = (mutation.entity.entity_type, mutation.entity.id)
+        current = self._entities.get(key)
+        if current is not None:
+            if mutation.entity.version < current.version:
+                self._mutations[mutation.mutation_id] = deepcopy(mutation)
+                return DomainApplyResult.SUPERSEDED
+            if mutation.entity.version == current.version:
+                if mutation.entity != current:
+                    raise ValueError(
+                        "conflicting domain entity version: "
+                        f"{mutation.entity.entity_type}/{mutation.entity.id} "
+                        f"v{mutation.entity.version}"
+                    )
+                self._mutations[mutation.mutation_id] = deepcopy(mutation)
+                return DomainApplyResult.REPLAYED
+
         self._entities[key] = deepcopy(mutation.entity)
         self._mutations[mutation.mutation_id] = deepcopy(mutation)
-        return True
+        return DomainApplyResult.APPLIED
 
     def mutation(self, mutation_id: str) -> DomainMutation | None:
         value = self._mutations.get(mutation_id)

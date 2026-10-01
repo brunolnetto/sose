@@ -1,7 +1,7 @@
 from sose.domain.delivery import DomainDelivery
 from sose.domain.entity import Entity
 from sose.domain.outbox import DomainMutationOutbox
-from sose.domain.warehouse import DomainMutation, MemoryDomainWarehouse
+from sose.domain.warehouse import DomainApplyResult, DomainMutation, MemoryDomainWarehouse
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
@@ -49,12 +49,12 @@ def test_crash_after_warehouse_apply_before_ack_is_safe():
     delivery = outbox.prepare(mutation())
 
     # Simulate process death after the external commit but before Engine OLTP ACK.
-    assert warehouse.apply(delivery.mutation) is True
+    assert warehouse.apply(delivery.mutation) is DomainApplyResult.APPLIED
     assert engine.domain_delivery(delivery.mutation_id) is not None
 
     # A fresh outbox replays the same immutable mutation and only then ACKs it.
     restarted = DomainMutationOutbox(engine, warehouse)
-    assert restarted.deliver(delivery) is False
+    assert restarted.deliver(delivery) is DomainApplyResult.REPLAYED
     assert engine.domain_delivery(delivery.mutation_id) is None
     assert warehouse.entity("work_order", "wo-1").state == "released"
 
