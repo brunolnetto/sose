@@ -5,7 +5,7 @@ from sose.core.runtime import ResourceDefinition
 from sose.domain.config import DomainDefinition
 from pydantic import Field, model_validator
 
-from .common import CanonicalConfig, build_runtime, seed_case, transition
+from .common import CanonicalConfig, build_runtime, resolve_tick_action, seed_case, transition
 
 
 class ReadersWritersConfig(CanonicalConfig):
@@ -48,28 +48,47 @@ def reconcile(persistence, engine, backend, config, case):
         transition(engine, current, "advance")
     elif current.state == "active":
         reservations = list(persistence.resource_reservations())
-        reader_reservations = [
-            reservation for reservation in reservations
-            if reservation.resource_name == "reader_slots"
-        ]
+        reader_reservations = sorted(
+            (
+                reservation for reservation in reservations
+                if reservation.resource_name == "reader_slots"
+            ),
+            key=lambda reservation: (reservation.sequence, reservation.request_id),
+        )
         cohort_gate = next(
             (reservation for reservation in reservations
              if reservation.request_id == "reader-cohort-gate"),
             None,
         )
-        writer_reservations = [
-            reservation for reservation in reservations
-            if reservation.request_id.startswith("writer-")
-        ]
-        # Readers finish as a cohort before their gate is released. Writers
-        # therefore cannot overlap any active reader and are serialized by the
-        # same capacity-one gate.
+        writer_reservations = sorted(
+            (
+                reservation for reservation in reservations
+                if reservation.request_id.startswith("writer-")
+            ),
+            key=lambda reservation: (reservation.sequence, reservation.request_id),
+        )
         if reader_reservations:
-            resources.release(backend, reader_reservations[0].reservation_id)
+            candidate = reader_reservations[0].request_id
         elif cohort_gate is not None:
-            resources.release(backend, cohort_gate.reservation_id)
+            candidate = cohort_gate.request_id
         elif writer_reservations:
-            resources.release(backend, writer_reservations[0].reservation_id)
+            candidate = writer_reservations[0].request_id
+        else:
+            candidate = "noop"
+
+        action = resolve_tick_action(
+            persistence,
+            backend,
+            canonical="readers_writers",
+            logical_tick=engine.context.clock.tick,
+            candidate=candidate,
+            requested_at=engine.context.clock.now,
+        )
+        if action != "noop":
+            reservation = resources.reservation_for(action)
+            if reservation is not None:
+                resources.release(backend, reservation.reservation_id)
+
         if not persistence.resource_demands() and not persistence.resource_reservations():
             transition(engine, persistence.entity("canonical_case", case.id), "finish")
 
