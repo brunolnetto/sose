@@ -98,9 +98,9 @@ def test_producer_consumer_preserves_capacity_and_unique_consumption(tmp_path):
         job.run_tick(trigger_id=f"pc:{tick}")
         assert_store_capacity(persistence, "buffer", config.capacity)
         assert_unique_consumption(persistence, "buffer")
-    consumed = len(persistence.store_get_results())
-    buffered = len(persistence.store_items())
-    pending = len(persistence.store_put_intents())
+    consumed = len([r for r in persistence.store_get_results() if r.store_name == "buffer"])
+    buffered = len([i for i in persistence.store_items() if i.store_name == "buffer"])
+    pending = len([i for i in persistence.store_put_intents() if i.store_name == "buffer"])
     assert_conservation(total=config.participants,
         buckets={"consumed": consumed, "buffered": buffered, "pending": pending})
     persistence.close()
