@@ -31,3 +31,16 @@ def test_catalog_classifies_canonicals_without_changing_default_listing():
     assert set(catalog.names(kind="canonical")).isdisjoint(
         catalog.names(kind="domain")
     )
+
+@pytest.mark.parametrize("restart_at", [(1,), (3,), (1, 3)])
+@pytest.mark.parametrize("name", CANONICALS)
+def test_canonical_is_equivalent_across_adversarial_restart_points(
+    tmp_path, name, restart_at
+):
+    assert_restart_equivalent(
+        definition=builtin_catalog().get(name),
+        directory=tmp_path,
+        ticks=6,
+        restart_at=restart_at,
+        job_id=f"{name}-adversarial-{'-'.join(map(str, restart_at))}",
+    )
