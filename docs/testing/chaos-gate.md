@@ -116,3 +116,24 @@ Two scenarios are then exercised:
 This proves that process death does not strand durable ownership and that an
 obsolete process cannot resume as a split-brain writer after a successor has
 taken ownership.
+
+
+## Level 3A: worker death and fencing
+
+The fencing chaos gate validates single-writer ownership under concurrent worker
+failure for both authoritative reference adapters, SQLite and PostgreSQL.
+
+For each canonical example the gate exercises two cases:
+
+1. A worker acquires a fencing epoch, durably claims a trigger, then is killed by
+   real POSIX SIGKILL. A successor claims the next epoch, explicitly recovers
+   the unresolved trigger, completes the remaining workload, and must converge
+   to the same durable snapshot as an uninterrupted control.
+2. A worker pauses after the durable trigger claim but remains alive. A successor
+   claims a newer epoch and completes the workload. The original worker is then
+   released and attempts to continue with its stale epoch; its next write must
+   fail with StaleWriterError and the durable snapshot must remain unchanged.
+
+This is a split-brain test, not merely a restart test: two workers coexist, but
+only the holder of the newest fencing epoch is allowed to mutate authoritative
+Engine OLTP state.
