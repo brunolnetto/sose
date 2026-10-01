@@ -32,7 +32,10 @@ def test_domain_outbox_rejects_mutation_identity_conflict():
     conflicting = DomainMutation("same-id", _entity("1", 2, "running"))
 
     with persistence.transaction() as uow:
-        outbox.enqueue(uow, first)
+        first_delivery = outbox.enqueue(uow, first)
+
+    with persistence.transaction() as uow:
+        assert outbox.enqueue(uow, first) == first_delivery
 
     with persistence.transaction() as uow:
         with pytest.raises(ValueError, match="domain mutation identity conflict"):
