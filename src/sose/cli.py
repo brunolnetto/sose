@@ -114,10 +114,15 @@ def _cmd_init(args: argparse.Namespace) -> int:
         job_id=args.job_id,
         persistence_adapter=args.persistence,
         persistence_path=args.persistence_path,
-        runtime_backend=args.backend,
         force=args.force,
     )
+    description = definition.describe_config()
     print(str(output))
+    print(
+        f'Initialized {len(description["defaults"])} editable domain defaults '
+        "in [domain.parameters]."
+    )
+    print("Edit them in sose.toml, then run: sose validate && sose apply")
     return 0
 
 
@@ -392,7 +397,6 @@ def build_parser() -> argparse.ArgumentParser:
         "--persistence-path",
         default="state/sose.sqlite3",
     )
-    init.add_argument("--backend", default="simpy")
     init.add_argument("--force", action="store_true")
     init.set_defaults(handler=_cmd_init)
 
