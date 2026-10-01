@@ -41,38 +41,32 @@ def reconcile(persistence, engine, backend, config, case):
         for item in persistence.store_items()
         if item.store_name == "completed_operations"
     }
-    reservations = {r.request_id: r for r in persistence.resource_reservations()}
 
     if current.state == "ready":
+        candidate = "ready"
+    elif current.state == "active":
+        target = None
         for job in range(config.participants):
-            machine = route(job)[0]
-            resources.ensure_requested(
-                backend, resource_name=f"machine-{machine}",
-                request_id=f"job-{job}-op-0",
-                requested_at=engine.context.clock.now,
-            )
-        transition(engine, current, "advance")
-        return
-
-    if current.state != "active":
-        return
-
-    candidate = None
-    for job in range(config.participants):
-        for operation in (0, 1):
-            request_id = f"job-{job}-op-{operation}"
-            if resources.reservation_for(request_id) is not None:
-                candidate = request_id
+            for operation in (0, 1):
+                request_id = f"job-{job}-op-{operation}"
+                if resources.reservation_for(request_id) is not None:
+                    target = request_id
+                    break
+            if target is not None:
                 break
-        if candidate is not None:
-            break
 
-    all_complete = all(
-        f"job-{job}-op-1-done" in completed
-        for job in range(config.participants)
-    )
-    if candidate is None:
-        candidate = "finish" if all_complete else "admit-successors"
+        all_complete = all(
+            f"job-{job}-op-1-done" in completed
+            for job in range(config.participants)
+        )
+        if target is not None:
+            candidate = f"active:{target}"
+        elif all_complete:
+            candidate = "active:finish"
+        else:
+            candidate = "active:admit-successors"
+    else:
+        candidate = "noop"
 
     action = resolve_tick_action(
         persistence,
@@ -83,11 +77,29 @@ def reconcile(persistence, engine, backend, config, case):
         requested_at=engine.context.clock.now,
     )
 
-    if action.startswith("job-"):
-        _, job_value, _, operation_value = action.split("-")
+    if action == "ready":
+        if current.state != "ready":
+            return
+        for job in range(config.participants):
+            machine = route(job)[0]
+            resources.ensure_requested(
+                backend,
+                resource_name=f"machine-{machine}",
+                request_id=f"job-{job}-op-0",
+                requested_at=engine.context.clock.now,
+            )
+        transition(engine, current, "advance")
+        return
+
+    if not action.startswith("active:") or current.state != "active":
+        return
+
+    active_action = action.removeprefix("active:")
+    if active_action.startswith("job-"):
+        _, job_value, _, operation_value = active_action.split("-")
         job = int(job_value)
         operation = int(operation_value)
-        marker = f"{action}-done"
+        marker = f"{active_action}-done"
         stores.ensure_put(
             backend,
             store_name="completed_operations",
@@ -95,12 +107,12 @@ def reconcile(persistence, engine, backend, config, case):
             value={"job": job, "operation": operation},
             requested_at=engine.context.clock.now,
         )
-        reservation = resources.reservation_for(action)
+        reservation = resources.reservation_for(active_action)
         if reservation is not None:
             resources.release(backend, reservation.reservation_id)
         return
 
-    if action == "admit-successors":
+    if active_action == "admit-successors":
         completed = {
             item.item_id
             for item in persistence.store_items()
@@ -121,8 +133,8 @@ def reconcile(persistence, engine, backend, config, case):
                     )
         return
 
-    if action == "finish":
-        transition(engine, persistence.entity("canonical_case", case.id), "finish")
+    if active_action == "finish":
+        transition(engine, current, "finish")
 
 
 definition = DomainDefinition(
