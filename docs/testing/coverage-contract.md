@@ -68,3 +68,27 @@ backward to make a change pass. The first authoritative combined baseline is
 88.36%, so CI now requires at least 88%. Once the measured reachable set reaches
 100%, `fail_under` is raised to 100 and any future uncovered branch becomes a
 merge blocker.
+
+
+## Codebase quality analysis
+
+The authoritative coverage job also runs `codebase-stats` against the generated
+`coverage.json` and pytest JSON report, with `src/sose` as the analysis root.
+
+Coverage gaps are prioritized together with:
+
+- cyclomatic complexity (CC);
+- maintainability index (MI);
+- comment/docstring ratio;
+- Halstead bug and difficulty estimates;
+- source file size and structural outliers;
+- slow-test duration;
+- explicit `# pragma: no cover` counts.
+
+This matters because a low-coverage, low-complexity validation branch usually
+needs a focused test, while a low-coverage file that is simultaneously large,
+complex, and low-MI may need decomposition before more tests are added.
+
+The generated `codebase-stats-report.txt`, `coverage.json`, and
+`pytest-report.json` are retained as CI artifacts so coverage convergence can
+be audited against code-quality trends rather than against a single percentage.
