@@ -517,3 +517,37 @@ def test_ensure_selection_rejects_pending_identity_reuse_with_other_filter():
             requested_at=NOW,
             filter_key="two",
         )
+
+
+
+def test_ensure_put_supports_backend_without_run_until():
+    intent = _intent("pending", "store", value=9)
+    persistence = _SnapshotPersistence(
+        definitions=(StoreDefinition("store"),),
+        intents=(intent,),
+    )
+    manager = DurableStoreManager(persistence)
+
+    assert manager.ensure_put(
+        SimpleNamespace(),
+        store_name="store",
+        item_id="pending",
+        value=9,
+        requested_at=NOW,
+    ) is None
+
+
+def test_ensure_selection_supports_backend_without_run_until():
+    request = _request("pick", "store")
+    persistence = _SnapshotPersistence(
+        definitions=(StoreDefinition("store"),),
+        requests=(request,),
+    )
+    manager = DurableStoreManager(persistence)
+
+    assert manager.ensure_selection(
+        SimpleNamespace(),
+        store_name="store",
+        request_id="pick",
+        requested_at=NOW,
+    ) is None
