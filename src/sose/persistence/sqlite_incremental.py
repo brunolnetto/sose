@@ -289,7 +289,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             row = self._connection.execute(
                 f"SELECT owner_epoch FROM {self._meta_table} WHERE singleton = 1"
             ).fetchone()
-            if row is None:  # pragma: no cover
+            if row is None:  # pragma: no cover - writer metadata invariant
                 raise RuntimeError("writer metadata disappeared")
             self._connection.commit()
             return WriterLease(owner_id=owner_id, epoch=int(row[0]))
