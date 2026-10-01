@@ -44,6 +44,7 @@ def reconcile(persistence, engine, backend, config, case):
 
 definition = DomainDefinition(
     name="job_shop",
+    kind="canonical",
     description="Canonical job-shop scheduling problem demonstrating deterministic multi-machine Resource contention.",
     config_model=JobShopConfig, build_runtime=build_runtime, seed=seed,
     reconcile_tick=reconcile,
