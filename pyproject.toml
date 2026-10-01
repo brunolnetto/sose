@@ -84,7 +84,7 @@ exclude_lines = [
   "pragma: no cover",
   "if TYPE_CHECKING:",
   "raise NotImplementedError",
-  'class .*\\([^)]*\\bProtocol\\b[^)]*\\):',
+  'class .*\([^)]*\bProtocol\b[^)]*\):',
 ]
 
 [tool.coverage.xml]
