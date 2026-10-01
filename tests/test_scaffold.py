@@ -63,7 +63,10 @@ def test_cli_init_generates_editable_mro_configuration(tmp_path, capsys):
         ]
     ) == 0
 
-    assert capsys.readouterr().out.strip() == str(output)
+    init_output = capsys.readouterr().out
+    assert str(output) in init_output
+    assert "editable domain defaults" in init_output
+    assert "[domain.parameters]" in init_output
     parsed, _ = load_sose_config(output)
     assert parsed.domain.name == "mro"
     assert parsed.job.id == "plant-maintenance"
@@ -218,3 +221,55 @@ def test_scaffold_marks_runtime_and_bootstrap_parameter_mutability():
     assert "# mutability=runtime" in tick_block
     quantity_prefix = rendered.split("quantity =", 1)[0]
     assert "# mutability=bootstrap" in quantity_prefix
+
+
+def test_scaffold_uses_public_store_names_and_keeps_simpy_implicit():
+    rendered = render_sose_toml(builtin_catalog().get("mro"))
+    assert "[engine_store]" in rendered
+    assert "[engine_store.options]" in rendered
+    assert "[persistence]" not in rendered
+    assert "[runtime]" not in rendered
+    assert "SimPy is SOSE's built-in simulation backend" in rendered
+
+
+def test_legacy_store_and_runtime_names_still_load(tmp_path):
+    path = tmp_path / "legacy.toml"
+    path.write_text(
+        """
+[domain]
+name = "tutorial_job"
+
+[persistence]
+adapter = "sqlite_incremental"
+
+[persistence.options]
+path = "legacy.sqlite3"
+
+[domain_warehouse]
+adapter = "sqlite"
+
+[domain_warehouse.options]
+path = "legacy-domain.sqlite3"
+
+[runtime]
+backend = "simpy"
+
+[job]
+id = "legacy"
+""".strip(),
+        encoding="utf-8",
+    )
+    parsed, _ = load_sose_config(path)
+    assert parsed.engine_store.adapter == "sqlite_incremental"
+    assert parsed.persistence is parsed.engine_store
+    assert parsed.domain_store is not None
+    assert parsed.domain_warehouse is parsed.domain_store
+    assert parsed.runtime.backend == "simpy"
+
+
+def test_scaffold_rejects_non_simpy_compatibility_backend():
+    with pytest.raises(ValueError, match="SimPy"):
+        render_sose_toml(
+            builtin_catalog().get("mro"),
+            runtime_backend="other",
+        )

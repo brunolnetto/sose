@@ -36,7 +36,7 @@ def set_authoritative_storage(
     config, _ = load_sose_config(config_path)
 
     payload = config.model_dump(mode="python")
-    payload["persistence"] = {
+    payload["engine_store"] = {
         "adapter": adapter,
         "require": list(require),
         "options": dict(options or {}),
@@ -47,19 +47,21 @@ def set_authoritative_storage(
     lines = config_path.read_text(encoding="utf-8").splitlines()
     lines = _replace_regular_section(
         lines,
-        "[persistence]",
+        "[engine_store]",
         [
             f"adapter = {_toml_value(adapter)}",
             f"require = {_toml_value(list(require))}",
         ],
+        aliases=("[persistence]",),
     )
     lines = _replace_regular_section(
         lines,
-        "[persistence.options]",
+        "[engine_store.options]",
         [
             f"{key} = {_toml_value(value)}"
             for key, value in sorted((options or {}).items())
         ],
+        aliases=("[persistence.options]",),
     )
     _write_lines(config_path, lines)
 
@@ -198,12 +200,15 @@ def _replace_regular_section(
     lines: list[str],
     header: str,
     body: list[str],
+    *,
+    aliases: tuple[str, ...] = (),
 ) -> list[str]:
+    accepted = {header, *aliases}
     try:
         start = next(
             index
             for index, line in enumerate(lines)
-            if line.strip() == header
+            if line.strip() in accepted
         )
     except StopIteration:
         if lines and lines[-1].strip():
