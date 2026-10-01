@@ -24,6 +24,52 @@ def _backend_factory(name: str):
     raise KeyError(f"unknown runtime backend: {name}")
 
 
+def _domain_warehouse(config: SOSEConfig, base_dir: Path):
+    section = config.domain_warehouse
+    if section is None:
+        return None
+    options = dict(section.options)
+    if section.adapter == "sqlite":
+        from sose.domain.sqlite import SQLiteDomainWarehouse
+        raw_path = options.pop("path", "state/domain.sqlite3")
+        if not isinstance(raw_path, str) or not raw_path:
+            raise ValueError("sqlite DomainWarehouse path must be a non-empty string")
+        path = Path(raw_path)
+        if not path.is_absolute():
+            path = base_dir / path
+        if options:
+            raise ValueError(f"unknown sqlite DomainWarehouse options: {sorted(options)}")
+        return SQLiteDomainWarehouse(path)
+    if section.adapter == "postgres":
+        try:
+            from sose.domain.postgres import PostgresDomainWarehouse
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "DomainWarehouse adapter 'postgres' requires installing the 'postgres' extra"
+            ) from exc
+        import os
+        dsn = options.pop("dsn", None)
+        dsn_env = options.pop("dsn_env", None)
+        namespace = options.pop("namespace", "sose_domain")
+        for name, value in (("dsn", dsn), ("dsn_env", dsn_env)):
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError(
+                    f"postgres DomainWarehouse {name} must be a non-empty string"
+                )
+        if not isinstance(namespace, str) or not namespace:
+            raise ValueError(
+                "postgres DomainWarehouse namespace must be a non-empty string"
+            )
+        if dsn is None and dsn_env is not None:
+            dsn = os.environ.get(dsn_env)
+        if options:
+            raise ValueError(f"unknown postgres DomainWarehouse options: {sorted(options)}")
+        if not dsn:
+            raise ValueError("postgres DomainWarehouse requires dsn or dsn_env")
+        return PostgresDomainWarehouse(dsn, namespace=namespace)
+    raise KeyError(f"unknown DomainWarehouse adapter: {section.adapter}")
+
+
 def build_job_from_config(
     config: SOSEConfig,
     *,
@@ -50,22 +96,38 @@ def build_job_from_config(
         registry=registry,
         base_dir=base_dir,
     )
-    sink_bindings = storage.create_sink_bindings(
-        registry=sink_adapters,
-        base_dir=base_dir,
-    )
-
-    job = SimulationJob(
-        job_id=config.job.id,
-        definition=definition,
-        persistence=persistence,
-        backend_factory=_backend_factory(config.runtime.backend),
-        ticks_per_trigger=config.job.ticks_per_trigger,
-        max_ticks_per_trigger=config.job.max_ticks_per_trigger,
-        sink_bindings=sink_bindings,
-    )
-    job.initialize(config.domain.parameters)
-    return job
+    warehouse = None
+    try:
+        sink_bindings = storage.create_sink_bindings(
+            registry=sink_adapters,
+            base_dir=base_dir,
+        )
+        warehouse = _domain_warehouse(config, base_dir)
+        job = SimulationJob(
+            job_id=config.job.id,
+            definition=definition,
+            persistence=persistence,
+            backend_factory=_backend_factory(config.runtime.backend),
+            ticks_per_trigger=config.job.ticks_per_trigger,
+            max_ticks_per_trigger=config.job.max_ticks_per_trigger,
+            sink_bindings=sink_bindings,
+            domain_warehouse=warehouse,
+        )
+        job.initialize(config.domain.parameters)
+        return job
+    except Exception:
+        # Cleanup is best-effort here: never mask the construction error, and
+        # always attempt both independently owned stores.
+        for store in (warehouse, persistence):
+            if store is None:
+                continue
+            close = getattr(store, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
+        raise
 
 
 def build_job_from_file(
