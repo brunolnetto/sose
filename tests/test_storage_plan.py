@@ -163,3 +163,18 @@ id = "storage-factory"
         assert [binding.name for binding in job.sink_bindings] == ["warehouse"]
     finally:
         job.persistence.close()
+
+
+def test_storage_plan_warns_for_append_only_authoritative_store():
+    config = _config(
+        persistence={
+            "adapter": "jsonl",
+            "options": {"path": "state.jsonl"},
+        }
+    )
+
+    plan = build_storage_plan(config)
+
+    assert [issue.code for issue in plan.issues] == [
+        "storage.authoritative_append_only"
+    ]
