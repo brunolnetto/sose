@@ -8,7 +8,7 @@ from sose.jobs.runner import SimulationJob
 from sose.backends.simpy import SimPyBackend
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 from sose.persistence.memory import MemoryPersistence
-from tests.support.behavioral_conformance import assert_conservation, assert_store_capacity, assert_unique_consumption
+from tests.support.behavioral_conformance import assert_conservation, assert_precedence, assert_resource_exclusive, assert_store_capacity, assert_unique_consumption
 
 
 CANONICALS = (
@@ -119,4 +119,60 @@ def test_sleeping_barber_records_abandonment_durably(tmp_path):
     abandoned = [i for i in persistence.store_items() if i.store_name == "abandoned"]
     expected = max(0, config.participants - config.waiting_chairs - config.capacity)
     assert len(abandoned) == expected
+    persistence.close()
+
+
+def test_coordination_canonicals_preserve_exclusive_resources(tmp_path):
+    for name in ("dining_philosophers", "readers_writers"):
+        definition = builtin_catalog().get(name)
+        persistence = SQLiteIncrementalPersistence(tmp_path / f"{name}.sqlite3")
+        job = SimulationJob(job_id=f"{name}-semantics", definition=definition,
+            persistence=persistence, backend_factory=lambda origin: SimPyBackend(origin=origin))
+        job.initialize()
+        for tick in range(1, 10):
+            job.run_tick(trigger_id=f"{name}:{tick}")
+            for resource in persistence.resource_definitions():
+                if resource.capacity == 1:
+                    assert_resource_exclusive(persistence, resource.name)
+        persistence.close()
+
+
+def test_writer_never_owns_gate_while_reader_is_active(tmp_path):
+    definition = builtin_catalog().get("readers_writers")
+    persistence = SQLiteIncrementalPersistence(tmp_path / "rw.sqlite3")
+    job = SimulationJob(job_id="rw-exclusion", definition=definition,
+        persistence=persistence, backend_factory=lambda origin: SimPyBackend(origin=origin))
+    job.initialize()
+    for tick in range(1, 10):
+        job.run_tick(trigger_id=f"rw:{tick}")
+        reservations = persistence.resource_reservations()
+        readers_active = any(r.resource_name == "reader_slots" for r in reservations)
+        writer_active = any(r.request_id.startswith("writer-") for r in reservations)
+        assert not (readers_active and writer_active)
+    persistence.close()
+
+def test_job_shop_enforces_multi_operation_precedence(tmp_path):
+    definition = builtin_catalog().get("job_shop")
+    config = definition.default_config()
+    persistence = SQLiteIncrementalPersistence(tmp_path / "job-shop-v2.sqlite3")
+    job = SimulationJob(job_id="job-shop-v2", definition=definition,
+        persistence=persistence, backend_factory=lambda origin: SimPyBackend(origin=origin))
+    job.initialize()
+    for tick in range(1, 30):
+        job.run_tick(trigger_id=f"job-shop:{tick}")
+        for machine in persistence.resource_definitions():
+            assert_resource_exclusive(persistence, machine.name)
+        completed = [
+            item.item_id.removesuffix("-done")
+            for item in sorted(persistence.store_items(), key=lambda item: item.sequence)
+            if item.store_name == "completed_operations"
+        ]
+        edges = [
+            (f"job-{index}-op-0", f"job-{index}-op-1")
+            for index in range(config.participants)
+        ]
+        assert_precedence(completed, edges)
+        if persistence.entity("canonical_case", job.state().bootstrap_state.id).state == "completed":
+            break
+    assert all(f"job-{index}-op-1" in completed for index in range(config.participants))
     persistence.close()
