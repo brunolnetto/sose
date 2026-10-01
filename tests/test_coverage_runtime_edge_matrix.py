@@ -391,6 +391,34 @@ def test_store_put_invokes_durable_completion_callback():
     assert [item.item_id for item in persistence.store_items()] == ["item"]
 
 
+
+def test_store_reconciliation_supports_backends_without_run_until():
+    persistence = MemoryPersistence()
+    persistence._state.store_definitions["inbox"] = StoreDefinition("inbox")
+    persistence._state.store_put_intents["pending"] = _put(
+        "pending", value="payload"
+    )
+    manager = DurableStoreManager(persistence)
+
+    # Matching pending work is already durable; a minimal backend without
+    # run_until must not be required merely to reconcile identity.
+    assert manager.ensure_put(
+        object(),
+        store_name="inbox",
+        item_id="pending",
+        value="payload",
+        requested_at=NOW,
+    ) is None
+
+    persistence._state.store_get_requests["pick"] = _get("pick")
+    assert manager.ensure_selection(
+        object(),
+        store_name="inbox",
+        request_id="pick",
+        requested_at=NOW,
+    ) is None
+
+
 def _container_intent(
     request_id="op",
     container_name="fuel",
@@ -736,6 +764,267 @@ def test_preemptive_request_duplicate_cancel_release_and_callback_guards():
         ResourcePreemption("lease", "already-gone", "crew", NOW, preempted_by="new")
     )
     assert manager._pending_preemptions == {}
+
+
+
+
+def test_preemptive_reconciliation_supports_backend_without_run_until():
+    persistence = MemoryPersistence()
+    persistence._state.preemptive_resource_definitions["crew"] = _definition()
+    persistence._state.preemptive_resource_demands["pending"] = _demand("pending")
+    manager = DurablePreemptiveResourceManager(persistence)
+
+    assert manager.ensure_requested(
+        object(),
+        resource_name="crew",
+        request_id="pending",
+        requested_at=NOW,
+    ) is None
+
+    empty = DurablePreemptiveResourceManager(MemoryPersistence())
+    assert empty.withdraw(object(), "missing") is False
+
+
+def test_preemptive_cancel_detects_demand_race(monkeypatch):
+    persistence = MemoryPersistence()
+    persistence._state.preemptive_resource_definitions["crew"] = _definition()
+    demand = _demand("pending")
+    persistence._state.preemptive_resource_demands["pending"] = demand
+    manager = DurablePreemptiveResourceManager(persistence)
+
+    class ChangedDemandUow:
+        def get_preemptive_resource_demand(self, request_id):
+            return None
+
+    @contextmanager
+    def transaction():
+        yield ChangedDemandUow()
+
+    monkeypatch.setattr(persistence, "transaction", transaction)
+    backend = SimpleNamespace(
+        cancel_preemptive_resource_request=lambda request_id: True
+    )
+    with pytest.raises(RuntimeError, match="demand changed during cancellation"):
+        manager.cancel_pending(backend, "pending")
+
+
+def test_preemptive_release_returns_false_when_reservation_changes(monkeypatch):
+    persistence = MemoryPersistence()
+    persistence._state.preemptive_resource_definitions["crew"] = _definition()
+    reservation = _reservation()
+    persistence._state.preemptive_resource_reservations["reservation"] = reservation
+    manager = DurablePreemptiveResourceManager(persistence)
+    manager._backend_leases["reservation"] = ResourceLease(
+        "lease", "holder", "crew", NOW
+    )
+
+    class ChangedReservationUow:
+        def get_preemptive_resource_reservation(self, reservation_id):
+            return None
+
+    @contextmanager
+    def transaction():
+        yield ChangedReservationUow()
+
+    monkeypatch.setattr(persistence, "transaction", transaction)
+    assert manager.release(object(), "reservation") is False
+
+
+def _seed_preemption_pair(persistence):
+    persistence._state.preemptive_resource_definitions["crew"] = _definition()
+    demand = _demand("urgent", sequence=2)
+    displaced = _reservation("old-reservation", "holder", sequence=1)
+    persistence._state.preemptive_resource_demands["urgent"] = demand
+    persistence._state.preemptive_resource_reservations[
+        "old-reservation"
+    ] = displaced
+    lease = ResourceLease("lease-urgent", "urgent", "crew", NOW)
+    event = ResourcePreemption(
+        "lease-holder",
+        "holder",
+        "crew",
+        NOW,
+        preempted_by="urgent",
+    )
+    return demand, displaced, lease, event
+
+
+def test_preemptive_pairing_handles_missing_and_cross_resource_records():
+    persistence = MemoryPersistence()
+    manager = DurablePreemptiveResourceManager(persistence)
+    manager._pending_grants["urgent"] = ResourceLease(
+        "lease-urgent", "urgent", "crew", NOW
+    )
+    manager._pending_preemptions["urgent"] = ResourcePreemption(
+        "lease-holder", "holder", "crew", NOW, preempted_by="urgent"
+    )
+    assert manager._try_commit_preemption("urgent") is False
+
+    persistence = MemoryPersistence()
+    demand = _demand("urgent", resource_name="crew", sequence=2)
+    displaced = _reservation(
+        "old-reservation", "holder", resource_name="other", sequence=1
+    )
+    persistence._state.preemptive_resource_demands["urgent"] = demand
+    persistence._state.preemptive_resource_reservations[
+        "old-reservation"
+    ] = displaced
+    manager = DurablePreemptiveResourceManager(persistence)
+    manager._pending_grants["urgent"] = ResourceLease(
+        "lease-urgent", "urgent", "crew", NOW
+    )
+    manager._pending_preemptions["urgent"] = ResourcePreemption(
+        "lease-holder", "holder", "other", NOW, preempted_by="urgent"
+    )
+
+    with pytest.raises(RuntimeError, match="preemption pair crosses resources"):
+        manager._try_commit_preemption("urgent")
+
+
+@pytest.mark.parametrize("changed", ["demand", "reservation"])
+def test_preemptive_pairing_loses_transaction_race(monkeypatch, changed):
+    persistence = MemoryPersistence()
+    demand, displaced, lease, event = _seed_preemption_pair(persistence)
+    manager = DurablePreemptiveResourceManager(persistence)
+    manager._pending_grants["urgent"] = lease
+    manager._pending_preemptions["urgent"] = event
+
+    class RacingUow:
+        def get_preemptive_resource_demand(self, request_id):
+            return None if changed == "demand" else demand
+
+        def get_preemptive_resource_reservation(self, reservation_id):
+            return None if changed == "reservation" else displaced
+
+    @contextmanager
+    def transaction():
+        yield RacingUow()
+
+    monkeypatch.setattr(persistence, "transaction", transaction)
+    assert manager._try_commit_preemption("urgent") is False
+
+
+def test_normal_grant_requires_both_lease_and_demand():
+    persistence = MemoryPersistence()
+    persistence._state.preemptive_resource_definitions["crew"] = _definition()
+    manager = DurablePreemptiveResourceManager(persistence)
+
+    assert manager._try_commit_normal_grant("missing") is False
+
+    manager._pending_grants["lease-only"] = ResourceLease(
+        "lease-only", "lease-only", "crew", NOW
+    )
+    assert manager._try_commit_normal_grant("lease-only") is False
+
+    persistence._state.preemptive_resource_demands["demand-only"] = _demand(
+        "demand-only"
+    )
+    assert manager._try_commit_normal_grant("demand-only") is False
+
+
+def test_normal_grant_returns_concurrent_reservation_or_rejects_lost_demand(
+    monkeypatch,
+):
+    persistence = MemoryPersistence()
+    persistence._state.preemptive_resource_definitions["crew"] = _definition()
+    demand = _demand("request")
+    lease = ResourceLease("lease", "request", "crew", NOW)
+    manager = DurablePreemptiveResourceManager(persistence)
+
+    existing = _reservation(
+        "existing-reservation", "request", resource_name="crew", sequence=1
+    )
+    persistence._state.preemptive_resource_reservations[
+        existing.reservation_id
+    ] = existing
+
+    class LostDemandUow:
+        def get_preemptive_resource_demand(self, request_id):
+            return None
+
+    @contextmanager
+    def transaction():
+        yield LostDemandUow()
+
+    monkeypatch.setattr(persistence, "transaction", transaction)
+    assert manager._commit_normal_grant(demand, lease) == existing
+
+    persistence._state.preemptive_resource_reservations.clear()
+    with pytest.raises(RuntimeError, match="demand changed before grant"):
+        manager._commit_normal_grant(demand, lease)
+
+
+def test_reconcile_pending_grants_skips_other_resources_and_completed_preemption(
+    monkeypatch,
+):
+    persistence = MemoryPersistence()
+    manager = DurablePreemptiveResourceManager(persistence)
+    manager._pending_grants["other"] = ResourceLease(
+        "lease-other", "other", "other-resource", NOW
+    )
+    manager._pending_grants["done"] = ResourceLease(
+        "lease-done", "done", "crew", NOW
+    )
+
+    attempted_normal = []
+    monkeypatch.setattr(
+        manager,
+        "_try_commit_preemption",
+        lambda request_id: request_id == "done",
+    )
+    monkeypatch.setattr(
+        manager,
+        "_try_commit_normal_grant",
+        attempted_normal.append,
+    )
+
+    manager._reconcile_pending_grants("crew")
+    assert attempted_normal == []
+
+
+@pytest.mark.parametrize("changed", ["intent", "reservation"])
+def test_finalize_release_detects_transaction_races(monkeypatch, changed):
+    persistence = MemoryPersistence()
+    manager = DurablePreemptiveResourceManager(persistence)
+    reservation = _reservation()
+    intent = PreemptiveResourceReleaseIntent(
+        "release", reservation.reservation_id, "crew", NOW
+    )
+
+    class RacingReleaseUow:
+        def get_preemptive_resource_release_intent(self, intent_id):
+            return None if changed == "intent" else intent
+
+        def get_preemptive_resource_reservation(self, reservation_id):
+            return None if changed == "reservation" else reservation
+
+    @contextmanager
+    def transaction():
+        yield RacingReleaseUow()
+
+    monkeypatch.setattr(persistence, "transaction", transaction)
+    message = (
+        "release intent changed"
+        if changed == "intent"
+        else "reservation changed during release"
+    )
+    with pytest.raises(RuntimeError, match=message):
+        manager._finalize_release_intent(intent, reservation)
+
+
+def test_rebuild_cleanup_drops_stale_release_without_reservation():
+    persistence = MemoryPersistence()
+    persistence._state.preemptive_resource_release_intents["stale"] = (
+        PreemptiveResourceReleaseIntent(
+            "stale", "missing-reservation", "crew", NOW
+        )
+    )
+
+    DurablePreemptiveResourceManager(
+        persistence
+    )._finalize_interrupted_releases()
+
+    assert persistence.preemptive_resource_release_intents() == ()
 
 
 def test_preemptive_callback_rejects_wrong_resource_and_unknown_definition():
