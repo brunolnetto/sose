@@ -50,14 +50,23 @@ def _domain_warehouse(config: SOSEConfig, base_dir: Path):
         import os
         dsn = options.pop("dsn", None)
         dsn_env = options.pop("dsn_env", None)
+        namespace = options.pop("namespace", "sose_domain")
+        for name, value in (("dsn", dsn), ("dsn_env", dsn_env)):
+            if value is not None and (not isinstance(value, str) or not value):
+                raise ValueError(
+                    f"postgres DomainWarehouse {name} must be a non-empty string"
+                )
+        if not isinstance(namespace, str) or not namespace:
+            raise ValueError(
+                "postgres DomainWarehouse namespace must be a non-empty string"
+            )
         if dsn is None and dsn_env is not None:
-            dsn = os.environ.get(str(dsn_env))
-        namespace = str(options.pop("namespace", "sose_domain"))
+            dsn = os.environ.get(dsn_env)
         if options:
             raise ValueError(f"unknown postgres DomainWarehouse options: {sorted(options)}")
         if not dsn:
             raise ValueError("postgres DomainWarehouse requires dsn or dsn_env")
-        return PostgresDomainWarehouse(str(dsn), namespace=namespace)
+        return PostgresDomainWarehouse(dsn, namespace=namespace)
     raise KeyError(f"unknown DomainWarehouse adapter: {section.adapter}")
 
 
@@ -87,13 +96,12 @@ def build_job_from_config(
         registry=registry,
         base_dir=base_dir,
     )
-    sink_bindings = storage.create_sink_bindings(
-        registry=sink_adapters,
-        base_dir=base_dir,
-    )
-
     warehouse = None
     try:
+        sink_bindings = storage.create_sink_bindings(
+            registry=sink_adapters,
+            base_dir=base_dir,
+        )
         warehouse = _domain_warehouse(config, base_dir)
         job = SimulationJob(
             job_id=config.job.id,
@@ -108,13 +116,17 @@ def build_job_from_config(
         job.initialize(config.domain.parameters)
         return job
     except Exception:
-        if warehouse is not None:
-            close = getattr(warehouse, "close", None)
+        # Cleanup is best-effort here: never mask the construction error, and
+        # always attempt both independently owned stores.
+        for store in (warehouse, persistence):
+            if store is None:
+                continue
+            close = getattr(store, "close", None)
             if callable(close):
-                close()
-        close = getattr(persistence, "close", None)
-        if callable(close):
-            close()
+                try:
+                    close()
+                except Exception:
+                    pass
         raise
 
 
