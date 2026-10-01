@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 import tomllib
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 class DomainSection(BaseModel):
@@ -59,12 +59,28 @@ class JobSection(BaseModel):
 
 
 class SOSEConfig(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     domain: DomainSection
-    persistence: PersistenceSection = Field(default_factory=PersistenceSection)
-    domain_warehouse: DomainWarehouseSection | None = None
+    engine_store: PersistenceSection = Field(
+        default_factory=PersistenceSection,
+        validation_alias=AliasChoices("engine_store", "persistence"),
+    )
+    domain_store: DomainWarehouseSection | None = Field(
+        default=None,
+        validation_alias=AliasChoices("domain_store", "domain_warehouse"),
+    )
     runtime: RuntimeSection = Field(default_factory=RuntimeSection)
+
+    @property
+    def persistence(self) -> PersistenceSection:
+        """Compatibility alias for the former public configuration name."""
+        return self.engine_store
+
+    @property
+    def domain_warehouse(self) -> DomainWarehouseSection | None:
+        """Compatibility alias for the former public configuration name."""
+        return self.domain_store
     sinks: list[SinkSection] = Field(default_factory=list)
     job: JobSection
 
