@@ -48,8 +48,28 @@ def reconcile(persistence, engine, backend, config, case):
         transition(engine, current, "advance")
     elif current.state == "active":
         reservations = list(persistence.resource_reservations())
-        if reservations:
-            resources.release(backend, reservations[0].reservation_id)
+        reader_reservations = [
+            reservation for reservation in reservations
+            if reservation.resource_name == "reader_slots"
+        ]
+        cohort_gate = next(
+            (reservation for reservation in reservations
+             if reservation.request_id == "reader-cohort-gate"),
+            None,
+        )
+        writer_reservations = [
+            reservation for reservation in reservations
+            if reservation.request_id.startswith("writer-")
+        ]
+        # Readers finish as a cohort before their gate is released. Writers
+        # therefore cannot overlap any active reader and are serialized by the
+        # same capacity-one gate.
+        if reader_reservations:
+            resources.release(backend, reader_reservations[0].reservation_id)
+        elif cohort_gate is not None:
+            resources.release(backend, cohort_gate.reservation_id)
+        elif writer_reservations:
+            resources.release(backend, writer_reservations[0].reservation_id)
         if not persistence.resource_demands() and not persistence.resource_reservations():
             transition(engine, persistence.entity("canonical_case", case.id), "finish")
 
