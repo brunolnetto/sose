@@ -110,15 +110,22 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         return self.persistence.job_state(self.job_id)
 
     def close(self) -> None:
-        """Close both operational and domain storage owned by this job."""
+        """Close all unique stores, re-raising only after cleanup completes."""
         seen: set[int] = set()
+        first_error: Exception | None = None
         for store in (self.domain_warehouse, self.persistence):
             if store is None or id(store) in seen:
                 continue
             seen.add(id(store))
             close = getattr(store, "close", None)
             if callable(close):
-                close()
+                try:
+                    close()
+                except Exception as exc:
+                    if first_error is None:
+                        first_error = exc
+        if first_error is not None:
+            raise first_error
 
 
 
