@@ -74,7 +74,7 @@ def _started_procedure():
 def test_queue_procedure_requires_treatment_or_icu_admission():
     persistence, entities, engine, _ = _runtime()
 
-    with pytest.raises(RuntimeError, match="Admission\(treatment\|icu\)"):
+    with pytest.raises(RuntimeError, match=r"Admission\(treatment\|icu\)"):
         queue_treatment_episode(
             persistence,
             engine,
