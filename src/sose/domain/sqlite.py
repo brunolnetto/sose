@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 import sqlite3
+from time import monotonic, sleep
 
 from sose.persistence.codec import dumps, loads
 
@@ -17,7 +18,7 @@ class SQLiteDomainWarehouse:
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._connection = sqlite3.connect(self.path, isolation_level=None, timeout=30.0)
-        self._connection.execute("PRAGMA journal_mode = WAL")
+        self._ensure_wal()
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS domain_entity (
                 entity_type TEXT NOT NULL,
@@ -33,6 +34,20 @@ class SQLiteDomainWarehouse:
                 payload TEXT NOT NULL
             )"""
         )
+
+    def _ensure_wal(self) -> None:
+        deadline = monotonic() + 30.0
+        while True:
+            try:
+                row = self._connection.execute("PRAGMA journal_mode = WAL").fetchone()
+                mode = "" if row is None else str(row[0]).lower()
+                if mode != "wal":
+                    raise RuntimeError("SQLiteDomainWarehouse requires WAL journal mode")
+                return
+            except sqlite3.OperationalError as exc:
+                if "locked" not in str(exc).lower() or monotonic() >= deadline:
+                    raise
+                sleep(0.01)
 
     def close(self) -> None:
         self._connection.close()
