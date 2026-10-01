@@ -14,6 +14,7 @@ from sose.core.identity import deterministic_id
 from sose.domain.delivery import DomainDelivery
 from sose.domain.entity import Entity
 from sose.domain.entity_store import WarehouseBackedEntityStore
+from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.warehouse import DomainMutation, DomainWarehouse
 from sose.persistence.base import Persistence
 
@@ -46,13 +47,9 @@ class DomainUnitOfWork:
             ),
             deepcopy(entity),
         )
-        existing = self._inner.get_domain_delivery(mutation.mutation_id)
-        if existing is not None and existing.mutation != mutation:
-            raise ValueError(
-                f"domain mutation identity conflict: {mutation.mutation_id}"
-            )
-        if existing is None:
-            self._inner.save_domain_delivery(DomainDelivery(mutation))
+        DomainMutationOutbox(self._persistence, self._warehouse).enqueue(
+            self._inner, mutation
+        )
         self._working[(entity.entity_type, entity.id)] = deepcopy(entity)
 
 
