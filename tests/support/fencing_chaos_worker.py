@@ -95,17 +95,6 @@ class PausingSQLite(_PausingMixin, SQLiteIncrementalPersistence):
             if state is not None and state.active_trigger_id == self.trigger_id:
                 self.paused = True
                 _pause(self.marker, self.continue_file, owner_epoch)
-        if (
-            owner_epoch is not None
-            and self.pause_on_claim
-            and not self.paused
-            and self.job_id is not None
-            and self.trigger_id is not None
-        ):
-            state = self.job_state(self.job_id)
-            if state is not None and state.active_trigger_id == self.trigger_id:
-                self.paused = True
-                _pause(self.marker, self.continue_file, owner_epoch)
 
 
 class PausingPostgres(_PausingMixin, PostgresPersistence):
@@ -124,6 +113,17 @@ class PausingPostgres(_PausingMixin, PostgresPersistence):
                 _pause(self.marker, self.continue_file, owner_epoch)
         if self._matches(index, "after_commit", owner_epoch):
             _pause(self.marker, self.continue_file, owner_epoch)
+        if (
+            owner_epoch is not None
+            and self.pause_on_claim
+            and not self.paused
+            and self.job_id is not None
+            and self.trigger_id is not None
+        ):
+            state = self.job_state(self.job_id)
+            if state is not None and state.active_trigger_id == self.trigger_id:
+                self.paused = True
+                _pause(self.marker, self.continue_file, owner_epoch)
 
 
 def main() -> None:
