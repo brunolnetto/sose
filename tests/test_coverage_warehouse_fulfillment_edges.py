@@ -60,6 +60,13 @@ def test_allocate_order_replays_existing_durable_allocation_index():
     assert order is not None
     existing = tuple(order.attributes["allocation_ids"])
     assert existing
+    balances_before = {
+        lot_id: (
+            persistence.entity("warehouse_inventory_lot", lot_id).attributes["on_hand"],
+            persistence.entity("warehouse_inventory_lot", lot_id).attributes["allocated"],
+        )
+        for lot_id in entities.lot_ids
+    }
 
     # Recreate the interrupted boundary where allocations committed but the
     # order state transition was not observed.
@@ -70,6 +77,14 @@ def test_allocate_order_replays_existing_durable_allocation_index():
     replayed = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert replayed is not None and replayed.state == "allocated"
     assert tuple(replayed.attributes["allocation_ids"]) == existing
+    balances_after = {
+        lot_id: (
+            persistence.entity("warehouse_inventory_lot", lot_id).attributes["on_hand"],
+            persistence.entity("warehouse_inventory_lot", lot_id).attributes["allocated"],
+        )
+        for lot_id in entities.lot_ids
+    }
+    assert balances_after == balances_before
 
 
 def test_allocate_order_rejects_missing_allocation_from_durable_index():
@@ -96,6 +111,16 @@ def test_pick_allocation_is_idempotent_after_pick():
         entities=entities,
         allocation_id_value=aid,
     )
+    allocation = persistence.entity("warehouse_allocation", aid)
+    assert allocation is not None
+    lot_id = str(allocation.attributes["lot_id"])
+    lot_after_first = persistence.entity("warehouse_inventory_lot", lot_id)
+    assert lot_after_first is not None
+    projection_after_first = (
+        lot_after_first.attributes["on_hand"],
+        lot_after_first.attributes["allocated"],
+    )
+
     second = pick_allocation(
         persistence,
         engine,
@@ -104,6 +129,12 @@ def test_pick_allocation_is_idempotent_after_pick():
     )
 
     assert first.state == second.state == "picked"
+    lot_after_second = persistence.entity("warehouse_inventory_lot", lot_id)
+    assert lot_after_second is not None
+    assert (
+        lot_after_second.attributes["on_hand"],
+        lot_after_second.attributes["allocated"],
+    ) == projection_after_first
 
 
 def test_pick_allocation_detects_corrupt_allocated_projection():
