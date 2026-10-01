@@ -15,7 +15,7 @@ A finite FIFO buffer separates producers from consumers. Producers may create mo
 ## Executable invariants
 - Store capacity is finite and configured by `capacity`.
 - Consumer request identities are deterministic, so restart does not duplicate consumption.
-- Continuous execution and execution interrupted by a fresh-process SQLite restart converge to the same operational snapshot.
+- Continuous execution and execution interrupted by closing and reopening the SQLite-backed job converge to the same operational snapshot.
 
 ## Happy path
 Items enter the bounded buffer, consumers obtain selections, and the case completes once every consumer has a durable result.
