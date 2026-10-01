@@ -356,3 +356,20 @@ def test_unknown_preemptive_resource_is_explicit():
 
     with pytest.raises(KeyError, match="unknown preemptive resource"):
         runtime.preemptive_resource_snapshot("missing")
+
+
+def test_naive_backend_rejects_aware_datetime_and_preserves_naive_now():
+    origin = datetime(2026, 1, 1, 8)
+    runtime = SimPyBackend(origin=origin)
+
+    assert runtime.now == origin
+    assert runtime.now.tzinfo is None
+
+    with pytest.raises(ValueError, match="timezone awareness"):
+        runtime.schedule_at(
+            datetime(2026, 1, 1, 9, tzinfo=timezone.utc),
+            lambda: None,
+        )
+
+    runtime.run_until(origin + timedelta(hours=1))
+    assert runtime.now == origin + timedelta(hours=1)
