@@ -22,7 +22,8 @@ class ReadersWritersConfig(CanonicalConfig):
 def seed(persistence, config):
     if not persistence.resource_definitions():
         with persistence.transaction() as uow:
-            uow.save_resource_definition(ResourceDefinition("document", 1))
+            uow.save_resource_definition(ResourceDefinition("reader_slots", config.readers))
+            uow.save_resource_definition(ResourceDefinition("writer_gate", 1))
     return seed_case(persistence, name="readers_writers",
                      attributes={"readers": config.readers, "writers": config.participants - config.readers})
 
@@ -33,13 +34,16 @@ def reconcile(persistence, engine, backend, config, case):
     current = persistence.entity("canonical_case", case.id)
     resources = engine.resources
     if current.state == "ready":
-        # A single ownership token makes exclusion explicit; reader requests
-        # precede writers in this minimal fairness demonstration.
+        # Readers may coexist. The writer gate is requested first by every
+        # reader cohort and writer, making writer ownership exclusive while
+        # reader_slots exposes concurrent read capacity.
+        resources.ensure_requested(backend, resource_name="writer_gate",
+            request_id="reader-cohort-gate", requested_at=engine.context.clock.now, priority=10)
         for index in range(config.readers):
-            resources.ensure_requested(backend, resource_name="document",
+            resources.ensure_requested(backend, resource_name="reader_slots",
                 request_id=f"reader-{index}", requested_at=engine.context.clock.now, priority=10)
         for index in range(config.participants - config.readers):
-            resources.ensure_requested(backend, resource_name="document",
+            resources.ensure_requested(backend, resource_name="writer_gate",
                 request_id=f"writer-{index}", requested_at=engine.context.clock.now, priority=20)
         transition(engine, current, "advance")
     elif current.state == "active":
