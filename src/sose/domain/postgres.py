@@ -56,6 +56,10 @@ class PostgresDomainWarehouse:
 
     def apply(self, mutation: DomainMutation) -> DomainApplyResult:
         with self._connection.transaction():
+            mutation_lock = f"{self.namespace}:mutation:{mutation.mutation_id}"
+            self._connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))", (mutation_lock,)
+            )
             replay = self._connection.execute(
                 sql.SQL("SELECT payload FROM {} WHERE mutation_id=%s FOR UPDATE").format(self._mutation_table),
                 (mutation.mutation_id,),
