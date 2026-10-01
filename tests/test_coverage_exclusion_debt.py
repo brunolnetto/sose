@@ -104,7 +104,9 @@ def test_p2p_stocking_detects_missing_seeded_receipt(monkeypatch):
 def test_p2p_consumption_detects_missing_material_demand(monkeypatch):
     persistence, entities = p2p.run_happy_path()
     _, engine = p2p.build_runtime(persistence)
-    backend = SimPyBackend(origin=p2p.ORIGIN)
+    position = persistence.simulation_position()
+    assert position is not None
+    backend = SimPyBackend(origin=position.logical_time)
     engine.rebuild_backend(backend)
     _hide_entity(
         monkeypatch,
