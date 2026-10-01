@@ -3,6 +3,7 @@ from __future__ import annotations
 from sose.core.resources import DurableResourceManager
 from sose.core.runtime import ResourceDefinition
 from sose.domain.config import DomainDefinition
+from pydantic import Field
 
 from .common import CanonicalConfig, build_runtime, seed_case, transition
 
@@ -10,7 +11,7 @@ from .common import CanonicalConfig, build_runtime, seed_case, transition
 class SleepingBarberConfig(CanonicalConfig):
     participants: int = 5
     capacity: int = 1
-    waiting_chairs: int = 3
+    waiting_chairs: int = Field(default=3, ge=0)
 
 
 def seed(persistence, config):
@@ -22,8 +23,10 @@ def seed(persistence, config):
 
 
 def reconcile(persistence, engine, backend, config, case):
+    if not config.enabled:
+        return
     current = persistence.entity("canonical_case", case.id)
-    resources = DurableResourceManager(persistence)
+    resources = engine.resources
     if current.state == "ready":
         accepted = min(config.participants, config.waiting_chairs + config.capacity)
         for index in range(accepted):
@@ -43,5 +46,5 @@ definition = DomainDefinition(
     description="Canonical sleeping-barber queue demonstrating capacity, waiting-room admission, and durable Resource ownership.",
     config_model=SleepingBarberConfig, build_runtime=build_runtime, seed=seed,
     reconcile_tick=reconcile,
-    runtime_mutable_fields=frozenset({"tick_step", "random_seed"}),
+    runtime_mutable_fields=frozenset({"tick_step", "random_seed", "enabled"}),
 )
