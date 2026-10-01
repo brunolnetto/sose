@@ -80,6 +80,33 @@ def test_propose_appointment_requires_positive_ordinal():
         )
 
 
+def test_appointment_identity_replay_returns_existing_without_side_effects():
+    persistence, entities, engine, _ = _runtime()
+    start_at = ORIGIN + timedelta(hours=1)
+    end_at = ORIGIN + timedelta(hours=2)
+    first = propose_appointment(
+        persistence,
+        engine,
+        entities=entities,
+        ordinal=1,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    before = tuple(persistence.entities())
+
+    second = propose_appointment(
+        persistence,
+        engine,
+        entities=entities,
+        ordinal=1,
+        start_at=start_at,
+        end_at=end_at,
+    )
+
+    assert second == first
+    assert tuple(persistence.entities()) == before
+
+
 def test_appointment_identity_cannot_replay_with_different_window():
     persistence, entities, engine, _ = _runtime()
     first = propose_appointment(
@@ -269,6 +296,7 @@ def test_work_start_rejects_missing_technician_after_part_ownership():
             entities=entities,
             appointment_id_value=appointment.id,
         )
+    assert len(persistence.store_get_results()) == 1
 
 
 def test_work_start_waits_when_selected_technician_capacity_is_contended():
@@ -291,10 +319,13 @@ def test_work_start_waits_when_selected_technician_capacity_is_contended():
         entities=entities,
         appointment_id_value=appointment.id,
     ) is False
+    request_id = f"field-tech:{appointment.id}"
     assert any(
-        demand.request_id == f"field-tech:{appointment.id}"
+        demand.request_id == request_id
         for demand in persistence.resource_demands()
     )
+    assert engine.resources.reservation_for(request_id) is None
+    assert engine.resources.reservation_for("field-tech:blocker") == blocker
 
 
 @pytest.mark.parametrize(
@@ -320,9 +351,9 @@ def test_visit_validates_sequence_and_outcome(sequence, outcome, message):
         )
 
 
-def test_visit_requires_active_appointment_and_work_order():
+def test_visit_requires_work_order_in_progress_even_when_appointment_started():
     persistence, entities, engine, backend = _runtime()
-    appointment = _confirmed_window(persistence, entities, engine)
+    appointment = _started_boundary(persistence, entities, engine, backend)
 
     with pytest.raises(RuntimeError, match="requires active appointment and work order"):
         record_visit(
@@ -332,6 +363,36 @@ def test_visit_requires_active_appointment_and_work_order():
             entities=entities,
             appointment_id_value=appointment.id,
             sequence=1,
+            outcome="completed",
+        )
+
+
+def test_visit_requires_appointment_in_progress_even_when_work_order_started():
+    persistence, entities, engine, backend = _runtime()
+    appointment = _started_boundary(persistence, entities, engine, backend)
+    assert reconcile_work_start(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        appointment_id_value=appointment.id,
+    )
+
+    appointment = persistence.entity("field_appointment", appointment.id)
+    assert appointment is not None
+    appointment.state = "confirmed"
+    _save(persistence, appointment)
+    work_order = persistence.entity("field_work_order", entities.work_order_id)
+    assert work_order is not None and work_order.state == "in_progress"
+
+    with pytest.raises(RuntimeError, match="requires active appointment and work order"):
+        record_visit(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            appointment_id_value=appointment.id,
+            sequence=2,
             outcome="completed",
         )
 
