@@ -59,7 +59,12 @@ def _wait(marker: Path, process: subprocess.Popen, timeout: float = 15) -> int:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
         if marker.exists():
-            return int(marker.read_text(encoding="utf-8"))
+            payload = marker.read_text(encoding="utf-8").strip()
+            if payload:
+                try:
+                    return int(payload)
+                except ValueError:
+                    pass
         if process.poll() is not None:
             stdout, stderr = process.communicate()
             raise AssertionError(
@@ -246,4 +251,14 @@ def test_zombie_worker_cannot_commit_after_successor_claims_epoch(
     stdout, stderr = worker.communicate()
     assert worker.returncode != 0
     assert "StaleWriterError" in stderr
+
+    final_persistence = _open(
+        backend,
+        path=data_path if backend == "sqlite" else None,
+        namespace=namespace,
+    )
+    final_snapshot = operational_snapshot(final_persistence)
+    final_persistence.close()
+
     assert actual == expected
+    assert final_snapshot == expected
