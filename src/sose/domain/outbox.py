@@ -15,18 +15,21 @@ class DomainMutationOutbox:
         self.persistence = persistence
         self.warehouse = warehouse
 
-    def prepare(self, mutation: DomainMutation) -> DomainDelivery:
+    def enqueue(self, uow, mutation: DomainMutation) -> DomainDelivery:
         delivery = DomainDelivery(mutation)
-        with self.persistence.transaction() as uow:
-            existing = uow.get_domain_delivery(mutation.mutation_id)
-            if existing is not None:
-                if existing.mutation != mutation:
-                    raise ValueError(
-                        f"domain mutation identity conflict: {mutation.mutation_id}"
-                    )
-                return existing
-            uow.save_domain_delivery(delivery)
+        existing = uow.get_domain_delivery(mutation.mutation_id)
+        if existing is not None:
+            if existing.mutation != mutation:
+                raise ValueError(
+                    f"domain mutation identity conflict: {mutation.mutation_id}"
+                )
+            return existing
+        uow.save_domain_delivery(delivery)
         return delivery
+
+    def prepare(self, mutation: DomainMutation) -> DomainDelivery:
+        with self.persistence.transaction() as uow:
+            return self.enqueue(uow, mutation)
 
     def pending(self) -> tuple[DomainDelivery, ...]:
         return self.persistence.domain_deliveries()
