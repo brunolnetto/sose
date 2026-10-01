@@ -91,3 +91,28 @@ It still does not model whole-node PostgreSQL failure, network partitions,
 filesystem corruption, disk-full conditions, or failover between independent
 database servers. Those belong to adapter/infrastructure-specific suites rather
 than the portable runtime gate.
+
+
+## Level 3: worker ownership and fencing under death
+
+The `chaos fencing/worker-death gate` validates the authoritative single-writer
+contract under real concurrent-worker failure.
+
+For every canonical example and for both authoritative reference stores
+(SQLite and PostgreSQL), worker A acquires a durable writer epoch and pauses
+immediately after the trigger claim has committed.
+
+Two scenarios are then exercised:
+
+1. **Dead worker takeover** — worker A is killed with POSIX `SIGKILL`. Worker B
+   claims the next epoch, explicitly recovers the unresolved trigger, and
+   continues to the same horizon. The final durable snapshot must equal a clean
+   fenced control run.
+2. **Zombie worker rejection** — worker A remains paused after its claim. Worker B
+   claims the next epoch and completes the unresolved work. Worker A is then
+   released and must fail with `StaleWriterError` on its next fenced
+   transaction. It must not alter the state already committed by worker B.
+
+This proves that process death does not strand durable ownership and that an
+obsolete process cannot resume as a split-brain writer after a successor has
+taken ownership.
