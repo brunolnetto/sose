@@ -190,7 +190,7 @@ def changes_for_dirty_records(
             index = int(raw_key)
             before_item = before_value[index] if index < len(before_value) else None
             after_item = after_value[index] if index < len(after_value) else None
-            if before_item == after_item and index < len(before_value) == (index < len(after_value)):
+            if before_item == after_item and (index < len(before_value)) == (index < len(after_value)):
                 continue
             if index >= len(after_value):
                 changes.append(

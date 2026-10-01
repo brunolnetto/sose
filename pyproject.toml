@@ -44,9 +44,11 @@ dev = [
   "duckdb>=1.5.5,<2",
   "psycopg[binary]>=3.3.6,<4",
   "pytest>=8,<10",
-  "pytest-cov>=6,<8",
+  "pytest-cov>=7,<8",
+  "coverage>=7.16,<8",
   "ruff>=0.11,<1",
   "mypy>=2.3,<3",
+  "codebase-stats>=0.0.3",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -72,15 +74,18 @@ dev = [
 [tool.coverage.run]
 branch = true
 source = ["sose"]
+patch = ["subprocess"]
+parallel = true
 
 [tool.coverage.report]
-fail_under = 80
+fail_under = 88
 show_missing = true
 skip_covered = false
 exclude_lines = [
   "pragma: no cover",
   "if TYPE_CHECKING:",
   "raise NotImplementedError",
+  'class .*\([^)]*\bProtocol\b[^)]*\):',
 ]
 
 [tool.coverage.xml]

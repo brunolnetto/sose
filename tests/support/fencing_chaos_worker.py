@@ -14,9 +14,26 @@ from sose.persistence.postgres import PostgresPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
-def _pause(marker: Path, continue_file: Path | None, epoch: int) -> None:
+def _checkpoint_coverage() -> None:
+    try:
+        from coverage import Coverage
+    except ImportError:
+        return
+    current = Coverage.current()
+    if current is not None:
+        current.save()
+
+
+def _publish_marker(marker: Path, payload: str) -> None:
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(str(epoch), encoding="utf-8")
+    temporary = marker.with_name(f".{marker.name}.tmp")
+    temporary.write_text(payload, encoding="utf-8")
+    temporary.replace(marker)
+
+
+def _pause(marker: Path, continue_file: Path | None, epoch: int) -> None:
+    _checkpoint_coverage()
+    _publish_marker(marker, str(epoch))
     if continue_file is None:
         while True:
             time.sleep(60)

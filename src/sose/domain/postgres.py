@@ -26,6 +26,14 @@ class PostgresDomainWarehouse:
         self._mutation_table = sql.Identifier(f"{namespace}_mutation")
         self._connection = psycopg.connect(dsn, autocommit=True)
         with self._connection.transaction():
+            # PostgreSQL's CREATE TABLE IF NOT EXISTS is not sufficient to make
+            # concurrent first-use bootstrap safe: two sessions can still race
+            # while creating the table's implicit composite type. Serialize
+            # schema bootstrap per namespace before issuing DDL.
+            self._connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"{self.namespace}:bootstrap",),
+            )
             self._connection.execute(sql.SQL(
                 "CREATE TABLE IF NOT EXISTS {} (entity_type TEXT NOT NULL, entity_id TEXT NOT NULL, version BIGINT NOT NULL, payload TEXT NOT NULL, PRIMARY KEY(entity_type, entity_id))"
             ).format(self._entity_table))
