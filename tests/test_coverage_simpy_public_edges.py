@@ -83,7 +83,7 @@ def test_store_get_rejects_empty_or_duplicate_request_id():
         runtime.get_store("queue", request_id="r1", on_received=lambda _: None)
 
 
-def test_filter_is_rejected_for_non_filter_store():
+def test_filter_is_rejected_for_non_filter_store_without_poisoning_request_id():
     runtime = backend()
     runtime.create_store("queue")
 
@@ -94,6 +94,13 @@ def test_filter_is_rejected_for_non_filter_store():
             on_received=lambda _: None,
             filter=lambda _: True,
         )
+
+    request = runtime.get_store(
+        "queue",
+        request_id="filtered",
+        on_received=lambda _: None,
+    )
+    assert request.request_id == "filtered"
 
 
 def test_unknown_store_fails_explicitly():
@@ -157,6 +164,11 @@ def test_resource_rejects_empty_name_invalid_capacity_and_cross_kind_duplicate()
     with pytest.raises(ValueError, match="resource already exists"):
         runtime.create_preemptive_resource("shared")
 
+    reverse = backend()
+    reverse.create_preemptive_resource("shared")
+    with pytest.raises(ValueError, match="resource already exists"):
+        reverse.create_resource("shared")
+
 
 def test_resource_request_rejects_empty_id():
     runtime = backend()
@@ -215,6 +227,23 @@ def test_request_id_is_unique_across_normal_and_preemptive_resources():
             request_id="shared",
             on_acquired=lambda _: None,
             on_preempted=lambda _: None,
+        )
+
+    reverse = backend()
+    reverse.create_resource("workers")
+    reverse.create_preemptive_resource("bay")
+    reverse.request_preemptive_resource(
+        "bay",
+        request_id="shared",
+        on_acquired=lambda _: None,
+        on_preempted=lambda _: None,
+        preempt=False,
+    )
+    with pytest.raises(ValueError, match="resource request already exists"):
+        reverse.request_resource(
+            "workers",
+            request_id="shared",
+            on_acquired=lambda _: None,
         )
 
 
