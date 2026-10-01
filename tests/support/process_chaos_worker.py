@@ -14,7 +14,8 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
 def _pause(marker: Path, continue_file: Path | None) -> None:
-    marker.write_text("ready", encoding="utf-8")
+    if not marker.exists():
+        marker.write_text("ready", encoding="utf-8")
     if continue_file is None:
         while True:
             time.sleep(60)
