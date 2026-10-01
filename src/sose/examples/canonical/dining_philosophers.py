@@ -44,6 +44,7 @@ def reconcile(persistence, engine, backend, config, case):
 
 definition = DomainDefinition(
     name="dining_philosophers",
+    kind="canonical",
     description="Canonical dining-philosophers problem demonstrating ordered durable Resource acquisition and contention.",
     config_model=DiningPhilosophersConfig, build_runtime=build_runtime, seed=seed,
     reconcile_tick=reconcile,
