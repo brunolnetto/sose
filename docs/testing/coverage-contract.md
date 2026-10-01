@@ -10,7 +10,10 @@ orchestration, sinks, scenarios, and public factories.
 ## Authoritative measurement
 
 The CI `coverage` job runs the ordinary suite with a real PostgreSQL service and
-also enables the process, fencing, and storage-chaos suites. This prevents the
+also enables the process, fencing, and storage-chaos suites. Coverage.py's
+subprocess patch instruments Python child workers; chaos workers checkpoint their
+current coverage data before publishing a pause marker, so a subsequent SIGKILL
+does not discard all evidence collected before the kill. This prevents the
 coverage number from ignoring code that is already exercised in separate
 conformance jobs.
 
