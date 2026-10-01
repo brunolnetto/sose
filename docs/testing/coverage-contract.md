@@ -64,10 +64,16 @@ each remaining miss:
    exclusion as narrow as possible.
 
 Coverage thresholds are ratcheted upward as evidence is added; they never move
-backward to make a change pass. The first authoritative combined baseline was 88.36%. The durable runtime edge matrix raised the measured branch-aware coverage to 89.64%, so CI now requires at least 89.5%. Once the measured reachable set reaches 100%, `fail_under` is raised to 100 and any future uncovered branch becomes a merge blocker.
+backward to make a change pass. The first authoritative combined baseline was
+88.36%. The current CI ratchet is **89%**, and the latest authoritative branch
+measurement is approximately **89.62%**. Once the measured reachable set reaches
+100%, `fail_under` is raised to 100 and any future uncovered branch becomes a
+merge blocker.
 
 
-The exclusion inventory and its remaining test debt are maintained in [coverage-exclusions.md](coverage-exclusions.md).\n\n## Codebase quality analysis
+The exclusion inventory and its remaining test debt are maintained in [coverage-exclusions.md](coverage-exclusions.md).
+
+## Codebase quality analysis
 
 The authoritative coverage job also runs `codebase-stats` against the generated
 `coverage.json` and pytest JSON report, with `src/sose` as the analysis root.
