@@ -8,6 +8,11 @@ EXPECTED = {
     "cards_payments",
     "construction",
     "credit_loans",
+    "dining_philosophers",
+    "job_shop",
+    "producer_consumer",
+    "readers_writers",
+    "sleeping_barber",
     "energy_utilities",
     "field_service",
     "hospitality",
@@ -31,7 +36,7 @@ EXPECTED = {
 def test_builtin_catalog_covers_every_promoted_reference_plus_tutorial():
     catalog = builtin_catalog()
     assert set(catalog.names()) == EXPECTED
-    assert len(catalog.names()) == 22
+    assert len(catalog.names()) == 27
 
 
 def test_every_builtin_domain_has_serializable_default_config_and_builds_runtime():
