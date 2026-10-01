@@ -162,6 +162,44 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
+  chaos-test:
+    name: chaos-test gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip check
+
+      - name: Run deterministic chaos recovery gate
+        run: |
+          python -m pytest -q \
+            tests/test_chaos_gate.py \
+            tests/test_all_domains_warehouse_restart.py \
+            --junitxml=chaos-results.xml
+
+      - name: Upload chaos gate report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: chaos-test-report
+          path: chaos-results.xml
+          if-no-files-found: error
+          retention-days: 14
+
   postgres:
     name: postgres integration
     runs-on: ubuntu-latest
