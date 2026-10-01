@@ -20,6 +20,8 @@ def seed(persistence, config):
 
 
 def reconcile(persistence, engine, backend, config, case):
+    if not config.enabled:
+        return
     current = persistence.entity("canonical_case", case.id)
     if current.state == "ready":
         stores = DurableStoreManager(persistence)
@@ -42,5 +44,5 @@ definition = DomainDefinition(
     description="Canonical bounded-buffer producer/consumer problem demonstrating durable Store backpressure.",
     config_model=ProducerConsumerConfig, build_runtime=build_runtime, seed=seed,
     reconcile_tick=reconcile,
-    runtime_mutable_fields=frozenset({"tick_step", "random_seed"}),
+    runtime_mutable_fields=frozenset({"tick_step", "random_seed", "enabled"}),
 )
