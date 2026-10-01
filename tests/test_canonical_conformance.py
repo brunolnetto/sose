@@ -30,7 +30,7 @@ def snapshot(persistence):
                    for d in persistence.resource_demands())
         ),
         "store_results": tuple(
-            sorted((r.store_name, r.request_id, r.item_id)
+            sorted((r.store_name, r.request_id, r.item.item_id)
                    for r in persistence.store_get_results())
         ),
     }
