@@ -3,13 +3,14 @@ from __future__ import annotations
 from sose.core.resources import DurableResourceManager
 from sose.core.runtime import ResourceDefinition
 from sose.domain.config import DomainDefinition
+from pydantic import Field
 
 from .common import CanonicalConfig, build_runtime, seed_case, transition
 
 
 class JobShopConfig(CanonicalConfig):
     participants: int = 3
-    machines: int = 2
+    machines: int = Field(default=2, ge=1)
 
 
 def seed(persistence, config):
@@ -22,8 +23,10 @@ def seed(persistence, config):
 
 
 def reconcile(persistence, engine, backend, config, case):
+    if not config.enabled:
+        return
     current = persistence.entity("canonical_case", case.id)
-    resources = DurableResourceManager(persistence)
+    resources = engine.resources
     if current.state == "ready":
         # First operation of each route; subsequent operations are admitted as
         # earlier ownership is released, preserving deterministic precedence.
@@ -44,5 +47,5 @@ definition = DomainDefinition(
     description="Canonical job-shop scheduling problem demonstrating deterministic multi-machine Resource contention.",
     config_model=JobShopConfig, build_runtime=build_runtime, seed=seed,
     reconcile_tick=reconcile,
-    runtime_mutable_fields=frozenset({"tick_step", "random_seed"}),
+    runtime_mutable_fields=frozenset({"tick_step", "random_seed", "enabled"}),
 )
