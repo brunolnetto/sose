@@ -43,6 +43,7 @@ def reconcile(persistence, engine, backend, config, case):
 
 definition = DomainDefinition(
     name="sleeping_barber",
+    kind="canonical",
     description="Canonical sleeping-barber queue demonstrating capacity, waiting-room admission, and durable Resource ownership.",
     config_model=SleepingBarberConfig, build_runtime=build_runtime, seed=seed,
     reconcile_tick=reconcile,
