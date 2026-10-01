@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Generic, TypeVar
+from typing import Generic, Literal, TypeVar
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -50,6 +50,7 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
         tuple[SimulationContext, Engine],
     ]
     seed: Callable[[Persistence, ConfigT], SeedT]
+    kind: Literal["domain", "canonical"] = "domain"
     reconcile_tick: Callable[
         [Persistence, Engine, object, ConfigT, SeedT],
         None,
@@ -162,6 +163,7 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
         return {
             "name": self.name,
             "description": self.description,
+            "kind": self.kind,
             "config_model": self.config_model.__name__,
             "defaults": defaults,
             "parameters": parameters,
@@ -184,8 +186,16 @@ class DomainCatalog:
         except KeyError as exc:
             raise KeyError(f"unknown domain: {name}") from exc
 
-    def names(self) -> tuple[str, ...]:
-        return tuple(sorted(self._definitions))
+    def names(self, *, kind: Literal["domain", "canonical"] | None = None) -> tuple[str, ...]:
+        return tuple(
+            sorted(
+                name
+                for name, definition in self._definitions.items()
+                if kind is None or definition.kind == kind
+            )
+        )
 
-    def definitions(self) -> tuple[DomainDefinition, ...]:
-        return tuple(self._definitions[name] for name in self.names())
+    def definitions(
+        self, *, kind: Literal["domain", "canonical"] | None = None
+    ) -> tuple[DomainDefinition, ...]:
+        return tuple(self._definitions[name] for name in self.names(kind=kind))

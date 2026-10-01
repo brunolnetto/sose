@@ -41,6 +41,7 @@ def reconcile(persistence, engine, backend, config, case):
 
 definition = DomainDefinition(
     name="producer_consumer",
+    kind="canonical",
     description="Canonical bounded-buffer producer/consumer problem demonstrating durable Store backpressure.",
     config_model=ProducerConsumerConfig, build_runtime=build_runtime, seed=seed,
     reconcile_tick=reconcile,
