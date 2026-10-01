@@ -157,3 +157,21 @@ def test_next_delivery_starts_at_previous_checkpoint():
     assert second.batch.from_event_offset == 1
     assert second.batch.to_event_offset == 2
     assert tuple(event.event_id for event in second.batch.events) == ("event-2",)
+
+
+def test_jsonl_sink_ignores_blank_lines_when_checking_idempotency(tmp_path):
+    persistence = MemoryPersistence()
+    with persistence.transaction() as uow:
+        uow.save_job_state(_state())
+    _append_event(persistence, 1)
+
+    path = tmp_path / "analytics.jsonl"
+    sink = JSONLAnalyticalSink(path)
+    path.write_text("\n\n", encoding="utf-8")
+
+    delivery = SinkOutbox(persistence).flush(SinkBinding("warehouse", sink), _state())
+
+    assert delivery is not None
+    nonblank = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(nonblank) == 1
+    assert json.loads(nonblank[0])["batch_id"] == delivery.batch.batch_id

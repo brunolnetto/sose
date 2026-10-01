@@ -85,3 +85,27 @@ def test_entity_factory_rejects_custom_class_without_entity_type_metadata():
 
     with pytest.raises(ValueError, match="entity_type is required"):
         context().entities.create(MissingEntityMetadata, key=("broken",))
+
+
+def test_entity_factory_rejects_empty_key():
+    with pytest.raises(ValueError, match="entity key"):
+        context().entities.create(Entity, entity_type="order", key=())
+
+
+def test_event_factory_exception_uses_standard_prefix_and_payload():
+    ctx = context()
+    entity = ctx.entities.create(Entity, entity_type="order", key=(1,))
+
+    event = ctx.events.exception("payment_failed", entity=entity, reason="declined")
+
+    assert event.name == "exception.payment_failed"
+    assert event.payload == {"reason": "declined"}
+
+
+def test_schedule_factory_rejects_negative_delay():
+    ctx = context()
+    entity = ctx.entities.create(Entity, entity_type="order", key=(1,))
+    command = ctx.commands.create("approve", target=entity, key=("approve", entity.id))
+
+    with pytest.raises(ValueError, match="delay cannot be negative"):
+        ctx.schedules.after(timedelta(seconds=-1), command=command)
