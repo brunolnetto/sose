@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import replace
-
 import pytest
 
 from sose.backends.simpy import SimPyBackend
@@ -201,7 +199,7 @@ def test_delivery_attempt_creation_is_idempotent():
     second = ensure_delivery_attempt(persistence, engine, ordinal=1)
 
     assert second == first
-    assert len(persistence.entities("delivery_attempt")) == 1
+    assert sum(1 for entity in persistence.entities() if entity.entity_type == "delivery_attempt") == 1
 
 
 def test_delivery_dispatch_rejects_wrong_shipment_state():
