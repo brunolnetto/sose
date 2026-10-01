@@ -106,6 +106,8 @@ class _PrepareRaceUow:
         return self.checkpoint
 
     def get_sink_delivery(self, delivery_id):
+        if self.existing is None or self.existing.delivery_id != delivery_id:
+            return None
         return self.existing
 
     def save_sink_delivery(self, delivery):
@@ -157,14 +159,16 @@ def test_prepare_returns_existing_deterministic_delivery():
     )
 
     result = SinkOutbox(persistence).prepare(_state(), sink_name="sink")
-    # Force identical identity by replacing the fake's result after learning
-    # deterministic delivery identity from a normal prepare path.
-    if result != existing:
-        uow.existing = result
-        result2 = SinkOutbox(persistence).prepare(_state(), sink_name="sink")
-        assert result2 == result
-    else:
-        assert result == existing
+    assert result is not None
+    assert result != existing
+    assert uow.saved == [result]
+
+    # The second prepare sees the exact deterministic identity persisted by the
+    # first attempt and must return it rather than manufacturing another record.
+    uow.existing = result
+    result2 = SinkOutbox(persistence).prepare(_state(), sink_name="sink")
+    assert result2 == result
+    assert uow.saved == [result]
 
 
 def test_deliver_validates_binding_and_short_circuits_completed():
