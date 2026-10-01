@@ -14,7 +14,7 @@ from sose.jobs.config_edit import (
     set_domain_parameter,
 )
 from sose.jobs.doctor import inspect_job_file_health
-from sose.jobs.factory import build_job_from_file
+from sose.jobs.factory import _domain_warehouse, build_job_from_file
 from sose.jobs.job_edit import describe_job_policy, set_job_policy
 from sose.jobs.plan import build_execution_plan_from_file
 from sose.jobs.storage import build_storage_plan
@@ -56,6 +56,37 @@ def _validate_config(path: str | Path) -> dict[str, object]:
 
     if config.runtime.backend != "simpy":
         raise KeyError(f"unknown runtime backend: {config.runtime.backend}")
+
+    # Validate the public DomainWarehouse section without opening a database.
+    if config.domain_warehouse is not None:
+        section = config.domain_warehouse
+        options = dict(section.options)
+        if section.adapter == "sqlite":
+            path_value = options.pop("path", "state/domain.sqlite3")
+            if not isinstance(path_value, str) or not path_value:
+                raise ValueError(
+                    "sqlite DomainWarehouse path must be a non-empty string"
+                )
+        elif section.adapter == "postgres":
+            for name in ("dsn", "dsn_env"):
+                value = options.pop(name, None)
+                if value is not None and (not isinstance(value, str) or not value):
+                    raise ValueError(
+                        f"postgres DomainWarehouse {name} must be a non-empty string"
+                    )
+            namespace = options.pop("namespace", "sose_domain")
+            if not isinstance(namespace, str) or not namespace:
+                raise ValueError(
+                    "postgres DomainWarehouse namespace must be a non-empty string"
+                )
+        else:
+            raise KeyError(
+                f"unknown DomainWarehouse adapter: {section.adapter}"
+            )
+        if options:
+            raise ValueError(
+                f"unknown {section.adapter} DomainWarehouse options: {sorted(options)}"
+            )
 
     return {
         "job_id": config.job.id,
