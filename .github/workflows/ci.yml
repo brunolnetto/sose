@@ -92,8 +92,22 @@ jobs:
             --cov=sose \
             --cov-branch \
             --cov-report=term-missing \
+            --cov-report=json:coverage.json \
             --cov-report=xml:coverage.xml \
-            --cov-report=html:htmlcov
+            --cov-report=html:htmlcov \
+            --json-report \
+            --json-report-file=pytest-report.json
+
+      - name: Analyze codebase quality
+        run: |
+          codebase-stats coverage.json \
+            --report pytest-report.json \
+            --source-root src/sose \
+            --show all \
+            --threshold 100 \
+            --top 0 \
+            --show-lines \
+            | tee codebase-stats-report.txt
 
       - name: Upload coverage reports
         if: always()
@@ -101,7 +115,10 @@ jobs:
         with:
           name: coverage-report
           path: |
+            coverage.json
             coverage.xml
+            pytest-report.json
+            codebase-stats-report.txt
             htmlcov/
           if-no-files-found: warn
           retention-days: 14
