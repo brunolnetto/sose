@@ -168,6 +168,11 @@ class SOSECatalogConfig(BaseModel):
                 "shared Engine Store catalogs currently require "
                 "'sqlite_incremental' or 'postgres'"
             )
+        if "namespace" in self.engine_store.options:
+            raise ValueError(
+                "catalog Engine Store namespace is job-specific; "
+                "set jobs[].engine_namespace instead"
+            )
         return self
 
 
