@@ -265,3 +265,11 @@ id = "legacy"
     assert parsed.domain_store is not None
     assert parsed.domain_warehouse is parsed.domain_store
     assert parsed.runtime.backend == "simpy"
+
+
+def test_scaffold_rejects_non_simpy_compatibility_backend():
+    with pytest.raises(ValueError, match="SimPy"):
+        render_sose_toml(
+            builtin_catalog().get("mro"),
+            runtime_backend="other",
+        )
