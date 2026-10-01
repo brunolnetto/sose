@@ -217,7 +217,7 @@ def reconcile_receiving_resources(
     inspector_request_id = f"inspector:{entities.receipt_id}"
 
     receipt = persistence.entity("receipt", entities.receipt_id)
-    if receipt is None:  # pragma: no cover - seed invariant
+    if receipt is None:
         raise RuntimeError("receipt was not persisted")
 
     dock = None
@@ -359,7 +359,7 @@ def reconcile_stocking(
         raise RuntimeError("receipt inventory is not durably stocked yet")
 
     receipt = persistence.entity("receipt", entities.receipt_id)
-    if receipt is None:  # pragma: no cover - seed invariant
+    if receipt is None:
         raise RuntimeError("receipt was not persisted")
     if receipt.state == "inspected":
         command = engine.context.commands.create(
@@ -483,7 +483,7 @@ def reconcile_consumption(
         raise RuntimeError("material demand inventory withdrawal is still pending")
 
     demand = persistence.entity("material_demand", entities.material_demand_id)
-    if demand is None:  # pragma: no cover - seed invariant
+    if demand is None:
         raise RuntimeError("material demand was not persisted")
     if demand.state in {"open", "waiting_inventory", "backordered"}:
         allocate = engine.context.commands.create(
@@ -559,7 +559,7 @@ def run_shortage_backorder(
     engine.rebuild_backend(backend)
 
     demand = persistence.entity("material_demand", entities.material_demand_id)
-    if demand is None:  # pragma: no cover - seed invariant
+    if demand is None:
         raise RuntimeError("material demand was not persisted")
 
     engine.stores.get(

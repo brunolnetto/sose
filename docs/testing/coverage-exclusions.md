@@ -56,17 +56,8 @@ statement is physically impossible to trigger with monkeypatching.
 
 ## Remaining exclusion debt
 
-These pragmas are **not** accepted as intrinsically untestable and should be
-removed as dedicated evidence is added.
-
-| File / line | Why it is testable | Intended envelope |
-| --- | --- | --- |
-| `backends/simpy.py:14` | Missing optional dependency is a supported installation failure | isolated packaging/venv test without `simpy` |
-| `backends/simpy.py:313` | A malformed native store value can be injected | adapter boundary unit test |
-| `examples/p2p/simulation.py:220` | Missing seeded receipt can be fault-injected | corrupted/fake persistence test |
-| `examples/p2p/simulation.py:362` | Missing seeded receipt can be fault-injected | corrupted/fake persistence test |
-| `examples/p2p/simulation.py:486` | Missing material demand can be fault-injected | corrupted/fake persistence test |
-| `examples/p2p/simulation.py:562` | Missing material demand can be fault-injected | corrupted/fake persistence test |
+None. Every previously identified reachable exclusion now has executable
+evidence. New exclusions remain subject to the review rule below.
 
 ## Removed exclusions
 
@@ -74,7 +65,10 @@ The coverage audit has already removed pragmas from:
 
 - reference-conformance module import failures;
 - reference-conformance scenario-module import failures;
-- malformed custom `EntityFactory` classes.
+- malformed custom `EntityFactory` classes;
+- missing SimPy optional dependency imports;
+- malformed native SimPy store values;
+- corrupted P2P receipt/material-demand seed invariants.
 
 Those are normal observable error paths and now have executable tests.
 
