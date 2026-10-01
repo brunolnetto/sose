@@ -52,3 +52,63 @@ def test_sqlite_domain_warehouse_rejects_non_string_path(tmp_path):
     })
     with pytest.raises(ValueError, match="non-empty string"):
         _domain_warehouse(config, Path(tmp_path))
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [("dsn", True), ("dsn_env", 42), ("namespace", False)],
+)
+def test_postgres_domain_warehouse_rejects_non_string_options(tmp_path, name, value):
+    config = SOSEConfig.model_validate({
+        "domain": {"name": "tutorial_job"},
+        "domain_warehouse": {
+            "adapter": "postgres",
+            "options": {"dsn": "postgresql://example", name: value},
+        },
+        "job": {"id": f"invalid-{name}"},
+    })
+    with pytest.raises(ValueError, match="non-empty string"):
+        _domain_warehouse(config, Path(tmp_path))
+
+
+def test_postgres_domain_warehouse_resolves_dsn_env(tmp_path, monkeypatch):
+    import sys
+    import types
+    import sose.domain.postgres as postgres_module
+
+    captured = {}
+    class StubWarehouse:
+        def __init__(self, dsn, *, namespace="sose_domain"):
+            captured.update(dsn=dsn, namespace=namespace)
+
+    monkeypatch.setattr(postgres_module, "PostgresDomainWarehouse", StubWarehouse)
+    monkeypatch.setenv("SOSE_TEST_DOMAIN_DSN", "postgresql://env")
+    config = SOSEConfig.model_validate({
+        "domain": {"name": "tutorial_job"},
+        "domain_warehouse": {
+            "adapter": "postgres",
+            "options": {
+                "dsn_env": "SOSE_TEST_DOMAIN_DSN",
+                "namespace": "custom_domain",
+            },
+        },
+        "job": {"id": "postgres-env"},
+    })
+    _domain_warehouse(config, Path(tmp_path))
+    assert captured == {
+        "dsn": "postgresql://env",
+        "namespace": "custom_domain",
+    }
+
+
+def test_postgres_domain_warehouse_rejects_unknown_options(tmp_path):
+    config = SOSEConfig.model_validate({
+        "domain": {"name": "tutorial_job"},
+        "domain_warehouse": {
+            "adapter": "postgres",
+            "options": {"dsn": "postgresql://example", "mystery": True},
+        },
+        "job": {"id": "postgres-unknown"},
+    })
+    with pytest.raises(ValueError, match="unknown postgres DomainWarehouse options"):
+        _domain_warehouse(config, Path(tmp_path))
