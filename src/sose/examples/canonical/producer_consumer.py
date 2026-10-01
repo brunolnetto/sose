@@ -26,8 +26,8 @@ def reconcile(persistence, engine, backend, config, case):
     if current.state == "ready":
         stores = DurableStoreManager(persistence)
         for index in range(config.participants):
-            stores.put(backend, store_name="buffer", item_id=f"item-{index}",
-                       value={"producer": index}, requested_at=engine.context.clock.now)
+            stores.ensure_put(backend, store_name="buffer", item_id=f"item-{index}",
+                              value={"producer": index}, requested_at=engine.context.clock.now)
         transition(engine, current, "advance")
     elif current.state == "active":
         stores = DurableStoreManager(persistence)
