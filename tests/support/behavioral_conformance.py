@@ -9,25 +9,30 @@ from sose.jobs.runner import SimulationJob
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
-def operational_snapshot(persistence) -> dict[str, tuple]:
-    """Stable operational truth suitable for deterministic continuation checks."""
+def operational_snapshot(persistence) -> dict[str, object]:
+    """Complete durable continuation truth used by restart-equivalence gates."""
     return {
-        "job": tuple(
-            (s.job_id, s.next_tick, s.run_count, s.status, s.phase)
-            for s in persistence.job_states()
-        ),
-        "resources": tuple(sorted(
-            (r.resource_name, r.reservation_id, r.request_id)
-            for r in persistence.resource_reservations()
-        )),
-        "demands": tuple(sorted(
-            (d.resource_name, d.request_id)
-            for d in persistence.resource_demands()
-        )),
-        "store_results": tuple(sorted(
-            (r.store_name, r.request_id, r.item.item_id)
-            for r in persistence.store_get_results()
-        )),
+        "job": persistence.job_states(),
+        "position": persistence.simulation_position(),
+        "scheduled_work": persistence.scheduled_work(),
+        "resource_definitions": persistence.resource_definitions(),
+        "resource_demands": persistence.resource_demands(),
+        "resource_reservations": persistence.resource_reservations(),
+        "resource_release_intents": persistence.resource_release_intents(),
+        "store_definitions": persistence.store_definitions(),
+        "store_items": persistence.store_items(),
+        "store_put_intents": persistence.store_put_intents(),
+        "store_get_requests": persistence.store_get_requests(),
+        "store_get_results": persistence.store_get_results(),
+        "container_definitions": persistence.container_definitions(),
+        "container_states": persistence.container_states(),
+        "container_operation_intents": persistence.container_operation_intents(),
+        "container_operation_results": persistence.container_operation_results(),
+        "preemptive_resource_definitions": persistence.preemptive_resource_definitions(),
+        "preemptive_resource_demands": persistence.preemptive_resource_demands(),
+        "preemptive_resource_reservations": persistence.preemptive_resource_reservations(),
+        "preemptive_resource_release_intents": persistence.preemptive_resource_release_intents(),
+        "resource_preemption_results": persistence.resource_preemption_results(),
     }
 
 
@@ -64,6 +69,8 @@ def assert_precedence(
     completed: Iterable[str],
     edges: Iterable[tuple[str, str]],
 ) -> None:
+    completed = tuple(completed)
+    assert len(completed) == len(set(completed)), "duplicate completion IDs are invalid"
     order = {operation: index for index, operation in enumerate(completed)}
     for predecessor, successor in edges:
         if successor in order:
@@ -102,6 +109,10 @@ def assert_restart_equivalent(
         return SimPyBackend(origin=origin)
 
     continuous_path = directory / f"{definition.name}-continuous.sqlite3"
+    restarted_path = directory / f"{definition.name}-restarted.sqlite3"
+    for path in (continuous_path, restarted_path):
+        if path.exists():
+            raise FileExistsError(f"restart-equivalence database already exists: {path}")
     continuous = SQLiteIncrementalPersistence(continuous_path)
     job = SimulationJob(
         job_id=identity,
@@ -115,7 +126,6 @@ def assert_restart_equivalent(
     expected = snapshot(continuous)
     continuous.close()
 
-    restarted_path = directory / f"{definition.name}-restarted.sqlite3"
     persistence = SQLiteIncrementalPersistence(restarted_path)
     job = SimulationJob(
         job_id=identity,
