@@ -64,6 +64,13 @@ def test_origin_hub_queue_backpressure_recovers_without_duplicate_arrival():
 
     request_id = f"origin-dock:{entities.shipment_id}"
     assert engine.resources.reservation_for(request_id) is not None
+    pending_origin = [
+        intent
+        for intent in persistence.store_put_intents()
+        if intent.item_id == f"origin-queue:{entities.shipment_id}"
+    ]
+    assert len(pending_origin) == 1
+    assert pending_origin[0].store_name == "origin_hub_queue"
 
     _drain(
         engine,
@@ -123,6 +130,13 @@ def test_destination_queue_backpressure_recovers_after_durable_origin_dequeue():
     dock_request = f"destination-dock:{entities.shipment_id}"
     assert engine.resources.reservation_for(transfer_request) is not None
     assert engine.resources.reservation_for(dock_request) is not None
+    pending_destination = [
+        intent
+        for intent in persistence.store_put_intents()
+        if intent.item_id == f"destination-queue:{entities.shipment_id}"
+    ]
+    assert len(pending_destination) == 1
+    assert pending_destination[0].store_name == "destination_hub_queue"
 
     _drain(
         engine,
@@ -152,6 +166,7 @@ def test_transfer_replay_after_destination_arrival_has_no_new_side_effects():
     before = (
         tuple(persistence.events()),
         tuple(persistence.store_get_results()),
+        tuple(persistence.store_put_intents()),
         tuple(persistence.resource_reservations()),
     )
 
@@ -160,6 +175,7 @@ def test_transfer_replay_after_destination_arrival_has_no_new_side_effects():
     after = (
         tuple(persistence.events()),
         tuple(persistence.store_get_results()),
+        tuple(persistence.store_put_intents()),
         tuple(persistence.resource_reservations()),
     )
     assert after == before
@@ -183,6 +199,7 @@ def test_delivery_dispatch_replay_keeps_single_attempt_and_selection():
     before = (
         tuple(persistence.events()),
         tuple(persistence.store_get_results()),
+        tuple(persistence.store_put_intents()),
         tuple(persistence.resource_reservations()),
     )
 
@@ -197,6 +214,7 @@ def test_delivery_dispatch_replay_keeps_single_attempt_and_selection():
     after = (
         tuple(persistence.events()),
         tuple(persistence.store_get_results()),
+        tuple(persistence.store_put_intents()),
         tuple(persistence.resource_reservations()),
     )
     assert after == before
