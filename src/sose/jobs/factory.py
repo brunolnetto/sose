@@ -24,6 +24,35 @@ def _backend_factory(name: str):
     raise KeyError(f"unknown runtime backend: {name}")
 
 
+def _domain_warehouse(config: SOSEConfig, base_dir: Path):
+    section = config.domain_warehouse
+    if section is None:
+        return None
+    options = dict(section.options)
+    if section.adapter == "sqlite":
+        from sose.domain.sqlite import SQLiteDomainWarehouse
+        path = Path(str(options.pop("path", "state/domain.sqlite3")))
+        if not path.is_absolute():
+            path = base_dir / path
+        if options:
+            raise ValueError(f"unknown sqlite DomainWarehouse options: {sorted(options)}")
+        return SQLiteDomainWarehouse(path)
+    if section.adapter == "postgres":
+        from sose.domain.postgres import PostgresDomainWarehouse
+        import os
+        dsn = options.pop("dsn", None)
+        dsn_env = options.pop("dsn_env", None)
+        if dsn is None and dsn_env is not None:
+            dsn = os.environ.get(str(dsn_env))
+        namespace = str(options.pop("namespace", "sose_domain"))
+        if options:
+            raise ValueError(f"unknown postgres DomainWarehouse options: {sorted(options)}")
+        if not dsn:
+            raise ValueError("postgres DomainWarehouse requires dsn or dsn_env")
+        return PostgresDomainWarehouse(str(dsn), namespace=namespace)
+    raise KeyError(f"unknown DomainWarehouse adapter: {section.adapter}")
+
+
 def build_job_from_config(
     config: SOSEConfig,
     *,
@@ -63,6 +92,7 @@ def build_job_from_config(
         ticks_per_trigger=config.job.ticks_per_trigger,
         max_ticks_per_trigger=config.job.max_ticks_per_trigger,
         sink_bindings=sink_bindings,
+        domain_warehouse=_domain_warehouse(config, base_dir),
     )
     job.initialize(config.domain.parameters)
     return job
