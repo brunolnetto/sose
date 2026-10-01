@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from html import escape
 from pathlib import Path
 
 
@@ -51,6 +52,12 @@ def summarize_coverage(payload: dict[str, object]) -> list[dict[str, object]]:
     return rows
 
 
+def _markdown_code(value: object) -> str:
+    escaped = escape(str(value), quote=True)
+    escaped = escaped.replace("|", "&#124;").replace("`", "&#96;")
+    return "`" + escaped + "`"
+
+
 def render_markdown(rows: list[dict[str, object]], *, limit: int = 30) -> str:
     selected = rows[:limit]
     lines = [
@@ -62,7 +69,7 @@ def render_markdown(rows: list[dict[str, object]], *, limit: int = 30) -> str:
     for rank, row in enumerate(selected, start=1):
         lines.append(
             "| "
-            f"{rank} | `{row['path']}` | "
+            f"{rank} | {_markdown_code(row['path'])} | "
             f"{row['missing_lines']} | "
             f"{row['missing_branches']} | "
             f"{row['total_debt']} | "
