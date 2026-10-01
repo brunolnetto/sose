@@ -88,6 +88,16 @@ def test_filter_is_rejected_for_non_filter_store():
             filter=lambda _: True,
         )
 
+    received = []
+    runtime.put_store("fifo", item_id="item", value=1)
+    runtime.get_store(
+        "fifo",
+        request_id="filtered",
+        on_received=received.append,
+    )
+    runtime.run_until(ORIGIN)
+    assert [item.item_id for item in received] == ["item"]
+
 
 def test_priority_store_orders_by_priority_then_insertion():
     runtime = _backend()
@@ -243,12 +253,16 @@ def test_preemptive_resource_definition_validation(name, capacity, message):
         runtime.create_preemptive_resource(name, capacity=capacity)
 
 
-def test_preemptive_resource_name_cannot_collide_with_normal_resource():
+def test_resource_name_namespace_is_symmetric_between_normal_and_preemptive():
     runtime = _backend()
-    runtime.create_resource("shared")
+    runtime.create_resource("normal-first")
 
     with pytest.raises(ValueError, match="already exists"):
-        runtime.create_preemptive_resource("shared")
+        runtime.create_preemptive_resource("normal-first")
+
+    runtime.create_preemptive_resource("preemptive-first")
+    with pytest.raises(ValueError, match="already exists"):
+        runtime.create_resource("preemptive-first")
 
 
 def test_preemptive_request_empty_and_duplicate_identity_validation():
@@ -277,6 +291,40 @@ def test_preemptive_request_empty_and_duplicate_identity_validation():
             on_acquired=lambda _: None,
             on_preempted=lambda _: None,
             preempt=False,
+        )
+
+
+def test_request_id_namespace_is_symmetric_between_normal_and_preemptive():
+    runtime = _backend()
+    runtime.create_resource("normal")
+    runtime.create_preemptive_resource("preemptive")
+
+    runtime.request_resource(
+        "normal",
+        request_id="normal-first",
+        on_acquired=lambda _: None,
+    )
+    with pytest.raises(ValueError, match="already exists"):
+        runtime.request_preemptive_resource(
+            "preemptive",
+            request_id="normal-first",
+            on_acquired=lambda _: None,
+            on_preempted=lambda _: None,
+            preempt=False,
+        )
+
+    runtime.request_preemptive_resource(
+        "preemptive",
+        request_id="preemptive-first",
+        on_acquired=lambda _: None,
+        on_preempted=lambda _: None,
+        preempt=False,
+    )
+    with pytest.raises(ValueError, match="already exists"):
+        runtime.request_resource(
+            "normal",
+            request_id="preemptive-first",
+            on_acquired=lambda _: None,
         )
 
 
