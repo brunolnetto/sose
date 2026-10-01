@@ -21,8 +21,10 @@ def seed(persistence, config):
 
 
 def reconcile(persistence, engine, backend, config, case):
+    if not config.enabled:
+        return
     current = persistence.entity("canonical_case", case.id)
-    resources = DurableResourceManager(persistence)
+    resources = engine.resources
     if current.state == "ready":
         # Ordered acquisition removes circular wait while retaining contention.
         for philosopher in range(config.participants):
@@ -45,5 +47,5 @@ definition = DomainDefinition(
     description="Canonical dining-philosophers problem demonstrating ordered durable Resource acquisition and contention.",
     config_model=DiningPhilosophersConfig, build_runtime=build_runtime, seed=seed,
     reconcile_tick=reconcile,
-    runtime_mutable_fields=frozenset({"tick_step", "random_seed"}),
+    runtime_mutable_fields=frozenset({"tick_step", "random_seed", "enabled"}),
 )
