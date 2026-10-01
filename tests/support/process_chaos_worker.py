@@ -23,10 +23,21 @@ def _checkpoint_coverage() -> None:
         current.save()
 
 
-def _pause(marker: Path, continue_file: Path | None) -> None:
+def _publish_marker(marker: Path, payload: str) -> None:
+    temporary = marker.with_name(f".{marker.name}.tmp")
+    temporary.write_text(payload, encoding="utf-8")
+    temporary.replace(marker)
+
+
+def _pause(
+    marker: Path,
+    continue_file: Path | None,
+    *,
+    payload: str = "ready",
+) -> None:
     _checkpoint_coverage()
     if not marker.exists():
-        marker.write_text("ready", encoding="utf-8")
+        _publish_marker(marker, payload)
     if continue_file is None:
         while True:
             time.sleep(60)
@@ -82,12 +93,18 @@ class PausingPostgres(PostgresPersistence):
             yield uow
             if index == self._pause_at and self._phase == "before_commit":
                 pid = self._connection.execute("SELECT pg_backend_pid()").fetchone()[0]
-                self._marker.write_text(str(pid), encoding="utf-8")
-                _pause(self._marker, self._continue_file)
+                _pause(
+                    self._marker,
+                    self._continue_file,
+                    payload=str(pid),
+                )
         if index == self._pause_at and self._phase == "after_commit":
             pid = self._connection.execute("SELECT pg_backend_pid()").fetchone()[0]
-            self._marker.write_text(str(pid), encoding="utf-8")
-            _pause(self._marker, self._continue_file)
+            _pause(
+                self._marker,
+                self._continue_file,
+                payload=str(pid),
+            )
 
 
 def _run(persistence, name: str) -> None:
