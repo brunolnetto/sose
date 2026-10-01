@@ -7,6 +7,7 @@ from sose.jobs.scaffold import render_sose_toml
 from sose.jobs.runner import SimulationJob
 from sose.backends.simpy import SimPyBackend
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+from sose.persistence.memory import MemoryPersistence
 
 
 CANONICALS = (
@@ -69,20 +70,18 @@ def test_canonical_executes_across_fresh_process_restart(tmp_path, name):
 def test_readers_writers_represents_concurrent_read_capacity():
     definition = builtin_catalog().get("readers_writers")
     config = definition.default_config()
-    persistence = SQLiteIncrementalPersistence(":memory:")
+    persistence = MemoryPersistence()
     definition.seed(persistence, config)
     resources = {item.name: item.capacity for item in persistence.resource_definitions()}
     assert resources["reader_slots"] == config.readers
     assert resources["writer_gate"] == 1
-    persistence.close()
 
 
 def test_dining_philosophers_has_one_exclusive_fork_per_participant():
     definition = builtin_catalog().get("dining_philosophers")
     config = definition.default_config()
-    persistence = SQLiteIncrementalPersistence(":memory:")
+    persistence = MemoryPersistence()
     definition.seed(persistence, config)
     resources = persistence.resource_definitions()
     assert len(resources) == config.participants
     assert all(resource.capacity == 1 for resource in resources)
-    persistence.close()
