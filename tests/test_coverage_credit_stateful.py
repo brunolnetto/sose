@@ -93,6 +93,24 @@ def test_delinquency_recovery_persists_missing_case_already_referenced_by_loan()
 
 def test_collection_unavailable_withdraws_any_request_and_returns_false(monkeypatch):
     persistence, _, engine, backend, _, installment_id = _prepare_overdue()
+    delinquency = credit.ensure_delinquency(
+        persistence,
+        engine,
+        installment_id_value=installment_id,
+    )
+    collection_id = credit.collection_case_id(delinquency.id)
+    request_id = f"collection-agent:{collection_id}"
+
+    engine.resources.request(
+        backend,
+        resource_name="collection_agent",
+        request_id=request_id,
+        requested_at=backend.now,
+        priority=1,
+    )
+    backend.run_until(backend.now)
+    assert engine.resources.reservation_for(request_id) is not None
+
     original_attribute = engine.context.scenarios.attribute
 
     def unavailable(key, default=None):
@@ -109,15 +127,9 @@ def test_collection_unavailable_withdraws_any_request_and_returns_false(monkeypa
         installment_id_value=installment_id,
     ) is False
 
-    collection_id = credit.collection_case_id(
-        credit.delinquency_case_id(
-            persistence.entity("loan_installment", installment_id).attributes["loan_id"],
-            installment_id,
-        )
-    )
-    assert engine.resources.reservation_for(f"collection-agent:{collection_id}") is None
+    assert engine.resources.reservation_for(request_id) is None
     assert all(
-        demand.request_id != f"collection-agent:{collection_id}"
+        demand.request_id != request_id
         for demand in persistence.resource_demands()
     )
 
@@ -140,6 +152,14 @@ def test_collection_returns_pending_when_agent_capacity_is_busy():
         backend,
         installment_id_value=installment_id,
     ) is False
+
+    installment = persistence.entity("loan_installment", installment_id)
+    assert installment is not None
+    request_id = f"collection-agent:{credit.collection_case_id(credit.delinquency_case_id(installment.attributes['loan_id'], installment_id))}"
+    assert any(
+        demand.request_id == request_id
+        for demand in persistence.resource_demands()
+    )
 
 
 def test_cure_requires_paid_installment():
