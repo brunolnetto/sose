@@ -75,7 +75,11 @@ def render_sose_toml(
     job_id: str | None = None,
     persistence_adapter: str = "sqlite_incremental",
     persistence_path: str = "state/sose.sqlite3",
+    runtime_backend: str = "simpy",
 ) -> str:
+    if runtime_backend != "simpy":
+        raise ValueError("SOSE uses SimPy as its built-in simulation backend")
+
     description = definition.describe_config()
     defaults = {
         key: value
@@ -183,6 +187,7 @@ def write_sose_toml(
             job_id=job_id,
             persistence_adapter=persistence_adapter,
             persistence_path=persistence_path,
+            runtime_backend=runtime_backend,
         ),
         encoding="utf-8",
     )
