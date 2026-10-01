@@ -192,6 +192,7 @@ def test_composite_effect_applies_environment_and_transition_modifier():
 
     assert ctx.scenarios.attribute("inventory.shortage") is True
     assert ctx.scenarios.transition_weight_multiplier("work_order", "wait") == 4.0
+    assert ctx.scenarios.transition_weight_multiplier("purchase_order", "wait") == 1.0
 
 
 def test_active_transition_weight_effect_changes_probability_distribution():
