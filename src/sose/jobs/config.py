@@ -19,7 +19,7 @@ def engine_namespace_for_job(job_id: str) -> str:
     digest = sha256(job_id.encode("utf-8")).hexdigest()[:8]
     stem = normalized[:30]
     namespace = f"{stem}_{digest}"
-    if not _ENGINE_NAMESPACE_RE.fullmatch(namespace):
+    if not _ENGINE_NAMESPACE_RE.fullmatch(namespace):  # pragma: no cover - construction invariant
         raise ValueError(f"cannot derive Engine Store namespace from job id: {job_id!r}")
     return namespace
 
