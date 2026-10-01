@@ -14,7 +14,7 @@ from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
 _SCHEMA_VERSION = 3
-_NAMESPACE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}$")
+_NAMESPACE_RE = re.compile(r"^[a-z_][a-z0-9_]{0,39}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -35,7 +35,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         super().__init__()
         if not _NAMESPACE_RE.fullmatch(namespace):
             raise ValueError(
-                "SQLiteIncrementalPersistence namespace must be a SQL-safe "
+                "SQLiteIncrementalPersistence namespace must be a lowercase SQL-safe "
                 "identifier with at most 40 characters"
             )
         self.namespace = namespace
