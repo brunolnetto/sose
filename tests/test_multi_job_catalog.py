@@ -9,6 +9,7 @@ from sose.jobs.config import (
     DomainWarehouseSection,
     PersistenceSection,
     SOSECatalogConfig,
+    load_sose_catalog_config,
 )
 
 
@@ -143,3 +144,51 @@ def test_same_domain_can_run_as_independent_jobs_with_separate_warehouses(tmp_pa
         assert first.domain_warehouse is not second.domain_warehouse
     finally:
         catalog.close()
+
+
+
+def test_catalog_toml_loads_shared_engine_and_per_job_domain_stores(tmp_path):
+    path = tmp_path / "sose-catalog.toml"
+    path.write_text(
+        """
+[engine_store]
+adapter = "sqlite_incremental"
+
+[engine_store.options]
+path = "shared.sqlite3"
+
+[[jobs]]
+id = "producer-a"
+engine_namespace = "producer_a"
+
+[jobs.domain]
+name = "producer_consumer"
+
+[jobs.domain_store]
+adapter = "sqlite"
+
+[jobs.domain_store.options]
+path = "producer-a-domain.sqlite3"
+
+[[jobs]]
+id = "barber-b"
+engine_namespace = "barber_b"
+
+[jobs.domain]
+name = "sleeping_barber"
+
+[jobs.domain_store]
+adapter = "sqlite"
+
+[jobs.domain_store.options]
+path = "barber-b-domain.sqlite3"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    config, base_dir = load_sose_catalog_config(path)
+    assert base_dir == tmp_path
+    assert config.engine_store.options["path"] == "shared.sqlite3"
+    assert [job.id for job in config.jobs] == ["producer-a", "barber-b"]
+    assert config.jobs[0].domain.name == "producer_consumer"
+    assert config.jobs[1].domain_store.options["path"] == "barber-b-domain.sqlite3"
