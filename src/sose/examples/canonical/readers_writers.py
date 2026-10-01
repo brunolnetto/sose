@@ -3,13 +3,20 @@ from __future__ import annotations
 from sose.core.resources import DurableResourceManager
 from sose.core.runtime import ResourceDefinition
 from sose.domain.config import DomainDefinition
+from pydantic import Field, model_validator
 
 from .common import CanonicalConfig, build_runtime, seed_case, transition
 
 
 class ReadersWritersConfig(CanonicalConfig):
     participants: int = 4
-    readers: int = 3
+    readers: int = Field(default=3, ge=1)
+
+    @model_validator(mode="after")
+    def validate_readers(self):
+        if self.readers >= self.participants:
+            raise ValueError("readers must be less than participants so at least one writer exists")
+        return self
 
 
 def seed(persistence, config):
@@ -21,8 +28,10 @@ def seed(persistence, config):
 
 
 def reconcile(persistence, engine, backend, config, case):
+    if not config.enabled:
+        return
     current = persistence.entity("canonical_case", case.id)
-    resources = DurableResourceManager(persistence)
+    resources = engine.resources
     if current.state == "ready":
         # A single ownership token makes exclusion explicit; reader requests
         # precede writers in this minimal fairness demonstration.
@@ -46,5 +55,5 @@ definition = DomainDefinition(
     description="Canonical readers/writers ownership problem demonstrating queued durable exclusion and priority.",
     config_model=ReadersWritersConfig, build_runtime=build_runtime, seed=seed,
     reconcile_tick=reconcile,
-    runtime_mutable_fields=frozenset({"tick_step", "random_seed"}),
+    runtime_mutable_fields=frozenset({"tick_step", "random_seed", "enabled"}),
 )
