@@ -25,17 +25,11 @@ def reconcile(persistence, engine, backend, config, case):
         return
     current = persistence.entity("canonical_case", case.id)
     resources = engine.resources
+
     if current.state == "ready":
-        # Request only the lower-ranked fork first. The second request is
-        # admitted only after durable ownership of the first, implementing a
-        # real resource hierarchy rather than merely sorting simultaneous asks.
-        for philosopher in range(config.participants):
-            first, _ = sorted((philosopher, (philosopher + 1) % config.participants))
-            resources.ensure_requested(backend, resource_name=f"fork-{first}",
-                request_id=f"p{philosopher}-fork-{first}", requested_at=engine.context.clock.now)
-        transition(engine, current, "advance")
+        candidate = "ready"
     elif current.state == "active":
-        candidate = "noop"
+        target = "noop"
         for philosopher in range(config.participants):
             first, second = sorted((philosopher, (philosopher + 1) % config.participants))
             first_id = f"p{philosopher}-fork-{first}"
@@ -44,19 +38,41 @@ def reconcile(persistence, engine, backend, config, case):
                 resources.reservation_for(first_id) is not None
                 or resources.reservation_for(second_id) is not None
             ):
-                candidate = f"p{philosopher}"
+                target = f"p{philosopher}"
                 break
+        candidate = f"active:{target}"
+    else:
+        candidate = "noop"
 
-        action = resolve_tick_action(
-            persistence,
-            backend,
-            canonical="dining_philosophers",
-            logical_tick=engine.context.clock.tick,
-            candidate=candidate,
-            requested_at=engine.context.clock.now,
-        )
-        if action != "noop":
-            philosopher = int(action[1:])
+    action = resolve_tick_action(
+        persistence,
+        backend,
+        canonical="dining_philosophers",
+        logical_tick=engine.context.clock.tick,
+        candidate=candidate,
+        requested_at=engine.context.clock.now,
+    )
+
+    if action == "ready":
+        if current.state != "ready":
+            return
+        for philosopher in range(config.participants):
+            first, _ = sorted((philosopher, (philosopher + 1) % config.participants))
+            resources.ensure_requested(
+                backend,
+                resource_name=f"fork-{first}",
+                request_id=f"p{philosopher}-fork-{first}",
+                requested_at=engine.context.clock.now,
+            )
+        transition(engine, current, "advance")
+        return
+
+    if action.startswith("active:"):
+        if current.state != "active":
+            return
+        target = action.removeprefix("active:")
+        if target != "noop":
+            philosopher = int(target[1:])
             first, second = sorted((philosopher, (philosopher + 1) % config.participants))
             first_id = f"p{philosopher}-fork-{first}"
             second_id = f"p{philosopher}-fork-{second}"
@@ -81,7 +97,7 @@ def reconcile(persistence, engine, backend, config, case):
                 resources.release(backend, second_reservation.reservation_id)
 
         if not persistence.resource_demands() and not persistence.resource_reservations():
-            transition(engine, persistence.entity("canonical_case", case.id), "finish")
+            transition(engine, current, "finish")
 
 
 definition = DomainDefinition(
