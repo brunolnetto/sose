@@ -111,7 +111,7 @@ jobs:
             | tee codebase-stats-report.txt
 
       - name: Enforce coverage floor
-        run: coverage report --fail-under=88
+        run: coverage report --fail-under=89
 
       - name: Upload coverage reports
         if: always()
