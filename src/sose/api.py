@@ -31,7 +31,7 @@ from sose.persistence.jsonl_journal import JSONLJournalPersistence
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
-from sose.jobs.config import SOSEConfig, load_sose_config
+from sose.jobs.config import SOSECatalogConfig, SOSEConfig, load_sose_catalog_config, load_sose_config
 from sose.jobs.doctor import (
     JobDoctorIssue,
     JobDoctorReport,
@@ -39,6 +39,11 @@ from sose.jobs.doctor import (
     inspect_job_health,
 )
 from sose.jobs.factory import build_job_from_config, build_job_from_file
+from sose.jobs.catalog import (
+    SimulationJobCatalog,
+    build_job_catalog_from_config,
+    build_job_catalog_from_file,
+)
 from sose.jobs.model import SimulationJobState
 from sose.jobs.runner import (
     JobTickResult,
@@ -99,11 +104,13 @@ __all__ = [
     "ResourceBackend",
     "SQLiteIncrementalPersistence",
     "SQLitePersistence",
+    "SOSECatalogConfig",
     "SOSEConfig",
     "Scenario",
     "Scheduler",
     "ScheduledTrigger",
     "SimulationClock",
+    "SimulationJobCatalog",
     "SimulationJob",
     "SimulationJobState",
     "SimulationContext",
@@ -115,6 +122,8 @@ __all__ = [
     "TickTrigger",
     "TransitionWeightEffect",
     "UnitOfWork",
+    "build_job_catalog_from_config",
+    "build_job_catalog_from_file",
     "build_job_from_config",
     "build_job_from_file",
     "builtin_persistence_registry",
@@ -122,6 +131,7 @@ __all__ = [
     "collect_runtime_diagnostics",
     "inspect_job_file_health",
     "inspect_job_health",
+    "load_sose_catalog_config",
     "load_sose_config",
     "probabilistic",
     "probabilistic_transitions",

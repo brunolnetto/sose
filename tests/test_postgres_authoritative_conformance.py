@@ -14,6 +14,14 @@ from sose.core.runtime import DurableStoreItem, ScheduledWork, StoreDefinition, 
 from sose.persistence.authoritative_conformance import AuthoritativePersistenceConformanceSuite
 from sose.persistence.postgres import PostgresPersistence, StaleWriterError
 from sose.persistence.qualification import ConcurrencyEnvelope
+from sose.jobs.catalog import build_job_catalog_from_config
+from sose.jobs.config import (
+    CatalogJobSection,
+    DomainSection,
+    DomainWarehouseSection,
+    PersistenceSection,
+    SOSECatalogConfig,
+)
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
@@ -116,3 +124,53 @@ def test_postgres_earns_authoritative_distributed_single_writer_qualification():
     q=suite.qualify(result)
     assert q.authoritative
     assert q.concurrency==ConcurrencyEnvelope(max_writers=1,distributed=True)
+
+
+
+def test_postgres_shared_engine_database_isolates_catalog_jobs(tmp_path):
+    assert DSN is not None
+    suffix = uuid4().hex[:8]
+    config = SOSECatalogConfig(
+        engine_store=PersistenceSection(
+            adapter="postgres",
+            options={"dsn": DSN},
+        ),
+        jobs=[
+            CatalogJobSection(
+                id=f"orders-{suffix}",
+                engine_namespace=f"orders_{suffix}",
+                domain=DomainSection(name="order_to_cash"),
+                domain_store=DomainWarehouseSection(
+                    adapter="sqlite",
+                    options={"path": f"orders-{suffix}.sqlite3"},
+                ),
+            ),
+            CatalogJobSection(
+                id=f"mro-{suffix}",
+                engine_namespace=f"mro_{suffix}",
+                domain=DomainSection(name="mro"),
+                domain_store=DomainWarehouseSection(
+                    adapter="sqlite",
+                    options={"path": f"mro-{suffix}.sqlite3"},
+                ),
+            ),
+        ],
+    )
+    catalog = build_job_catalog_from_config(config, base_dir=tmp_path)
+    try:
+        orders = catalog.get(f"orders-{suffix}")
+        mro = catalog.get(f"mro-{suffix}")
+        assert orders.persistence.dsn == mro.persistence.dsn == DSN
+        assert orders.persistence.namespace != mro.persistence.namespace
+        assert len(orders.persistence.job_states()) == 1
+        assert len(mro.persistence.job_states()) == 1
+
+        orders.run_tick(trigger_id="orders:1")
+        assert orders.state().next_tick == 1
+        assert mro.state().next_tick == 0
+
+        mro.run_tick(trigger_id="mro:1")
+        assert mro.state().next_tick == 1
+        assert orders.state().next_tick == 1
+    finally:
+        catalog.close()

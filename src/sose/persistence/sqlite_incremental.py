@@ -4,6 +4,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from copy import deepcopy
 from pathlib import Path
+import re
 import sqlite3
 from time import monotonic, sleep
 from typing import Iterator
@@ -13,6 +14,7 @@ from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
 _SCHEMA_VERSION = 3
+_NAMESPACE_RE = re.compile(r"^[a-z_][a-z0-9_]{0,39}$")
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,8 +31,16 @@ class StaleWriterError(RuntimeError):
 class SQLiteIncrementalPersistence(MemoryPersistence):
     """SQLite adapter that persists only changed durable records per transaction."""
 
-    def __init__(self, path: str | Path) -> None:
+    def __init__(self, path: str | Path, *, namespace: str = "sose") -> None:
         super().__init__()
+        if not _NAMESPACE_RE.fullmatch(namespace):
+            raise ValueError(
+                "SQLiteIncrementalPersistence namespace must be a lowercase SQL-safe "
+                "identifier with at most 40 characters"
+            )
+        self.namespace = namespace
+        self._meta_table = f'"{namespace}_record_meta"'
+        self._record_table = f'"{namespace}_record"'
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
@@ -49,8 +59,8 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         self._connection.execute("BEGIN IMMEDIATE")
         try:
             self._connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS sose_record_meta (
+                f"""
+                CREATE TABLE IF NOT EXISTS {self._meta_table} (
                     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
                     schema_version INTEGER NOT NULL,
                     revision INTEGER NOT NULL DEFAULT 0,
@@ -60,8 +70,8 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                 """
             )
             self._connection.execute(
-                """
-                CREATE TABLE IF NOT EXISTS sose_record (
+                f"""
+                CREATE TABLE IF NOT EXISTS {self._record_table} (
                     collection TEXT NOT NULL,
                     record_key TEXT NOT NULL,
                     position INTEGER NOT NULL,
@@ -74,17 +84,17 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             columns = {
                 str(row[1])
                 for row in self._connection.execute(
-                    "PRAGMA table_info(sose_record_meta)"
+                    f"PRAGMA table_info({self._meta_table})"
                 ).fetchall()
             }
             row = self._connection.execute(
-                "SELECT schema_version FROM sose_record_meta WHERE singleton = 1"
+                f"SELECT schema_version FROM {self._meta_table} WHERE singleton = 1"
             ).fetchone()
 
             if row is None:
                 self._connection.execute(
-                    """
-                    INSERT OR IGNORE INTO sose_record_meta(
+                    f"""
+                    INSERT OR IGNORE INTO {self._meta_table}(
                         singleton,
                         schema_version,
                         revision
@@ -94,9 +104,9 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                     (_SCHEMA_VERSION,),
                 )
                 row = self._connection.execute(
-                    """
+                    f"""
                     SELECT schema_version
-                    FROM sose_record_meta
+                    FROM {self._meta_table}
                     WHERE singleton = 1
                     """
                 ).fetchone()
@@ -108,8 +118,8 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             if version == 1:
                 if "revision" not in columns:
                     self._connection.execute(
-                        """
-                        ALTER TABLE sose_record_meta
+                        f"""
+                        ALTER TABLE {self._meta_table}
                         ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
                         """
                     )
@@ -117,18 +127,18 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             if version == 2:
                 if "owner_id" not in columns:
                     self._connection.execute(
-                        "ALTER TABLE sose_record_meta ADD COLUMN owner_id TEXT"
+                        f"ALTER TABLE {self._meta_table} ADD COLUMN owner_id TEXT"
                     )
                 if "owner_epoch" not in columns:
                     self._connection.execute(
-                        """
-                        ALTER TABLE sose_record_meta
+                        f"""
+                        ALTER TABLE {self._meta_table}
                         ADD COLUMN owner_epoch INTEGER NOT NULL DEFAULT 0
                         """
                     )
                 self._connection.execute(
-                    """
-                    UPDATE sose_record_meta
+                    f"""
+                    UPDATE {self._meta_table}
                     SET schema_version = 3
                     WHERE singleton = 1
                     """
@@ -179,7 +189,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
 
     def _database_revision(self) -> int:
         row = self._connection.execute(
-            "SELECT revision FROM sose_record_meta WHERE singleton = 1"
+            f"SELECT revision FROM {self._meta_table} WHERE singleton = 1"
         ).fetchone()
         if row is None:
             return 0
@@ -191,9 +201,9 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             return
 
         rows = self._connection.execute(
-            """
+            f"""
             SELECT collection, record_key, position, payload
-            FROM sose_record
+            FROM {self._record_table}
             ORDER BY collection, position, record_key
             """
         ).fetchall()
@@ -219,15 +229,15 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         for change in changes:
             if change.operation == "delete":
                 self._connection.execute(
-                    "DELETE FROM sose_record WHERE collection = ? AND record_key = ?",
+                    f"DELETE FROM {self._record_table} WHERE collection = ? AND record_key = ?",
                     (change.collection, change.key),
                 )
             elif change.operation == "upsert":
                 assert change.position is not None
                 assert change.payload is not None
                 self._connection.execute(
-                    """
-                    INSERT INTO sose_record(collection, record_key, position, payload)
+                    f"""
+                    INSERT INTO {self._record_table}(collection, record_key, position, payload)
                     VALUES (?, ?, ?, ?)
                     ON CONFLICT(collection, record_key) DO UPDATE SET
                         position = excluded.position,
@@ -248,7 +258,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
 
     def writer_epoch(self) -> int:
         row = self._connection.execute(
-            "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
+            f"SELECT owner_epoch FROM {self._meta_table} WHERE singleton = 1"
         ).fetchone()
         if row is None:
             raise RuntimeError("writer metadata disappeared")
@@ -265,8 +275,8 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         self._connection.execute("BEGIN IMMEDIATE")
         try:
             cursor = self._connection.execute(
-                """
-                UPDATE sose_record_meta
+                f"""
+                UPDATE {self._meta_table}
                 SET owner_id = ?, owner_epoch = owner_epoch + 1
                 WHERE singleton = 1 AND owner_epoch = ?
                 """,
@@ -277,7 +287,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                     f"writer claim lost: expected epoch {expected_epoch}"
                 )
             row = self._connection.execute(
-                "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
+                f"SELECT owner_epoch FROM {self._meta_table} WHERE singleton = 1"
             ).fetchone()
             if row is None:  # pragma: no cover
                 raise RuntimeError("writer metadata disappeared")
@@ -295,7 +305,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
     ) -> Iterator[MemoryUnitOfWork]:
         self._connection.execute("BEGIN IMMEDIATE")
         row = self._connection.execute(
-            "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
+            f"SELECT owner_epoch FROM {self._meta_table} WHERE singleton = 1"
         ).fetchone()
         current_epoch = -1 if row is None else int(row[0])
         if current_epoch > 0 and owner_epoch is None:
@@ -323,8 +333,8 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             if changed:
                 next_revision = self._revision + 1
                 self._connection.execute(
-                    """
-                    UPDATE sose_record_meta
+                    f"""
+                    UPDATE {self._meta_table}
                     SET revision = ?
                     WHERE singleton = 1
                     """,
@@ -341,7 +351,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
 
     def persisted_record_count(self) -> int:
         row = self._connection.execute(
-            "SELECT COUNT(*) FROM sose_record"
+            f"SELECT COUNT(*) FROM {self._record_table}"
         ).fetchone()
         return 0 if row is None else int(row[0])
 

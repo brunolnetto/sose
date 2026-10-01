@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sose.jobs.config import SOSEConfig, load_sose_config
+from sose.jobs.config import SOSEConfig, DomainWarehouseSection, load_sose_config
 from sose.jobs.runner import SimulationJob
 from sose.persistence.registry import (
     PersistenceRegistry,
@@ -24,8 +24,10 @@ def _backend_factory(name: str):
     raise KeyError(f"unknown runtime backend: {name}")
 
 
-def _domain_warehouse(config: SOSEConfig, base_dir: Path):
-    section = config.domain_warehouse
+def _domain_warehouse_section(
+    section: DomainWarehouseSection | None,
+    base_dir: Path,
+):
     if section is None:
         return None
     options = dict(section.options)
@@ -68,6 +70,10 @@ def _domain_warehouse(config: SOSEConfig, base_dir: Path):
             raise ValueError("postgres DomainWarehouse requires dsn or dsn_env")
         return PostgresDomainWarehouse(dsn, namespace=namespace)
     raise KeyError(f"unknown DomainWarehouse adapter: {section.adapter}")
+
+
+def _domain_warehouse(config: SOSEConfig, base_dir: Path):
+    return _domain_warehouse_section(config.domain_warehouse, base_dir)
 
 
 def build_job_from_config(

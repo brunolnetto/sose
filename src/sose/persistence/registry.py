@@ -163,12 +163,22 @@ def builtin_persistence_registry() -> PersistenceRegistry:
             ),
         )
     )
+    def sqlite_incremental_factory(
+        options: dict[str, object],
+        base_dir: Path,
+    ) -> Persistence:
+        namespace = options.get("namespace", "sose")
+        if not isinstance(namespace, str) or not namespace:
+            raise ValueError("SQLite incremental namespace must be a non-empty string")
+        return SQLiteIncrementalPersistence(
+            _resolve_path(options, base_dir, default="sose.sqlite3"),
+            namespace=namespace,
+        )
+
     registry.register(
         PersistenceAdapter(
             "sqlite_incremental",
-            lambda options, base_dir: SQLiteIncrementalPersistence(
-                _resolve_path(options, base_dir, default="sose.sqlite3")
-            ),
+            sqlite_incremental_factory,
             capabilities=PersistenceCapabilities(
                 process_durable=True,
                 transactional_commits=True,
