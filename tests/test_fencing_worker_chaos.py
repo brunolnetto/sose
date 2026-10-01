@@ -87,6 +87,11 @@ def _worker_command(
     path: Path | None,
     namespace: str | None,
     continue_file: Path | None = None,
+    recover: bool = False,
+    result_file: Path | None = None,
+    pause_on_claim: bool = True,
+    pause_at: int | None = None,
+    pause_phase: str | None = None,
 ) -> list[str]:
     command = [
         sys.executable,
@@ -99,10 +104,19 @@ def _worker_command(
         owner,
         "--trigger-id",
         trigger,
-        "--pause-on-claim",
         "--marker",
         str(marker),
     ]
+    if pause_on_claim:
+        command.append("--pause-on-claim")
+    if recover:
+        command.append("--recover")
+    if result_file is not None:
+        command += ["--result-file", str(result_file)]
+    if pause_at is not None:
+        command += ["--pause-at", str(pause_at)]
+    if pause_phase is not None:
+        command += ["--pause-phase", pause_phase]
     if continue_file is not None:
         command += ["--continue-file", str(continue_file)]
     if backend == "sqlite":
@@ -193,6 +207,105 @@ def test_dead_worker_is_fenced_out_and_successor_recovers(tmp_path, backend, nam
         first_trigger=trigger,
         expected_previous_epoch=epoch_a,
     )
+    assert actual == expected
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGKILL requires POSIX")
+@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
+@pytest.mark.parametrize("name", CANONICALS)
+def test_takeover_waits_for_open_fenced_transaction_then_recovers(
+    tmp_path, backend, name
+):
+    if backend == "postgres" and not DSN:
+        pytest.skip("SOSE_TEST_POSTGRES_DSN is required")
+
+    definition = builtin_catalog().get(name)
+    control_path = tmp_path / name / backend / "open-tx-control.sqlite3"
+    data_path = tmp_path / name / backend / "open-tx.sqlite3"
+    control_namespace = f"oc_{uuid4().hex[:20]}" if backend == "postgres" else None
+    namespace = f"ot_{uuid4().hex[:20]}" if backend == "postgres" else None
+    expected = _control(
+        definition,
+        backend,
+        path=control_path if backend == "sqlite" else None,
+        namespace=control_namespace,
+    )
+
+    trigger = _trigger(name, 1)
+    transaction_marker = tmp_path / name / backend / "worker-a-open-transaction"
+    transaction_marker.parent.mkdir(parents=True, exist_ok=True)
+    worker_a = subprocess.Popen(
+        _worker_command(
+            backend=backend,
+            name=name,
+            owner="worker-a",
+            trigger=trigger,
+            marker=transaction_marker,
+            path=data_path if backend == "sqlite" else None,
+            namespace=namespace,
+            pause_on_claim=False,
+            pause_at=1,
+            pause_phase="before_commit",
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    epoch_a = _wait(transaction_marker, worker_a)
+
+    takeover_result = tmp_path / name / backend / "worker-b-result"
+    worker_b = subprocess.Popen(
+        _worker_command(
+            backend=backend,
+            name=name,
+            owner="worker-b",
+            trigger=trigger,
+            marker=tmp_path / name / backend / "worker-b-unused-marker",
+            path=data_path if backend == "sqlite" else None,
+            namespace=namespace,
+            recover=True,
+            result_file=takeover_result,
+            pause_on_claim=False,
+        ),
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+
+    # Worker B must not be able to advance the ownership epoch while worker A
+    # still holds an open fenced transaction. SQLite serializes this with
+    # BEGIN IMMEDIATE; PostgreSQL uses shared/exclusive advisory transaction
+    # locks around fenced work and ownership claims.
+    time.sleep(0.25)
+    assert worker_b.poll() is None
+    assert not takeover_result.exists()
+
+    worker_a.kill()
+    worker_a.wait(timeout=10)
+    assert worker_a.returncode == -signal.SIGKILL
+
+    stdout_b, stderr_b = worker_b.communicate(timeout=15)
+    assert worker_b.returncode == 0, (
+        f"takeover worker failed\nstdout={stdout_b}\nstderr={stderr_b}"
+    )
+    owner_b, epoch_b_text, logical_tick_text = takeover_result.read_text(
+        encoding="utf-8"
+    ).strip().split(":")
+    assert owner_b == "worker-b"
+    assert int(epoch_b_text) == epoch_a + 1
+    assert int(logical_tick_text) == 1
+
+    persistence = _open(
+        backend,
+        path=data_path if backend == "sqlite" else None,
+        namespace=namespace,
+    )
+    runner = PersistentJobRunner(_job(definition, persistence), owner_id="worker-b")
+    for tick in range(2, 4):
+        runner.run_tick(trigger_id=_trigger(definition.name, tick))
+    actual = operational_snapshot(persistence)
+    persistence.close()
+
     assert actual == expected
 
 
