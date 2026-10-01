@@ -56,6 +56,7 @@ def reconcile(persistence, engine, backend, config, case):
 
 definition = DomainDefinition(
     name="readers_writers",
+    kind="canonical",
     description="Canonical readers/writers ownership problem demonstrating queued durable exclusion and priority.",
     config_model=ReadersWritersConfig, build_runtime=build_runtime, seed=seed,
     reconcile_tick=reconcile,
