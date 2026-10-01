@@ -37,14 +37,28 @@ class DomainUnitOfWork:
         ).entity(entity_type, entity_id)
 
     def save_entity(self, entity: Entity) -> None:
+        persisted = deepcopy(entity)
+        current = self.get_entity(entity.entity_type, entity.id)
+        if current is not None and persisted != current:
+            if persisted.version < current.version:
+                raise ValueError(
+                    f"stale domain entity write: {entity.entity_type}/{entity.id} "
+                    f"v{persisted.version} < v{current.version}"
+                )
+            if persisted.version == current.version:
+                # Some domain reconcilers update attributes directly rather
+                # than calling Entity.touch(). The persistence boundary owns
+                # the monotonic revision invariant, so materialize a new
+                # revision before assigning mutation identity.
+                persisted.version = current.version + 1
         mutation = DomainMutation(
             deterministic_id(
                 "domain-entity-version",
-                entity.entity_type,
-                entity.id,
-                entity.version,
+                persisted.entity_type,
+                persisted.id,
+                persisted.version,
             ),
-            deepcopy(entity),
+            persisted,
         )
         existing = self._inner.get_domain_delivery(mutation.mutation_id)
         if existing is not None and existing.mutation != mutation:
@@ -53,7 +67,7 @@ class DomainUnitOfWork:
             )
         if existing is None:
             self._inner.save_domain_delivery(DomainDelivery(mutation))
-        self._working[(entity.entity_type, entity.id)] = deepcopy(entity)
+        self._working[(persisted.entity_type, persisted.id)] = deepcopy(persisted)
 
 
 class DomainPersistence:
