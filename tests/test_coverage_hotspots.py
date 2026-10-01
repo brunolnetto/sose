@@ -16,8 +16,18 @@ def _payload():
                 "summary": {"percent_covered": 80.0},
             },
             "src/beta.py": {
-                "missing_lines": [7, 9, 12],
-                "missing_branches": [],
+                "missing_lines": [7, 9],
+                "missing_branches": [[3, 7], [3, 9]],
+                "summary": {"percent_covered": 70.0},
+            },
+            "src/gamma.py": {
+                "missing_lines": [1, 2, 3],
+                "missing_branches": [[4, 5]],
+                "summary": {"percent_covered": 70.0},
+            },
+            "src/delta.py": {
+                "missing_lines": [8, 9, 10],
+                "missing_branches": [[4, 6]],
                 "summary": {"percent_covered": 70.0},
             },
             "src/complete.py": {
@@ -32,10 +42,19 @@ def _payload():
 def test_hotspots_rank_combined_line_and_branch_debt():
     rows = summarize_coverage(_payload())
 
-    assert [row["path"] for row in rows] == ["src/alpha.py", "src/beta.py"]
+    assert [row["path"] for row in rows] == [
+        "src/alpha.py",
+        "src/beta.py",
+        "src/delta.py",
+        "src/gamma.py",
+    ]
     assert rows[0]["total_debt"] == 4
     assert rows[0]["missing_branches"] == 2
-    assert rows[1]["total_debt"] == 3
+    assert rows[1]["total_debt"] == 4
+    assert rows[1]["missing_branches"] == 2
+    assert rows[2]["total_debt"] == rows[3]["total_debt"] == 4
+    assert rows[2]["missing_branches"] == rows[3]["missing_branches"] == 1
+    assert rows[2]["path"] == "src/delta.py"
 
 
 def test_hotspot_markdown_is_stable_and_explicit_about_metric():
@@ -58,3 +77,20 @@ def test_cli_writes_report(tmp_path):
 
     assert main([str(source), "--output", str(output), "--limit", "2"]) == 0
     assert "src/alpha.py" in output.read_text(encoding="utf-8")
+
+
+def test_hotspot_markdown_escapes_table_and_html_sensitive_path():
+    rows = [
+        {
+            "path": "src/a|<b>`c.py",
+            "missing_lines": 1,
+            "missing_branches": 0,
+            "total_debt": 1,
+            "percent_covered": 50.0,
+        }
+    ]
+
+    report = render_markdown(rows)
+
+    assert "src/a&#124;&lt;b&gt;&#96;c.py" in report
+    assert "src/a|<b>" not in report
