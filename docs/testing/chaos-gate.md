@@ -108,7 +108,13 @@ Two scenarios are then exercised:
    claims the next epoch, explicitly recovers the unresolved trigger, and
    continues to the same horizon. The final durable snapshot must equal a clean
    fenced control run.
-2. **Zombie worker rejection** — worker A remains paused after its claim. Worker B
+2. **Open-transaction takeover serialization** — worker A pauses inside a real
+   fenced transaction before COMMIT. Worker B starts a takeover concurrently
+   and must remain blocked while A still holds the database transaction. After
+   worker A is killed with `SIGKILL`, the database releases A's transaction;
+   only then may worker B claim the next epoch, recover the unresolved trigger,
+   and converge to the clean control snapshot.
+3. **Zombie worker rejection** — worker A remains paused after its claim. Worker B
    claims the next epoch and completes the unresolved work. Worker A is then
    released and must fail with `StaleWriterError` on its next fenced
    transaction. It must not alter the state already committed by worker B.
