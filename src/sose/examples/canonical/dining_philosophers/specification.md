@@ -15,7 +15,7 @@ Adjacent philosophers contend for exclusive forks. Naive acquisition can create 
 - Exactly one capacity-one fork exists per philosopher.
 - A fork cannot have multiple simultaneous owners.
 - Fork identities are globally ordered before requests are issued, removing circular-wait ordering.
-- Continuous and fresh-process-restarted execution converge.
+- Continuous and SQLite-reopened execution converge.
 
 ## Happy path
 Contended fork reservations are progressively released until all demand drains.
