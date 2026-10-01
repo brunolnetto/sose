@@ -8,6 +8,7 @@ from sose.jobs.runner import SimulationJob
 from sose.backends.simpy import SimPyBackend
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 from sose.persistence.memory import MemoryPersistence
+from tests.support.behavioral_conformance import assert_conservation, assert_store_capacity, assert_unique_consumption
 
 
 CANONICALS = (
