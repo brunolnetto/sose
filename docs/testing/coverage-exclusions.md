@@ -49,6 +49,7 @@ them would require invalidating an already-tested stronger contract.
 | `core/durable.py:76` | Attached durable scheduler requires its due callback |
 | `core/durable.py:197` | Recovery participants are validated for `rebuild_backend()` before reconstruction |
 | `persistence/duckdb.py:132` | Record changes have a closed internal operation set |
+| `jobs/config.py:22` | Namespace construction normalizes to a lowercase SQL-safe stem, prefixes digit/empty starts, truncates length, and appends an 8-hex digest; the final regex rejection cannot be reached through any `job_id` input |
 
 These are still defensive guards. The exclusion says the failure branch is not
 part of the supported execution state space; it does not claim the Python
