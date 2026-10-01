@@ -54,7 +54,7 @@ def test_crash_after_warehouse_apply_before_ack_is_safe():
 
     # A fresh outbox replays the same immutable mutation and only then ACKs it.
     restarted = DomainMutationOutbox(engine, warehouse)
-    assert restarted.deliver(delivery) is False
+    assert restarted.deliver(delivery) is DomainApplyResult.REPLAYED
     assert engine.domain_delivery(delivery.mutation_id) is None
     assert warehouse.entity("work_order", "wo-1").state == "released"
 
