@@ -24,17 +24,25 @@ def _production_pragmas() -> dict[str, str]:
     return pragmas
 
 
-def _ledger_entries() -> set[str]:
-    return {
+def _ledger_entries() -> tuple[str, ...]:
+    return tuple(
         f"{match.group('path')}:{match.group('line')}"
         for match in LEDGER_ENTRY.finditer(LEDGER.read_text(encoding="utf-8"))
-    }
+    )
 
 
 def test_every_production_no_cover_pragma_is_audited_exactly_once():
     actual = set(_production_pragmas())
-    documented = _ledger_entries()
+    entries = _ledger_entries()
+    documented = set(entries)
+    duplicates = sorted(
+        {entry for entry in entries if entries.count(entry) > 1}
+    )
 
+    assert duplicates == [], (
+        "coverage exclusion ledger contains duplicate audited entries: "
+        f"{duplicates}"
+    )
     assert actual == documented, (
         "coverage exclusion ledger drifted; add/remove a pragma only with an "
         "explicit audited ledger entry\n"
@@ -47,7 +55,7 @@ def test_every_production_no_cover_pragma_names_its_invariant_inline():
     missing_reason = {
         location: line
         for location, line in _production_pragmas().items()
-        if "# pragma: no cover -" not in line
+        if re.search(r"# pragma: no cover -\\s*\\S", line) is None
     }
 
     assert missing_reason == {}, (
