@@ -70,7 +70,7 @@ backward to make a change pass. The first authoritative combined baseline is
 merge blocker.
 
 
-## Codebase quality analysis
+The exclusion inventory and its remaining test debt are maintained in [coverage-exclusions.md](coverage-exclusions.md).\n\n## Codebase quality analysis
 
 The authoritative coverage job also runs `codebase-stats` against the generated
 `coverage.json` and pytest JSON report, with `src/sose` as the analysis root.
