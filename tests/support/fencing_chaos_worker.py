@@ -14,7 +14,18 @@ from sose.persistence.postgres import PostgresPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
+def _checkpoint_coverage() -> None:
+    try:
+        from coverage import Coverage
+    except ImportError:
+        return
+    current = Coverage.current()
+    if current is not None:
+        current.save()
+
+
 def _pause(marker: Path, continue_file: Path | None, epoch: int) -> None:
+    _checkpoint_coverage()
     marker.parent.mkdir(parents=True, exist_ok=True)
     marker.write_text(str(epoch), encoding="utf-8")
     if continue_file is None:
