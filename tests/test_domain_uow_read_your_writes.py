@@ -2,7 +2,7 @@ import pytest
 
 from sose.domain.entity import Entity
 from sose.domain.storage import DomainPersistence
-from sose.domain.warehouse import MemoryDomainWarehouse
+from sose.domain.warehouse import DomainMutation, MemoryDomainWarehouse
 from sose.persistence.memory import MemoryPersistence
 
 
