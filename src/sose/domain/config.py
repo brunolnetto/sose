@@ -44,13 +44,13 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
 
     name: str
     description: str
-    kind: Literal["domain", "canonical"] = "domain"
     config_model: type[ConfigT]
     build_runtime: Callable[
         [Persistence, ConfigT, datetime, int],
         tuple[SimulationContext, Engine],
     ]
     seed: Callable[[Persistence, ConfigT], SeedT]
+    kind: Literal["domain", "canonical"] = "domain"
     reconcile_tick: Callable[
         [Persistence, Engine, object, ConfigT, SeedT],
         None,
