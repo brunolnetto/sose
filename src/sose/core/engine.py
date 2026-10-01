@@ -131,7 +131,7 @@ class Engine:
 
         chart = self.context.statecharts.bind(entity, caused_by=command)
         chart.send(command.name, **dict(command.payload))
-        uow.save_entity(entity)
+        self._save_entity(uow, entity)
         emitted = self.context.drain_events()
         for event in emitted:
             uow.append_event(event)
