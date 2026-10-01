@@ -69,8 +69,12 @@ class PausingPostgres(PostgresPersistence):
         with super().transaction(owner_epoch=owner_epoch) as uow:
             yield uow
             if index == self._pause_at and self._phase == "before_commit":
+                pid = self._connection.execute("SELECT pg_backend_pid()").fetchone()[0]
+                self._marker.write_text(str(pid), encoding="utf-8")
                 _pause(self._marker, self._continue_file)
         if index == self._pause_at and self._phase == "after_commit":
+            pid = self._connection.execute("SELECT pg_backend_pid()").fetchone()[0]
+            self._marker.write_text(str(pid), encoding="utf-8")
             _pause(self._marker, self._continue_file)
 
 
