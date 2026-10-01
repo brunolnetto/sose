@@ -33,6 +33,10 @@ class _PausingMixin:
     marker: Path | None
     continue_file: Path | None
     fenced_transactions: int
+    pause_on_claim: bool
+    job_id: str | None
+    trigger_id: str | None
+    paused: bool
 
     def _configure_pause(
         self,
@@ -41,12 +45,19 @@ class _PausingMixin:
         pause_phase: str | None,
         marker: Path | None,
         continue_file: Path | None,
+        pause_on_claim: bool,
+        job_id: str | None,
+        trigger_id: str | None,
     ) -> None:
         self.pause_at = pause_at
         self.pause_phase = pause_phase
         self.marker = marker
         self.continue_file = continue_file
         self.fenced_transactions = 0
+        self.pause_on_claim = pause_on_claim
+        self.job_id = job_id
+        self.trigger_id = trigger_id
+        self.paused = False
 
     def _matches(self, index: int, phase: str, owner_epoch: int | None) -> bool:
         return (
@@ -73,6 +84,28 @@ class PausingSQLite(_PausingMixin, SQLiteIncrementalPersistence):
                 _pause(self.marker, self.continue_file, owner_epoch)
         if self._matches(index, "after_commit", owner_epoch):
             _pause(self.marker, self.continue_file, owner_epoch)
+        if (
+            owner_epoch is not None
+            and self.pause_on_claim
+            and not self.paused
+            and self.job_id is not None
+            and self.trigger_id is not None
+        ):
+            state = self.job_state(self.job_id)
+            if state is not None and state.active_trigger_id == self.trigger_id:
+                self.paused = True
+                _pause(self.marker, self.continue_file, owner_epoch)
+        if (
+            owner_epoch is not None
+            and self.pause_on_claim
+            and not self.paused
+            and self.job_id is not None
+            and self.trigger_id is not None
+        ):
+            state = self.job_state(self.job_id)
+            if state is not None and state.active_trigger_id == self.trigger_id:
+                self.paused = True
+                _pause(self.marker, self.continue_file, owner_epoch)
 
 
 class PausingPostgres(_PausingMixin, PostgresPersistence):
@@ -105,16 +138,21 @@ def main() -> None:
     parser.add_argument("--marker", type=Path)
     parser.add_argument("--continue-file", type=Path)
     parser.add_argument("--result-file", type=Path)
+    parser.add_argument("--pause-on-claim", action="store_true")
     parser.add_argument("--sqlite-path", type=Path)
     parser.add_argument("--dsn")
     parser.add_argument("--namespace")
     args = parser.parse_args()
 
+    job_id = f"{args.name}-fencing-chaos"
     pause = {
         "pause_at": args.pause_at,
         "pause_phase": args.pause_phase,
         "marker": args.marker,
         "continue_file": args.continue_file,
+        "pause_on_claim": args.pause_on_claim,
+        "job_id": job_id,
+        "trigger_id": args.trigger_id,
     }
     if args.backend == "sqlite":
         if args.sqlite_path is None:
@@ -127,7 +165,7 @@ def main() -> None:
 
     definition = builtin_catalog().get(args.name)
     job = SimulationJob(
-        job_id=f"{args.name}-fencing-chaos",
+        job_id=job_id,
         definition=definition,
         persistence=persistence,
         backend_factory=lambda origin: SimPyBackend(origin=origin),
