@@ -1,5 +1,7 @@
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
 from sose.core.randomness import RandomSource
@@ -75,3 +77,11 @@ def test_schedule_factory_reschedules_and_orders_command():
     assert scheduled.due_at == ctx.clock.now + timedelta(hours=4)
     assert ctx.scheduler.due(ctx.clock.now) == []
     assert ctx.scheduler.due(ctx.clock.now + timedelta(hours=4)) == [scheduled]
+
+
+def test_entity_factory_rejects_custom_class_without_entity_type_metadata():
+    class MissingEntityMetadata:
+        pass
+
+    with pytest.raises(ValueError, match="entity_type is required"):
+        context().entities.create(MissingEntityMetadata, key=("broken",))
