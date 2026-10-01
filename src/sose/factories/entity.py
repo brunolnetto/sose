@@ -33,7 +33,7 @@ class EntityFactory:
         if not isinstance(resolved_type, str) or not resolved_type:
             try:
                 resolved_type = entity_cls.__dataclass_fields__["entity_type"].default
-            except Exception as exc:  # pragma: no cover - defensive for custom classes
+            except Exception as exc:
                 raise ValueError("entity_type is required") from exc
 
         at = created_at or self._now()
