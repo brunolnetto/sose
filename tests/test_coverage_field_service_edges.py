@@ -280,6 +280,7 @@ def test_work_start_respects_dispatch_outage(monkeypatch):
         appointment_id_value=appointment.id,
     ) is False
     assert persistence.resource_demands() == ()
+    assert persistence.store_get_results() == ()
 
 
 def test_work_start_rejects_missing_technician_after_part_ownership():
