@@ -56,17 +56,9 @@ statement is physically impossible to trigger with monkeypatching.
 
 ## Remaining exclusion debt
 
-These pragmas are **not** accepted as intrinsically untestable and should be
-removed as dedicated evidence is added.
-
-| File / line | Why it is testable | Intended envelope |
-| --- | --- | --- |
-| `backends/simpy.py:14` | Missing optional dependency is a supported installation failure | isolated packaging/venv test without `simpy` |
-| `backends/simpy.py:313` | A malformed native store value can be injected | adapter boundary unit test |
-| `examples/p2p/simulation.py:220` | Missing seeded receipt can be fault-injected | corrupted/fake persistence test |
-| `examples/p2p/simulation.py:362` | Missing seeded receipt can be fault-injected | corrupted/fake persistence test |
-| `examples/p2p/simulation.py:486` | Missing material demand can be fault-injected | corrupted/fake persistence test |
-| `examples/p2p/simulation.py:562` | Missing material demand can be fault-injected | corrupted/fake persistence test |
+No current `# pragma: no cover` site is classified as testable exclusion debt.
+Supported packaging failures, malformed SimPy store values, and P2P corrupted-state
+guards now have executable evidence and remain in the measured coverage denominator.
 
 ## Removed exclusions
 
@@ -77,6 +69,13 @@ The coverage audit has already removed pragmas from:
 - malformed custom `EntityFactory` classes.
 
 Those are normal observable error paths and now have executable tests.
+
+The audit has also removed pragmas from:
+
+- missing SimPy optional-dependency import failure;
+- malformed native SimPy store values;
+- P2P missing seeded receipt guards;
+- P2P missing material-demand guards.
 
 ## Review rule
 
