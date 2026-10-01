@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
 from statemachine import State, StateChart
+from pydantic import Field
 
 from sose.api import (
     DomainConfig, DomainRegistry, Engine, Entity, EntityType,
@@ -29,11 +30,12 @@ class CanonicalCaseChart(StateChart):
 
 
 class CanonicalConfig(DomainConfig):
+    enabled: bool = True
     start_at: datetime = ORIGIN
     tick_step: timedelta = timedelta(minutes=1)
     random_seed: int = 1701
-    participants: int = 3
-    capacity: int = 1
+    participants: int = Field(default=3, ge=1)
+    capacity: int = Field(default=1, ge=1)
 
 
 def build_runtime(persistence, config: CanonicalConfig, now: datetime, tick: int):
