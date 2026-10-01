@@ -173,6 +173,26 @@ class SOSECatalogConfig(BaseModel):
                 "catalog Engine Store namespace is job-specific; "
                 "set jobs[].engine_namespace instead"
             )
+        if (
+            self.engine_store.adapter == "sqlite_incremental"
+            and self.engine_store.options.get("path") == ":memory:"
+        ):
+            raise ValueError(
+                "shared SQLite Engine Store catalogs require a file-backed path"
+            )
+        if self.engine_store.adapter == "sqlite_incremental":
+            noncanonical = [
+                job.engine_namespace
+                for job in self.jobs
+                if (
+                    job.engine_namespace is not None
+                    and job.engine_namespace != job.engine_namespace.lower()
+                )
+            ]
+            if noncanonical:
+                raise ValueError(
+                    "SQLite catalog engine_namespace values must be lowercase"
+                )
         return self
 
 
