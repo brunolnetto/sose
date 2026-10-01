@@ -55,7 +55,7 @@ def test_every_production_no_cover_pragma_names_its_invariant_inline():
     missing_reason = {
         location: line
         for location, line in _production_pragmas().items()
-        if re.search(r"# pragma: no cover -\\s*\\S", line) is None
+        if re.search(r"# pragma: no cover -\s*\S", line) is None
     }
 
     assert missing_reason == {}, (
