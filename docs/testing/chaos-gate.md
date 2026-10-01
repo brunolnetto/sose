@@ -142,3 +142,27 @@ failure from server failure.
 These tests establish runtime recovery after temporary PostgreSQL unavailability
 and connection-path loss. They do not claim tolerance while the database remains
 unavailable; SOSE resumes once authoritative storage becomes reachable again.
+
+## Level 5: storage exhaustion and write failure
+
+The `chaos storage-failure gate` targets the SQLite authoritative reference
+adapter with storage conditions that are qualitatively different from process
+death.
+
+The gate covers:
+
+- **disk-full semantics** using SQLite's real `SQLITE_FULL` path by constraining
+  `max_page_count` and attempting a multi-page durable entity write. The
+  transaction must roll back without advancing revision or committed state.
+  After capacity is restored, the same write must succeed and survive reopen.
+- **filesystem write denial** on POSIX by making both the database file and its
+  directory read-only after a clean close. A fresh writer must fail without
+  altering the previously committed state. Restoring permissions must allow the
+  same database to reopen and continue.
+- **live write denial** through SQLite `query_only` to exercise rollback while
+  the process and connection remain alive, followed by a successful retry.
+
+This gate establishes atomic rollback and resumability for the SQLite reference
+store under storage exhaustion and write denial. It does not emulate physical
+media corruption, torn sectors, or PostgreSQL server-side ENOSPC; those require
+backend/host-specific fault facilities.
