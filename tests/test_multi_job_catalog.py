@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from sose.jobs.catalog import build_job_catalog_from_config
 from sose.jobs.config import (
     CatalogJobSection,
@@ -192,3 +194,37 @@ path = "barber-b-domain.sqlite3"
     assert [job.id for job in config.jobs] == ["producer-a", "barber-b"]
     assert config.jobs[0].domain.name == "producer_consumer"
     assert config.jobs[1].domain_store.options["path"] == "barber-b-domain.sqlite3"
+
+
+
+def test_catalog_rejects_sqlite_memory_database():
+    with pytest.raises(ValueError, match="file-backed"):
+        SOSECatalogConfig(
+            engine_store=PersistenceSection(
+                adapter="sqlite_incremental",
+                options={"path": ":memory:"},
+            ),
+            jobs=[
+                CatalogJobSection(
+                    id="job-a",
+                    domain=DomainSection(name="producer_consumer"),
+                )
+            ],
+        )
+
+
+def test_catalog_rejects_case_aliasing_sqlite_namespaces():
+    with pytest.raises(ValueError, match="lowercase"):
+        SOSECatalogConfig(
+            engine_store=PersistenceSection(
+                adapter="sqlite_incremental",
+                options={"path": "engine.sqlite3"},
+            ),
+            jobs=[
+                CatalogJobSection(
+                    id="job-a",
+                    engine_namespace="Job",
+                    domain=DomainSection(name="producer_consumer"),
+                )
+            ],
+        )
