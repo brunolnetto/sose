@@ -109,6 +109,18 @@ class SimulationJob(Generic[ConfigT, SeedT]):
     def state(self) -> SimulationJobState | None:
         return self.persistence.job_state(self.job_id)
 
+    def close(self) -> None:
+        """Close both operational and domain storage owned by this job."""
+        seen: set[int] = set()
+        for store in (self.domain_warehouse, self.persistence):
+            if store is None or id(store) in seen:
+                continue
+            seen.add(id(store))
+            close = getattr(store, "close", None)
+            if callable(close):
+                close()
+
+
 
     def flush_domain_warehouse(self) -> int:
         """Drain committed business mutations before reading the next domain state."""
