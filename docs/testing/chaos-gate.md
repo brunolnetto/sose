@@ -116,3 +116,29 @@ Two scenarios are then exercised:
 This proves that process death does not strand durable ownership and that an
 obsolete process cannot resume as a split-brain writer after a successor has
 taken ownership.
+
+## Level 4: PostgreSQL infrastructure failure
+
+The `chaos postgres infrastructure gate` moves beyond individual session loss
+and manipulates the database service and transport itself.
+
+For each canonical example, the gate pauses a PostgreSQL-backed worker at a
+representative transaction boundary and exercises both sides of COMMIT:
+
+- **whole database outage** — the PostgreSQL service container is stopped while
+  the worker is paused, the worker is released into a dead database, and the
+  same container is restarted. A fresh `PostgresPersistence` then recovers the
+  unresolved trigger and must converge to the clean control snapshot.
+- **network interruption** — the worker connects through a disposable TCP proxy.
+  The proxy is terminated while the connection is active, severing the socket
+  without stopping PostgreSQL. The proxy is recreated on the same endpoint and
+  a fresh persistence connection must recover to the same durable state.
+
+Both tests run for failures immediately before and immediately after the chosen
+COMMIT boundary. The outage test therefore also validates persistence across a
+real PostgreSQL process restart, while the proxy test distinguishes transport
+failure from server failure.
+
+These tests establish runtime recovery after temporary PostgreSQL unavailability
+and connection-path loss. They do not claim tolerance while the database remains
+unavailable; SOSE resumes once authoritative storage becomes reachable again.
