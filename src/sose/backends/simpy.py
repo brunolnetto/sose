@@ -11,7 +11,7 @@ try:
     from simpy.resources.container import Container
     from simpy.resources.resource import PreemptiveResource, PriorityRequest, PriorityResource
     from simpy.resources.store import FilterStore, PriorityStore, Store
-except ImportError as exc:  # pragma: no cover - exercised in packaging environments
+except ImportError as exc:
     raise ImportError(
         "SimPyBackend requires the optional 'simpy' dependency. "
         "Install SOSE with: pip install 'sose[simpy]'"
@@ -310,7 +310,7 @@ class SimPyBackend:
         def received(completed: Event) -> None:
             native_item = completed.value
             item = native_item.item if isinstance(native_item, _PriorityEnvelope) else native_item
-            if not isinstance(item, StoreItem):  # pragma: no cover - adapter invariant
+            if not isinstance(item, StoreItem):
                 raise RuntimeError("store returned a non-SOSE item")
             state.items.pop(item.item_id, None)
             on_received(item)

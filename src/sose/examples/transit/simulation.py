@@ -948,36 +948,6 @@ def cancel_trip(
     return True
 
 
-def cancel_service_alert(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    *,
-    alert_key: str,
-) -> bool:
-    alert = _entity(
-        persistence,
-        "transit_service_alert",
-        service_alert_id(alert_key),
-    )
-    if alert.state == "cancelled":
-        return True
-    if alert.state == "cleared":
-        return False
-    for name in ("activate", "clear"):
-        engine.scheduler.cancel_pending(
-            entity_type="transit_service_alert",
-            entity_id=alert.id,
-            name=name,
-        )
-    _dispatch(
-        engine,
-        alert,
-        "cancel",
-        key=("transit-alert", alert.id, "cancel"),
-        correlation_id=deterministic_id("transit-alert", alert.id),
-    )
-    return True
-
 def schedule_service_alert(
     persistence: MemoryPersistence,
     engine: Engine,

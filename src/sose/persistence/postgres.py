@@ -207,7 +207,7 @@ class PostgresPersistence(MemoryPersistence):
                         change.payload,
                     ),
                 )
-            else:  # pragma: no cover
+            else:  # pragma: no cover - closed record operation set
                 raise RuntimeError(
                     f"unknown state record operation: {change.operation}"
                 )
@@ -304,7 +304,7 @@ class PostgresPersistence(MemoryPersistence):
                             """
                         ).format(self._meta_table)
                     ).fetchone()
-                    if row is None:  # pragma: no cover
+                    if row is None:  # pragma: no cover - metadata singleton invariant
                         raise RuntimeError(
                             "PostgresPersistence revision update failed"
                         )
