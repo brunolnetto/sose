@@ -133,7 +133,7 @@ def _cmd_apply(args: argparse.Namespace) -> int:
         )
         return 0
     finally:
-        _close_persistence(job.persistence)
+        job.close()
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
@@ -146,7 +146,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         print(_json(asdict(result)))
         return 0
     finally:
-        _close_persistence(job.persistence)
+        job.close()
 
 
 def _cmd_trigger(args: argparse.Namespace) -> int:
@@ -170,7 +170,7 @@ def _cmd_trigger(args: argparse.Namespace) -> int:
         print(_json(asdict(result)))
         return 0
     finally:
-        _close_persistence(job.persistence)
+        job.close()
 
 
 def _cmd_inspect(args: argparse.Namespace) -> int:
