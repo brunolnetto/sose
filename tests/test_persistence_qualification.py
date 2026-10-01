@@ -41,3 +41,11 @@ def test_authoritative_qualification_rejects_missing_evidence():
             tier=PersistenceTier.AUTHORITATIVE,
             suite_version="1.0",
         )
+
+
+def test_persistence_qualification_rejects_empty_suite_version():
+    with pytest.raises(ValueError, match="suite_version"):
+        PersistenceQualification(
+            tier=PersistenceTier.DURABLE,
+            suite_version="",
+        )
