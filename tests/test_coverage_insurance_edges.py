@@ -179,6 +179,7 @@ def test_claim_next_withdraws_adjuster_request_when_scenario_unavailable(monkeyp
         demand.request_id != "claims-adjuster:w1"
         for demand in persistence.resource_demands()
     )
+    assert engine.resources.reservation_for("claims-adjuster:blocker") == blocker
 
 
 def test_claim_next_releases_adjuster_when_queue_is_empty():
