@@ -31,14 +31,22 @@ def _domain_warehouse(config: SOSEConfig, base_dir: Path):
     options = dict(section.options)
     if section.adapter == "sqlite":
         from sose.domain.sqlite import SQLiteDomainWarehouse
-        path = Path(str(options.pop("path", "state/domain.sqlite3")))
+        raw_path = options.pop("path", "state/domain.sqlite3")
+        if not isinstance(raw_path, str) or not raw_path:
+            raise ValueError("sqlite DomainWarehouse path must be a non-empty string")
+        path = Path(raw_path)
         if not path.is_absolute():
             path = base_dir / path
         if options:
             raise ValueError(f"unknown sqlite DomainWarehouse options: {sorted(options)}")
         return SQLiteDomainWarehouse(path)
     if section.adapter == "postgres":
-        from sose.domain.postgres import PostgresDomainWarehouse
+        try:
+            from sose.domain.postgres import PostgresDomainWarehouse
+        except ModuleNotFoundError as exc:
+            raise RuntimeError(
+                "DomainWarehouse adapter 'postgres' requires installing the 'postgres' extra"
+            ) from exc
         import os
         dsn = options.pop("dsn", None)
         dsn_env = options.pop("dsn_env", None)
@@ -84,18 +92,30 @@ def build_job_from_config(
         base_dir=base_dir,
     )
 
-    job = SimulationJob(
-        job_id=config.job.id,
-        definition=definition,
-        persistence=persistence,
-        backend_factory=_backend_factory(config.runtime.backend),
-        ticks_per_trigger=config.job.ticks_per_trigger,
-        max_ticks_per_trigger=config.job.max_ticks_per_trigger,
-        sink_bindings=sink_bindings,
-        domain_warehouse=_domain_warehouse(config, base_dir),
-    )
-    job.initialize(config.domain.parameters)
-    return job
+    warehouse = None
+    try:
+        warehouse = _domain_warehouse(config, base_dir)
+        job = SimulationJob(
+            job_id=config.job.id,
+            definition=definition,
+            persistence=persistence,
+            backend_factory=_backend_factory(config.runtime.backend),
+            ticks_per_trigger=config.job.ticks_per_trigger,
+            max_ticks_per_trigger=config.job.max_ticks_per_trigger,
+            sink_bindings=sink_bindings,
+            domain_warehouse=warehouse,
+        )
+        job.initialize(config.domain.parameters)
+        return job
+    except Exception:
+        if warehouse is not None:
+            close = getattr(warehouse, "close", None)
+            if callable(close):
+                close()
+        close = getattr(persistence, "close", None)
+        if callable(close):
+            close()
+        raise
 
 
 def build_job_from_file(
