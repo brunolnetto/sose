@@ -75,7 +75,6 @@ def render_sose_toml(
     job_id: str | None = None,
     persistence_adapter: str = "sqlite_incremental",
     persistence_path: str = "state/sose.sqlite3",
-    runtime_backend: str = "simpy",
 ) -> str:
     description = definition.describe_config()
     defaults = {
@@ -113,10 +112,10 @@ def render_sose_toml(
     resolved_job_id = job_id or f"{definition.name}-job"
     persistence_options = [
         "",
-        "[persistence]",
+        "[engine_store]",
         f"adapter = {_toml_value(persistence_adapter)}",
         "",
-        "[persistence.options]",
+        "[engine_store.options]",
     ]
     if persistence_adapter == "postgres":
         namespace = "".join(
@@ -150,8 +149,7 @@ def render_sose_toml(
         persistence_options
         + [
             "",
-            "[runtime]",
-            f"backend = {_toml_value(runtime_backend)}",
+            "# SimPy is SOSE's built-in simulation backend; no runtime selection is required.",
             "",
             "[job]",
             f"id = {_toml_value(resolved_job_id)}",
@@ -185,7 +183,6 @@ def write_sose_toml(
             job_id=job_id,
             persistence_adapter=persistence_adapter,
             persistence_path=persistence_path,
-            runtime_backend=runtime_backend,
         ),
         encoding="utf-8",
     )
