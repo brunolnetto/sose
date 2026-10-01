@@ -31,12 +31,12 @@ them would require invalidating an already-tested stronger contract.
 | File / line | Invariant |
 | --- | --- |
 | `backends/simpy.py:275` | SimPy store-put event cannot be processed before callback attachment under the supported scheduling lifecycle |
-| `backends/simpy.py:318` | SimPy store-get event callback lifecycle |
-| `backends/simpy.py:349` | Store kind is a closed internal set validated before backend reconstruction |
-| `backends/simpy.py:453` | Container operation is a closed internal set |
-| `backends/simpy.py:456` | SimPy container event callback lifecycle |
-| `backends/simpy.py:523` | SimPy resource-request callback lifecycle |
-| `backends/simpy.py:620` | Preemptive resource lifecycle executes inside an active SimPy process |
+| `backends/simpy.py:319` | SimPy store-get event callback lifecycle |
+| `backends/simpy.py:350` | Store kind is a closed internal set validated before backend reconstruction |
+| `backends/simpy.py:454` | Container operation is a closed internal set |
+| `backends/simpy.py:457` | SimPy container event callback lifecycle |
+| `backends/simpy.py:529` | SimPy resource-request callback lifecycle |
+| `backends/simpy.py:626` | Preemptive resource lifecycle executes inside an active SimPy process |
 | `persistence/postgres.py:100` | Metadata singleton cannot disappear after transactional bootstrap |
 | `persistence/postgres.py:210` | Record changes have a closed internal operation set |
 | `persistence/postgres.py:307` | Metadata singleton cannot disappear during revision update |
