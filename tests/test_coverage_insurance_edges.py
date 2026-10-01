@@ -82,7 +82,7 @@ def test_missing_insurance_entity_guard_is_observable():
 def test_document_request_requires_active_policy():
     persistence, entities, engine, backend = _runtime()
     policy = _policy(persistence, entities)
-    policy.state = "expired"
+    policy.state = "lapsed"
     _save(persistence, policy)
 
     with pytest.raises(RuntimeError, match="active policy coverage"):
@@ -142,6 +142,25 @@ def test_claim_queue_requires_ready_or_reopened_claim():
 
 def test_claim_next_withdraws_adjuster_request_when_scenario_unavailable(monkeypatch):
     persistence, entities, engine, backend = _runtime()
+    blocker = engine.resources.ensure_requested(
+        backend,
+        resource_name="claims_adjuster",
+        request_id="claims-adjuster:blocker",
+        requested_at=backend.now,
+    )
+    assert blocker is not None
+    pending = engine.resources.ensure_requested(
+        backend,
+        resource_name="claims_adjuster",
+        request_id="claims-adjuster:w1",
+        requested_at=backend.now,
+    )
+    assert pending is None
+    assert any(
+        demand.request_id == "claims-adjuster:w1"
+        for demand in persistence.resource_demands()
+    )
+
     monkeypatch.setattr(
         engine.context.scenarios,
         "attribute",
@@ -219,6 +238,34 @@ def test_complete_assessment_requires_active_assessment():
         )
 
 
+def test_complete_assessment_requires_claim_to_be_assessing():
+    persistence, entities, engine, backend = _runtime()
+    claim = _claim(persistence, entities)
+    claim.state = "ready_for_assessment"
+    _save(persistence, claim)
+
+    from sose.examples.insurance.entities import Assessment
+    from sose.examples.insurance.simulation import assessment_id
+
+    assessment = engine.context.entities.create(
+        Assessment,
+        key=("insurance-reference", claim.id, "assessment", 1),
+        state="in_progress",
+        attributes={"claim_id": claim.id, "ordinal": 1},
+    )
+    assert assessment.id == assessment_id(claim.id, 1)
+    _save(persistence, assessment)
+
+    with pytest.raises(RuntimeError, match="requires active claim assessment"):
+        complete_assessment(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            worker_id="w1",
+        )
+
+
 def test_fraud_investigation_requires_fraud_review_claim():
     persistence, entities, engine, _ = _runtime()
 
@@ -253,8 +300,35 @@ def test_fraud_reconciliation_waits_when_investigator_is_contended():
     ) is False
 
 
-def test_reserve_requires_approved_claim_and_assessment():
+def test_reserve_requires_approved_assessment_when_claim_is_approved():
     persistence, entities, engine, _ = _runtime()
+    claim = _claim(persistence, entities)
+    claim.state = "approved"
+    _save(persistence, claim)
+
+    with pytest.raises(RuntimeError, match="approved claim and assessment"):
+        ensure_reserve(
+            persistence,
+            engine,
+            entities=entities,
+        )
+
+
+def test_reserve_requires_approved_claim_even_with_approved_assessment():
+    persistence, entities, engine, _ = _runtime()
+    claim = _claim(persistence, entities)
+
+    from sose.examples.insurance.entities import Assessment
+    from sose.examples.insurance.simulation import assessment_id
+
+    assessment = engine.context.entities.create(
+        Assessment,
+        key=("insurance-reference", claim.id, "assessment", 1),
+        state="approved",
+        attributes={"claim_id": claim.id, "ordinal": 1},
+    )
+    assert assessment.id == assessment_id(claim.id, 1)
+    _save(persistence, assessment)
 
     with pytest.raises(RuntimeError, match="approved claim and assessment"):
         ensure_reserve(
@@ -291,8 +365,35 @@ def test_reserve_requires_positive_amount_even_with_approved_evidence():
         )
 
 
-def test_payment_requires_approved_claim_and_established_reserve():
+def test_payment_requires_established_reserve_when_claim_is_approved():
     persistence, entities, engine, _ = _runtime()
+    claim = _claim(persistence, entities)
+    claim.state = "approved"
+    _save(persistence, claim)
+
+    with pytest.raises(RuntimeError, match="established Reserve"):
+        ensure_payment(
+            persistence,
+            engine,
+            entities=entities,
+        )
+
+
+def test_payment_requires_approved_claim_even_with_established_reserve():
+    persistence, entities, engine, _ = _runtime()
+    claim = _claim(persistence, entities)
+
+    from sose.examples.insurance.entities import Reserve
+    from sose.examples.insurance.simulation import reserve_id
+
+    reserve = engine.context.entities.create(
+        Reserve,
+        key=("insurance-reference", claim.id, "reserve"),
+        state="established",
+        attributes={"claim_id": claim.id, "amount": 10.0, "currency": "USD"},
+    )
+    assert reserve.id == reserve_id(claim.id)
+    _save(persistence, reserve)
 
     with pytest.raises(RuntimeError, match="established Reserve"):
         ensure_payment(
