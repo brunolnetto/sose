@@ -110,6 +110,13 @@ jobs:
             --show-lines \
             | tee codebase-stats-report.txt
 
+      - name: Render coverage hotspots
+        run: |
+          python scripts/coverage_hotspots.py coverage.json \
+            --limit 40 \
+            --output coverage-hotspots.md
+          cat coverage-hotspots.md
+
       - name: Enforce coverage floor
         run: coverage report --fail-under=90.5
 
@@ -123,6 +130,7 @@ jobs:
             coverage.xml
             pytest-report.json
             codebase-stats-report.txt
+            coverage-hotspots.md
             htmlcov/
           if-no-files-found: warn
           retention-days: 14
