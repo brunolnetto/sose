@@ -6,7 +6,7 @@ from sose.domain.config import DomainDefinition
 from sose.core.stores import DurableStoreManager
 from pydantic import Field
 
-from .common import CanonicalConfig, build_runtime, seed_case, transition
+from .common import CanonicalConfig, build_runtime, resolve_tick_action, seed_case, transition
 
 
 class SleepingBarberConfig(CanonicalConfig):
@@ -36,16 +36,30 @@ def reconcile(persistence, engine, backend, config, case):
         stores = DurableStoreManager(persistence)
         for index in range(accepted, config.participants):
             if not any(i.item_id == f"customer-{index}" for i in persistence.store_items()):
-                stores.put(backend, store_name="abandoned", item_id=f"customer-{index}",
-                           value={"customer": index}, requested_at=engine.context.clock.now)
+                stores.ensure_put(backend, store_name="abandoned", item_id=f"customer-{index}",
+                                  value={"customer": index}, requested_at=engine.context.clock.now)
         for index in range(accepted):
             resources.ensure_requested(backend, resource_name="barber",
                 request_id=f"customer-{index}", requested_at=engine.context.clock.now)
         transition(engine, current, "advance")
     elif current.state == "active":
-        reservations = list(persistence.resource_reservations())
-        if reservations:
-            resources.release(backend, reservations[0].reservation_id)
+        reservations = sorted(
+            persistence.resource_reservations(),
+            key=lambda reservation: (reservation.sequence, reservation.request_id),
+        )
+        candidate = reservations[0].request_id if reservations else "noop"
+        action = resolve_tick_action(
+            persistence,
+            backend,
+            canonical="sleeping_barber",
+            logical_tick=engine.context.clock.tick,
+            candidate=candidate,
+            requested_at=engine.context.clock.now,
+        )
+        if action != "noop":
+            reservation = resources.reservation_for(action)
+            if reservation is not None:
+                resources.release(backend, reservation.reservation_id)
         if not persistence.resource_demands() and not persistence.resource_reservations():
             transition(engine, persistence.entity("canonical_case", case.id), "finish")
 
