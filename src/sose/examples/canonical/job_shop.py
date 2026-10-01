@@ -6,7 +6,7 @@ from sose.domain.config import DomainDefinition
 from sose.core.stores import DurableStoreManager
 from pydantic import Field
 
-from .common import CanonicalConfig, build_runtime, seed_case, transition
+from .common import CanonicalConfig, build_runtime, resolve_tick_action, seed_case, transition
 
 
 class JobShopConfig(CanonicalConfig):
@@ -57,43 +57,71 @@ def reconcile(persistence, engine, backend, config, case):
     if current.state != "active":
         return
 
-    # Completing an owned operation creates a durable precedence marker.
+    candidate = None
     for job in range(config.participants):
         for operation in (0, 1):
             request_id = f"job-{job}-op-{operation}"
-            marker = f"{request_id}-done"
-            reservation = reservations.get(request_id)
-            if reservation is not None and marker not in completed:
-                resources.release(backend, reservation.reservation_id)
-                stores.put(
-                    backend,
-                    store_name="completed_operations",
-                    item_id=marker,
-                    value={"job": job, "operation": operation},
-                    requested_at=engine.context.clock.now,
-                )
-                return
+            if resources.reservation_for(request_id) is not None:
+                candidate = request_id
+                break
+        if candidate is not None:
+            break
 
-    # Operation 1 becomes eligible only after operation 0's durable marker.
-    for job in range(config.participants):
-        predecessor = f"job-{job}-op-0-done"
-        successor = f"job-{job}-op-1"
-        successor_done = f"{successor}-done"
-        if predecessor in completed and successor_done not in completed:
-            if successor not in {d.request_id for d in persistence.resource_demands()}:
-                machine = route(job)[1]
-                resources.ensure_requested(
-                    backend, resource_name=f"machine-{machine}",
-                    request_id=successor,
-                    requested_at=engine.context.clock.now,
-                )
+    all_complete = all(
+        f"job-{job}-op-1-done" in completed
+        for job in range(config.participants)
+    )
+    if candidate is None:
+        candidate = "finish" if all_complete else "admit-successors"
 
-    completed = {
-        item.item_id
-        for item in persistence.store_items()
-        if item.store_name == "completed_operations"
-    }
-    if all(f"job-{job}-op-1-done" in completed for job in range(config.participants)):
+    action = resolve_tick_action(
+        persistence,
+        backend,
+        canonical="job_shop",
+        logical_tick=engine.context.clock.tick,
+        candidate=candidate,
+        requested_at=engine.context.clock.now,
+    )
+
+    if action.startswith("job-"):
+        _, job_value, _, operation_value = action.split("-")
+        job = int(job_value)
+        operation = int(operation_value)
+        marker = f"{action}-done"
+        stores.ensure_put(
+            backend,
+            store_name="completed_operations",
+            item_id=marker,
+            value={"job": job, "operation": operation},
+            requested_at=engine.context.clock.now,
+        )
+        reservation = resources.reservation_for(action)
+        if reservation is not None:
+            resources.release(backend, reservation.reservation_id)
+        return
+
+    if action == "admit-successors":
+        completed = {
+            item.item_id
+            for item in persistence.store_items()
+            if item.store_name == "completed_operations"
+        }
+        for job in range(config.participants):
+            predecessor = f"job-{job}-op-0-done"
+            successor = f"job-{job}-op-1"
+            successor_done = f"{successor}-done"
+            if predecessor in completed and successor_done not in completed:
+                if not resources.has_request(successor):
+                    machine = route(job)[1]
+                    resources.ensure_requested(
+                        backend,
+                        resource_name=f"machine-{machine}",
+                        request_id=successor,
+                        requested_at=engine.context.clock.now,
+                    )
+        return
+
+    if action == "finish":
         transition(engine, persistence.entity("canonical_case", case.id), "finish")
 
 
