@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from sose.backends.simpy import SimPyBackend
 from sose.examples.mro import simulation as mro
 from sose.persistence.memory import MemoryPersistence
+from tests.support.behavioral_conformance import operational_snapshot
 
 
 def _released_runtime():
@@ -179,6 +180,7 @@ def test_interrupt_with_grant_but_no_displacement_withdraws_emergency(monkeypatc
 
 def test_resume_is_idempotent_after_work_is_already_running():
     persistence, entities, engine, backend = _active_work()
+    before = operational_snapshot(persistence)
 
     assert (
         mro.reconcile_emergency_resume(
@@ -189,6 +191,8 @@ def test_resume_is_idempotent_after_work_is_already_running():
         )
         is True
     )
+
+    assert operational_snapshot(persistence) == before
 
 
 def test_scenario_reconciles_committed_preemption_then_resumes_work():
@@ -211,6 +215,8 @@ def test_scenario_reconciles_committed_preemption_then_resumes_work():
         for result in persistence.resource_preemption_results()
     )
 
+    committed_before = persistence.resource_preemption_results()
+
     assert mro.reconcile_scenario_emergency(
         persistence,
         engine,
@@ -219,6 +225,12 @@ def test_scenario_reconciles_committed_preemption_then_resumes_work():
     )
 
     assert persistence.entity("work_order", entities.work_order_id).state == "in_progress"
+    assert persistence.resource_preemption_results() == committed_before
+    assert mro._active_emergency_request_id(
+        persistence,
+        entities.work_order_id,
+        prefix=f"bay-emergency-scenario:{entities.work_order_id}:",
+    ) is None
     assert [r.request_id for r in persistence.preemptive_resource_reservations()] == [
         f"bay:{entities.work_order_id}"
     ]
@@ -239,9 +251,13 @@ def test_scenario_with_active_emergency_but_no_interrupted_work_returns_false():
     backend.run_until(backend.now)
 
     assert persistence.entity("work_order", entities.work_order_id).state == "released"
+    before = operational_snapshot(persistence)
+
     assert mro.reconcile_scenario_emergency(
         persistence,
         engine,
         backend,
         entities=entities,
     ) is False
+
+    assert operational_snapshot(persistence) == before
