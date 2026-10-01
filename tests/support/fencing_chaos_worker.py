@@ -24,10 +24,16 @@ def _checkpoint_coverage() -> None:
         current.save()
 
 
+def _publish_marker(marker: Path, payload: str) -> None:
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    temporary = marker.with_name(f".{marker.name}.tmp")
+    temporary.write_text(payload, encoding="utf-8")
+    temporary.replace(marker)
+
+
 def _pause(marker: Path, continue_file: Path | None, epoch: int) -> None:
     _checkpoint_coverage()
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(str(epoch), encoding="utf-8")
+    _publish_marker(marker, str(epoch))
     if continue_file is None:
         while True:
             time.sleep(60)
