@@ -31,37 +31,61 @@ def reconcile(persistence, engine, backend, config, case):
         return
     current = persistence.entity("canonical_case", case.id)
     resources = engine.resources
+
     if current.state == "ready":
-        accepted = min(config.participants, config.waiting_chairs + config.capacity)
-        stores = DurableStoreManager(persistence)
-        for index in range(accepted, config.participants):
-            if not any(i.item_id == f"customer-{index}" for i in persistence.store_items()):
-                stores.ensure_put(backend, store_name="abandoned", item_id=f"customer-{index}",
-                                  value={"customer": index}, requested_at=engine.context.clock.now)
-        for index in range(accepted):
-            resources.ensure_requested(backend, resource_name="barber",
-                request_id=f"customer-{index}", requested_at=engine.context.clock.now)
-        transition(engine, current, "advance")
+        candidate = "ready"
     elif current.state == "active":
         reservations = sorted(
             persistence.resource_reservations(),
             key=lambda reservation: (reservation.sequence, reservation.request_id),
         )
-        candidate = reservations[0].request_id if reservations else "noop"
-        action = resolve_tick_action(
-            persistence,
-            backend,
-            canonical="sleeping_barber",
-            logical_tick=engine.context.clock.tick,
-            candidate=candidate,
-            requested_at=engine.context.clock.now,
-        )
-        if action != "noop":
-            reservation = resources.reservation_for(action)
+        target = reservations[0].request_id if reservations else "noop"
+        candidate = f"active:{target}"
+    else:
+        candidate = "noop"
+
+    action = resolve_tick_action(
+        persistence,
+        backend,
+        canonical="sleeping_barber",
+        logical_tick=engine.context.clock.tick,
+        candidate=candidate,
+        requested_at=engine.context.clock.now,
+    )
+
+    if action == "ready":
+        if current.state != "ready":
+            return
+        accepted = min(config.participants, config.waiting_chairs + config.capacity)
+        stores = DurableStoreManager(persistence)
+        for index in range(accepted, config.participants):
+            stores.ensure_put(
+                backend,
+                store_name="abandoned",
+                item_id=f"customer-{index}",
+                value={"customer": index},
+                requested_at=engine.context.clock.now,
+            )
+        for index in range(accepted):
+            resources.ensure_requested(
+                backend,
+                resource_name="barber",
+                request_id=f"customer-{index}",
+                requested_at=engine.context.clock.now,
+            )
+        transition(engine, current, "advance")
+        return
+
+    if action.startswith("active:"):
+        if current.state != "active":
+            return
+        target = action.removeprefix("active:")
+        if target != "noop":
+            reservation = resources.reservation_for(target)
             if reservation is not None:
                 resources.release(backend, reservation.reservation_id)
         if not persistence.resource_demands() and not persistence.resource_reservations():
-            transition(engine, persistence.entity("canonical_case", case.id), "finish")
+            transition(engine, current, "finish")
 
 
 definition = DomainDefinition(
