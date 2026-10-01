@@ -5,7 +5,7 @@ from dataclasses import replace
 from sose.persistence.base import Persistence
 
 from .delivery import DomainDelivery
-from .warehouse import DomainMutation, DomainWarehouse
+from .warehouse import DomainApplyResult, DomainMutation, DomainWarehouse
 
 
 class DomainMutationOutbox:
@@ -31,12 +31,12 @@ class DomainMutationOutbox:
     def pending(self) -> tuple[DomainDelivery, ...]:
         return self.persistence.domain_deliveries()
 
-    def deliver(self, delivery: DomainDelivery) -> bool:
+    def deliver(self, delivery: DomainDelivery) -> DomainApplyResult | None:
         current = self.persistence.domain_delivery(delivery.mutation_id)
         if current is None:
-            return False
+            return None
         try:
-            applied = self.warehouse.apply(current.mutation)
+            result = self.warehouse.apply(current.mutation)
         except Exception as exc:
             failed = replace(
                 current,
@@ -54,7 +54,7 @@ class DomainMutationOutbox:
         # idempotent, so either result is safe to acknowledge.
         with self.persistence.transaction() as uow:
             uow.delete_domain_delivery(current.mutation_id)
-        return applied
+        return result
 
     def flush(self) -> int:
         delivered = 0
