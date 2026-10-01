@@ -10,7 +10,7 @@ from sose.domain.delivery import DomainDelivery
 from sose.domain.entity import Entity
 from sose.domain.sqlite import SQLiteDomainWarehouse
 from sose.domain import sqlite as sqlite_module
-from sose.domain.storage import DomainPersistence
+from sose.domain.storage import DomainPersistence, DomainUnitOfWork
 from sose.domain.warehouse import (
     DomainApplyResult,
     DomainMutation,
@@ -80,8 +80,8 @@ def test_sqlite_domain_warehouse_stops_retrying_after_deadline(monkeypatch):
         warehouse._ensure_wal()
 
 
-def test_sqlite_domain_warehouse_reads_filters_and_same_version_replay():
-    warehouse = SQLiteDomainWarehouse(":memory:")
+def test_sqlite_domain_warehouse_reads_filters_and_same_version_replay(tmp_path):
+    warehouse = SQLiteDomainWarehouse(tmp_path / "domain.db")
     try:
         first = Entity(
             id="1",
@@ -184,7 +184,8 @@ def test_domain_uow_reuses_existing_identical_delivery():
 
 
 def test_domain_uow_rejects_conflicting_existing_mutation_identity():
-    engine, warehouse, persistence = _domain_persistence()
+    engine = MemoryPersistence()
+    warehouse = MemoryDomainWarehouse()
     desired = Entity(id="1", entity_type="order", state="queued", version=1)
     mutation_id = deterministic_id(
         "domain-entity-version",
@@ -192,16 +193,23 @@ def test_domain_uow_rejects_conflicting_existing_mutation_identity():
         desired.id,
         desired.version,
     )
-    conflict = DomainMutation(
-        mutation_id,
-        Entity(id="1", entity_type="order", state="different", version=1),
+    conflict = DomainDelivery(
+        DomainMutation(
+            mutation_id,
+            Entity(id="1", entity_type="order", state="different", version=1),
+        )
     )
-    with engine.transaction() as uow:
-        uow.save_domain_delivery(DomainDelivery(conflict))
 
+    class _Inner:
+        def get_domain_delivery(self, current_id):
+            return conflict if current_id == mutation_id else None
+
+        def save_domain_delivery(self, delivery):
+            raise AssertionError(f"unexpected save: {delivery}")
+
+    uow = DomainUnitOfWork(_Inner(), engine, warehouse)
     with pytest.raises(ValueError, match="domain mutation identity conflict"):
-        with persistence.transaction() as uow:
-            uow.save_entity(desired)
+        uow.save_entity(desired)
 
 
 def test_domain_persistence_entities_prefers_newer_pending_delivery():
