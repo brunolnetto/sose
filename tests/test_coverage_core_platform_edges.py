@@ -16,7 +16,7 @@ from sose.jobs.scaffold import _schema_comment, _toml_value, render_sose_toml
 
 def test_job_section_writer_rejects_missing_section():
     job = JobSection(id="job", ticks_per_trigger=2, max_ticks_per_trigger=4)
-    with pytest.raises(ValueError, match="missing \[job\]"):
+    with pytest.raises(ValueError, match=r"missing \[job\]"):
         _write_job_section("[domain]\nname = \"x\"\n", job)
 
 
