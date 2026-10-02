@@ -190,6 +190,8 @@ def test_settlement_respects_processor_outage(monkeypatch):
         backend,
         entities=entities,
     ) is None
+    payment = persistence.entity("card_payment", entities.payment_id)
+    assert payment is not None and payment.state == "settlement_pending"
     assert persistence.resource_demands() == ()
 
 
