@@ -118,7 +118,7 @@ jobs:
           cat coverage-hotspots.md
 
       - name: Enforce coverage floor
-        run: coverage report --fail-under=89
+        run: coverage report --fail-under=92
 
       - name: Upload coverage reports
         if: always()
