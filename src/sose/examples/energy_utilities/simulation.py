@@ -485,8 +485,6 @@ def schedule_demand_response(
     requested_targets = tuple(
         dict.fromkeys(target_service_point_ids or (entities.service_point_id,))
     )
-    if not requested_targets:
-        raise ValueError("demand-response event requires at least one target")
     if entities.service_point_id not in requested_targets:
         raise ValueError("primary service point must belong to target population")
     for service_point_id in requested_targets:
