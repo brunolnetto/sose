@@ -764,14 +764,17 @@ def reconcile_part_issue(
             correlation_id=correlation_id,
         )
         demand = _entity(persistence, "aviation_part_demand", demand.id)
-    if demand.state == "allocated":
-        _dispatch(
-            engine,
-            demand,
-            "issue",
-            key=("aviation-part", demand.id, "issue"),
-            correlation_id=correlation_id,
+    if demand.state != "allocated":
+        raise RuntimeError(
+            f"part demand cannot reconcile issue from {demand.state}"
         )
+    _dispatch(
+        engine,
+        demand,
+        "issue",
+        key=("aviation-part", demand.id, "issue"),
+        correlation_id=correlation_id,
+    )
     return reconcile_part_issue(
         persistence,
         engine,
