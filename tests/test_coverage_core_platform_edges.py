@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+from enum import Enum
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -316,3 +317,163 @@ def test_sleeping_barber_active_action_ignored_when_state_changed(monkeypatch):
         SimpleNamespace(id="case"),
     )
     assert resources.releases == []
+
+
+
+class _PlainEnum(Enum):
+    VALUE = "value"
+
+
+def test_persistence_codec_round_trips_plain_enum():
+    from sose.persistence.codec import dumps, loads
+
+    assert loads(dumps(_PlainEnum.VALUE)) is _PlainEnum.VALUE
+
+
+def _doctor_config():
+    return SimpleNamespace(
+        job=SimpleNamespace(id="job-1"),
+        domain=SimpleNamespace(name="expected-domain"),
+        persistence=SimpleNamespace(adapter="memory"),
+    )
+
+
+def _doctor_state(**overrides):
+    values = {
+        "job_id": "job-1",
+        "domain_name": "expected-domain",
+        "config_json": '{"enabled": true}',
+        "config_revision": 2,
+        "status": "ready",
+        "initialized": True,
+        "logical_time": datetime(2026, 1, 1, tzinfo=timezone.utc),
+        "next_tick": 3,
+        "phase": "idle",
+        "last_error": None,
+        "active_trigger_id": None,
+        "active_batch_trigger_id": None,
+        "active_batch_completed_ticks": 0,
+        "active_batch_total_ticks": 0,
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+class _DoctorPersistence:
+    def __init__(self, state, *, deliveries=(), position=None):
+        self.state = state
+        self.deliveries = tuple(deliveries)
+        self.position = position
+
+    def job_state(self, job_id):
+        return self.state
+
+    def sink_deliveries(self, *, job_id=None):
+        return self.deliveries
+
+    def simulation_position(self):
+        return self.position
+
+
+def test_job_doctor_uninitialized_job_is_healthy(monkeypatch):
+    import sose.jobs.doctor as module
+
+    monkeypatch.setattr(
+        module,
+        "collect_runtime_diagnostics",
+        lambda persistence: SimpleNamespace(issues=()),
+    )
+    report = module.inspect_open_job_health(
+        _doctor_config(),
+        persistence=_DoctorPersistence(None),
+        resolved_config_json='{"enabled": true}',
+    )
+
+    assert report.healthy
+    assert not report.initialized
+    assert report.config_revision is None
+    assert report.to_dict()["job_id"] == "job-1"
+
+
+def test_job_doctor_reports_state_delivery_and_position_failures(monkeypatch):
+    import sose.jobs.doctor as module
+
+    monkeypatch.setattr(
+        module,
+        "collect_runtime_diagnostics",
+        lambda persistence: SimpleNamespace(
+            issues=(SimpleNamespace(code="runtime.issue", message="runtime problem"),)
+        ),
+    )
+    state = _doctor_state(
+        domain_name="other-domain",
+        config_json="{broken",
+        status="failed",
+        last_error=None,
+        active_trigger_id="trigger-1",
+        active_batch_trigger_id="batch-1",
+        active_batch_completed_ticks=1,
+        active_batch_total_ticks=4,
+    )
+    deliveries = (
+        SimpleNamespace(
+            delivery_id="d1",
+            sink_name="warehouse",
+            status="pending",
+            last_error=None,
+        ),
+        SimpleNamespace(
+            delivery_id="d2",
+            sink_name="warehouse",
+            status="pending",
+            last_error="network",
+        ),
+        SimpleNamespace(
+            delivery_id="d3",
+            sink_name="warehouse",
+            status="delivered",
+            last_error=None,
+        ),
+    )
+    report = module.inspect_open_job_health(
+        _doctor_config(),
+        persistence=_DoctorPersistence(state, deliveries=deliveries, position=None),
+        resolved_config_json='{"enabled": true}',
+    )
+
+    codes = [issue.code for issue in report.issues]
+    assert codes.count("sink.delivery_pending") == 2
+    assert "runtime.issue" in codes
+    assert "job.domain_mismatch" in codes
+    assert "job.config_invalid" in codes
+    assert "job.failed" in codes
+    assert "job.trigger_unresolved" in codes
+    assert "job.batch_trigger_unresolved" in codes
+    assert "job.position_missing" in codes
+
+
+def test_job_doctor_reports_config_tick_and_time_drift(monkeypatch):
+    import sose.jobs.doctor as module
+
+    monkeypatch.setattr(
+        module,
+        "collect_runtime_diagnostics",
+        lambda persistence: SimpleNamespace(issues=()),
+    )
+    state = _doctor_state(config_json='{"enabled": false}')
+    position = SimpleNamespace(
+        logical_tick=state.next_tick + 1,
+        logical_time=state.logical_time + timedelta(minutes=1),
+    )
+    report = module.inspect_open_job_health(
+        _doctor_config(),
+        persistence=_DoctorPersistence(state, position=position),
+        resolved_config_json='{"enabled": true}',
+    )
+
+    codes = {issue.code for issue in report.issues}
+    assert codes == {
+        "job.config_drift",
+        "job.tick_mismatch",
+        "job.time_mismatch",
+    }
