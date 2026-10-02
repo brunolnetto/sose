@@ -196,7 +196,7 @@ def test_icu_discharge_and_transfer_reject_wrong_states():
         )
 
 
-def test_discharge_from_icu_accepts_already_discharge_ready_and_releases_capacity():
+def test_discharge_from_icu_accepts_discharge_ready_without_existing_capacity():
     persistence, entities, engine, backend = _runtime()
     _set_state(persistence, entities.admission_id, "discharge_ready")
 
