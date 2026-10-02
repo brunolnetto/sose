@@ -200,10 +200,10 @@ def test_close_persistence_accepts_objects_without_close():
 
 
 def test_main_propagates_run_cli_exit_code(monkeypatch):
-    monkeypatch.setattr(sys, "argv", ["sose", "persistence"])
+    monkeypatch.setattr("sose.cli.run_cli", lambda: 37)
     with pytest.raises(SystemExit) as exc:
         main()
-    assert exc.value.code == 0
+    assert exc.value.code == 37
 
 
 def test_module_entrypoint_executes_cli():
