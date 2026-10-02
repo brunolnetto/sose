@@ -79,6 +79,20 @@ def test_airborne_departure_reconciles_assigned_aircraft():
     )
 
 
+def test_airborne_departure_is_idempotent_when_aircraft_is_already_airborne():
+    persistence, entities, engine, backend = _runtime()
+    _set(persistence, "aviation_flight", entities.leg1_id, "airborne")
+    _set(persistence, "aviation_aircraft", entities.aircraft_id, "airborne")
+
+    assert reconcile_departure(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        flight_id=entities.leg1_id,
+    )
+
+
 def test_delayed_departure_stays_delayed_when_departure_is_unavailable(monkeypatch):
     persistence, entities, engine, backend = _runtime()
     _set(persistence, "aviation_flight", entities.leg1_id, "delayed")
@@ -249,6 +263,52 @@ def test_part_issue_reuses_preexisting_store_selection():
         "aviation_maintenance_work_order",
         work.id,
     ).state == "released"
+
+
+def test_part_issue_accepts_preallocated_demand_with_existing_selection():
+    persistence, entities, engine, backend = _runtime()
+    _, demand = _prepare_maintenance(persistence, entities, engine, backend)
+    seed_spare_part(persistence, engine, backend, item_id="allocated-part")
+    selected = engine.stores.ensure_selection(
+        backend,
+        store_name="part_lots",
+        request_id=f"part-issue:{demand.id}",
+        requested_at=backend.now,
+    )
+    assert selected is not None
+    _set(persistence, "aviation_part_demand", demand.id, "allocated")
+
+    assert reconcile_part_issue(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        flight_id=entities.leg1_id,
+    )
+    assert _entity(persistence, "aviation_part_demand", demand.id).state == "issued"
+
+
+def test_part_issue_rejects_corrupted_demand_state_instead_of_recursing():
+    persistence, entities, engine, backend = _runtime()
+    _, demand = _prepare_maintenance(persistence, entities, engine, backend)
+    seed_spare_part(persistence, engine, backend, item_id="corrupt-part")
+    selected = engine.stores.ensure_selection(
+        backend,
+        store_name="part_lots",
+        request_id=f"part-issue:{demand.id}",
+        requested_at=backend.now,
+    )
+    assert selected is not None
+    _set(persistence, "aviation_part_demand", demand.id, "corrupted")
+
+    with pytest.raises(RuntimeError, match="cannot reconcile issue from corrupted"):
+        reconcile_part_issue(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            flight_id=entities.leg1_id,
+        )
 
 
 def test_part_issue_handles_selection_race_after_inventory_snapshot(monkeypatch):
