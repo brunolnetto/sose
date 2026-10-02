@@ -17,6 +17,7 @@ from sose.examples.aviation.simulation import (
     seed_reference,
     seed_spare_part,
     land_flight,
+    maintenance_work_order_id,
 )
 from sose.persistence.memory import MemoryPersistence
 
@@ -198,7 +199,7 @@ def test_failed_inspection_does_not_remark_already_aog_aircraft():
     )
     assert persistence.entity(
         "aviation_maintenance_work_order",
-        __import__("sose.examples.aviation.simulation", fromlist=["maintenance_work_order_id"]).maintenance_work_order_id(entities.leg1_id),
+        maintenance_work_order_id(entities.leg1_id),
     ) is not None
 
 
