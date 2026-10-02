@@ -206,19 +206,23 @@ def test_departure_slot_schedule_is_idempotent_and_terminal_slot_returns_now():
     assert second == first
     assert len(persistence.scheduled_work()) == 1
 
-    slot = persistence.entity("airport_departure_slot", entities.departure_slot_id)
+    terminal_persistence, terminal_entities, terminal_engine, terminal_backend = _runtime()
+    slot = terminal_persistence.entity(
+        "airport_departure_slot",
+        terminal_entities.departure_slot_id,
+    )
     assert slot is not None
     slot.state = "consumed"
-    _save(persistence, slot)
+    _save(terminal_persistence, slot)
 
     assert schedule_departure_slot(
-        persistence,
-        engine,
-        backend,
-        entities=entities,
+        terminal_persistence,
+        terminal_engine,
+        terminal_backend,
+        entities=terminal_entities,
         delay=timedelta(hours=10),
-    ) == backend.now
-    assert len(persistence.scheduled_work()) == 1
+    ) == terminal_backend.now
+    assert terminal_persistence.scheduled_work() == ()
 
 
 def test_departure_queue_independently_requires_completed_ground_service():
