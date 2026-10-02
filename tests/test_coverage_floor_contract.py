@@ -8,7 +8,7 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 PYPROJECT = ROOT / "pyproject.toml"
 CI = ROOT / ".github" / "workflows" / "ci.yml"
-MINIMUM_RATCHET = 92.0
+MINIMUM_RATCHET = 95.0
 
 
 def test_coverage_floor_cannot_regress_below_ratchet():
