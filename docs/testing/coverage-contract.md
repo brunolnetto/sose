@@ -65,10 +65,12 @@ each remaining miss:
 
 Coverage thresholds are ratcheted upward as evidence is added; they never move
 backward to make a change pass. The first authoritative combined baseline was
-88.36%. The current CI ratchet is **89%**, and the latest authoritative branch
-measurement is approximately **89.62%**. Once the measured reachable set reaches
-100%, `fail_under` is raised to 100 and any future uncovered branch becomes a
-merge blocker.
+88.36%. The current CI ratchet is **92%**. The latest completed authoritative
+coverage run measured approximately **93.72%** combined branch coverage
+(19,309 covered executable obligations out of 20,602) on the Record-to-Report
+coverage branch before subsequent Cards/Payments and Hospital merges. Once the
+measured reachable set reaches 100%, `fail_under` is raised to 100 and any
+future uncovered branch becomes a merge blocker.
 
 
 The exclusion inventory and its remaining test debt are maintained in [coverage-exclusions.md](coverage-exclusions.md).
