@@ -100,6 +100,7 @@ def test_journal_posting_respects_processor_outage(monkeypatch):
     journal = persistence.entity("journal_entry", entities.journal_id)
     assert journal is not None and journal.state == "drafted"
     assert persistence.resource_demands() == ()
+    assert persistence.resource_reservations() == ()
 
 
 def test_journal_posting_waits_for_processor_capacity():
@@ -221,6 +222,10 @@ def test_reconciliation_waits_for_analyst_capacity():
     )
     item = persistence.entity("reconciliation_item", entities.reconciliation_id)
     assert item is not None and item.state == "pending"
+    assert any(
+        demand.request_id == f"reconciliation-analyst:{entities.reconciliation_id}"
+        for demand in persistence.resource_demands()
+    )
 
 
 def test_ensure_adjustment_is_idempotent_after_creation():
@@ -344,6 +349,10 @@ def test_adjustment_posting_waits_for_processor_capacity():
     )
     persisted = persistence.entity("accounting_adjustment", adjustment.id)
     assert persisted is not None and persisted.state == "proposed"
+    assert any(
+        demand.request_id == f"posting-adjustment:{adjustment.id}"
+        for demand in persistence.resource_demands()
+    )
 
 
 def test_adjustment_rejection_path_is_durable():
@@ -456,6 +465,8 @@ def test_close_respects_team_outage(monkeypatch):
     )
     period = persistence.entity("accounting_period", entities.period_id)
     assert period is not None and period.state == "open"
+    assert persistence.resource_demands() == ()
+    assert persistence.resource_reservations() == ()
 
 
 def test_close_waits_for_accountant_capacity():
@@ -479,6 +490,10 @@ def test_close_waits_for_accountant_capacity():
     )
     period = persistence.entity("accounting_period", entities.period_id)
     assert period is not None and period.state == "open"
+    assert any(
+        demand.request_id == f"close-accountant:{entities.close_task_id}"
+        for demand in persistence.resource_demands()
+    )
 
 
 def test_closed_completed_close_is_idempotent():
