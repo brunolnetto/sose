@@ -405,41 +405,43 @@ def reconcile_escalation(
         return False
 
     correlation_id = flow_correlation_id(incident.id)
-    escalation = _escalation(persistence, incident.id)
-    if escalation is None:
-        raise RuntimeError("escalation disappeared")
-
-    for state, event in (
-        ("raised", "acknowledge"),
-        ("acknowledged", "take_ownership"),
-        ("owned", "mitigate"),
-        ("mitigated", "complete"),
-    ):
+    try:
         escalation = _escalation(persistence, incident.id)
-        if escalation is not None and escalation.state == state:
-            _dispatch(
-                engine,
-                escalation,
-                event,
-                key=("itsm-escalation", escalation.id, event),
-                correlation_id=correlation_id,
-            )
+        if escalation is None:
+            raise RuntimeError("escalation disappeared")
 
-    resolve_incident(
-        persistence,
-        engine,
-        backend,
-        incident_id=incident.id,
-    )
-    engine.resources.withdraw(backend, request_id)
-    if claim_id is not None:
-        release_incident_owner(
+        for state, event in (
+            ("raised", "acknowledge"),
+            ("acknowledged", "take_ownership"),
+            ("owned", "mitigate"),
+            ("mitigated", "complete"),
+        ):
+            escalation = _escalation(persistence, incident.id)
+            if escalation is not None and escalation.state == state:
+                _dispatch(
+                    engine,
+                    escalation,
+                    event,
+                    key=("itsm-escalation", escalation.id, event),
+                    correlation_id=correlation_id,
+                )
+
+        resolve_incident(
             persistence,
             engine,
             backend,
-            claim_id=claim_id,
+            incident_id=incident.id,
         )
-    return True
+        if claim_id is not None:
+            release_incident_owner(
+                persistence,
+                engine,
+                backend,
+                claim_id=claim_id,
+            )
+        return True
+    finally:
+        engine.resources.withdraw(backend, request_id)
 
 
 def run_happy_path() -> tuple[MemoryPersistence, ITSMEntities]:
