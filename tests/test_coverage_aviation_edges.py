@@ -78,6 +78,7 @@ def test_departure_schedule_is_idempotent_and_terminal_flight_returns_now():
         flight_id=entities.leg2_id,
         delay=timedelta(hours=10),
     ) == backend.now
+    assert len(persistence.scheduled_work()) == 1
 
 
 def test_unknown_reference_flight_has_no_crew_mapping():
@@ -130,7 +131,8 @@ def test_departure_outage_moves_due_flight_to_delayed_without_crew_demand(monkey
     )
     persisted = persistence.entity("aviation_flight", entities.leg1_id)
     assert persisted is not None and persisted.state == "delayed"
-    assert persistence.resource_demands() == ()
+    request_id = f"flight-crew:{entities.leg1_id}"
+    assert engine.resources.has_request(request_id) is False
 
 
 def test_landing_rejects_invalid_flight_state():
@@ -232,6 +234,9 @@ def test_inspection_waits_for_team_capacity():
     )
     persisted = persistence.entity("aviation_inspection", inspection.id)
     assert persisted is not None and persisted.state == "pending"
+    request_id = f"inspection-team:{inspection.id}"
+    assert engine.resources.has_request(request_id)
+    assert engine.resources.reservation_for(request_id) is None
 
 
 def test_seed_spare_part_is_idempotent():
@@ -276,7 +281,7 @@ def test_part_issue_reconciles_already_issued_demand_and_waiting_work():
         flight_id=entities.leg1_id,
     )
     persisted = persistence.entity("aviation_maintenance_work_order", work.id)
-    assert persisted is not None and persisted.state != "waiting_part"
+    assert persisted is not None and persisted.state == "released"
 
 
 def test_aog_maintenance_waits_until_part_is_issued():
@@ -301,7 +306,8 @@ def test_aog_maintenance_waits_until_part_is_issued():
         )
         is False
     )
-    assert persistence.preemptive_resource_demands() == ()
+    request_id = f"maintenance-bay:{work.id}"
+    assert engine.preemptive_resources.has_request(request_id) is False
 
 
 def test_complete_aog_maintenance_rejects_inactive_work():
