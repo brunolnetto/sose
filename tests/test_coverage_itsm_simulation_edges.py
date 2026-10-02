@@ -289,6 +289,11 @@ def test_reconcile_escalation_detects_disappearing_evidence(monkeypatch):
             incident_id=entities.incident_id,
         )
 
+    assert not any(
+        reservation.request_id == f"escalation-manager:{escalation.id}"
+        for reservation in persistence.resource_reservations()
+    )
+
 
 def test_reference_path_guards_are_executable(monkeypatch):
     monkeypatch.setattr(simulation, "claim_next_incident", lambda *args, **kwargs: "wrong")
