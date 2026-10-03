@@ -148,3 +148,80 @@ id = "demo"
 
     with pytest.raises(RuntimeError, match="could not locate analytical sink block"):
         remove_analytical_sink(path, name="warehouse")
+
+
+def test_add_sink_appends_when_job_is_inline_table(tmp_path):
+    path = tmp_path / "sose.toml"
+    path.write_text(
+        """
+domain = { name = "tutorial_job" }
+job = { id = "inline-job" }
+""".strip(),
+        encoding="utf-8",
+    )
+
+    result = add_analytical_sink(
+        path,
+        name="warehouse",
+        adapter="jsonl",
+    )
+
+    assert result["name"] == "warehouse"
+    text = path.read_text(encoding="utf-8")
+    assert text.rstrip().endswith(
+        'job = { id = "inline-job" }\n\n[[sinks]]\nname = "warehouse"\nadapter = "jsonl"'
+    )
+
+
+def test_add_sink_inserts_blank_between_sink_and_suffix_section(tmp_path):
+    path = tmp_path / "sose.toml"
+    path.write_text(
+        """
+[domain]
+name = "tutorial_job"
+
+[persistence]
+adapter = "memory"
+
+[job]
+id = "demo"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    add_analytical_sink(path, name="warehouse", adapter="jsonl")
+    text = path.read_text(encoding="utf-8")
+    assert 'adapter = "jsonl"\n\n[job]\nid = "demo"' in text
+
+
+def test_remove_sink_repairs_spacing_when_block_is_inline_with_sections(tmp_path):
+    path = tmp_path / "sose.toml"
+    path.write_text(
+        """
+[domain]
+name = "tutorial_job"
+[[sinks]]
+name = "warehouse"
+adapter = "jsonl"
+[domain.parameters]
+auto_complete = true
+[job]
+id = "demo"
+""".strip(),
+        encoding="utf-8",
+    )
+
+    remove_analytical_sink(path, name="warehouse")
+    text = path.read_text(encoding="utf-8")
+    assert 'name = "tutorial_job"\n\n[domain.parameters]' in text
+
+
+def test_replace_regular_section_replaces_terminal_section_without_extra_blank():
+    assert _replace_regular_section(
+        ["[engine_store]", 'adapter = "memory"'],
+        "[engine_store]",
+        ['adapter = "sqlite_incremental"'],
+    ) == [
+        "[engine_store]",
+        'adapter = "sqlite_incremental"',
+    ]

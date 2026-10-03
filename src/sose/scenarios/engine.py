@@ -108,6 +108,84 @@ class ScenarioEngine:
             )
         )
 
+    def _scenario_attempt_id(
+        self,
+        scenario: Scenario,
+        trigger_key: tuple[object, ...],
+    ) -> str:
+        return deterministic_id("scenario-attempt", scenario.name, *trigger_key)
+
+    def _is_scenario_active(self, scenario_name: str) -> bool:
+        return any(
+            activation.scenario_name == scenario_name
+            for activation in self._activations.values()
+        )
+
+    def _inactive_decision(
+        self,
+        *,
+        attempt_id: str,
+        scenario: Scenario,
+        reason: str,
+    ) -> ScenarioDecision:
+        return ScenarioDecision(
+            attempt_id=attempt_id,
+            scenario_name=scenario.name,
+            activated=False,
+            probability=scenario.activation_probability,
+            draw=None,
+            reason=reason,
+        )
+
+    def _store_decision(
+        self,
+        decision: ScenarioDecision,
+        decisions: list[ScenarioDecision],
+    ) -> None:
+        self._decisions[decision.attempt_id] = decision
+        decisions.append(decision)
+
+    def _activate_scenario_if_selected(
+        self,
+        *,
+        scenario: Scenario,
+        signal: ScenarioSignal,
+        attempt_id: str,
+        trigger_key: tuple[object, ...],
+    ) -> tuple[bool, float, str, str | None]:
+        draw = self._random.for_scope(
+            "scenario-activation",
+            scenario.name,
+            *trigger_key,
+        ).random()
+        activated = draw < scenario.activation_probability
+        if not activated:
+            return False, draw, "probability_miss", None
+
+        activation_id = deterministic_id("scenario-activation", attempt_id)
+        event = signal.event
+        activation = ScenarioActivation(
+            activation_id=activation_id,
+            scenario_name=scenario.name,
+            activated_at=signal.now,
+            expires_at=(
+                signal.now + scenario.duration
+                if scenario.duration is not None
+                else None
+            ),
+            priority=scenario.priority,
+            effects=scenario.effects,
+            trigger_key=trigger_key,
+            causation_id=event.event_id if event is not None else None,
+            correlation_id=(
+                (event.correlation_id or event.event_id)
+                if event is not None
+                else None
+            ),
+        )
+        self._activations[activation_id] = activation
+        return True, draw, "activated", activation_id
+
     def evaluate(self, signal: ScenarioSignal) -> tuple[ScenarioDecision, ...]:
         self.expire_due(signal.now)
         decisions: list[ScenarioDecision] = []
@@ -117,26 +195,21 @@ class ScenarioEngine:
                 continue
 
             trigger_key = scenario.trigger.key(signal)
-            attempt_id = deterministic_id("scenario-attempt", scenario.name, *trigger_key)
+            attempt_id = self._scenario_attempt_id(scenario, trigger_key)
             previous = self._decisions.get(attempt_id)
             if previous is not None:
                 decisions.append(previous)
                 continue
 
-            if not scenario.allow_reentry and any(
-                activation.scenario_name == scenario.name
-                for activation in self._activations.values()
-            ):
-                decision = ScenarioDecision(
-                    attempt_id=attempt_id,
-                    scenario_name=scenario.name,
-                    activated=False,
-                    probability=scenario.activation_probability,
-                    draw=None,
-                    reason="already_active",
+            if not scenario.allow_reentry and self._is_scenario_active(scenario.name):
+                self._store_decision(
+                    self._inactive_decision(
+                        attempt_id=attempt_id,
+                        scenario=scenario,
+                        reason="already_active",
+                    ),
+                    decisions,
                 )
-                self._decisions[attempt_id] = decision
-                decisions.append(decision)
                 continue
 
             evaluation = ScenarioEvaluation(
@@ -145,52 +218,22 @@ class ScenarioEngine:
                 context=self._context(),
             )
             if scenario.condition is not None and not scenario.condition(evaluation):
-                decision = ScenarioDecision(
-                    attempt_id=attempt_id,
-                    scenario_name=scenario.name,
-                    activated=False,
-                    probability=scenario.activation_probability,
-                    draw=None,
-                    reason="condition_false",
+                self._store_decision(
+                    self._inactive_decision(
+                        attempt_id=attempt_id,
+                        scenario=scenario,
+                        reason="condition_false",
+                    ),
+                    decisions,
                 )
-                self._decisions[attempt_id] = decision
-                decisions.append(decision)
                 continue
 
-            draw = self._random.for_scope(
-                "scenario-activation",
-                scenario.name,
-                *trigger_key,
-            ).random()
-            activated = draw < scenario.activation_probability
-            activation_id = None
-            reason = "probability_miss"
-
-            if activated:
-                activation_id = deterministic_id("scenario-activation", attempt_id)
-                event = signal.event
-                activation = ScenarioActivation(
-                    activation_id=activation_id,
-                    scenario_name=scenario.name,
-                    activated_at=signal.now,
-                    expires_at=(
-                        signal.now + scenario.duration
-                        if scenario.duration is not None
-                        else None
-                    ),
-                    priority=scenario.priority,
-                    effects=scenario.effects,
-                    trigger_key=trigger_key,
-                    causation_id=event.event_id if event is not None else None,
-                    correlation_id=(
-                        (event.correlation_id or event.event_id)
-                        if event is not None
-                        else None
-                    ),
-                )
-                self._activations[activation_id] = activation
-                reason = "activated"
-
+            activated, draw, reason, activation_id = self._activate_scenario_if_selected(
+                scenario=scenario,
+                signal=signal,
+                attempt_id=attempt_id,
+                trigger_key=trigger_key,
+            )
             decision = ScenarioDecision(
                 attempt_id=attempt_id,
                 scenario_name=scenario.name,
@@ -200,8 +243,7 @@ class ScenarioEngine:
                 reason=reason,
                 activation_id=activation_id,
             )
-            self._decisions[attempt_id] = decision
-            decisions.append(decision)
+            self._store_decision(decision, decisions)
 
         return tuple(decisions)
 
@@ -216,20 +258,48 @@ class ScenarioEngine:
             self._activations.pop(activation.activation_id, None)
         return expired
 
+    def _attribute_matches(
+        self,
+        key: str,
+    ) -> list[tuple[ScenarioActivation, AttributeEffect]]:
+        return [
+            (activation, effect)
+            for activation in self.active_activations
+            for effect in iter_leaf_effects(activation.effects)
+            if isinstance(effect, AttributeEffect) and effect.key == key
+        ]
+
+    @staticmethod
+    def _lowest_priority_matches(
+        matches: list[tuple[ScenarioActivation, AttributeEffect]],
+    ) -> list[tuple[ScenarioActivation, AttributeEffect]]:
+        prioritized = min(activation.priority for activation, _ in matches)
+        return [
+            item for item in matches if item[0].priority == prioritized
+        ]
+
+    @staticmethod
+    def _latest_activation_matches(
+        matches: list[tuple[ScenarioActivation, AttributeEffect]],
+    ) -> list[tuple[ScenarioActivation, AttributeEffect]]:
+        latest_at = max(activation.activated_at for activation, _ in matches)
+        return [
+            item
+            for item in matches
+            if item[0].activated_at == latest_at
+        ]
+
     def attribute(self, key: str, default: Any = None) -> Any:
-        matches: list[tuple[ScenarioActivation, AttributeEffect]] = []
-        for activation in self.active_activations:
-            for effect in iter_leaf_effects(activation.effects):
-                if isinstance(effect, AttributeEffect) and effect.key == key:
-                    matches.append((activation, effect))
+        matches = self._attribute_matches(key)
         if not matches:
             return default
 
-        best_priority = min(activation.priority for activation, _ in matches)
-        matches = [item for item in matches if item[0].priority == best_priority]
-        latest_at = max(activation.activated_at for activation, _ in matches)
-        matches = [item for item in matches if item[0].activated_at == latest_at]
-        activation, effect = min(matches, key=lambda item: item[0].activation_id)
+        priority_matches = self._lowest_priority_matches(matches)
+        latest_matches = self._latest_activation_matches(priority_matches)
+        activation, effect = min(
+            latest_matches,
+            key=lambda item: item[0].activation_id,
+        )
         return effect.value
 
     def transition_weight_multiplier(self, entity_type: str, event: str) -> float:

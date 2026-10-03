@@ -107,17 +107,23 @@ def _test_file_has_test(path: Path) -> bool:
     except SyntaxError:
         return False
 
+    def is_test_function(node: ast.AST) -> bool:
+        return (
+            isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name.startswith("test_")
+        )
+
+    def is_test_class(node: ast.AST) -> bool:
+        return isinstance(node, ast.ClassDef) and node.name.startswith("Test")
+
+    def class_has_test_method(node: ast.ClassDef) -> bool:
+        return any(is_test_function(member) for member in node.body)
+
     for node in module.body:
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            if node.name.startswith("test_"):
-                return True
-        if isinstance(node, ast.ClassDef) and node.name.startswith("Test"):
-            if any(
-                isinstance(member, (ast.FunctionDef, ast.AsyncFunctionDef))
-                and member.name.startswith("test_")
-                for member in node.body
-            ):
-                return True
+        if is_test_function(node):
+            return True
+        if is_test_class(node) and class_has_test_method(node):
+            return True
     return False
 
 
@@ -134,41 +140,47 @@ def _declares_reference_status(content: str) -> bool:
     return False
 
 
-def validate_reference_contract(
+def _validate_baseline_capabilities(
     contract: ReferenceContract,
-    *,
-    repo_root: str | Path,
-) -> tuple[ReferenceConformanceIssue, ...]:
-    root = Path(repo_root)
-    issues: list[ReferenceConformanceIssue] = []
-
+    issues: list[ReferenceConformanceIssue],
+) -> None:
     missing_baseline = BASELINE_REFERENCE_CAPABILITIES - contract.capabilities
-    if missing_baseline:
-        issues.append(
-            ReferenceConformanceIssue(
-                contract.domain,
-                "missing-baseline-capability",
-                "missing baseline capabilities: "
-                + ", ".join(sorted(cap.value for cap in missing_baseline)),
-            )
+    if not missing_baseline:
+        return
+    issues.append(
+        ReferenceConformanceIssue(
+            contract.domain,
+            "missing-baseline-capability",
+            "missing baseline capabilities: "
+            + ", ".join(sorted(cap.value for cap in missing_baseline)),
         )
+    )
 
+
+def _validate_capability_dependencies(
+    contract: ReferenceContract,
+    issues: list[ReferenceConformanceIssue],
+) -> None:
     for capability in sorted(contract.capabilities, key=lambda cap: cap.value):
         missing_dependencies = CAPABILITY_REQUIREMENTS.get(
             capability, frozenset()
         ) - contract.capabilities
-        if missing_dependencies:
-            issues.append(
-                ReferenceConformanceIssue(
-                    contract.domain,
-                    "missing-capability-dependency",
-                    f"{capability.value} requires: "
-                    + ", ".join(
-                        sorted(dep.value for dep in missing_dependencies)
-                    ),
-                )
+        if not missing_dependencies:
+            continue
+        issues.append(
+            ReferenceConformanceIssue(
+                contract.domain,
+                "missing-capability-dependency",
+                f"{capability.value} requires: "
+                + ", ".join(sorted(dep.value for dep in missing_dependencies)),
             )
+        )
 
+
+def _validate_capability_evidence(
+    contract: ReferenceContract,
+    issues: list[ReferenceConformanceIssue],
+) -> None:
     undeclared_evidence = set(contract.evidence) - set(contract.capabilities)
     if undeclared_evidence:
         issues.append(
@@ -185,16 +197,24 @@ def validate_reference_contract(
         for capability in sorted(contract.capabilities, key=lambda cap: cap.value)
         if not contract.evidence.get(capability)
     ]
-    if missing_evidence:
-        issues.append(
-            ReferenceConformanceIssue(
-                contract.domain,
-                "missing-evidence",
-                "capabilities without evidence: "
-                + ", ".join(cap.value for cap in missing_evidence),
-            )
+    if not missing_evidence:
+        return
+    issues.append(
+        ReferenceConformanceIssue(
+            contract.domain,
+            "missing-evidence",
+            "capabilities without evidence: "
+            + ", ".join(cap.value for cap in missing_evidence),
         )
+    )
 
+
+def _validate_evidence_files(
+    contract: ReferenceContract,
+    *,
+    root: Path,
+    issues: list[ReferenceConformanceIssue],
+) -> None:
     for capability, paths in contract.evidence.items():
         for relative in paths:
             path = root / relative
@@ -216,27 +236,37 @@ def validate_reference_contract(
                     )
                 )
 
+
+def _validate_documentation_status(
+    contract: ReferenceContract,
+    *,
+    root: Path,
+    issues: list[ReferenceConformanceIssue],
+) -> None:
     docs = root / contract.docs_dir
     readme = docs / "README.md"
     specification = docs / "specification.md"
     for path in (readme, specification):
-        if not path.is_file():
-            issues.append(
-                ReferenceConformanceIssue(
-                    contract.domain,
-                    "missing-documentation",
-                    f"missing {path.relative_to(root)}",
-                )
+        if path.is_file():
+            continue
+        issues.append(
+            ReferenceConformanceIssue(
+                contract.domain,
+                "missing-documentation",
+                f"missing {path.relative_to(root)}",
             )
+        )
 
     existing_docs = [
         path.read_text(encoding="utf-8")
         for path in (readme, specification)
         if path.is_file()
     ]
-    if existing_docs and not any(
+    if existing_docs and any(
         _declares_reference_status(content) for content in existing_docs
     ):
+        return
+    if existing_docs:
         issues.append(
             ReferenceConformanceIssue(
                 contract.domain,
@@ -245,6 +275,11 @@ def validate_reference_contract(
             )
         )
 
+
+def _validate_required_modules(
+    contract: ReferenceContract,
+    issues: list[ReferenceConformanceIssue],
+) -> None:
     for module_name in (
         contract.package,
         f"{contract.package}.entities",
@@ -262,29 +297,52 @@ def validate_reference_contract(
                 )
             )
             continue
-        if module_name == contract.resolved_runtime_module:
-            for required in contract.runtime_entrypoints:
-                if not callable(getattr(module, required, None)):
-                    issues.append(
-                        ReferenceConformanceIssue(
-                            contract.domain,
-                            "runtime-entrypoint-missing",
-                            f"{module_name} has no callable {required}()",
-                        )
-                    )
-
-    if ReferenceCapability.SCENARIOS in contract.capabilities:
-        try:
-            import_module(f"{contract.package}.scenarios")
-        except Exception as exc:
+        if module_name != contract.resolved_runtime_module:
+            continue
+        for required in contract.runtime_entrypoints:
+            if callable(getattr(module, required, None)):
+                continue
             issues.append(
                 ReferenceConformanceIssue(
                     contract.domain,
-                    "scenario-module-import-failed",
-                    f"{contract.package}.scenarios: {type(exc).__name__}: {exc}",
+                    "runtime-entrypoint-missing",
+                    f"{module_name} has no callable {required}()",
                 )
             )
 
+
+def _validate_scenario_module(
+    contract: ReferenceContract,
+    issues: list[ReferenceConformanceIssue],
+) -> None:
+    if ReferenceCapability.SCENARIOS not in contract.capabilities:
+        return
+    try:
+        import_module(f"{contract.package}.scenarios")
+    except Exception as exc:
+        issues.append(
+            ReferenceConformanceIssue(
+                contract.domain,
+                "scenario-module-import-failed",
+                f"{contract.package}.scenarios: {type(exc).__name__}: {exc}",
+            )
+        )
+
+
+def validate_reference_contract(
+    contract: ReferenceContract,
+    *,
+    repo_root: str | Path,
+) -> tuple[ReferenceConformanceIssue, ...]:
+    root = Path(repo_root)
+    issues: list[ReferenceConformanceIssue] = []
+    _validate_baseline_capabilities(contract, issues)
+    _validate_capability_dependencies(contract, issues)
+    _validate_capability_evidence(contract, issues)
+    _validate_evidence_files(contract, root=root, issues=issues)
+    _validate_documentation_status(contract, root=root, issues=issues)
+    _validate_required_modules(contract, issues)
+    _validate_scenario_module(contract, issues)
     return tuple(issues)
 
 

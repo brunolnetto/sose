@@ -155,14 +155,17 @@ class SOSECatalogConfig(BaseModel):
     runtime: RuntimeSection = Field(default_factory=RuntimeSection)
     jobs: list[CatalogJobSection] = Field(min_length=1)
 
-    @model_validator(mode="after")
-    def validate_unique_jobs(self) -> "SOSECatalogConfig":
+    def _validate_unique_ids(self) -> None:
         ids = [job.id for job in self.jobs]
         if len(ids) != len(set(ids)):
             raise ValueError("catalog job ids must be unique")
+
+    def _validate_unique_namespaces(self) -> None:
         namespaces = [job.resolved_engine_namespace for job in self.jobs]
         if len(namespaces) != len(set(namespaces)):
             raise ValueError("catalog Engine Store namespaces must be unique")
+
+    def _validate_engine_store(self) -> None:
         if self.engine_store.adapter not in {"sqlite_incremental", "postgres"}:
             raise ValueError(
                 "shared Engine Store catalogs currently require "
@@ -180,19 +183,29 @@ class SOSECatalogConfig(BaseModel):
             raise ValueError(
                 "shared SQLite Engine Store catalogs require a file-backed path"
             )
-        if self.engine_store.adapter == "sqlite_incremental":
-            noncanonical = [
-                job.engine_namespace
-                for job in self.jobs
-                if (
-                    job.engine_namespace is not None
-                    and job.engine_namespace != job.engine_namespace.lower()
-                )
-            ]
-            if noncanonical:
-                raise ValueError(
-                    "SQLite catalog engine_namespace values must be lowercase"
-                )
+
+    def _validate_sqlite_namespaces_lowercase(self) -> None:
+        if self.engine_store.adapter != "sqlite_incremental":
+            return
+        noncanonical = [
+            job.engine_namespace
+            for job in self.jobs
+            if (
+                job.engine_namespace is not None
+                and job.engine_namespace != job.engine_namespace.lower()
+            )
+        ]
+        if noncanonical:
+            raise ValueError(
+                "SQLite catalog engine_namespace values must be lowercase"
+            )
+
+    @model_validator(mode="after")
+    def validate_unique_jobs(self) -> "SOSECatalogConfig":
+        self._validate_unique_ids()
+        self._validate_unique_namespaces()
+        self._validate_engine_store()
+        self._validate_sqlite_namespaces_lowercase()
         return self
 
 

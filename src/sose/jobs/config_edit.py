@@ -100,37 +100,79 @@ def _write_parameter(path: Path, name: str, value: Any) -> None:
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
     header = "[domain.parameters]"
-
-    try:
-        header_index = next(
-            index for index, line in enumerate(lines)
-            if line.strip() == header
-        )
-    except StopIteration:
-        if lines and lines[-1].strip():
-            lines.append("")
-        lines.extend([header, f"{name} = {_toml_value(value)}"])
+    value_line = f"{name} = {_toml_value(value)}"
+    header_index = next(
+        (index for index, line in enumerate(lines) if line.strip() == header),
+        None,
+    )
+    if header_index is None:
+        _append_domain_parameters_section(lines, header, value_line)
         path.write_text("\n".join(lines) + "\n", encoding="utf-8")
         return
 
-    section_end = len(lines)
-    for index in range(header_index + 1, len(lines)):
+    section_end = _section_end(lines, start=header_index)
+    updated = _rewrite_parameter_assignment(
+        lines,
+        start=header_index + 1,
+        end=section_end,
+        name=name,
+        value_line=value_line,
+    )
+    if not updated:
+        _insert_parameter_assignment(
+            lines,
+            header_index=header_index,
+            section_end=section_end,
+            value_line=value_line,
+        )
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _append_domain_parameters_section(
+    lines: list[str],
+    header: str,
+    value_line: str,
+) -> None:
+    if lines and lines[-1].strip():
+        lines.append("")
+    lines.extend([header, value_line])
+
+
+def _section_end(lines: list[str], *, start: int) -> int:
+    for index in range(start + 1, len(lines)):
         stripped = lines[index].strip()
         if stripped.startswith("[") and stripped.endswith("]"):
-            section_end = index
-            break
+            return index
+    return len(lines)
 
+
+def _rewrite_parameter_assignment(
+    lines: list[str],
+    *,
+    start: int,
+    end: int,
+    name: str,
+    value_line: str,
+) -> bool:
     assignment = re.compile(rf"^(?P<indent>\s*){re.escape(name)}\s*=")
-    for index in range(header_index + 1, section_end):
+    for index in range(start, end):
         match = assignment.match(lines[index])
-        if match is not None:
-            indent = match.group("indent")
-            lines[index] = f"{indent}{name} = {_toml_value(value)}"
-            path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-            return
+        if match is None:
+            continue
+        indent = match.group("indent")
+        lines[index] = f"{indent}{value_line}"
+        return True
+    return False
 
+
+def _insert_parameter_assignment(
+    lines: list[str],
+    *,
+    header_index: int,
+    section_end: int,
+    value_line: str,
+) -> None:
     insert_at = section_end
     while insert_at > header_index + 1 and not lines[insert_at - 1].strip():
         insert_at -= 1
-    lines.insert(insert_at, f"{name} = {_toml_value(value)}")
-    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    lines.insert(insert_at, value_line)

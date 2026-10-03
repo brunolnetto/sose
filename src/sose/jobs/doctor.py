@@ -88,6 +88,65 @@ def inspect_job_file_health(
     )
 
 
+def _append_pending_sink_delivery_issues(
+    persistence: Persistence,
+    *,
+    state: SimulationJobState,
+    issues: list[JobDoctorIssue],
+) -> None:
+    pending_deliveries = tuple(
+        delivery
+        for delivery in persistence.sink_deliveries(job_id=state.job_id)
+        if delivery.status == "pending"
+    )
+    for delivery in pending_deliveries:
+        issues.append(
+            JobDoctorIssue(
+                "sink.delivery_pending",
+                f"sink delivery {delivery.delivery_id} to "
+                f"{delivery.sink_name!r} remains pending"
+                + (
+                    ""
+                    if delivery.last_error is None
+                    else f": {delivery.last_error}"
+                ),
+            )
+        )
+
+
+def _append_position_alignment_issues(
+    persistence: Persistence,
+    *,
+    state: SimulationJobState,
+    issues: list[JobDoctorIssue],
+) -> None:
+    position = persistence.simulation_position()
+    if position is None:
+        if state.next_tick > 0:
+            issues.append(
+                JobDoctorIssue(
+                    "job.position_missing",
+                    "job checkpoint advanced but SimulationPosition is missing",
+                )
+            )
+        return
+
+    if position.logical_tick != state.next_tick:
+        issues.append(
+            JobDoctorIssue(
+                "job.tick_mismatch",
+                "job next_tick does not match durable SimulationPosition",
+            )
+        )
+    if position.logical_time != state.logical_time:
+        issues.append(
+            JobDoctorIssue(
+                "job.time_mismatch",
+                "job logical_time does not match durable SimulationPosition",
+            )
+        )
+
+
 def inspect_open_job_health(
     config: SOSEConfig,
     *,
@@ -102,54 +161,22 @@ def inspect_open_job_health(
     ]
 
     if state is not None:
-        pending_deliveries = tuple(
-            delivery
-            for delivery in persistence.sink_deliveries(job_id=state.job_id)
-            if delivery.status == "pending"
+        _append_pending_sink_delivery_issues(
+            persistence,
+            state=state,
+            issues=issues,
         )
-        for delivery in pending_deliveries:
-            issues.append(
-                JobDoctorIssue(
-                    "sink.delivery_pending",
-                    f"sink delivery {delivery.delivery_id} to "
-                    f"{delivery.sink_name!r} remains pending"
-                    + (
-                        ""
-                        if delivery.last_error is None
-                        else f": {delivery.last_error}"
-                    ),
-                )
-            )
-
         _check_job_state(
             config,
             state,
             resolved_config_json=resolved_config_json,
             issues=issues,
         )
-        position = persistence.simulation_position()
-        if position is None and state.next_tick > 0:
-            issues.append(
-                JobDoctorIssue(
-                    "job.position_missing",
-                    "job checkpoint advanced but SimulationPosition is missing",
-                )
-            )
-        elif position is not None:
-            if position.logical_tick != state.next_tick:
-                issues.append(
-                    JobDoctorIssue(
-                        "job.tick_mismatch",
-                        "job next_tick does not match durable SimulationPosition",
-                    )
-                )
-            if position.logical_time != state.logical_time:
-                issues.append(
-                    JobDoctorIssue(
-                        "job.time_mismatch",
-                        "job logical_time does not match durable SimulationPosition",
-                    )
-                )
+        _append_position_alignment_issues(
+            persistence,
+            state=state,
+            issues=issues,
+        )
 
     return JobDoctorReport(
         job_id=config.job.id,
@@ -229,4 +256,3 @@ def _check_job_state(
                 f"{state.active_batch_total_ticks} ticks",
             )
         )
-

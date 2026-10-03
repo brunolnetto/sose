@@ -43,38 +43,35 @@ def test_populated_v1_database_migrates_and_preserves_durable_state(tmp_path):
     )
     _legacy_v1_database(path, state=state)
 
-    persistence = SQLitePersistence(path)
+    with SQLitePersistence(path) as persistence:
+        assert persistence.schema_info().schema_version == CURRENT_SCHEMA_VERSION
+        assert persistence.schema_info().codec_version == CURRENT_CODEC_VERSION
+        assert persistence.resource_definitions() == (
+            ResourceDefinition("bay", capacity=2),
+        )
+        assert persistence.committed_tick() == 7
 
-    assert persistence.schema_info().schema_version == CURRENT_SCHEMA_VERSION
-    assert persistence.schema_info().codec_version == CURRENT_CODEC_VERSION
-    assert persistence.resource_definitions() == (
-        ResourceDefinition("bay", capacity=2),
-    )
-    assert persistence.committed_tick() == 7
-
-    columns = {
-        row[1]
-        for row in persistence._connection.execute(
-            "PRAGMA table_info(sose_state)"
-        ).fetchall()
-    }
-    assert "codec_version" in columns
-    persistence.close()
+        columns = {
+            row[1]
+            for row in persistence._connection.execute(
+                "PRAGMA table_info(sose_state)"
+            ).fetchall()
+        }
+        assert "codec_version" in columns
 
 
 def test_empty_v1_schema_is_structurally_upgraded_before_first_write(tmp_path):
     path = tmp_path / "empty-legacy.sqlite3"
     _legacy_v1_database(path)
 
-    persistence = SQLitePersistence(path)
-    with persistence.transaction() as uow:
-        uow.save_resource_definition(ResourceDefinition("worker", capacity=1))
+    with SQLitePersistence(path) as persistence:
+        with persistence.transaction() as uow:
+            uow.save_resource_definition(ResourceDefinition("worker", capacity=1))
 
-    assert persistence.schema_info().schema_version == CURRENT_SCHEMA_VERSION
-    assert persistence.resource_definitions() == (
-        ResourceDefinition("worker", capacity=1),
-    )
-    persistence.close()
+        assert persistence.schema_info().schema_version == CURRENT_SCHEMA_VERSION
+        assert persistence.resource_definitions() == (
+            ResourceDefinition("worker", capacity=1),
+        )
 
 
 def test_migrated_database_reopens_without_reapplying_migration(tmp_path):
@@ -84,13 +81,11 @@ def test_migrated_database_reopens_without_reapplying_migration(tmp_path):
         state=_State(committed_tick=3),
     )
 
-    first = SQLitePersistence(path)
-    first.close()
-    second = SQLitePersistence(path)
-
-    assert second.schema_info().schema_version == CURRENT_SCHEMA_VERSION
-    assert second.committed_tick() == 3
-    second.close()
+    with SQLitePersistence(path):
+        pass
+    with SQLitePersistence(path) as second:
+        assert second.schema_info().schema_version == CURRENT_SCHEMA_VERSION
+        assert second.committed_tick() == 3
 
 
 def test_future_schema_is_rejected_without_mutation(tmp_path):

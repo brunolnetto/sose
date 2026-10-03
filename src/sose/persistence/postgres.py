@@ -259,58 +259,18 @@ class PostgresPersistence(MemoryPersistence):
         before: _State | None = None
         try:
             with self._connection.transaction():
-                self._connection.execute(
-                    "SELECT pg_advisory_xact_lock_shared(hashtext(%s))",
-                    (self.namespace,),
-                )
-                owner_row = self._connection.execute(
-                    sql.SQL(
-                        "SELECT owner_epoch FROM {} WHERE singleton = 1"
-                    ).format(self._meta_table)
-                ).fetchone()
-                current_epoch = -1 if owner_row is None else int(owner_row[0])
-                if current_epoch > 0 and owner_epoch is None:
-                    raise StaleWriterError(
-                        f"writer fencing is active at epoch {current_epoch}; "
-                        "owner_epoch is required"
-                    )
-                if owner_epoch is not None and current_epoch != owner_epoch:
-                    raise StaleWriterError(
-                        f"stale writer epoch {owner_epoch}; current epoch is {current_epoch}"
-                    )
-                # Force a transaction-consistent refresh. Writers may overlap,
-                # and dirty-record persistence prevents unrelated updates from
-                # replacing one another.
-                self._refresh_from_db(force=True)
-                before = self._state
-                uow = MemoryUnitOfWork(fork_state(self._state), self)
+                self._lock_and_validate_epoch(owner_epoch)
+                before, uow = self._begin_transaction_uow()
                 yield uow
                 if not uow._closed:
                     uow.commit()
 
-                changed = self._apply_changes(
-                    before,
-                    self._state,
-                    uow.dirty_records,
+                changed = self._apply_changes(before, self._state, uow.dirty_records)
+                next_revision = (
+                    self._increment_revision()
+                    if changed
+                    else self._revision
                 )
-                if changed:
-                    row = self._connection.execute(
-                        sql.SQL(
-                            """
-                            UPDATE {}
-                            SET revision = revision + 1
-                            WHERE singleton = 1
-                            RETURNING revision
-                            """
-                        ).format(self._meta_table)
-                    ).fetchone()
-                    if row is None:  # pragma: no cover - metadata singleton invariant
-                        raise RuntimeError(
-                            "PostgresPersistence revision update failed"
-                        )
-                    next_revision = int(row[0])
-                else:
-                    next_revision = self._revision
             # A concurrent writer may have committed records that were not
             # present in this transaction's in-memory snapshot before our
             # revision increment. Never claim the local cache represents the
@@ -320,6 +280,50 @@ class PostgresPersistence(MemoryPersistence):
             if before is not None:
                 self._state = before
             raise
+
+    def _lock_and_validate_epoch(self, owner_epoch: int | None) -> int:
+        self._connection.execute(
+            "SELECT pg_advisory_xact_lock_shared(hashtext(%s))",
+            (self.namespace,),
+        )
+        owner_row = self._connection.execute(
+            sql.SQL("SELECT owner_epoch FROM {} WHERE singleton = 1").format(
+                self._meta_table
+            )
+        ).fetchone()
+        current_epoch = -1 if owner_row is None else int(owner_row[0])
+        if current_epoch > 0 and owner_epoch is None:
+            raise StaleWriterError(
+                f"writer fencing is active at epoch {current_epoch}; "
+                "owner_epoch is required"
+            )
+        if owner_epoch is not None and current_epoch != owner_epoch:
+            raise StaleWriterError(
+                f"stale writer epoch {owner_epoch}; current epoch is {current_epoch}"
+            )
+        return current_epoch
+
+    def _begin_transaction_uow(self) -> tuple[_State, MemoryUnitOfWork]:
+        # Force a transaction-consistent refresh. Writers may overlap, and
+        # dirty-record persistence prevents unrelated updates from replacing one another.
+        self._refresh_from_db(force=True)
+        before = self._state
+        return before, MemoryUnitOfWork(fork_state(self._state), self)
+
+    def _increment_revision(self) -> int:
+        row = self._connection.execute(
+            sql.SQL(
+                """
+                UPDATE {}
+                SET revision = revision + 1
+                WHERE singleton = 1
+                RETURNING revision
+                """
+            ).format(self._meta_table)
+        ).fetchone()
+        if row is None:  # pragma: no cover - metadata singleton invariant
+            raise RuntimeError("PostgresPersistence revision update failed")
+        return int(row[0])
 
     def persisted_record_count(self) -> int:
         row = self._connection.execute(

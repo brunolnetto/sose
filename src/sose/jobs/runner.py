@@ -360,46 +360,20 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         )
 
 
-    def run_trigger(
-        self,
-        *,
-        trigger_id: str,
-        ticks: int | None = None,
-        triggered_at: datetime | None = None,
-        recover: bool = False,
-    ) -> JobTriggerResult:
-        """Execute a bounded recurring trigger as one durable batch.
-
-        The external trigger owns a stable identity. Individual ticks receive
-        deterministic child trigger ids so replay after a timeout/crash can
-        resume at the first unfinished tick without duplicating committed work.
-        """
-
-        if not trigger_id:
-            raise ValueError("trigger_id cannot be empty")
-
+    def _initialized_state(self) -> SimulationJobState:
         state = self.state()
         if state is None:
-            state = self.initialize()
-        elif not state.initialized:
-            state = self._finish_initialization(state)
+            return self.initialize()
+        if not state.initialized:
+            return self._finish_initialization(state)
+        return state
 
-        if state.active_batch_trigger_id == trigger_id:
-            requested_ticks = state.active_batch_total_ticks
-            if ticks is not None and ticks != requested_ticks:
-                raise RuntimeError(
-                    "cannot recover batch trigger with a different tick count"
-                )
-        else:
-            requested_ticks = self.ticks_per_trigger if ticks is None else ticks
-            if requested_ticks < 1:
-                raise ValueError("ticks must be >= 1")
-            if requested_ticks > self.max_ticks_per_trigger:
-                raise ValueError(
-                    f"ticks exceeds max_ticks_per_trigger={self.max_ticks_per_trigger}"
-                )
-
-        completed_record = next(
+    @staticmethod
+    def _batch_record(
+        state: SimulationJobState,
+        trigger_id: str,
+    ) -> CompletedJobTrigger | None:
+        return next(
             (
                 item
                 for item in state.completed_batch_triggers
@@ -407,20 +381,53 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             ),
             None,
         )
-        if completed_record is not None:
-            return JobTriggerResult(
-                job_id=self.job_id,
-                domain_name=self.definition.name,
-                trigger_id=completed_record.trigger_id,
-                requested_ticks=completed_record.requested_ticks,
-                completed_ticks=completed_record.requested_ticks,
-                start_tick=completed_record.start_tick,
-                end_tick=completed_record.end_tick,
-                config_revision=completed_record.config_revision,
-                logical_time=completed_record.logical_time,
-                run_count=completed_record.run_count,
-            )
 
+    def _batch_result(self, record: CompletedJobTrigger) -> JobTriggerResult:
+        return JobTriggerResult(
+            job_id=self.job_id,
+            domain_name=self.definition.name,
+            trigger_id=record.trigger_id,
+            requested_ticks=record.requested_ticks,
+            completed_ticks=record.requested_ticks,
+            start_tick=record.start_tick,
+            end_tick=record.end_tick,
+            config_revision=record.config_revision,
+            logical_time=record.logical_time,
+            run_count=record.run_count,
+        )
+
+    def _requested_ticks(
+        self,
+        *,
+        state: SimulationJobState,
+        trigger_id: str,
+        ticks: int | None,
+    ) -> int:
+        if state.active_batch_trigger_id == trigger_id:
+            requested = state.active_batch_total_ticks
+            if ticks is not None and ticks != requested:
+                raise RuntimeError(
+                    "cannot recover batch trigger with a different tick count"
+                )
+            return requested
+
+        requested = self.ticks_per_trigger if ticks is None else ticks
+        if requested < 1:
+            raise ValueError("ticks must be >= 1")
+        if requested > self.max_ticks_per_trigger:
+            raise ValueError(
+                f"ticks exceeds max_ticks_per_trigger={self.max_ticks_per_trigger}"
+            )
+        return requested
+
+    def _claim_batch_trigger(
+        self,
+        *,
+        trigger_id: str,
+        requested_ticks: int,
+        ticks: int | None,
+        recover: bool,
+    ) -> tuple[SimulationJobState | None, int, CompletedJobTrigger | None]:
         with self.persistence.transaction() as uow:
             latest = uow.get_job_state(self.job_id)
             if latest is None:
@@ -428,91 +435,93 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                     f"job disappeared before batch trigger claim: {self.job_id}"
                 )
 
-            completed_record = next(
-                (
-                    item
-                    for item in latest.completed_batch_triggers
-                    if item.trigger_id == trigger_id
-                ),
-                None,
-            )
-            if completed_record is not None:
-                return JobTriggerResult(
-                    job_id=self.job_id,
-                    domain_name=self.definition.name,
-                    trigger_id=completed_record.trigger_id,
-                    requested_ticks=completed_record.requested_ticks,
-                    completed_ticks=completed_record.requested_ticks,
-                    start_tick=completed_record.start_tick,
-                    end_tick=completed_record.end_tick,
-                    config_revision=completed_record.config_revision,
-                    logical_time=completed_record.logical_time,
-                    run_count=completed_record.run_count,
-                )
+            completed = self._batch_record(latest, trigger_id)
+            if completed is not None:
+                return None, requested_ticks, completed
 
-            if latest.active_batch_trigger_id is not None:
-                if latest.active_batch_trigger_id != trigger_id:
-                    raise RuntimeError(
-                        f"job has unresolved batch trigger: {self.job_id} "
-                        f"(trigger={latest.active_batch_trigger_id!r})"
-                    )
-                requested_ticks = latest.active_batch_total_ticks
-                if ticks is not None and ticks != requested_ticks:
-                    raise RuntimeError(
-                        "cannot recover batch trigger with a different tick count"
-                    )
-                if not recover and latest.active_batch_completed_ticks < requested_ticks:
-                    raise RuntimeError(
-                        f"batch trigger requires explicit recovery: {trigger_id}"
-                    )
-                claimed = latest
-            else:
-                if (
-                    latest.status != "ready"
-                    or latest.phase != "idle"
-                    or latest.active_trigger_id is not None
-                ):
-                    raise RuntimeError(
-                        f"job is not idle for batch trigger: {self.job_id} "
-                        f"(status={latest.status!r}, phase={latest.phase!r}, "
-                        f"trigger={latest.active_trigger_id!r})"
-                    )
-                claimed = replace(
-                    latest,
-                    active_batch_trigger_id=trigger_id,
-                    active_batch_total_ticks=requested_ticks,
-                    active_batch_completed_ticks=0,
-                )
-                uow.save_job_state(claimed)
-
-        start_tick = claimed.next_tick - claimed.active_batch_completed_ticks
-        completed = claimed.active_batch_completed_ticks
-
-        while completed < requested_ticks:
-            child_id = f"{trigger_id}:tick:{completed + 1}"
-            tick_result = self.run_tick(
-                triggered_at=triggered_at,
-                trigger_id=child_id,
+            active_claim = self._claim_existing_batch(
+                latest=latest,
+                trigger_id=trigger_id,
+                ticks=ticks,
                 recover=recover,
             )
-            completed += 1
+            if active_claim is not None:
+                return active_claim
 
-            with self.persistence.transaction() as uow:
-                latest = uow.get_job_state(self.job_id)
-                if latest is None:
-                    raise RuntimeError(
-                        f"job disappeared during batch trigger: {self.job_id}"
-                    )
-                if latest.active_batch_trigger_id != trigger_id:
-                    raise RuntimeError(
-                        f"batch trigger ownership was lost: {self.job_id}"
-                    )
-                updated = replace(
+            self._validate_idle_for_batch_trigger(latest)
+            claimed = replace(
+                latest,
+                active_batch_trigger_id=trigger_id,
+                active_batch_total_ticks=requested_ticks,
+                active_batch_completed_ticks=0,
+            )
+            uow.save_job_state(claimed)
+            return claimed, requested_ticks, None
+
+    def _claim_existing_batch(
+        self,
+        *,
+        latest: SimulationJobState,
+        trigger_id: str,
+        ticks: int | None,
+        recover: bool,
+    ) -> tuple[SimulationJobState, int, None] | None:
+        if latest.active_batch_trigger_id is None:
+            return None
+        if latest.active_batch_trigger_id != trigger_id:
+            raise RuntimeError(
+                f"job has unresolved batch trigger: {self.job_id} "
+                f"(trigger={latest.active_batch_trigger_id!r})"
+            )
+        requested_ticks = latest.active_batch_total_ticks
+        if ticks is not None and ticks != requested_ticks:
+            raise RuntimeError(
+                "cannot recover batch trigger with a different tick count"
+            )
+        if not recover and latest.active_batch_completed_ticks < requested_ticks:
+            raise RuntimeError(
+                f"batch trigger requires explicit recovery: {trigger_id}"
+            )
+        return latest, requested_ticks, None
+
+    def _validate_idle_for_batch_trigger(self, latest: SimulationJobState) -> None:
+        if (
+            latest.status == "ready"
+            and latest.phase == "idle"
+            and latest.active_trigger_id is None
+        ):
+            return
+        raise RuntimeError(
+            f"job is not idle for batch trigger: {self.job_id} "
+            f"(status={latest.status!r}, phase={latest.phase!r}, "
+            f"trigger={latest.active_trigger_id!r})"
+        )
+
+    def _save_batch_progress(self, *, trigger_id: str, completed: int) -> None:
+        with self.persistence.transaction() as uow:
+            latest = uow.get_job_state(self.job_id)
+            if latest is None:
+                raise RuntimeError(
+                    f"job disappeared during batch trigger: {self.job_id}"
+                )
+            if latest.active_batch_trigger_id != trigger_id:
+                raise RuntimeError(
+                    f"batch trigger ownership was lost: {self.job_id}"
+                )
+            uow.save_job_state(
+                replace(
                     latest,
                     active_batch_completed_ticks=completed,
                 )
-                uow.save_job_state(updated)
+            )
 
+    def _finalize_batch_trigger(
+        self,
+        *,
+        trigger_id: str,
+        requested_ticks: int,
+        start_tick: int,
+    ) -> SimulationJobState:
         with self.persistence.transaction() as uow:
             latest = uow.get_job_state(self.job_id)
             if latest is None:
@@ -545,6 +554,240 @@ class SimulationJob(Generic[ConfigT, SeedT]):
                 ),
             )
             uow.save_job_state(finished)
+            return finished
+
+    def _tick_trigger_id(
+        self,
+        state: SimulationJobState,
+        trigger_id: str | None,
+    ) -> str:
+        return trigger_id or (
+            f"{self.job_id}:tick:{state.next_tick}:run:{state.run_count + 1}"
+        )
+
+    def _expected_batch_child(
+        self,
+        batch_trigger_id: str,
+        completed_ticks: int,
+    ) -> str:
+        return f"{batch_trigger_id}:tick:{completed_ticks + 1}"
+
+    def _ensure_tick_matches_batch(
+        self,
+        state: SimulationJobState,
+        effective_trigger_id: str,
+    ) -> None:
+        if state.active_batch_trigger_id is None:
+            return
+        expected_child = self._expected_batch_child(
+            state.active_batch_trigger_id,
+            state.active_batch_completed_ticks,
+        )
+        if effective_trigger_id != expected_child:
+            raise RuntimeError(
+                f"job has unresolved batch trigger: {self.job_id} "
+                f"(trigger={state.active_batch_trigger_id!r}, "
+                f"expected_child={expected_child!r})"
+            )
+
+    def _claim_tick(
+        self,
+        *,
+        state: SimulationJobState,
+        effective_trigger_id: str,
+        triggered_at: datetime | None,
+        recover: bool,
+    ) -> SimulationJobState | JobTickResult:
+        with self.persistence.transaction() as uow:
+            latest = uow.get_job_state(self.job_id)
+            if latest is None:
+                raise RuntimeError(f"job disappeared before trigger claim: {self.job_id}")
+
+            if latest.last_completed_trigger_id == effective_trigger_id:
+                return self._result_from_state(latest)
+
+            self._validate_batch_ownership_for_tick(
+                latest=latest,
+                state=state,
+                effective_trigger_id=effective_trigger_id,
+            )
+            if latest.active_batch_trigger_id is None and state.active_batch_trigger_id is not None:
+                raise RuntimeError(
+                    f"batch trigger ownership changed before tick claim: "
+                    f"{self.job_id}"
+                )
+
+            if latest.status == "paused":
+                raise RuntimeError(f"job is paused: {self.job_id}")
+
+            claimed = self._claim_tick_state(
+                latest=latest,
+                effective_trigger_id=effective_trigger_id,
+                triggered_at=triggered_at,
+                recover=recover,
+            )
+            uow.save_job_state(claimed)
+            return claimed
+
+    def _validate_batch_ownership_for_tick(
+        self,
+        *,
+        latest: SimulationJobState,
+        state: SimulationJobState,
+        effective_trigger_id: str,
+    ) -> None:
+        if latest.active_batch_trigger_id is None:
+            return
+        expected_child = self._expected_batch_child(
+            latest.active_batch_trigger_id,
+            latest.active_batch_completed_ticks,
+        )
+        if effective_trigger_id != expected_child:
+            raise RuntimeError(
+                f"job has unresolved batch trigger: {self.job_id} "
+                f"(trigger={latest.active_batch_trigger_id!r}, "
+                f"expected_child={expected_child!r})"
+            )
+
+    def _claim_tick_state(
+        self,
+        *,
+        latest: SimulationJobState,
+        effective_trigger_id: str,
+        triggered_at: datetime | None,
+        recover: bool,
+    ) -> SimulationJobState:
+        unresolved = (
+            latest.active_trigger_id is not None
+            and latest.status in {"running", "failed"}
+        )
+        if not unresolved:
+            return replace(
+                latest,
+                status="running",
+                phase="advance",
+                active_trigger_id=effective_trigger_id,
+                last_triggered_at=triggered_at or latest.logical_time,
+                last_error=None,
+            )
+        if not (recover and latest.active_trigger_id == effective_trigger_id):
+            raise RuntimeError(
+                f"job has unresolved trigger: {self.job_id} "
+                f"(trigger={latest.active_trigger_id!r}, "
+                f"phase={latest.phase!r})"
+            )
+        return replace(
+            latest,
+            status="running",
+            last_triggered_at=triggered_at or latest.last_triggered_at,
+            last_error=None,
+        )
+
+    def _save_tick_if_owned(
+        self,
+        *,
+        effective_trigger_id: str,
+        state: SimulationJobState,
+    ) -> None:
+        with self.persistence.transaction() as uow:
+            latest = uow.get_job_state(self.job_id)
+            if latest is None or latest.active_trigger_id != effective_trigger_id:
+                raise RuntimeError(
+                    f"job trigger ownership was lost: {self.job_id}"
+                )
+            uow.save_job_state(state)
+
+    def _recover_reconcile_state(
+        self,
+        *,
+        claimed: SimulationJobState,
+        effective_trigger_id: str,
+        position,
+    ) -> SimulationJobState:
+        if (
+            claimed.phase != "advance"
+            or position is None
+            or position.logical_tick <= claimed.next_tick
+        ):
+            return claimed
+        running = replace(
+            claimed,
+            phase="reconcile",
+            logical_time=position.logical_time,
+            next_tick=position.logical_tick,
+        )
+        self._save_tick_if_owned(
+            effective_trigger_id=effective_trigger_id,
+            state=running,
+        )
+        return running
+
+    def _build_runtime_for_tick(self, config, logical_time: datetime, logical_tick: int):
+        context, engine = self.definition.build_runtime(
+            self.domain_persistence,
+            config,
+            logical_time,
+            logical_tick,
+        )
+        self._attach_domain_warehouse(engine)
+        backend = self.backend_factory(logical_time)
+        engine.rebuild_backend(backend)
+        run_until = getattr(backend, "run_until", None)
+        return context, engine, backend, run_until
+
+    def run_trigger(
+        self,
+        *,
+        trigger_id: str,
+        ticks: int | None = None,
+        triggered_at: datetime | None = None,
+        recover: bool = False,
+    ) -> JobTriggerResult:
+        """Execute a bounded recurring trigger as one durable batch."""
+        if not trigger_id:
+            raise ValueError("trigger_id cannot be empty")
+
+        state = self._initialized_state()
+        requested_ticks = self._requested_ticks(
+            state=state,
+            trigger_id=trigger_id,
+            ticks=ticks,
+        )
+        completed_record = self._batch_record(state, trigger_id)
+        if completed_record is not None:
+            return self._batch_result(completed_record)
+
+        claimed, requested_ticks, completed_record = self._claim_batch_trigger(
+            trigger_id=trigger_id,
+            requested_ticks=requested_ticks,
+            ticks=ticks,
+            recover=recover,
+        )
+        if completed_record is not None:
+            return self._batch_result(completed_record)
+        assert claimed is not None
+
+        start_tick = claimed.next_tick - claimed.active_batch_completed_ticks
+        completed = claimed.active_batch_completed_ticks
+
+        while completed < requested_ticks:
+            child_id = f"{trigger_id}:tick:{completed + 1}"
+            self.run_tick(
+                triggered_at=triggered_at,
+                trigger_id=child_id,
+                recover=recover,
+            )
+            completed += 1
+            self._save_batch_progress(
+                trigger_id=trigger_id,
+                completed=completed,
+            )
+
+        finished = self._finalize_batch_trigger(
+            trigger_id=trigger_id,
+            requested_ticks=requested_ticks,
+            start_tick=start_tick,
+        )
 
         return JobTriggerResult(
             job_id=self.job_id,
@@ -559,7 +802,6 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             run_count=finished.run_count,
         )
 
-
     def run_tick(
         self,
         *,
@@ -567,11 +809,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         trigger_id: str | None = None,
         recover: bool = False,
     ) -> JobTickResult:
-        state = self.state()
-        if state is None:
-            state = self.initialize()
-        elif not state.initialized:
-            state = self._finish_initialization(state)
+        state = self._initialized_state()
 
         # Reconcile committed domain mutations before the next domain read.
         self.flush_domain_warehouse()
@@ -580,231 +818,40 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         # Failures stay durable and never block operational semantic progress.
         self.flush_sinks()
 
-        effective_trigger_id = trigger_id or (
-            f"{self.job_id}:tick:{state.next_tick}:run:{state.run_count + 1}"
+        effective_trigger_id = self._tick_trigger_id(state, trigger_id)
+        self._ensure_tick_matches_batch(state, effective_trigger_id)
+        claimed_or_result = self._claim_tick(
+            state=state,
+            effective_trigger_id=effective_trigger_id,
+            triggered_at=triggered_at,
+            recover=recover,
         )
-
-        if state.active_batch_trigger_id is not None:
-            expected_child_id = (
-                f"{state.active_batch_trigger_id}:tick:"
-                f"{state.active_batch_completed_ticks + 1}"
-            )
-            if effective_trigger_id != expected_child_id:
-                raise RuntimeError(
-                    f"job has unresolved batch trigger: {self.job_id} "
-                    f"(trigger={state.active_batch_trigger_id!r}, "
-                    f"expected_child={expected_child_id!r})"
-                )
-
-        # Claim or explicitly recover one durable trigger. Recovery is opt-in so
-        # SOSE never guesses that a currently running external worker is dead.
-        with self.persistence.transaction() as uow:
-            latest = uow.get_job_state(self.job_id)
-            if latest is None:
-                raise RuntimeError(f"job disappeared before trigger claim: {self.job_id}")
-
-            if latest.last_completed_trigger_id == effective_trigger_id:
-                return self._result_from_state(latest)
-
-            if latest.active_batch_trigger_id is not None:
-                expected_child_id = (
-                    f"{latest.active_batch_trigger_id}:tick:"
-                    f"{latest.active_batch_completed_ticks + 1}"
-                )
-                if effective_trigger_id != expected_child_id:
-                    raise RuntimeError(
-                        f"job has unresolved batch trigger: {self.job_id} "
-                        f"(trigger={latest.active_batch_trigger_id!r}, "
-                        f"expected_child={expected_child_id!r})"
-                    )
-            elif state.active_batch_trigger_id is not None:
-                raise RuntimeError(
-                    f"batch trigger ownership changed before tick claim: "
-                    f"{self.job_id}"
-                )
-
-            if latest.status == "paused":
-                raise RuntimeError(f"job is paused: {self.job_id}")
-
-            unresolved = (
-                latest.active_trigger_id is not None
-                and latest.status in {"running", "failed"}
-            )
-            if unresolved:
-                if not (
-                    recover
-                    and latest.active_trigger_id == effective_trigger_id
-                ):
-                    raise RuntimeError(
-                        f"job has unresolved trigger: {self.job_id} "
-                        f"(trigger={latest.active_trigger_id!r}, "
-                        f"phase={latest.phase!r})"
-                    )
-                claimed = replace(
-                    latest,
-                    status="running",
-                    last_triggered_at=triggered_at or latest.last_triggered_at,
-                    last_error=None,
-                )
-            else:
-                claimed = replace(
-                    latest,
-                    status="running",
-                    phase="advance",
-                    active_trigger_id=effective_trigger_id,
-                    last_triggered_at=triggered_at or latest.logical_time,
-                    last_error=None,
-                )
-            uow.save_job_state(claimed)
+        if isinstance(claimed_or_result, JobTickResult):
+            return claimed_or_result
+        claimed = claimed_or_result
 
         config = self.definition.config_model.model_validate_json(
             claimed.config_json
         )
 
         try:
-            position = self.persistence.simulation_position()
-
-            # If semantic position advanced but the orchestration checkpoint did
-            # not, a crash happened after advance_tick committed. Treat
-            # SimulationPosition as authoritative and resume at reconciliation.
-            if (
-                claimed.phase == "advance"
-                and position is not None
-                and position.logical_tick > claimed.next_tick
-            ):
-                running = replace(
-                    claimed,
-                    phase="reconcile",
-                    logical_time=position.logical_time,
-                    next_tick=position.logical_tick,
-                )
-                with self.persistence.transaction() as uow:
-                    latest = uow.get_job_state(self.job_id)
-                    if (
-                        latest is None
-                        or latest.active_trigger_id != effective_trigger_id
-                    ):
-                        raise RuntimeError(
-                            f"job trigger ownership was lost: {self.job_id}"
-                        )
-                    uow.save_job_state(running)
-            else:
-                running = claimed
-
-            if running.phase == "advance":
-                logical_time = (
-                    config.start_at if position is None else position.logical_time
-                )
-                logical_tick = 0 if position is None else position.logical_tick
-                running = replace(
-                    running,
-                    logical_time=logical_time,
-                    next_tick=logical_tick,
-                )
-                with self.persistence.transaction() as uow:
-                    latest = uow.get_job_state(self.job_id)
-                    if (
-                        latest is None
-                        or latest.active_trigger_id != effective_trigger_id
-                    ):
-                        raise RuntimeError(
-                            f"job trigger ownership was lost: {self.job_id}"
-                        )
-                    uow.save_job_state(running)
-
-                context, engine = self.definition.build_runtime(
-                    self.domain_persistence,
-                    config,
-                    logical_time,
-                    logical_tick,
-                )
-                self._attach_domain_warehouse(engine)
-                backend = self.backend_factory(logical_time)
-                engine.rebuild_backend(backend)
-
-                engine.advance_tick()
-                run_until = getattr(backend, "run_until", None)
-                if callable(run_until):
-                    run_until(context.clock.now)
-
-                committed = self.persistence.simulation_position()
-                if committed is None:
-                    raise RuntimeError(
-                        "tick advance completed without durable simulation position"
-                    )
-                running = replace(
-                    running,
-                    phase="reconcile",
-                    logical_time=committed.logical_time,
-                    next_tick=committed.logical_tick,
-                )
-                with self.persistence.transaction() as uow:
-                    latest = uow.get_job_state(self.job_id)
-                    if (
-                        latest is None
-                        or latest.active_trigger_id != effective_trigger_id
-                    ):
-                        raise RuntimeError(
-                            f"job trigger ownership was lost: {self.job_id}"
-                        )
-                    uow.save_job_state(running)
-            else:
-                committed = self.persistence.simulation_position()
-                if committed is None:
-                    raise RuntimeError(
-                        "reconcile phase requires durable simulation position"
-                    )
-                context, engine = self.definition.build_runtime(
-                    self.domain_persistence,
-                    config,
-                    committed.logical_time,
-                    committed.logical_tick,
-                )
-                self._attach_domain_warehouse(engine)
-                backend = self.backend_factory(committed.logical_time)
-                engine.rebuild_backend(backend)
-                run_until = getattr(backend, "run_until", None)
-                if callable(run_until):
-                    run_until(context.clock.now)
-
-            if self.definition.reconcile_tick is not None:
-                self.definition.reconcile_tick(
-                    self.domain_persistence,
-                    engine,
-                    backend,
-                    config,
-                    running.bootstrap_state,
-                )
-                if callable(run_until):
-                    run_until(context.clock.now)
-
-            committed = self.persistence.simulation_position()
-            if committed is None:
-                raise RuntimeError(
-                    "tick completed without a durable simulation position"
-                )
-
-            completed = replace(
-                running,
-                status="ready",
-                phase="idle",
-                logical_time=committed.logical_time,
-                next_tick=committed.logical_tick,
-                run_count=max(running.run_count + 1, committed.logical_tick),
-                active_trigger_id=None,
-                last_completed_trigger_id=effective_trigger_id,
-                last_error=None,
+            running, context, engine, backend, run_until = self._execute_tick_phase(
+                config=config,
+                claimed=claimed,
+                effective_trigger_id=effective_trigger_id,
             )
-            with self.persistence.transaction() as uow:
-                latest = uow.get_job_state(self.job_id)
-                if (
-                    latest is None
-                    or latest.active_trigger_id != effective_trigger_id
-                ):
-                    raise RuntimeError(
-                        f"job trigger ownership was lost: {self.job_id}"
-                    )
-                uow.save_job_state(completed)
+            self._run_reconcile_tick(
+                running=running,
+                context=context,
+                engine=engine,
+                backend=backend,
+                config=config,
+                run_until=run_until,
+            )
+            completed = self._persist_completed_tick(
+                running=running,
+                effective_trigger_id=effective_trigger_id,
+            )
 
             # Business mutations are committed with operational progress and are
             # delivered idempotently after that commit.
@@ -815,12 +862,152 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             self.flush_sinks()
             return self._result_from_state(completed)
         except Exception as exc:
-            latest = self.state() or claimed
-            failed = replace(
-                latest,
-                status="failed",
-                last_error=f"{type(exc).__name__}: {exc}",
-            )
-            with self.persistence.transaction() as uow:
-                uow.save_job_state(failed)
+            self._persist_failed_tick(claimed=claimed, exc=exc)
             raise
+
+    def _execute_tick_phase(
+        self,
+        *,
+        config,
+        claimed: SimulationJobState,
+        effective_trigger_id: str,
+    ):
+        position = self.persistence.simulation_position()
+        running = self._recover_reconcile_state(
+            claimed=claimed,
+            effective_trigger_id=effective_trigger_id,
+            position=position,
+        )
+        if running.phase != "advance":
+            return self._build_reconcile_runtime(config, running=running)
+        return self._advance_tick_runtime(
+            config=config,
+            running=running,
+            effective_trigger_id=effective_trigger_id,
+            position=position,
+        )
+
+    def _advance_tick_runtime(
+        self,
+        *,
+        config,
+        running: SimulationJobState,
+        effective_trigger_id: str,
+        position,
+    ):
+        logical_time = config.start_at if position is None else position.logical_time
+        logical_tick = 0 if position is None else position.logical_tick
+        running = replace(
+            running,
+            logical_time=logical_time,
+            next_tick=logical_tick,
+        )
+        self._save_tick_if_owned(
+            effective_trigger_id=effective_trigger_id,
+            state=running,
+        )
+        context, engine, backend, run_until = self._build_runtime_for_tick(
+            config,
+            logical_time,
+            logical_tick,
+        )
+        engine.advance_tick()
+        if callable(run_until):
+            run_until(context.clock.now)
+
+        committed = self.persistence.simulation_position()
+        if committed is None:
+            raise RuntimeError(
+                "tick advance completed without durable simulation position"
+            )
+        running = replace(
+            running,
+            phase="reconcile",
+            logical_time=committed.logical_time,
+            next_tick=committed.logical_tick,
+        )
+        self._save_tick_if_owned(
+            effective_trigger_id=effective_trigger_id,
+            state=running,
+        )
+        return running, context, engine, backend, run_until
+
+    def _build_reconcile_runtime(self, config, *, running: SimulationJobState):
+        committed = self.persistence.simulation_position()
+        if committed is None:
+            raise RuntimeError(
+                "reconcile phase requires durable simulation position"
+            )
+        context, engine, backend, run_until = self._build_runtime_for_tick(
+            config,
+            committed.logical_time,
+            committed.logical_tick,
+        )
+        if callable(run_until):
+            run_until(context.clock.now)
+        return running, context, engine, backend, run_until
+
+    def _run_reconcile_tick(
+        self,
+        *,
+        running: SimulationJobState,
+        context,
+        engine,
+        backend,
+        config,
+        run_until,
+    ) -> None:
+        if self.definition.reconcile_tick is None:
+            return
+        self.definition.reconcile_tick(
+            self.domain_persistence,
+            engine,
+            backend,
+            config,
+            running.bootstrap_state,
+        )
+        if callable(run_until):
+            run_until(context.clock.now)
+
+    def _persist_completed_tick(
+        self,
+        *,
+        running: SimulationJobState,
+        effective_trigger_id: str,
+    ) -> SimulationJobState:
+        committed = self.persistence.simulation_position()
+        if committed is None:
+            raise RuntimeError(
+                "tick completed without a durable simulation position"
+            )
+        completed = replace(
+            running,
+            status="ready",
+            phase="idle",
+            logical_time=committed.logical_time,
+            next_tick=committed.logical_tick,
+            run_count=max(running.run_count + 1, committed.logical_tick),
+            active_trigger_id=None,
+            last_completed_trigger_id=effective_trigger_id,
+            last_error=None,
+        )
+        self._save_tick_if_owned(
+            effective_trigger_id=effective_trigger_id,
+            state=completed,
+        )
+        return completed
+
+    def _persist_failed_tick(
+        self,
+        *,
+        claimed: SimulationJobState,
+        exc: Exception,
+    ) -> None:
+        latest = self.state() or claimed
+        failed = replace(
+            latest,
+            status="failed",
+            last_error=f"{type(exc).__name__}: {exc}",
+        )
+        with self.persistence.transaction() as uow:
+            uow.save_job_state(failed)

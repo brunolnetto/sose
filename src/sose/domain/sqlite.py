@@ -17,7 +17,13 @@ class SQLiteDomainWarehouse:
         self.path = str(path)
         if self.path != ":memory:":
             Path(self.path).parent.mkdir(parents=True, exist_ok=True)
-        self._connection = sqlite3.connect(self.path, isolation_level=None, timeout=30.0)
+        self._connection = sqlite3.connect(
+            self.path,
+            isolation_level=None,
+            timeout=30.0,
+            check_same_thread=False,
+        )
+        self._closed = False
         self._ensure_wal()
         self._connection.execute(
             """CREATE TABLE IF NOT EXISTS domain_entity (
@@ -50,7 +56,25 @@ class SQLiteDomainWarehouse:
                 sleep(0.01)
 
     def close(self) -> None:
-        self._connection.close()
+        if self._closed:
+            return
+        conn = getattr(self, "_connection", None)
+        self._connection = None
+        self._closed = True
+        if conn is not None:
+            conn.close()
+
+    def __enter__(self) -> "SQLiteDomainWarehouse":
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def entity(self, entity_type: str, entity_id: str) -> Entity | None:
         row = self._connection.execute(

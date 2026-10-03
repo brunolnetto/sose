@@ -8,7 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 from sose.examples.catalog import builtin_catalog
-from sose.jobs.model import SimulationJobState
+from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.jobs.runner import (
     JobTickResult,
     SimulationJob,
@@ -114,6 +114,9 @@ def _replace_transaction_state(
 
 
 def test_scheduled_trigger_and_constructor_validation_edges():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        scheduled_trigger_id("job", datetime(2026, 1, 1, 8))
+
     with pytest.raises(ValueError, match="job_id cannot be empty"):
         scheduled_trigger_id("", NOW)
 
@@ -232,6 +235,46 @@ def test_apply_config_initializes_while_update_and_status_require_existing_job()
         missing.pause()
 
 
+def test_apply_config_returns_current_when_no_changes():
+    persistence = MemoryPersistence()
+    job = _job(persistence)
+    current = job.initialize()
+    same = job.definition.parse_config()
+
+    assert job.apply_config(same) == current
+
+
+def test_domain_warehouse_helpers_attach_flush_and_filter_pending_sink_deliveries(monkeypatch):
+    class Warehouse:
+        def entity(self, entity_type, entity_id):
+            return None
+
+    persistence = MemoryPersistence()
+    warehouse = Warehouse()
+    job = _job(persistence, definition=_definition(), sink_bindings=(),)
+    job.domain_warehouse = warehouse
+    job.domain_persistence = persistence
+    job.domain_outbox = SimpleNamespace(flush=lambda: 3)
+
+    assert job.flush_domain_warehouse() == 3
+    engine = SimpleNamespace()
+    job._attach_domain_warehouse(engine)
+    assert engine.domain_warehouse is warehouse
+    assert engine.domain_entities.entity("missing", "id") is None
+
+    monkeypatch.setattr(
+        persistence,
+        "sink_deliveries",
+        lambda job_id=None: (
+            SimpleNamespace(delivery_id="d-pending", status="pending"),
+            SimpleNamespace(delivery_id="d-done", status="delivered"),
+        ),
+    )
+
+    pending = job.pending_sink_deliveries()
+    assert [delivery.delivery_id for delivery in pending] == ["d-pending"]
+
+
 @pytest.mark.parametrize("mode", ["missing", "revision"])
 def test_update_config_detects_transaction_races(monkeypatch, mode):
     persistence = MemoryPersistence()
@@ -271,6 +314,55 @@ def test_run_trigger_validates_identity_tick_count_and_initializes_fresh_job():
         job.run_trigger(trigger_id="")
     with pytest.raises(ValueError, match="ticks must be >= 1"):
         job.run_trigger(trigger_id="zero", ticks=0)
+    with pytest.raises(ValueError, match="exceeds max_ticks_per_trigger"):
+        job.run_trigger(trigger_id="too-many", ticks=3)
+
+
+def test_run_trigger_reads_completed_record_from_latest_transaction_state(monkeypatch):
+    persistence = MemoryPersistence()
+    job = _job(persistence)
+    initial = job.initialize()
+    completed = CompletedJobTrigger(
+        trigger_id="batch-done",
+        requested_ticks=1,
+        start_tick=0,
+        end_tick=1,
+        config_revision=initial.config_revision,
+        logical_time=initial.logical_time,
+        run_count=initial.run_count,
+    )
+    with persistence.transaction() as uow:
+        uow.save_job_state(replace(initial, completed_batch_triggers=(completed,)))
+
+    monkeypatch.setattr(job, "state", lambda: initial)
+    result = job.run_trigger(trigger_id="batch-done")
+    assert result.trigger_id == "batch-done"
+
+
+def test_run_trigger_rejects_non_idle_state_and_allows_recovering_owned_batch():
+    persistence = MemoryPersistence()
+    job = _job(persistence)
+    current = job.initialize()
+    with persistence.transaction() as uow:
+        uow.save_job_state(replace(current, status="paused"))
+    with pytest.raises(RuntimeError, match="not idle for batch trigger"):
+        job.run_trigger(trigger_id="batch")
+
+    persistence = MemoryPersistence()
+    job = _job(persistence)
+    current = job.initialize()
+    with persistence.transaction() as uow:
+        uow.save_job_state(
+            replace(
+                current,
+                active_batch_trigger_id="batch",
+                active_batch_total_ticks=1,
+                active_batch_completed_ticks=1,
+                next_tick=1,
+            )
+        )
+    recovered = job.run_trigger(trigger_id="batch", recover=True)
+    assert recovered.trigger_id == "batch"
 
 
 def test_run_trigger_finishes_pending_initialization():
@@ -425,6 +517,45 @@ def test_run_tick_finishes_pending_initialization():
     result = job.run_tick(trigger_id="tick")
     assert result.logical_tick == 1
     assert job.state().initialized
+
+
+def test_run_tick_initializes_when_state_is_missing_and_rejects_wrong_batch_child():
+    fresh = _job(MemoryPersistence())
+    assert fresh.run_tick(trigger_id="tick-1").logical_tick == 1
+
+    persistence = MemoryPersistence()
+    job = _job(persistence)
+    current = job.initialize()
+    with persistence.transaction() as uow:
+        uow.save_job_state(
+            replace(
+                current,
+                active_batch_trigger_id="batch",
+                active_batch_total_ticks=2,
+                active_batch_completed_ticks=0,
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="expected_child"):
+        job.run_tick(trigger_id="batch:tick:9")
+
+
+def test_pause_rejects_status_change_while_batch_trigger_active():
+    persistence = MemoryPersistence()
+    job = _job(persistence)
+    current = job.initialize()
+    with persistence.transaction() as uow:
+        uow.save_job_state(
+            replace(
+                current,
+                active_batch_trigger_id="batch",
+                active_batch_total_ticks=1,
+                active_batch_completed_ticks=0,
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="cannot change status while job trigger is active"):
+        job.pause()
 
 
 def test_run_tick_detects_disappearance_before_claim(monkeypatch):

@@ -33,130 +33,153 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
 
     def __init__(self, path: str | Path, *, namespace: str = "sose") -> None:
         super().__init__()
-        if not _NAMESPACE_RE.fullmatch(namespace):
-            raise ValueError(
-                "SQLiteIncrementalPersistence namespace must be a lowercase SQL-safe "
-                "identifier with at most 40 characters"
-            )
+        self._validate_namespace(namespace)
         self.namespace = namespace
         self._meta_table = f'"{namespace}_record_meta"'
         self._record_table = f'"{namespace}_record"'
         self.path = str(path)
-        if self.path != ":memory:":
-            Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+        self._ensure_parent_path()
+        self._connection = self._connect()
+        self._closed = False
+        self._connection.execute("PRAGMA foreign_keys = ON")
+        self._connection.execute("PRAGMA busy_timeout = 30000")
+        self._bootstrap_schema()
+        self._ensure_wal()
+        self._revision = -1
+        self._refresh_from_db(force=True)
 
-        self._connection = sqlite3.connect(
+    @staticmethod
+    def _validate_namespace(namespace: str) -> None:
+        if _NAMESPACE_RE.fullmatch(namespace):
+            return
+        raise ValueError(
+            "SQLiteIncrementalPersistence namespace must be a lowercase SQL-safe "
+            "identifier with at most 40 characters"
+        )
+
+    def _ensure_parent_path(self) -> None:
+        if self.path == ":memory:":
+            return
+        Path(self.path).parent.mkdir(parents=True, exist_ok=True)
+
+    def _connect(self):
+        return sqlite3.connect(
             self.path,
             isolation_level=None,
             timeout=30.0,
+            check_same_thread=False,
         )
-        self._connection.execute("PRAGMA foreign_keys = ON")
-        self._connection.execute("PRAGMA busy_timeout = 30000")
 
+    def _bootstrap_schema(self) -> None:
         # Schema creation, singleton bootstrap, and migrations share one
         # BEGIN IMMEDIATE lock. Concurrent constructors therefore serialize
         # before any metadata is inspected or mutated.
         self._connection.execute("BEGIN IMMEDIATE")
         try:
-            self._connection.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self._meta_table} (
-                    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-                    schema_version INTEGER NOT NULL,
-                    revision INTEGER NOT NULL DEFAULT 0,
-                    owner_id TEXT,
-                    owner_epoch INTEGER NOT NULL DEFAULT 0
-                )
-                """
-            )
-            self._connection.execute(
-                f"""
-                CREATE TABLE IF NOT EXISTS {self._record_table} (
-                    collection TEXT NOT NULL,
-                    record_key TEXT NOT NULL,
-                    position INTEGER NOT NULL,
-                    payload TEXT NOT NULL,
-                    PRIMARY KEY (collection, record_key)
-                )
-                """
-            )
-
-            columns = {
-                str(row[1])
-                for row in self._connection.execute(
-                    f"PRAGMA table_info({self._meta_table})"
-                ).fetchall()
-            }
-            row = self._connection.execute(
-                f"SELECT schema_version FROM {self._meta_table} WHERE singleton = 1"
-            ).fetchone()
-
-            if row is None:
-                self._connection.execute(
-                    f"""
-                    INSERT OR IGNORE INTO {self._meta_table}(
-                        singleton,
-                        schema_version,
-                        revision
-                    )
-                    VALUES (1, ?, 0)
-                    """,
-                    (_SCHEMA_VERSION,),
-                )
-                row = self._connection.execute(
-                    f"""
-                    SELECT schema_version
-                    FROM {self._meta_table}
-                    WHERE singleton = 1
-                    """
-                ).fetchone()
-
-            if row is None:  # pragma: no cover - defensive database invariant
-                raise RuntimeError("SQLite incremental metadata bootstrap failed")
-
-            version = int(row[0])
-            if version == 1:
-                if "revision" not in columns:
-                    self._connection.execute(
-                        f"""
-                        ALTER TABLE {self._meta_table}
-                        ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
-                        """
-                    )
-                version = 2
-            if version == 2:
-                if "owner_id" not in columns:
-                    self._connection.execute(
-                        f"ALTER TABLE {self._meta_table} ADD COLUMN owner_id TEXT"
-                    )
-                if "owner_epoch" not in columns:
-                    self._connection.execute(
-                        f"""
-                        ALTER TABLE {self._meta_table}
-                        ADD COLUMN owner_epoch INTEGER NOT NULL DEFAULT 0
-                        """
-                    )
-                self._connection.execute(
-                    f"""
-                    UPDATE {self._meta_table}
-                    SET schema_version = 3
-                    WHERE singleton = 1
-                    """
-                )
-            elif version != _SCHEMA_VERSION:
-                raise RuntimeError(
-                    "unsupported SQLiteIncrementalPersistence schema version: "
-                    f"{version}"
-                )
+            self._create_tables()
+            columns = self._meta_columns()
+            version = self._meta_schema_version()
+            self._migrate_schema(version, columns)
 
             self._connection.commit()
         except Exception:
             self._connection.rollback()
             raise
 
-        self._ensure_wal()
-        self._revision = -1
-        self._refresh_from_db(force=True)
+    def _create_tables(self) -> None:
+        self._connection.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._meta_table} (
+                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+                schema_version INTEGER NOT NULL,
+                revision INTEGER NOT NULL DEFAULT 0,
+                owner_id TEXT,
+                owner_epoch INTEGER NOT NULL DEFAULT 0
+            )
+            """
+        )
+        self._connection.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {self._record_table} (
+                collection TEXT NOT NULL,
+                record_key TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                payload TEXT NOT NULL,
+                PRIMARY KEY (collection, record_key)
+            )
+            """
+        )
+
+    def _meta_columns(self) -> set[str]:
+        return {
+            str(row[1])
+            for row in self._connection.execute(
+                f"PRAGMA table_info({self._meta_table})"
+            ).fetchall()
+        }
+
+    def _meta_schema_version(self) -> int:
+        row = self._connection.execute(
+            f"SELECT schema_version FROM {self._meta_table} WHERE singleton = 1"
+        ).fetchone()
+        if row is None:
+            self._connection.execute(
+                f"""
+                INSERT OR IGNORE INTO {self._meta_table}(
+                    singleton,
+                    schema_version,
+                    revision
+                )
+                VALUES (1, ?, 0)
+                """,
+                (_SCHEMA_VERSION,),
+            )
+            row = self._connection.execute(
+                f"""
+                SELECT schema_version
+                FROM {self._meta_table}
+                WHERE singleton = 1
+                """
+            ).fetchone()
+        if row is None:  # pragma: no cover - defensive database invariant
+            raise RuntimeError("SQLite incremental metadata bootstrap failed")
+        return int(row[0])
+
+    def _migrate_schema(self, version: int, columns: set[str]) -> None:
+        if version == 1:
+            if "revision" not in columns:
+                self._connection.execute(
+                    f"""
+                    ALTER TABLE {self._meta_table}
+                    ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
+                    """
+                )
+            version = 2
+        if version == 2:
+            if "owner_id" not in columns:
+                self._connection.execute(
+                    f"ALTER TABLE {self._meta_table} ADD COLUMN owner_id TEXT"
+                )
+            if "owner_epoch" not in columns:
+                self._connection.execute(
+                    f"""
+                    ALTER TABLE {self._meta_table}
+                    ADD COLUMN owner_epoch INTEGER NOT NULL DEFAULT 0
+                    """
+                )
+            self._connection.execute(
+                f"""
+                UPDATE {self._meta_table}
+                SET schema_version = 3
+                WHERE singleton = 1
+                """
+            )
+            return
+        if version != _SCHEMA_VERSION:
+            raise RuntimeError(
+                "unsupported SQLiteIncrementalPersistence schema version: "
+                f"{version}"
+            )
 
     def _ensure_wal(self) -> None:
         """Enable WAL safely when multiple constructors race on one database."""
@@ -179,7 +202,19 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                 sleep(0.01)
 
     def close(self) -> None:
-        self._connection.close()
+        if self._closed:
+            return
+        conn = getattr(self, "_connection", None)
+        self._connection = None
+        self._closed = True
+        if conn is not None:
+            conn.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def __enter__(self) -> "SQLiteIncrementalPersistence":
         return self

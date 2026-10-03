@@ -53,69 +53,119 @@ def _resolve(path: str) -> type[Any]:
     return current
 
 
+def _encode_sorted_collection(kind: str, value: set[object] | frozenset[object]) -> object:
+    encoded = [_encode(item) for item in value]
+    encoded.sort(key=lambda item: json.dumps(item, sort_keys=True))
+    return {_TAG: kind, "items": encoded}
+
+
+def _decode_collection(value: dict[str, object], factory):
+    return factory(_decode(item) for item in value["items"])
+
+
+def _decode_enum(value: dict[str, object]) -> object:
+    cls = _resolve(str(value["class"]))
+    return cls(_decode(value["value"]))
+
+
+def _decode_dataclass(value: dict[str, object]) -> object:
+    cls = _resolve(str(value["class"]))
+    decoded_fields = {
+        name: _decode(item)
+        for name, item in value["fields"].items()
+    }
+    return cls(**decoded_fields)
+
+
+def _decode_dict(value: dict[str, object]) -> object:
+    return {
+        _decode(key): _decode(item)
+        for key, item in value["items"]
+    }
+
+
+_SCALAR_ENCODERS = (
+    (float, lambda current: {_TAG: "float", "hex": current.hex()}),
+    (datetime, lambda current: {_TAG: "datetime", "value": current.isoformat()}),
+    (date, lambda current: {_TAG: "date", "value": current.isoformat()}),
+    (UUID, lambda current: {_TAG: "uuid", "value": str(current)}),
+    (bytes, lambda current: {_TAG: "bytes", "hex": current.hex()}),
+    (Path, lambda current: {_TAG: "path", "value": str(current)}),
+)
+
+
+def _encode_scalar(value: object) -> object | None:
+    for cls, encoder in _SCALAR_ENCODERS:
+        if isinstance(value, cls):
+            return encoder(value)
+    return None
+
+
+def _encode_collection(kind: str, value: tuple[object, ...] | list[object]) -> object:
+    return {_TAG: kind, "items": [_encode(item) for item in value]}
+
+
+def _encode_enum(value: object) -> object | None:
+    if not isinstance(value, Enum):
+        return None
+    return {
+        _TAG: "enum",
+        "class": _class_path(value),
+        "value": _encode(value.value),
+    }
+
+
+def _encode_dataclass_value(value: object) -> object | None:
+    if not (is_dataclass(value) and not isinstance(value, type)):
+        return None
+    return {
+        _TAG: "dataclass",
+        "class": _class_path(value),
+        "fields": {
+            field.name: _encode(getattr(value, field.name))
+            for field in fields(value)
+        },
+    }
+
+
+def _encode_sequence_or_set(value: object) -> object | None:
+    if isinstance(value, tuple):
+        return _encode_collection("tuple", value)
+    if isinstance(value, list):
+        return _encode_collection("list", value)
+    if isinstance(value, frozenset):
+        return _encode_sorted_collection("frozenset", value)
+    if isinstance(value, set):
+        return _encode_sorted_collection("set", value)
+    return None
+
+
+def _encode_mapping_value(value: object) -> object | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        _TAG: "dict",
+        "items": [
+            [_encode(key), _encode(item)]
+            for key, item in value.items()
+        ],
+    }
+
+
 def _encode(value: object) -> object:
     if value is None or isinstance(value, (bool, int, str)):
         return value
 
-    if isinstance(value, float):
-        return {_TAG: "float", "hex": value.hex()}
-
-    if isinstance(value, datetime):
-        return {_TAG: "datetime", "value": value.isoformat()}
-
-    if isinstance(value, date):
-        return {_TAG: "date", "value": value.isoformat()}
-
-    if isinstance(value, UUID):
-        return {_TAG: "uuid", "value": str(value)}
-
-    if isinstance(value, bytes):
-        return {_TAG: "bytes", "hex": value.hex()}
-
-    if isinstance(value, Path):
-        return {_TAG: "path", "value": str(value)}
-
-    if isinstance(value, Enum):
-        return {
-            _TAG: "enum",
-            "class": _class_path(value),
-            "value": _encode(value.value),
-        }
-
-    if is_dataclass(value) and not isinstance(value, type):
-        return {
-            _TAG: "dataclass",
-            "class": _class_path(value),
-            "fields": {
-                field.name: _encode(getattr(value, field.name))
-                for field in fields(value)
-            },
-        }
-
-    if isinstance(value, tuple):
-        return {_TAG: "tuple", "items": [_encode(item) for item in value]}
-
-    if isinstance(value, list):
-        return {_TAG: "list", "items": [_encode(item) for item in value]}
-
-    if isinstance(value, frozenset):
-        encoded = [_encode(item) for item in value]
-        encoded.sort(key=lambda item: json.dumps(item, sort_keys=True))
-        return {_TAG: "frozenset", "items": encoded}
-
-    if isinstance(value, set):
-        encoded = [_encode(item) for item in value]
-        encoded.sort(key=lambda item: json.dumps(item, sort_keys=True))
-        return {_TAG: "set", "items": encoded}
-
-    if isinstance(value, dict):
-        return {
-            _TAG: "dict",
-            "items": [
-                [_encode(key), _encode(item)]
-                for key, item in value.items()
-            ],
-        }
+    for encoder in (
+        _encode_scalar,
+        _encode_enum,
+        _encode_dataclass_value,
+        _encode_sequence_or_set,
+        _encode_mapping_value,
+    ):
+        encoded = encoder(value)
+        if encoded is not None:
+            return encoded
 
     raise TypeError(
         "unsupported SOSE persistence value: "
@@ -137,40 +187,23 @@ def _decode(value: object) -> object:
     if kind is None:
         return {key: _decode(item) for key, item in value.items()}
 
-    if kind == "float":
-        return float.fromhex(str(value["hex"]))
-    if kind == "datetime":
-        return datetime.fromisoformat(str(value["value"]))
-    if kind == "date":
-        return date.fromisoformat(str(value["value"]))
-    if kind == "uuid":
-        return UUID(str(value["value"]))
-    if kind == "bytes":
-        return bytes.fromhex(str(value["hex"]))
-    if kind == "path":
-        return Path(str(value["value"]))
-    if kind == "enum":
-        cls = _resolve(str(value["class"]))
-        return cls(_decode(value["value"]))
-    if kind == "tuple":
-        return tuple(_decode(item) for item in value["items"])
-    if kind == "list":
-        return [_decode(item) for item in value["items"]]
-    if kind == "frozenset":
-        return frozenset(_decode(item) for item in value["items"])
-    if kind == "set":
-        return set(_decode(item) for item in value["items"])
-    if kind == "dict":
-        return {
-            _decode(key): _decode(item)
-            for key, item in value["items"]
-        }
-    if kind == "dataclass":
-        cls = _resolve(str(value["class"]))
-        decoded_fields = {
-            name: _decode(item)
-            for name, item in value["fields"].items()
-        }
-        return cls(**decoded_fields)
+    decoders = {
+        "float": lambda current: float.fromhex(str(current["hex"])),
+        "datetime": lambda current: datetime.fromisoformat(str(current["value"])),
+        "date": lambda current: date.fromisoformat(str(current["value"])),
+        "uuid": lambda current: UUID(str(current["value"])),
+        "bytes": lambda current: bytes.fromhex(str(current["hex"])),
+        "path": lambda current: Path(str(current["value"])),
+        "enum": _decode_enum,
+        "tuple": lambda current: _decode_collection(current, tuple),
+        "list": lambda current: _decode_collection(current, list),
+        "frozenset": lambda current: _decode_collection(current, frozenset),
+        "set": lambda current: _decode_collection(current, set),
+        "dict": _decode_dict,
+        "dataclass": _decode_dataclass,
+    }
+    decoder = decoders.get(kind)
+    if decoder is not None:
+        return decoder(value)
 
     raise ValueError(f"unknown SOSE persistence tag: {kind}")

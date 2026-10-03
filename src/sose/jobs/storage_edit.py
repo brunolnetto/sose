@@ -103,6 +103,26 @@ def add_analytical_sink(
     plan = build_storage_plan(validated)
 
     lines = config_path.read_text(encoding="utf-8").splitlines()
+    insertion = _sink_insertion_lines(name=name, adapter=adapter, options=options)
+    updated_lines = _insert_sink_block(lines, insertion)
+    _write_lines(config_path, updated_lines)
+
+    return {
+        "role": "analytical",
+        "name": name,
+        "adapter": adapter,
+        "options": dict(options or {}),
+        "storage_plan": plan.describe(),
+        "applied": False,
+    }
+
+
+def _sink_insertion_lines(
+    *,
+    name: str,
+    adapter: str,
+    options: dict[str, object] | None,
+) -> list[str]:
     insertion = [
         "[[sinks]]",
         f"name = {_toml_value(name)}",
@@ -119,11 +139,10 @@ def add_analytical_sink(
                 ],
             ]
         )
+    return insertion
 
-    insert_at = _first_top_level_section_index(
-        lines,
-        preferred=("runtime", "job"),
-    )
+def _insert_sink_block(lines: list[str], insertion: list[str]) -> list[str]:
+    insert_at = _first_top_level_section_index(lines, preferred=("runtime", "job"))
     if insert_at is None:
         insert_at = len(lines)
 
@@ -134,16 +153,7 @@ def add_analytical_sink(
     prefix.extend(insertion)
     if suffix and (not prefix or prefix[-1].strip()):
         prefix.append("")
-    _write_lines(config_path, prefix + suffix)
-
-    return {
-        "role": "analytical",
-        "name": name,
-        "adapter": adapter,
-        "options": dict(options or {}),
-        "storage_plan": plan.describe(),
-        "applied": False,
-    }
+    return prefix + suffix
 
 
 def remove_analytical_sink(
@@ -159,25 +169,14 @@ def remove_analytical_sink(
     lines = config_path.read_text(encoding="utf-8").splitlines()
     blocks = _sink_blocks(lines)
 
-    target: tuple[int, int] | None = None
-    for start, end in blocks:
-        block_name = _sink_name(lines[start:end])
-        if block_name == name:
-            target = (start, end)
-            break
+    target = _find_sink_block(lines, blocks, name=name)
 
     if target is None:
         raise RuntimeError(
             f"could not locate analytical sink block in TOML: {name}"
         )
 
-    start, end = target
-    updated_lines = lines[:start] + lines[end:]
-    while start < len(updated_lines) and not updated_lines[start].strip():
-        del updated_lines[start]
-    if start > 0 and start < len(updated_lines):
-        if updated_lines[start - 1].strip() and updated_lines[start].strip():
-            updated_lines.insert(start, "")
+    updated_lines = _remove_sink_block(lines, target)
 
     _write_lines(config_path, updated_lines)
     updated_config, _ = load_sose_config(config_path)
@@ -192,6 +191,37 @@ def remove_analytical_sink(
     }
 
 
+def _find_sink_block(
+    lines: list[str],
+    blocks: list[tuple[int, int]],
+    *,
+    name: str,
+) -> tuple[int, int] | None:
+    for start, end in blocks:
+        block_name = _sink_name(lines[start:end])
+        if block_name == name:
+            return (start, end)
+    return None
+
+
+def _remove_sink_block(
+    lines: list[str],
+    target: tuple[int, int],
+) -> list[str]:
+    start, end = target
+    updated_lines = lines[:start] + lines[end:]
+    while start < len(updated_lines) and not updated_lines[start].strip():
+        del updated_lines[start]
+    if (
+        start > 0
+        and start < len(updated_lines)
+        and updated_lines[start - 1].strip()
+        and updated_lines[start].strip()
+    ):
+        updated_lines.insert(start, "")
+    return updated_lines
+
+
 def _write_lines(path: Path, lines: list[str]) -> None:
     path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
 
@@ -204,28 +234,45 @@ def _replace_regular_section(
     aliases: tuple[str, ...] = (),
 ) -> list[str]:
     accepted = {header, *aliases}
-    try:
-        start = next(
-            index
-            for index, line in enumerate(lines)
-            if line.strip() in accepted
-        )
-    except StopIteration:
-        if lines and lines[-1].strip():
-            lines = [*lines, ""]
-        return [*lines, header, *body]
+    start = _section_start_index(lines, accepted)
+    if start is None:
+        return _append_regular_section(lines, header, body)
 
-    end = len(lines)
-    for index in range(start + 1, len(lines)):
-        stripped = lines[index].strip()
-        if stripped.startswith("[") and stripped.endswith("]"):
-            end = index
-            break
+    end = _section_end_index(lines, start=start)
 
     replacement = [header, *body]
     if end < len(lines) and replacement[-1:]:
         replacement.append("")
     return lines[:start] + replacement + lines[end:]
+
+
+def _section_start_index(lines: list[str], accepted: set[str]) -> int | None:
+    return next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip() in accepted
+        ),
+        None,
+    )
+
+
+def _append_regular_section(
+    lines: list[str],
+    header: str,
+    body: list[str],
+) -> list[str]:
+    if lines and lines[-1].strip():
+        lines = [*lines, ""]
+    return [*lines, header, *body]
+
+
+def _section_end_index(lines: list[str], *, start: int) -> int:
+    for index in range(start + 1, len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            return index
+    return len(lines)
 
 
 def _first_top_level_section_index(

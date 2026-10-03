@@ -36,7 +36,9 @@ class SQLitePersistence(MemoryPersistence):
             self.path,
             isolation_level=None,
             timeout=30.0,
+            check_same_thread=False,
         )
+        self._closed = False
         self._connection.execute("PRAGMA foreign_keys = ON")
         self._connection.execute("BEGIN IMMEDIATE")
         try:
@@ -53,7 +55,19 @@ class SQLitePersistence(MemoryPersistence):
             self._connection.commit()
 
     def close(self) -> None:
-        self._connection.close()
+        if self._closed:
+            return
+        conn = getattr(self, "_connection", None)
+        self._connection = None
+        self._closed = True
+        if conn is not None:
+            conn.close()
+
+    def __del__(self) -> None:
+        try:
+            self.close()
+        except Exception:
+            pass
 
     def schema_info(self) -> SQLiteSchemaInfo:
         """Return the durable SQLite schema/codec versions currently stored."""

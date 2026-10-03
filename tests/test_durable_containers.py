@@ -432,3 +432,292 @@ def test_container_records_reject_non_finite_quantities(value):
             value,
             1,
         )
+
+
+def test_define_rejects_conflicting_existing_state():
+    store = MemoryPersistence()
+    manager = DurableContainerManager(store)
+    manager.define(ContainerDefinition("fuel", capacity=10.0, initial=2.0))
+
+    with pytest.raises(ValueError, match="already exists"):
+        manager.define(ContainerDefinition("fuel", capacity=10.0, initial=1.0))
+
+
+def test_validate_rebuild_detects_durable_container_corruption():
+    class _OverCapacityPersistence:
+        def container_definitions(self):
+            return (ContainerDefinition("fuel", capacity=5.0, initial=1.0),)
+
+        def container_states(self):
+            return (ContainerState("fuel", level=6.0),)
+
+        def container_operation_results(self):
+            return ()
+
+        def container_operation_intents(self):
+            return ()
+
+    manager = DurableContainerManager(_OverCapacityPersistence())
+    with pytest.raises(RuntimeError, match="exceeds capacity"):
+        manager.validate_rebuild()
+
+    class _UnknownStatePersistence:
+        def container_definitions(self):
+            return ()
+
+        def container_states(self):
+            return (ContainerState("ghost", level=1.0),)
+
+        def container_operation_results(self):
+            return ()
+
+        def container_operation_intents(self):
+            return ()
+
+    manager = DurableContainerManager(_UnknownStatePersistence())
+    with pytest.raises(RuntimeError, match="unknown definition"):
+        manager.validate_rebuild()
+
+    class _UnknownIntentDefinitionPersistence:
+        def container_definitions(self):
+            return (ContainerDefinition("fuel", capacity=10.0, initial=1.0),)
+
+        def container_states(self):
+            return (ContainerState("fuel", level=1.0),)
+
+        def container_operation_results(self):
+            return ()
+
+        def container_operation_intents(self):
+            return (
+                ContainerOperationIntent(
+                    request_id="intent-1",
+                    container_name="ghost",
+                    operation="put",
+                    amount=1.0,
+                    requested_at=NOW,
+                    sequence=1,
+                ),
+            )
+
+    manager = DurableContainerManager(_UnknownIntentDefinitionPersistence())
+    with pytest.raises(RuntimeError, match="references unknown definition"):
+        manager.validate_rebuild()
+
+
+def test_validate_rebuild_rejects_invalid_result_state():
+    class _OverlappedPersistence:
+        def container_definitions(self):
+            return (ContainerDefinition("fuel", capacity=10.0, initial=5.0),)
+
+        def container_states(self):
+            return (ContainerState("fuel", level=5.0),)
+
+        def container_operation_intents(self):
+            return (
+                ContainerOperationIntent(
+                    request_id="result-1",
+                    container_name="fuel",
+                    operation="put",
+                    amount=2.0,
+                    requested_at=NOW,
+                    sequence=2,
+                ),
+            )
+
+        def container_operation_results(self):
+            return (
+                ContainerOperationResult(
+                    request_id="result-1",
+                    container_name="fuel",
+                    operation="put",
+                    amount=2.0,
+                    completed_at=NOW,
+                    level_before=5.0,
+                    level_after=8.0,
+                    sequence=1,
+                ),
+            )
+
+    manager = DurableContainerManager(_OverlappedPersistence())
+    with pytest.raises(RuntimeError, match="both pending and completed"):
+        manager.validate_rebuild()
+
+    class _InconsistentResultPersistence:
+        def container_definitions(self):
+            return (ContainerDefinition("fuel", capacity=10.0, initial=5.0),)
+
+        def container_states(self):
+            return (ContainerState("fuel", level=5.0),)
+
+        def container_operation_intents(self):
+            return ()
+
+        def container_operation_results(self):
+            return (
+                ContainerOperationResult(
+                    request_id="result-2",
+                    container_name="fuel",
+                    operation="get",
+                    amount=2.0,
+                    completed_at=NOW,
+                    level_before=5.0,
+                    level_after=9.0,
+                    sequence=1,
+                ),
+            )
+
+    manager = DurableContainerManager(_InconsistentResultPersistence())
+    with pytest.raises(RuntimeError, match="inconsistent level delta"):
+        manager.validate_rebuild()
+
+
+def test_commit_rejects_missing_intent_state_or_infeasible_backend_result():
+    store = MemoryPersistence()
+    manager = DurableContainerManager(store)
+    with pytest.raises(KeyError, match="unknown container operation intent"):
+        manager.commit("missing", completed_at=NOW)
+
+    with store.transaction() as uow:
+        uow.save_container_definition(
+            ContainerDefinition("fuel", capacity=10.0, initial=1.0)
+        )
+        uow.save_container_operation_intent(
+            ContainerOperationIntent(
+                request_id="no-state",
+                container_name="fuel",
+                operation="put",
+                amount=1.0,
+                requested_at=NOW,
+                sequence=1,
+            )
+        )
+    with pytest.raises(KeyError, match="unknown durable container state"):
+        manager.commit("no-state", completed_at=NOW)
+
+    store = MemoryPersistence()
+    manager = DurableContainerManager(store)
+    with store.transaction() as uow:
+        uow.save_container_definition(
+            ContainerDefinition("fuel", capacity=5.0, initial=1.0)
+        )
+        uow.save_container_state(ContainerState("fuel", level=4.0))
+        uow.save_container_operation_intent(
+            ContainerOperationIntent(
+                request_id="too-much",
+                container_name="fuel",
+                operation="put",
+                amount=3.0,
+                requested_at=NOW,
+                sequence=1,
+            )
+        )
+    with pytest.raises(RuntimeError, match="infeasible container operation"):
+        manager.commit("too-much", completed_at=NOW)
+
+
+def test_commit_handles_race_with_completed_result_and_changed_state():
+    intent = ContainerOperationIntent(
+        request_id="req-1",
+        container_name="fuel",
+        operation="put",
+        amount=1.0,
+        requested_at=NOW,
+        sequence=1,
+    )
+    state = ContainerState("fuel", level=2.0)
+    completed = ContainerOperationResult(
+        request_id="req-1",
+        container_name="fuel",
+        operation="put",
+        amount=1.0,
+        completed_at=NOW,
+        level_before=2.0,
+        level_after=3.0,
+        sequence=1,
+    )
+
+    class _RaceUow:
+        def __init__(self, *, existing_completed, persisted_state):
+            self._existing_completed = existing_completed
+            self._persisted_state = persisted_state
+
+        def get_container_operation_intent(self, request_id):
+            return None if self._existing_completed is not None else intent
+
+        def get_container_operation_result(self, request_id):
+            return self._existing_completed
+
+        def get_container_state(self, name):
+            return self._persisted_state
+
+        def save_container_state(self, next_state):
+            raise AssertionError("race path should not mutate")
+
+        def save_container_operation_result(self, result):
+            raise AssertionError("race path should not mutate")
+
+        def delete_container_operation_intent(self, request_id):
+            raise AssertionError("race path should not mutate")
+
+    class _RaceTransaction:
+        def __init__(self, uow):
+            self._uow = uow
+
+        def __enter__(self):
+            return self._uow
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _RacePersistence:
+        def __init__(self, *, existing_completed, persisted_state):
+            self._existing_completed = existing_completed
+            self._persisted_state = persisted_state
+
+        def container_definitions(self):
+            return (ContainerDefinition("fuel", capacity=10.0, initial=2.0),)
+
+        def container_states(self):
+            return (state,)
+
+        def container_operation_intents(self):
+            return (intent,)
+
+        def container_operation_results(self):
+            return ()
+
+        def transaction(self):
+            return _RaceTransaction(
+                _RaceUow(
+                    existing_completed=self._existing_completed,
+                    persisted_state=self._persisted_state,
+                )
+            )
+
+    manager = DurableContainerManager(
+        _RacePersistence(existing_completed=completed, persisted_state=state)
+    )
+    assert manager.commit("req-1", completed_at=NOW) == completed
+
+    manager = DurableContainerManager(
+        _RacePersistence(
+            existing_completed=None,
+            persisted_state=ContainerState("fuel", level=7.0),
+        )
+    )
+    with pytest.raises(RuntimeError, match="state changed before operation commit"):
+        manager.commit("req-1", completed_at=NOW)
+
+
+def test_missing_container_definition_error_is_explicit():
+    manager = DurableContainerManager(MemoryPersistence())
+
+    with pytest.raises(KeyError, match="unknown container definition"):
+        manager.put(
+            SimPyBackend(origin=NOW),
+            container_name="ghost",
+            request_id="req",
+            amount=1.0,
+            requested_at=NOW,
+        )

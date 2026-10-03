@@ -36,6 +36,50 @@ class JSONLJournalPersistence(MemoryPersistence):
         self._transaction_count = 0
         self._refresh_from_journal()
 
+    @staticmethod
+    def _is_truncated_final_line(handle) -> bool:
+        remaining = handle.read().strip()
+        return not remaining
+
+    @staticmethod
+    def _journal_change(raw: dict[str, object]) -> StateRecordChange:
+        return StateRecordChange(
+            operation=str(raw["operation"]),
+            collection=str(raw["collection"]),
+            key=str(raw["key"]),
+            position=(
+                None
+                if raw.get("position") is None
+                else int(raw["position"])
+            ),
+            payload=raw.get("payload"),
+        )
+
+    @staticmethod
+    def _apply_change(
+        records: dict[tuple[str, str], StateRecord],
+        change: StateRecordChange,
+    ) -> None:
+        identity = (change.collection, change.key)
+        if change.operation == "delete":
+            records.pop(identity, None)
+            return
+        if change.operation != "upsert":
+            raise RuntimeError(
+                "unknown JSONL journal operation: "
+                f"{change.operation}"
+            )
+        if change.position is None or change.payload is None:
+            raise RuntimeError(
+                "invalid JSONL journal upsert without payload"
+            )
+        records[identity] = StateRecord(
+            collection=change.collection,
+            key=change.key,
+            position=change.position,
+            payload=str(change.payload),
+        )
+
     def _refresh_from_journal(self) -> None:
         records: dict[tuple[str, str], StateRecord] = {}
         transaction_count = 0
@@ -49,7 +93,7 @@ class JSONLJournalPersistence(MemoryPersistence):
                 except json.JSONDecodeError:
                     # A process crash can leave one partial final append. Ignore
                     # only that final fragment; corruption in the middle is fatal.
-                    if handle.read().strip():
+                    if not self._is_truncated_final_line(handle):
                         raise RuntimeError(
                             f"corrupt JSONL journal at line {line_number}"
                         )
@@ -65,36 +109,8 @@ class JSONLJournalPersistence(MemoryPersistence):
                     int(entry["transaction"]),
                 )
                 for raw in entry["changes"]:
-                    change = StateRecordChange(
-                        operation=str(raw["operation"]),
-                        collection=str(raw["collection"]),
-                        key=str(raw["key"]),
-                        position=(
-                            None
-                            if raw.get("position") is None
-                            else int(raw["position"])
-                        ),
-                        payload=raw.get("payload"),
-                    )
-                    identity = (change.collection, change.key)
-                    if change.operation == "delete":
-                        records.pop(identity, None)
-                    elif change.operation == "upsert":
-                        if change.position is None or change.payload is None:
-                            raise RuntimeError(
-                                "invalid JSONL journal upsert without payload"
-                            )
-                        records[identity] = StateRecord(
-                            collection=change.collection,
-                            key=change.key,
-                            position=change.position,
-                            payload=str(change.payload),
-                        )
-                    else:
-                        raise RuntimeError(
-                            "unknown JSONL journal operation: "
-                            f"{change.operation}"
-                        )
+                    change = self._journal_change(raw)
+                    self._apply_change(records, change)
 
         self._transaction_count = transaction_count
         self._state = records_to_state(records.values())

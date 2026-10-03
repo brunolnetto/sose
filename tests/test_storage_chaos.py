@@ -11,13 +11,6 @@ from sose.domain.entity import Entity
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
-RUN = os.environ.get("SOSE_RUN_STORAGE_CHAOS") == "1"
-
-pytestmark = pytest.mark.skipif(
-    not RUN,
-    reason="SOSE_RUN_STORAGE_CHAOS=1 is required",
-)
-
 
 def _large_entity(version: int = 1) -> Entity:
     return Entity(

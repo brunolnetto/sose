@@ -43,8 +43,8 @@ def test_sqlite_domain_warehouse_concurrent_constructors(tmp_path):
     path = tmp_path / "domain.db"
 
     def open_and_close(_):
-        warehouse = SQLiteDomainWarehouse(path)
-        warehouse.close()
+        with SQLiteDomainWarehouse(path):
+            pass
 
     with ThreadPoolExecutor(max_workers=8) as pool:
         list(pool.map(open_and_close, range(32)))

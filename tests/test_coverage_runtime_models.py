@@ -17,6 +17,7 @@ from sose.core.runtime import (
     ResourceDefinition,
     ResourceDemand,
     ResourcePreemptionResult,
+    ScheduledWork,
     SimulationPosition,
     StoreDefinition,
     StoreGetRequest,
@@ -26,6 +27,22 @@ from sose.core.runtime import (
 
 
 NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
+
+
+def test_scheduled_work_preserves_constructor_argument_order():
+    work = ScheduledWork(
+        "work-1",
+        NOW,
+        7,
+        13,
+        "command-1",
+    )
+
+    assert work.work_id == "work-1"
+    assert work.due_at == NOW
+    assert work.priority == 7
+    assert work.sequence == 13
+    assert work.command_id == "command-1"
 
 
 @pytest.mark.parametrize(

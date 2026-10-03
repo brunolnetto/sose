@@ -5,6 +5,7 @@ from sose.testing.conformance import (
     CAPABILITY_REQUIREMENTS,
     ReferenceCapability,
     ReferenceContract,
+    _test_file_has_test,
     validate_reference_catalog,
     validate_reference_contract,
 )
@@ -230,3 +231,146 @@ def test_scenario_module_import_failure_is_reported(tmp_path):
     )
     assert scenario_issue.domain == "Broken scenarios"
     assert "missing.scenario_package.scenarios" in scenario_issue.message
+
+
+def test_test_file_has_test_rejects_invalid_utf8_and_syntax(tmp_path):
+    binary = tmp_path / "tests" / "test_binary.py"
+    binary.parent.mkdir(parents=True)
+    binary.write_bytes(b"\xff\xfe")
+    assert _test_file_has_test(binary) is False
+
+    broken = tmp_path / "tests" / "test_broken.py"
+    broken.write_text("def test_bad(:\n    pass\n", encoding="utf-8")
+    assert _test_file_has_test(broken) is False
+
+
+def test_contract_reports_undeclared_and_missing_evidence(tmp_path):
+    evidence = tmp_path / "tests" / "test_real.py"
+    evidence.parent.mkdir(parents=True)
+    evidence.write_text("def test_real():\n    pass\n", encoding="utf-8")
+    docs = tmp_path / "docs" / "fixture"
+    docs.mkdir(parents=True)
+    (docs / "README.md").write_text(
+        "Status: **Reference implementation**\n",
+        encoding="utf-8",
+    )
+    (docs / "specification.md").write_text(
+        "Current status: **Reference implementation**.\n",
+        encoding="utf-8",
+    )
+
+    capabilities = frozenset(BASELINE_REFERENCE_CAPABILITIES)
+    contract = ReferenceContract(
+        domain="Evidence mismatch",
+        package="missing.package",
+        docs_dir="docs/fixture",
+        capabilities=capabilities,
+        evidence={
+            ReferenceCapability.STATECHARTS: ("tests/test_real.py",),
+            ReferenceCapability.HAPPY_PATH: (),
+            ReferenceCapability.SAD_PATHS: ("tests/test_real.py",),
+            ReferenceCapability.RESTART_EQUIVALENCE: ("tests/test_real.py",),
+            ReferenceCapability.SCENARIOS: ("tests/test_real.py",),
+        },
+    )
+
+    issues = validate_reference_contract(contract, repo_root=tmp_path)
+    codes = {issue.code for issue in issues}
+    assert "evidence-for-undeclared-capability" in codes
+    assert "missing-evidence" in codes
+
+
+def test_contract_reports_missing_runtime_entrypoints(tmp_path, monkeypatch):
+    package = tmp_path / "demo_pkg"
+    package.mkdir()
+    (package / "__init__.py").write_text("", encoding="utf-8")
+    (package / "entities.py").write_text("", encoding="utf-8")
+    (package / "statecharts.py").write_text("", encoding="utf-8")
+    (package / "simulation.py").write_text(
+        "def build_runtime(*args, **kwargs):\n    return None\n",
+        encoding="utf-8",
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_real.py").write_text(
+        "def test_real():\n    pass\n",
+        encoding="utf-8",
+    )
+    docs = tmp_path / "docs" / "fixture"
+    docs.mkdir(parents=True)
+    (docs / "README.md").write_text(
+        "Status: **Reference implementation**\n",
+        encoding="utf-8",
+    )
+    (docs / "specification.md").write_text(
+        "Current status: **Reference implementation**.\n",
+        encoding="utf-8",
+    )
+
+    contract = ReferenceContract(
+        domain="Missing runtime entrypoint",
+        package="demo_pkg",
+        docs_dir="docs/fixture",
+        capabilities=frozenset(BASELINE_REFERENCE_CAPABILITIES),
+        evidence={
+            capability: ("tests/test_real.py",)
+            for capability in BASELINE_REFERENCE_CAPABILITIES
+        },
+    )
+
+    issues = validate_reference_contract(contract, repo_root=tmp_path)
+    assert any(issue.code == "runtime-entrypoint-missing" for issue in issues)
+
+
+def test_catalog_reports_duplicate_identity_fields(tmp_path):
+    docs = tmp_path / "docs" / "fixture"
+    docs.mkdir(parents=True)
+    (docs / "README.md").write_text(
+        "Status: **Reference implementation**\n",
+        encoding="utf-8",
+    )
+    (docs / "specification.md").write_text(
+        "Current status: **Reference implementation**.\n",
+        encoding="utf-8",
+    )
+    tests_dir = tmp_path / "tests"
+    tests_dir.mkdir()
+    (tests_dir / "test_real.py").write_text(
+        "def test_real():\n    pass\n",
+        encoding="utf-8",
+    )
+
+    capabilities = frozenset(BASELINE_REFERENCE_CAPABILITIES)
+    evidence = {
+        capability: ("tests/test_real.py",)
+        for capability in capabilities
+    }
+    first = ReferenceContract(
+        domain="Same",
+        package="pkg.one",
+        docs_dir="docs/fixture",
+        capabilities=capabilities,
+        evidence=evidence,
+    )
+    second = ReferenceContract(
+        domain="Same",
+        package="pkg.two",
+        docs_dir="docs/fixture-two",
+        capabilities=capabilities,
+        evidence=evidence,
+    )
+    docs_two = tmp_path / "docs" / "fixture-two"
+    docs_two.mkdir(parents=True)
+    (docs_two / "README.md").write_text(
+        "Status: **Reference implementation**\n",
+        encoding="utf-8",
+    )
+    (docs_two / "specification.md").write_text(
+        "Current status: **Reference implementation**.\n",
+        encoding="utf-8",
+    )
+
+    issues = validate_reference_catalog((first, second), repo_root=tmp_path)
+    assert any(issue.code == "duplicate-domain" for issue in issues)

@@ -65,35 +65,11 @@ def _append_missing_reference_issues(
             issues.append(DiagnosticIssue(code, message_of(record, reference)))
 
 
-def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
-    """Inspect durable runtime truth without mutating or rebuilding it."""
-
-    issues: list[DiagnosticIssue] = []
-
-    # Snapshot every durable collection once. Besides making diagnostics cheaper
-    # on remote stores, this ensures counts and referential checks describe the
-    # same observation rather than independent reads.
-    scheduled = persistence.scheduled_work()
-    events = persistence.events()
-    resource_definitions = persistence.resource_definitions()
-    resource_demands = persistence.resource_demands()
-    resource_reservations = persistence.resource_reservations()
-    resource_release_intents = persistence.resource_release_intents()
-    store_definitions = persistence.store_definitions()
-    store_items = persistence.store_items()
-    store_put_intents = persistence.store_put_intents()
-    store_get_requests = persistence.store_get_requests()
-    store_get_results = persistence.store_get_results()
-    container_definitions = persistence.container_definitions()
-    container_operation_intents = persistence.container_operation_intents()
-    container_operation_results = persistence.container_operation_results()
-    preemptive_definitions = persistence.preemptive_resource_definitions()
-    preemptive_demands = persistence.preemptive_resource_demands()
-    preemptive_reservations = persistence.preemptive_resource_reservations()
-    preemptive_release_intents = persistence.preemptive_resource_release_intents()
-    preemption_results = persistence.resource_preemption_results()
-    sink_deliveries = persistence.sink_deliveries()
-
+def _append_missing_command_issues(
+    issues: list[DiagnosticIssue],
+    persistence: Persistence,
+    scheduled,
+) -> None:
     for work in scheduled:
         if persistence.command(work.command_id) is None:
             issues.append(
@@ -104,6 +80,15 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
                 )
             )
 
+
+def _append_resource_reference_issues(
+    issues: list[DiagnosticIssue],
+    *,
+    resource_definitions,
+    resource_demands,
+    resource_reservations,
+    resource_release_intents,
+) -> None:
     resource_names = {definition.name for definition in resource_definitions}
     _append_missing_reference_issues(
         issues,
@@ -137,6 +122,16 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
         ),
     )
 
+
+def _append_store_reference_issues(
+    issues: list[DiagnosticIssue],
+    *,
+    store_definitions,
+    store_items,
+    store_put_intents,
+    store_get_requests,
+    store_get_results,
+) -> None:
     store_names = {definition.name for definition in store_definitions}
     _append_missing_reference_issues(
         issues,
@@ -179,8 +174,16 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
         ),
     )
 
+
+def _append_container_reference_issues(
+    issues: list[DiagnosticIssue],
+    *,
+    container_definitions,
+    container_states,
+    container_operation_intents,
+    container_operation_results,
+) -> None:
     container_names = {definition.name for definition in container_definitions}
-    container_states = persistence.container_states()
     _append_missing_reference_issues(
         issues,
         container_states,
@@ -210,6 +213,15 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
         ),
     )
 
+
+def _append_preemptive_reference_issues(
+    issues: list[DiagnosticIssue],
+    *,
+    preemptive_definitions,
+    preemptive_demands,
+    preemptive_reservations,
+    preemptive_release_intents,
+) -> None:
     preemptive_names = {definition.name for definition in preemptive_definitions}
     _append_missing_reference_issues(
         issues,
@@ -243,6 +255,8 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
         ),
     )
 
+
+def _sink_delivery_health(sink_deliveries) -> tuple[tuple[Any, ...], tuple[Any, ...]]:
     pending_sink_deliveries = tuple(
         delivery for delivery in sink_deliveries if delivery.status == "pending"
     )
@@ -250,6 +264,77 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
         delivery
         for delivery in pending_sink_deliveries
         if delivery.last_error is not None
+    )
+    return pending_sink_deliveries, failed_sink_deliveries
+
+
+def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
+    """Inspect durable runtime truth without mutating or rebuilding it."""
+
+    issues: list[DiagnosticIssue] = []
+
+    # Snapshot every durable collection once. Besides making diagnostics cheaper
+    # on remote stores, this ensures counts and referential checks describe the
+    # same observation rather than independent reads.
+    scheduled = persistence.scheduled_work()
+    events = persistence.events()
+    resource_definitions = persistence.resource_definitions()
+    resource_demands = persistence.resource_demands()
+    resource_reservations = persistence.resource_reservations()
+    resource_release_intents = persistence.resource_release_intents()
+    store_definitions = persistence.store_definitions()
+    store_items = persistence.store_items()
+    store_put_intents = persistence.store_put_intents()
+    store_get_requests = persistence.store_get_requests()
+    store_get_results = persistence.store_get_results()
+    container_definitions = persistence.container_definitions()
+    container_operation_intents = persistence.container_operation_intents()
+    container_operation_results = persistence.container_operation_results()
+    preemptive_definitions = persistence.preemptive_resource_definitions()
+    preemptive_demands = persistence.preemptive_resource_demands()
+    preemptive_reservations = persistence.preemptive_resource_reservations()
+    preemptive_release_intents = persistence.preemptive_resource_release_intents()
+    preemption_results = persistence.resource_preemption_results()
+    sink_deliveries = persistence.sink_deliveries()
+
+    container_states = persistence.container_states()
+    _append_missing_command_issues(
+        issues,
+        persistence,
+        scheduled,
+    )
+    _append_resource_reference_issues(
+        issues,
+        resource_definitions=resource_definitions,
+        resource_demands=resource_demands,
+        resource_reservations=resource_reservations,
+        resource_release_intents=resource_release_intents,
+    )
+    _append_store_reference_issues(
+        issues,
+        store_definitions=store_definitions,
+        store_items=store_items,
+        store_put_intents=store_put_intents,
+        store_get_requests=store_get_requests,
+        store_get_results=store_get_results,
+    )
+    _append_container_reference_issues(
+        issues,
+        container_definitions=container_definitions,
+        container_states=container_states,
+        container_operation_intents=container_operation_intents,
+        container_operation_results=container_operation_results,
+    )
+    _append_preemptive_reference_issues(
+        issues,
+        preemptive_definitions=preemptive_definitions,
+        preemptive_demands=preemptive_demands,
+        preemptive_reservations=preemptive_reservations,
+        preemptive_release_intents=preemptive_release_intents,
+    )
+
+    pending_sink_deliveries, failed_sink_deliveries = _sink_delivery_health(
+        sink_deliveries
     )
     issues.extend(
         DiagnosticIssue(

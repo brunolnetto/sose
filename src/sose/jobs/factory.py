@@ -24,6 +24,78 @@ def _backend_factory(name: str):
     raise KeyError(f"unknown runtime backend: {name}")
 
 
+def _sqlite_domain_warehouse(options: dict[str, object], base_dir: Path):
+    from sose.domain.sqlite import SQLiteDomainWarehouse
+
+    raw_path = options.pop("path", "state/domain.sqlite3")
+    if not isinstance(raw_path, str) or not raw_path:
+        raise ValueError("sqlite DomainWarehouse path must be a non-empty string")
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = base_dir / path
+    if options:
+        raise ValueError(f"unknown sqlite DomainWarehouse options: {sorted(options)}")
+    return SQLiteDomainWarehouse(path)
+
+
+def _validate_optional_non_empty(
+    *,
+    label: str,
+    value: object | None,
+) -> None:
+    if value is None:
+        return
+    if isinstance(value, str) and value:
+        return
+    raise ValueError(
+        f"postgres DomainWarehouse {label} must be a non-empty string"
+    )
+
+
+def _resolve_postgres_dsn(
+    *,
+    dsn: str | None,
+    dsn_env: str | None,
+) -> str | None:
+    import os
+
+    if dsn is not None:
+        return dsn
+    if dsn_env is None:
+        return None
+    return os.environ.get(dsn_env)
+
+
+def _postgres_dsn_from_options(options: dict[str, object]) -> tuple[str, str]:
+    dsn = options.pop("dsn", None)
+    dsn_env = options.pop("dsn_env", None)
+    namespace = options.pop("namespace", "sose_domain")
+    _validate_optional_non_empty(label="dsn", value=dsn)
+    _validate_optional_non_empty(label="dsn_env", value=dsn_env)
+    if not isinstance(namespace, str) or not namespace:
+        raise ValueError(
+            "postgres DomainWarehouse namespace must be a non-empty string"
+        )
+    dsn = _resolve_postgres_dsn(dsn=dsn, dsn_env=dsn_env)
+    if options:
+        raise ValueError(f"unknown postgres DomainWarehouse options: {sorted(options)}")
+    if not dsn:
+        raise ValueError("postgres DomainWarehouse requires dsn or dsn_env")
+    return dsn, namespace
+
+
+def _postgres_domain_warehouse(options: dict[str, object]):
+    try:
+        from sose.domain.postgres import PostgresDomainWarehouse
+    except ModuleNotFoundError as exc:
+        raise RuntimeError(
+            "DomainWarehouse adapter 'postgres' requires installing the 'postgres' extra"
+        ) from exc
+
+    dsn, namespace = _postgres_dsn_from_options(options)
+    return PostgresDomainWarehouse(dsn, namespace=namespace)
+
+
 def _domain_warehouse_section(
     section: DomainWarehouseSection | None,
     base_dir: Path,
@@ -32,43 +104,9 @@ def _domain_warehouse_section(
         return None
     options = dict(section.options)
     if section.adapter == "sqlite":
-        from sose.domain.sqlite import SQLiteDomainWarehouse
-        raw_path = options.pop("path", "state/domain.sqlite3")
-        if not isinstance(raw_path, str) or not raw_path:
-            raise ValueError("sqlite DomainWarehouse path must be a non-empty string")
-        path = Path(raw_path)
-        if not path.is_absolute():
-            path = base_dir / path
-        if options:
-            raise ValueError(f"unknown sqlite DomainWarehouse options: {sorted(options)}")
-        return SQLiteDomainWarehouse(path)
+        return _sqlite_domain_warehouse(options, base_dir)
     if section.adapter == "postgres":
-        try:
-            from sose.domain.postgres import PostgresDomainWarehouse
-        except ModuleNotFoundError as exc:
-            raise RuntimeError(
-                "DomainWarehouse adapter 'postgres' requires installing the 'postgres' extra"
-            ) from exc
-        import os
-        dsn = options.pop("dsn", None)
-        dsn_env = options.pop("dsn_env", None)
-        namespace = options.pop("namespace", "sose_domain")
-        for name, value in (("dsn", dsn), ("dsn_env", dsn_env)):
-            if value is not None and (not isinstance(value, str) or not value):
-                raise ValueError(
-                    f"postgres DomainWarehouse {name} must be a non-empty string"
-                )
-        if not isinstance(namespace, str) or not namespace:
-            raise ValueError(
-                "postgres DomainWarehouse namespace must be a non-empty string"
-            )
-        if dsn is None and dsn_env is not None:
-            dsn = os.environ.get(dsn_env)
-        if options:
-            raise ValueError(f"unknown postgres DomainWarehouse options: {sorted(options)}")
-        if not dsn:
-            raise ValueError("postgres DomainWarehouse requires dsn or dsn_env")
-        return PostgresDomainWarehouse(dsn, namespace=namespace)
+        return _postgres_domain_warehouse(options)
     raise KeyError(f"unknown DomainWarehouse adapter: {section.adapter}")
 
 

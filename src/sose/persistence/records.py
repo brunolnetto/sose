@@ -159,70 +159,111 @@ def changes_for_dirty_records(
         after_value = getattr(after, collection)
 
         if isinstance(after_value, dict):
-            before_item = before_value.get(raw_key)
-            exists_after = raw_key in after_value
-            after_item = after_value.get(raw_key)
-            if before_item == after_item and (raw_key in before_value) == exists_after:
-                continue
-            encoded_key = dumps(raw_key)
-            if not exists_after:
-                changes.append(
-                    StateRecordChange(
-                        operation="delete",
-                        collection=collection,
-                        key=encoded_key,
-                    )
-                )
-                continue
-            position = list(after_value).index(raw_key)
-            changes.append(
-                StateRecordChange(
-                    operation="upsert",
-                    collection=collection,
-                    key=encoded_key,
-                    position=position,
-                    payload=dumps(after_item),
-                )
+            change = _dict_dirty_change(
+                collection=collection,
+                raw_key=raw_key,
+                before_value=before_value,
+                after_value=after_value,
             )
+            if change is not None:
+                changes.append(change)
             continue
 
         if isinstance(after_value, list):
-            index = int(raw_key)
-            before_item = before_value[index] if index < len(before_value) else None
-            after_item = after_value[index] if index < len(after_value) else None
-            if before_item == after_item and (index < len(before_value)) == (index < len(after_value)):
-                continue
-            if index >= len(after_value):
-                changes.append(
-                    StateRecordChange(
-                        operation="delete",
-                        collection=collection,
-                        key=str(index),
-                    )
-                )
-                continue
-            changes.append(
-                StateRecordChange(
-                    operation="upsert",
-                    collection=collection,
-                    key=str(index),
-                    position=index,
-                    payload=dumps(after_item),
-                )
+            change = _list_dirty_change(
+                collection=collection,
+                raw_key=raw_key,
+                before_value=before_value,
+                after_value=after_value,
             )
+            if change is not None:
+                changes.append(change)
             continue
 
-        default_value = getattr(template, collection)
-        if before_value == after_value:
-            continue
-        changes.append(
-            StateRecordChange(
-                operation="upsert",
-                collection=collection,
-                key="__scalar__",
-                position=0,
-                payload=dumps(after_value if after_value is not None else default_value),
-            )
+        change = _scalar_dirty_change(
+            template,
+            collection=collection,
+            before_value=before_value,
+            after_value=after_value,
         )
+        if change is not None:
+            changes.append(change)
 
     return tuple(changes)
+
+
+def _dict_dirty_change(
+    *,
+    collection: str,
+    raw_key: object,
+    before_value: dict[object, object],
+    after_value: dict[object, object],
+) -> StateRecordChange | None:
+    before_item = before_value.get(raw_key)
+    exists_after = raw_key in after_value
+    after_item = after_value.get(raw_key)
+    if before_item == after_item and (raw_key in before_value) == exists_after:
+        return None
+    encoded_key = dumps(raw_key)
+    if not exists_after:
+        return StateRecordChange(
+            operation="delete",
+            collection=collection,
+            key=encoded_key,
+        )
+    position = list(after_value).index(raw_key)
+    return StateRecordChange(
+        operation="upsert",
+        collection=collection,
+        key=encoded_key,
+        position=position,
+        payload=dumps(after_item),
+    )
+
+
+def _list_dirty_change(
+    *,
+    collection: str,
+    raw_key: object,
+    before_value: list[object],
+    after_value: list[object],
+) -> StateRecordChange | None:
+    index = int(raw_key)
+    before_item = before_value[index] if index < len(before_value) else None
+    after_item = after_value[index] if index < len(after_value) else None
+    before_exists = index < len(before_value)
+    after_exists = index < len(after_value)
+    if before_item == after_item and before_exists == after_exists:
+        return None
+    if not after_exists:
+        return StateRecordChange(
+            operation="delete",
+            collection=collection,
+            key=str(index),
+        )
+    return StateRecordChange(
+        operation="upsert",
+        collection=collection,
+        key=str(index),
+        position=index,
+        payload=dumps(after_item),
+    )
+
+
+def _scalar_dirty_change(
+    template: _State,
+    *,
+    collection: str,
+    before_value: object,
+    after_value: object,
+) -> StateRecordChange | None:
+    default_value = getattr(template, collection)
+    if before_value == after_value:
+        return None
+    return StateRecordChange(
+        operation="upsert",
+        collection=collection,
+        key="__scalar__",
+        position=0,
+        payload=dumps(after_value if after_value is not None else default_value),
+    )

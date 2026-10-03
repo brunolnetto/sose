@@ -224,6 +224,41 @@ class RuntimeRebuilder:
             "scheduled-work",
         )
 
+    def _restore_context_from_position(self, position) -> None:
+        if self._context is None:
+            return
+        if position is not None:
+            self._context.clock.now = position.logical_time
+            self._context.clock.tick = position.logical_tick
+        self._context.scenarios.restore_state(self._persistence.scenario_state())
+
+    def _validate_scheduled_items(
+        self,
+        *,
+        items: tuple[DurableScheduledItem, ...],
+        boundary: datetime,
+    ) -> None:
+        for item in items:
+            if item.work.due_at < boundary:
+                raise RuntimeError(
+                    f"scheduled work {item.work.work_id} is before recovery boundary"
+                )
+
+    @staticmethod
+    def _schedule_pending_items(
+        backend: RebuildBackend,
+        items: tuple[DurableScheduledItem, ...],
+        *,
+        on_due: Callable[[DurableScheduledItem], None],
+    ) -> None:
+        for item in items:
+            backend.schedule_at(
+                item.work.due_at,
+                lambda item=item: on_due(item),
+                priority=item.work.priority,
+                key=("durable-work", item.work.work_id),
+            )
+
     def rebuild(
         self,
         backend: RebuildBackend,
@@ -240,29 +275,15 @@ class RuntimeRebuilder:
         items = DurableScheduler(self._persistence).pending()
 
         # Validate the complete recovery plan before mutating context/backend.
-        for item in items:
-            if item.work.due_at < boundary:
-                raise RuntimeError(
-                    f"scheduled work {item.work.work_id} is before recovery boundary"
-                )
+        self._validate_scheduled_items(items=items, boundary=boundary)
         for participant in self._participants:
             participant.validate()
 
         # Reconstruct in one explicit and stable order.
-        if self._context is not None:
-            if position is not None:
-                self._context.clock.now = position.logical_time
-                self._context.clock.tick = position.logical_tick
-            self._context.scenarios.restore_state(self._persistence.scenario_state())
+        self._restore_context_from_position(position)
 
         for participant in self._participants:
             participant.rebuild(backend)
 
-        for item in items:
-            backend.schedule_at(
-                item.work.due_at,
-                lambda item=item: on_due(item),
-                priority=item.work.priority,
-                key=("durable-work", item.work.work_id),
-            )
+        self._schedule_pending_items(backend, items, on_due=on_due)
         return len(items)

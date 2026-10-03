@@ -38,6 +38,10 @@ class DurableStoreManager:
             definition.name: definition
             for definition in self._persistence.store_definitions()
         }
+        self._validate_store_records(definitions)
+        self._validate_store_capacities(definitions)
+
+    def _validate_store_records(self, definitions: dict[str, StoreDefinition]) -> None:
         for item in self._persistence.store_items():
             if item.store_name not in definitions:
                 raise RuntimeError(f"store item references unknown definition: {item.item_id}")
@@ -57,6 +61,10 @@ class DurableStoreManager:
                     )
                 self._filter(request.filter_key)
 
+    def _validate_store_capacities(
+        self,
+        definitions: dict[str, StoreDefinition],
+    ) -> None:
         for definition in definitions.values():
             if definition.capacity is None:
                 continue
@@ -75,9 +83,24 @@ class DurableStoreManager:
             definition.name: definition
             for definition in self._persistence.store_definitions()
         }
+        self._create_stores_on_backend(backend, definitions)
+        restored_items = self._restore_store_items(backend, definitions)
+        restored_pending = self._restore_pending_operations(backend)
+        return restored_items + restored_pending
+
+    def _create_stores_on_backend(
+        self,
+        backend,
+        definitions: dict[str, StoreDefinition],
+    ) -> None:
         for definition in definitions.values():
             self._create_backend_store(backend, definition)
 
+    def _restore_store_items(
+        self,
+        backend,
+        definitions: dict[str, StoreDefinition],
+    ) -> int:
         restored = 0
         for definition in definitions.values():
             items = [
@@ -93,11 +116,20 @@ class DurableStoreManager:
                     priority=item.priority,
                 )
                 restored += 1
+        return restored
 
+    def _restore_pending_operations(self, backend) -> int:
         pending = [
-            *((intent.sequence, "put", intent) for intent in self._persistence.store_put_intents()),
-            *((request.sequence, "get", request) for request in self._persistence.store_get_requests()),
+            *(
+                (intent.sequence, "put", intent)
+                for intent in self._persistence.store_put_intents()
+            ),
+            *(
+                (request.sequence, "get", request)
+                for request in self._persistence.store_get_requests()
+            ),
         ]
+        restored = 0
         for _, operation, record in sorted(
             pending,
             key=lambda value: (value[0], 0 if value[1] == "put" else 1),
@@ -151,59 +183,39 @@ class DurableStoreManager:
         priority: int = 100,
     ) -> DurableStoreItem | None:
         """Ensure one logical Store item exists without duplicating retries."""
-        existing = next(
-            (item for item in self._persistence.store_items() if item.item_id == item_id),
-            None,
-        )
+        existing = self._item_with_id(item_id)
         if existing is not None:
-            if existing.store_name != store_name or existing.value != value:
-                raise ValueError(f"store item identity conflict: {item_id}")
+            self._assert_store_item_identity(
+                existing,
+                store_name=store_name,
+                value=value,
+                item_id=item_id,
+            )
             return existing
 
-        consumed = next(
-            (
-                result.item
-                for result in self._persistence.store_get_results()
-                if result.item.item_id == item_id
-            ),
-            None,
-        )
+        consumed = self._consumed_item_with_id(item_id)
         if consumed is not None:
-            if consumed.store_name != store_name or consumed.value != value:
-                raise ValueError(f"store item identity conflict: {item_id}")
+            self._assert_store_item_identity(
+                consumed,
+                store_name=store_name,
+                value=value,
+                item_id=item_id,
+            )
             return consumed
 
-        pending = next(
-            (
-                intent
-                for intent in self._persistence.store_put_intents()
-                if intent.item_id == item_id
-            ),
-            None,
+        self._ensure_pending_put_intent(
+            backend,
+            store_name=store_name,
+            item_id=item_id,
+            value=value,
+            requested_at=requested_at,
+            priority=priority,
         )
-        if pending is None:
-            self.put(
-                backend,
-                store_name=store_name,
-                item_id=item_id,
-                value=value,
-                priority=priority,
-                requested_at=requested_at,
-            )
-        elif (
-            pending.store_name != store_name
-            or pending.value != value
-            or pending.priority != priority
-        ):
-            raise ValueError(f"store item identity conflict: {item_id}")
 
         run_until = getattr(backend, "run_until", None)
         if callable(run_until):
             run_until(getattr(backend, "now", requested_at))
-        return next(
-            (item for item in self._persistence.store_items() if item.item_id == item_id),
-            None,
-        )
+        return self._item_with_id(item_id)
 
     def get(
         self,
@@ -295,31 +307,15 @@ class DurableStoreManager:
                 f"store get returned item from wrong store: {backend_item.item_id}"
             )
 
-        item = next(
-            (
-                item
-                for item in self._persistence.store_items()
-                if item.item_id == backend_item.item_id
-            ),
-            None,
-        )
-        intent = next(
-            (
-                intent
-                for intent in self._persistence.store_put_intents()
-                if intent.item_id == backend_item.item_id
-            ),
-            None,
-        )
+        item = self._item_with_id(backend_item.item_id)
+        intent = self._pending_put_intent(backend_item.item_id)
         if item is None and intent is None:
             raise KeyError(f"unknown durable store item: {backend_item.item_id}")
 
-        consumed = item or DurableStoreItem(
-            item_id=intent.item_id,
-            store_name=intent.store_name,
-            value=intent.value,
-            priority=intent.priority,
-            sequence=intent.sequence,
+        consumed = self._consume_store_item(
+            item=item,
+            intent=intent,
+            item_id=backend_item.item_id,
         )
         result = StoreGetResult(
             request_id=request.request_id,
@@ -336,20 +332,111 @@ class DurableStoreManager:
                 if existing is not None:
                     return existing
                 raise RuntimeError(f"store get request changed: {request_id}")
-
-            persisted_item = uow.get_store_item(backend_item.item_id)
-            persisted_intent = uow.get_store_put_intent(backend_item.item_id)
-            if persisted_item is None and persisted_intent is None:
-                raise RuntimeError(
-                    f"store item disappeared during consume: {backend_item.item_id}"
-                )
-            if persisted_item is not None:
-                uow.delete_store_item(backend_item.item_id)
-            if persisted_intent is not None:
-                uow.delete_store_put_intent(backend_item.item_id)
+            self._consume_persisted_store_item(
+                uow,
+                backend_item.item_id,
+            )
             uow.save_store_get_result(result)
             uow.delete_store_get_request(request_id)
         return result
+
+    @staticmethod
+    def _assert_store_item_identity(
+        item: DurableStoreItem,
+        *,
+        store_name: str,
+        value: object,
+        item_id: str,
+    ) -> None:
+        if item.store_name == store_name and item.value == value:
+            return
+        raise ValueError(f"store item identity conflict: {item_id}")
+
+    def _ensure_pending_put_intent(
+        self,
+        backend,
+        *,
+        store_name: str,
+        item_id: str,
+        value: object,
+        requested_at: datetime,
+        priority: int,
+    ) -> None:
+        pending = self._pending_put_intent(item_id)
+        if pending is None:
+            self.put(
+                backend,
+                store_name=store_name,
+                item_id=item_id,
+                value=value,
+                priority=priority,
+                requested_at=requested_at,
+            )
+            return
+        if (
+            pending.store_name != store_name
+            or pending.value != value
+            or pending.priority != priority
+        ):
+            raise ValueError(f"store item identity conflict: {item_id}")
+
+    @staticmethod
+    def _consume_store_item(
+        *,
+        item: DurableStoreItem | None,
+        intent: StorePutIntent | None,
+        item_id: str,
+    ) -> DurableStoreItem:
+        if item is not None:
+            return item
+        if intent is None:  # pragma: no cover - guarded by caller
+            raise KeyError(f"unknown durable store item: {item_id}")
+        return DurableStoreItem(
+            item_id=intent.item_id,
+            store_name=intent.store_name,
+            value=intent.value,
+            priority=intent.priority,
+            sequence=intent.sequence,
+        )
+
+    @staticmethod
+    def _consume_persisted_store_item(uow, item_id: str) -> None:
+        persisted_item = uow.get_store_item(item_id)
+        persisted_intent = uow.get_store_put_intent(item_id)
+        if persisted_item is None and persisted_intent is None:
+            raise RuntimeError(
+                f"store item disappeared during consume: {item_id}"
+            )
+        if persisted_item is not None:
+            uow.delete_store_item(item_id)
+        if persisted_intent is not None:
+            uow.delete_store_put_intent(item_id)
+
+    def _item_with_id(self, item_id: str) -> DurableStoreItem | None:
+        return next(
+            (item for item in self._persistence.store_items() if item.item_id == item_id),
+            None,
+        )
+
+    def _consumed_item_with_id(self, item_id: str) -> DurableStoreItem | None:
+        return next(
+            (
+                result.item
+                for result in self._persistence.store_get_results()
+                if result.item.item_id == item_id
+            ),
+            None,
+        )
+
+    def _pending_put_intent(self, item_id: str) -> StorePutIntent | None:
+        return next(
+            (
+                intent
+                for intent in self._persistence.store_put_intents()
+                if intent.item_id == item_id
+            ),
+            None,
+        )
 
     def _submit_put_intent(
         self,

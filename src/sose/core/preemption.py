@@ -39,7 +39,25 @@ class DurablePreemptiveResourceManager:
         reservations = self._persistence.preemptive_resource_reservations()
         demands = self._persistence.preemptive_resource_demands()
         releases = self._persistence.preemptive_resource_release_intents()
+        self._validate_preemptive_references(
+            definitions,
+            reservations=reservations,
+            demands=demands,
+            releases=releases,
+        )
+        self._validate_preemptive_capacities(definitions, reservations)
+        self._validate_request_overlap(demands, reservations)
+        self._validate_preemption_results(definitions)
 
+    @staticmethod
+    def _validate_preemptive_references(
+        definitions: dict[str, PreemptiveResourceDefinition],
+        *,
+        reservations,
+        demands,
+        releases,
+    ) -> None:
+        
         for reservation in reservations:
             if reservation.resource_name not in definitions:
                 raise RuntimeError(
@@ -69,6 +87,11 @@ class DurablePreemptiveResourceManager:
                     f"preemptive release targets wrong resource: {intent.intent_id}"
                 )
 
+    @staticmethod
+    def _validate_preemptive_capacities(
+        definitions: dict[str, PreemptiveResourceDefinition],
+        reservations,
+    ) -> None:
         for name, definition in definitions.items():
             active = sum(
                 reservation.resource_name == name for reservation in reservations
@@ -78,6 +101,8 @@ class DurablePreemptiveResourceManager:
                     f"preemptive resource {name} exceeds durable capacity"
                 )
 
+    @staticmethod
+    def _validate_request_overlap(demands, reservations) -> None:
         demand_ids = {demand.request_id for demand in demands}
         reservation_ids = {reservation.request_id for reservation in reservations}
         overlap = demand_ids & reservation_ids
@@ -86,6 +111,10 @@ class DurablePreemptiveResourceManager:
                 f"preemptive requests are both pending and reserved: {sorted(overlap)!r}"
             )
 
+    def _validate_preemption_results(
+        self,
+        definitions: dict[str, PreemptiveResourceDefinition],
+    ) -> None:
         for result in self._persistence.resource_preemption_results():
             if result.resource_name not in definitions:
                 raise RuntimeError(
@@ -353,22 +382,8 @@ class DurablePreemptiveResourceManager:
         if lease is None or event is None:
             return False
 
-        demand = next(
-            (
-                demand
-                for demand in self._persistence.preemptive_resource_demands()
-                if demand.request_id == preempting_request_id
-            ),
-            None,
-        )
-        displaced = next(
-            (
-                reservation
-                for reservation in self._persistence.preemptive_resource_reservations()
-                if reservation.request_id == event.request_id
-            ),
-            None,
-        )
+        demand = self._demand_for_request(preempting_request_id)
+        displaced = self._reservation_for_request(event.request_id)
         if demand is None or displaced is None:
             return False
         if demand.resource_name != displaced.resource_name:
@@ -376,31 +391,11 @@ class DurablePreemptiveResourceManager:
                 f"preemption pair crosses resources: {preempting_request_id}"
             )
 
-        successor = PreemptiveResourceReservation(
-            reservation_id=deterministic_id(
-                "preemptive-resource-reservation",
-                demand.resource_name,
-                demand.request_id,
-            ),
-            request_id=demand.request_id,
-            resource_name=demand.resource_name,
-            acquired_at=lease.acquired_at,
-            priority=demand.priority,
-            sequence=demand.sequence,
-        )
-        result = ResourcePreemptionResult(
-            result_id=deterministic_id(
-                "resource-preemption",
-                displaced.reservation_id,
-                demand.request_id,
-            ),
-            resource_name=demand.resource_name,
-            displaced_reservation_id=displaced.reservation_id,
-            displaced_request_id=displaced.request_id,
-            preempting_request_id=demand.request_id,
-            successor_reservation_id=successor.reservation_id,
+        successor, result = self._build_preemption_outcome(
+            demand=demand,
+            displaced=displaced,
             preempted_at=event.preempted_at,
-            sequence=demand.sequence,
+            acquired_at=lease.acquired_at,
         )
 
         with self._persistence.transaction() as uow:
@@ -425,14 +420,7 @@ class DurablePreemptiveResourceManager:
 
     def _try_commit_normal_grant(self, request_id: str) -> bool:
         lease = self._pending_grants.get(request_id)
-        demand = next(
-            (
-                demand
-                for demand in self._persistence.preemptive_resource_demands()
-                if demand.request_id == request_id
-            ),
-            None,
-        )
+        demand = self._demand_for_request(request_id)
         if lease is None or demand is None:
             return False
 
@@ -459,6 +447,68 @@ class DurablePreemptiveResourceManager:
         self._pending_grants.pop(request_id, None)
         self._notify_acquired(reservation)
         return True
+
+    def _demand_for_request(
+        self,
+        request_id: str,
+    ) -> PreemptiveResourceDemand | None:
+        return next(
+            (
+                demand
+                for demand in self._persistence.preemptive_resource_demands()
+                if demand.request_id == request_id
+            ),
+            None,
+        )
+
+    def _reservation_for_request(
+        self,
+        request_id: str,
+    ) -> PreemptiveResourceReservation | None:
+        return next(
+            (
+                reservation
+                for reservation in self._persistence.preemptive_resource_reservations()
+                if reservation.request_id == request_id
+            ),
+            None,
+        )
+
+    @staticmethod
+    def _build_preemption_outcome(
+        *,
+        demand: PreemptiveResourceDemand,
+        displaced: PreemptiveResourceReservation,
+        preempted_at: datetime,
+        acquired_at: datetime,
+    ) -> tuple[PreemptiveResourceReservation, ResourcePreemptionResult]:
+        successor = PreemptiveResourceReservation(
+            reservation_id=deterministic_id(
+                "preemptive-resource-reservation",
+                demand.resource_name,
+                demand.request_id,
+            ),
+            request_id=demand.request_id,
+            resource_name=demand.resource_name,
+            acquired_at=acquired_at,
+            priority=demand.priority,
+            sequence=demand.sequence,
+        )
+        result = ResourcePreemptionResult(
+            result_id=deterministic_id(
+                "resource-preemption",
+                displaced.reservation_id,
+                demand.request_id,
+            ),
+            resource_name=demand.resource_name,
+            displaced_reservation_id=displaced.reservation_id,
+            displaced_request_id=displaced.request_id,
+            preempting_request_id=demand.request_id,
+            successor_reservation_id=successor.reservation_id,
+            preempted_at=preempted_at,
+            sequence=demand.sequence,
+        )
+        return successor, result
 
     def _commit_normal_grant(
         self,

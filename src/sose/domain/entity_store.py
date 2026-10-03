@@ -20,19 +20,44 @@ class WarehouseBackedEntityStore:
         self.persistence = persistence
         self.warehouse = warehouse
 
-    def entity(self, entity_type: str, entity_id: str) -> Entity | None:
-        warehouse_entity = self.warehouse.entity(entity_type, entity_id)
-        candidates = [warehouse_entity] if warehouse_entity is not None else []
-        for delivery in self.persistence.domain_deliveries():
-            entity = delivery.mutation.entity
-            if entity.entity_type == entity_type and entity.id == entity_id:
-                candidates.append(entity)
-        if not candidates:
-            return None
+    def _pending_entities_for(
+        self,
+        entity_type: str,
+        entity_id: str,
+    ) -> list[Entity]:
+        return [
+            delivery.mutation.entity
+            for delivery in self.persistence.domain_deliveries()
+            if (
+                delivery.mutation.entity.entity_type == entity_type
+                and delivery.mutation.entity.id == entity_id
+            )
+        ]
+
+    @staticmethod
+    def _latest_consistent_entity(
+        candidates: list[Entity],
+        *,
+        entity_type: str,
+        entity_id: str,
+    ) -> Entity:
         max_version = max(item.version for item in candidates)
         latest = [item for item in candidates if item.version == max_version]
         if any(item != latest[0] for item in latest[1:]):
             raise RuntimeError(
                 f"conflicting domain entity version: {entity_type}/{entity_id} v{max_version}"
             )
-        return deepcopy(latest[0])
+        return latest[0]
+
+    def entity(self, entity_type: str, entity_id: str) -> Entity | None:
+        warehouse_entity = self.warehouse.entity(entity_type, entity_id)
+        candidates = [warehouse_entity] if warehouse_entity is not None else []
+        candidates.extend(self._pending_entities_for(entity_type, entity_id))
+        if not candidates:
+            return None
+        latest = self._latest_consistent_entity(
+            candidates,
+            entity_type=entity_type,
+            entity_id=entity_id,
+        )
+        return deepcopy(latest)

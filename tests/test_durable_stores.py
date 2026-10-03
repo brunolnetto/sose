@@ -6,6 +6,7 @@ import pytest
 
 from datetime import timedelta
 
+from sose.backends.base import StoreItem
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
@@ -651,6 +652,599 @@ def test_ensure_selection_rejects_request_identity_reuse_for_other_store():
         manager.ensure_selection(
             backend,
             store_name="two",
+            request_id="pick",
+            requested_at=NOW,
+        )
+
+
+def test_ensure_put_returns_existing_and_consumed_items_without_new_backend_work():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    with store.transaction() as uow:
+        uow.save_store_definition(StoreDefinition("inbox", kind="fifo"))
+        existing = DurableStoreItem(
+            item_id="existing-item",
+            store_name="inbox",
+            value={"payload": 1},
+            priority=100,
+            sequence=1,
+        )
+        uow.save_store_item(existing)
+        consumed_item = DurableStoreItem(
+            item_id="consumed-item",
+            store_name="inbox",
+            value={"payload": 2},
+            priority=100,
+            sequence=2,
+        )
+        uow.save_store_get_request(
+            StoreGetRequest(
+                request_id="completed-get",
+                store_name="inbox",
+                requested_at=NOW,
+                sequence=3,
+            )
+        )
+        uow.save_store_get_result(
+            StoreGetResult(
+                request_id="completed-get",
+                store_name="inbox",
+                item=consumed_item,
+                completed_at=NOW,
+                sequence=3,
+            )
+        )
+        uow.delete_store_get_request("completed-get")
+
+    assert manager.ensure_put(
+        object(),
+        store_name="inbox",
+        item_id="existing-item",
+        value={"payload": 1},
+        requested_at=NOW,
+    ) == existing
+    assert manager.ensure_put(
+        object(),
+        store_name="inbox",
+        item_id="consumed-item",
+        value={"payload": 2},
+        requested_at=NOW,
+    ) == consumed_item
+
+    with pytest.raises(ValueError, match="identity conflict"):
+        manager.ensure_put(
+            object(),
+            store_name="inbox",
+            item_id="existing-item",
+            value={"payload": 99},
+            requested_at=NOW,
+        )
+    with pytest.raises(ValueError, match="identity conflict"):
+        manager.ensure_put(
+            object(),
+            store_name="inbox",
+            item_id="consumed-item",
+            value={"payload": 99},
+            requested_at=NOW,
+        )
+
+
+def test_ensure_put_handles_pending_identity_and_run_until_path():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    backend = SimPyBackend(origin=NOW)
+    manager.define(StoreDefinition("inbox", kind="fifo"))
+    manager.rebuild_backend(backend)
+
+    pending = StorePutIntent(
+        item_id="pending-item",
+        store_name="inbox",
+        value={"payload": 1},
+        priority=100,
+        requested_at=NOW,
+        sequence=1,
+    )
+    with store.transaction() as uow:
+        uow.save_store_put_intent(pending)
+
+    assert manager.ensure_put(
+        backend,
+        store_name="inbox",
+        item_id="pending-item",
+        value={"payload": 1},
+        requested_at=NOW,
+    ) is None
+
+    with pytest.raises(ValueError, match="identity conflict"):
+        manager.ensure_put(
+            backend,
+            store_name="inbox",
+            item_id="pending-item",
+            value={"payload": 1},
+            priority=101,
+            requested_at=NOW,
+        )
+
+    created = manager.ensure_put(
+        backend,
+        store_name="inbox",
+        item_id="new-item",
+        value={"payload": 2},
+        requested_at=NOW,
+    )
+    assert created is not None
+    assert created.item_id == "new-item"
+
+
+def test_commit_get_rejects_invalid_inputs_and_missing_durable_state():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    with store.transaction() as uow:
+        uow.save_store_definition(StoreDefinition("inbox", kind="fifo"))
+        uow.save_store_get_request(
+            StoreGetRequest(
+                request_id="pick",
+                store_name="inbox",
+                requested_at=NOW,
+                sequence=1,
+            )
+        )
+
+    with pytest.raises(KeyError, match="unknown store get request"):
+        manager.commit_get(
+            "missing",
+            StoreItem("item-1", "inbox", 1),
+            completed_at=NOW,
+        )
+    with pytest.raises(RuntimeError, match="wrong store"):
+        manager.commit_get(
+            "pick",
+            StoreItem("item-1", "other", 1),
+            completed_at=NOW,
+        )
+    with pytest.raises(KeyError, match="unknown durable store item"):
+        manager.commit_get(
+            "pick",
+            StoreItem("item-1", "inbox", 1),
+            completed_at=NOW,
+        )
+
+
+def test_commit_get_supports_consuming_item_from_pending_put_intent():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    with store.transaction() as uow:
+        uow.save_store_definition(StoreDefinition("inbox", kind="fifo"))
+        uow.save_store_get_request(
+            StoreGetRequest(
+                request_id="pick",
+                store_name="inbox",
+                requested_at=NOW,
+                sequence=2,
+            )
+        )
+        uow.save_store_put_intent(
+            StorePutIntent(
+                item_id="from-intent",
+                store_name="inbox",
+                value={"payload": 3},
+                priority=100,
+                requested_at=NOW,
+                sequence=1,
+            )
+        )
+
+    result = manager.commit_get(
+        "pick",
+        StoreItem("from-intent", "inbox", {"payload": 3}),
+        completed_at=NOW,
+    )
+
+    assert result.item.item_id == "from-intent"
+    assert store.store_put_intents() == ()
+    assert store.store_get_requests() == ()
+    assert store.store_get_results() == (result,)
+
+
+def test_commit_get_detects_changed_request_race_paths():
+    request = StoreGetRequest(
+        request_id="pick",
+        store_name="inbox",
+        requested_at=NOW,
+        sequence=1,
+    )
+    durable_item = DurableStoreItem(
+        item_id="item-1",
+        store_name="inbox",
+        value={"payload": 1},
+        priority=100,
+        sequence=2,
+    )
+    completed = StoreGetResult(
+        request_id="pick",
+        store_name="inbox",
+        item=durable_item,
+        completed_at=NOW,
+        sequence=1,
+    )
+
+    class _RaceUow:
+        def __init__(self, *, existing):
+            self._existing = existing
+
+        def get_store_get_request(self, request_id):
+            return None
+
+        def get_store_get_result(self, request_id):
+            return self._existing
+
+        def get_store_item(self, item_id):
+            return durable_item
+
+        def get_store_put_intent(self, item_id):
+            return None
+
+        def delete_store_item(self, item_id):
+            raise AssertionError("race branch should return/raise before mutation")
+
+        def delete_store_put_intent(self, item_id):
+            raise AssertionError("race branch should return/raise before mutation")
+
+        def save_store_get_result(self, result):
+            raise AssertionError("race branch should return/raise before mutation")
+
+        def delete_store_get_request(self, request_id):
+            raise AssertionError("race branch should return/raise before mutation")
+
+    class _RaceTransaction:
+        def __init__(self, uow):
+            self._uow = uow
+
+        def __enter__(self):
+            return self._uow
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _RacePersistence:
+        def __init__(self, existing):
+            self._existing = existing
+
+        def store_get_results(self):
+            return ()
+
+        def store_get_requests(self):
+            return (request,)
+
+        def store_items(self):
+            return (durable_item,)
+
+        def store_put_intents(self):
+            return ()
+
+        def transaction(self):
+            return _RaceTransaction(_RaceUow(existing=self._existing))
+
+    manager = DurableStoreManager(_RacePersistence(existing=completed))
+    assert manager.commit_get(
+        "pick",
+        StoreItem("item-1", "inbox", {"payload": 1}),
+        completed_at=NOW,
+    ) == completed
+
+    manager = DurableStoreManager(_RacePersistence(existing=None))
+    with pytest.raises(RuntimeError, match="store get request changed"):
+        manager.commit_get(
+            "pick",
+            StoreItem("item-1", "inbox", {"payload": 1}),
+            completed_at=NOW,
+        )
+
+
+def test_validate_rebuild_rejects_unknown_store_references():
+    class _InvalidPersistence:
+        def store_definitions(self):
+            return ()
+
+        def store_items(self):
+            return (
+                DurableStoreItem(
+                    item_id="item-1",
+                    store_name="ghost",
+                    value=1,
+                    priority=100,
+                    sequence=1,
+                ),
+            )
+
+        def store_put_intents(self):
+            return ()
+
+        def store_get_requests(self):
+            return ()
+
+        def store_get_results(self):
+            return ()
+
+    manager = DurableStoreManager(_InvalidPersistence())
+    with pytest.raises(RuntimeError, match="item references unknown definition"):
+        manager.validate_rebuild()
+
+    class _InvalidIntentPersistence:
+        def store_definitions(self):
+            return ()
+
+        def store_items(self):
+            return ()
+
+        def store_put_intents(self):
+            return (
+                StorePutIntent(
+                    item_id="intent-1",
+                    store_name="ghost",
+                    value=1,
+                    priority=100,
+                    requested_at=NOW,
+                    sequence=1,
+                ),
+            )
+
+        def store_get_requests(self):
+            return ()
+
+        def store_get_results(self):
+            return ()
+
+    manager = DurableStoreManager(_InvalidIntentPersistence())
+    with pytest.raises(RuntimeError, match="put references unknown definition"):
+        manager.validate_rebuild()
+
+    class _InvalidRequestPersistence:
+        def store_definitions(self):
+            return ()
+
+        def store_items(self):
+            return ()
+
+        def store_put_intents(self):
+            return ()
+
+        def store_get_requests(self):
+            return (
+                StoreGetRequest(
+                    request_id="get-1",
+                    store_name="ghost",
+                    requested_at=NOW,
+                    sequence=1,
+                ),
+            )
+
+        def store_get_results(self):
+            return ()
+
+    manager = DurableStoreManager(_InvalidRequestPersistence())
+    with pytest.raises(RuntimeError, match="get references unknown definition"):
+        manager.validate_rebuild()
+
+
+def test_validate_rebuild_rejects_invalid_filter_and_capacity_overflow():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    with store.transaction() as uow:
+        uow.save_store_definition(StoreDefinition("inbox", kind="fifo"))
+        uow.save_store_get_request(
+            StoreGetRequest(
+                request_id="get-filtered",
+                store_name="inbox",
+                requested_at=NOW,
+                sequence=1,
+                filter_key="only-priority",
+            )
+        )
+    with pytest.raises(RuntimeError, match="non-filter store"):
+        manager.validate_rebuild()
+
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    with store.transaction() as uow:
+        uow.save_store_definition(StoreDefinition("inbox", kind="fifo", capacity=1))
+        uow.save_store_item(
+            DurableStoreItem(
+                item_id="item-1",
+                store_name="inbox",
+                value=1,
+                priority=100,
+                sequence=1,
+            )
+        )
+        uow.save_store_item(
+            DurableStoreItem(
+                item_id="item-2",
+                store_name="inbox",
+                value=2,
+                priority=100,
+                sequence=2,
+            )
+        )
+    with pytest.raises(RuntimeError, match="more items than capacity"):
+        manager.validate_rebuild()
+
+
+def test_get_rejects_filter_key_for_non_filter_store():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    manager.define(StoreDefinition("inbox", kind="fifo"))
+
+    with pytest.raises(ValueError, match="supported only for filter stores"):
+        manager.get(
+            SimPyBackend(origin=NOW),
+            store_name="inbox",
+            request_id="pick",
+            requested_at=NOW,
+            filter_key="any",
+        )
+
+
+def test_commit_put_returns_existing_and_none_paths():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    with store.transaction() as uow:
+        uow.save_store_definition(StoreDefinition("inbox", kind="fifo"))
+        existing = DurableStoreItem(
+            item_id="existing",
+            store_name="inbox",
+            value=1,
+            priority=100,
+            sequence=1,
+        )
+        uow.save_store_item(existing)
+
+    assert manager.commit_put("existing") == existing
+    assert manager.commit_put("missing") is None
+
+
+def test_commit_get_returns_existing_result_without_revalidating_item():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store)
+    durable_item = DurableStoreItem(
+        item_id="item-1",
+        store_name="inbox",
+        value=1,
+        priority=100,
+        sequence=1,
+    )
+    with store.transaction() as uow:
+        uow.save_store_definition(StoreDefinition("inbox", kind="fifo"))
+        uow.save_store_get_request(
+            StoreGetRequest(
+                request_id="pick",
+                store_name="inbox",
+                requested_at=NOW,
+                sequence=2,
+            )
+        )
+        uow.save_store_item(durable_item)
+        uow.save_store_get_result(
+            StoreGetResult(
+                request_id="pick",
+                store_name="inbox",
+                item=durable_item,
+                completed_at=NOW,
+                sequence=2,
+            )
+        )
+        uow.delete_store_get_request("pick")
+
+    result = manager.commit_get("pick", StoreItem("item-1", "inbox", 1), completed_at=NOW)
+    assert result.request_id == "pick"
+
+
+def test_commit_get_detects_disappeared_item_during_transaction():
+    request = StoreGetRequest(
+        request_id="pick",
+        store_name="inbox",
+        requested_at=NOW,
+        sequence=1,
+    )
+    durable_item = DurableStoreItem(
+        item_id="item-1",
+        store_name="inbox",
+        value={"payload": 1},
+        priority=100,
+        sequence=2,
+    )
+
+    class _RaceUow:
+        def get_store_get_request(self, request_id):
+            return request
+
+        def get_store_get_result(self, request_id):
+            return None
+
+        def get_store_item(self, item_id):
+            return None
+
+        def get_store_put_intent(self, item_id):
+            return None
+
+        def delete_store_item(self, item_id):
+            raise AssertionError("should fail before mutation")
+
+        def delete_store_put_intent(self, item_id):
+            raise AssertionError("should fail before mutation")
+
+        def save_store_get_result(self, result):
+            raise AssertionError("should fail before mutation")
+
+        def delete_store_get_request(self, request_id):
+            raise AssertionError("should fail before mutation")
+
+    class _RaceTransaction:
+        def __enter__(self):
+            return _RaceUow()
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    class _RacePersistence:
+        def store_get_results(self):
+            return ()
+
+        def store_get_requests(self):
+            return (request,)
+
+        def store_items(self):
+            return (durable_item,)
+
+        def store_put_intents(self):
+            return ()
+
+        def transaction(self):
+            return _RaceTransaction()
+
+    manager = DurableStoreManager(_RacePersistence())
+    with pytest.raises(RuntimeError, match="disappeared during consume"):
+        manager.commit_get(
+            "pick",
+            StoreItem("item-1", "inbox", {"payload": 1}),
+            completed_at=NOW,
+        )
+
+
+def test_ensure_selection_rejects_pending_request_store_filter_mismatch():
+    store = MemoryPersistence()
+    manager = DurableStoreManager(store, filters={"allowed": lambda _: True})
+    backend = SimPyBackend(origin=NOW)
+    manager.define(StoreDefinition("orders", kind="filter"))
+    manager.rebuild_backend(backend)
+    with store.transaction() as uow:
+        uow.save_store_get_request(
+            StoreGetRequest(
+                request_id="pick",
+                store_name="orders",
+                requested_at=NOW,
+                sequence=1,
+                filter_key="allowed",
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="does not match requested store/filter"):
+        manager.ensure_selection(
+            backend,
+            store_name="orders",
+            request_id="pick",
+            requested_at=NOW,
+            filter_key=None,
+        )
+
+
+def test_unknown_store_definition_errors_are_explicit():
+    manager = DurableStoreManager(MemoryPersistence())
+
+    with pytest.raises(KeyError, match="unknown store definition"):
+        manager.get(
+            SimPyBackend(origin=NOW),
+            store_name="missing",
             request_id="pick",
             requested_at=NOW,
         )

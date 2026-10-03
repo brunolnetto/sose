@@ -302,3 +302,157 @@ def test_malformed_late_participant_fails_before_any_rebuild():
         )
 
     assert observed == [("validate", "valid")]
+
+
+def test_rebuilder_restores_scenarios_with_live_clock_when_no_position_exists():
+    store = MemoryPersistence()
+    context = FakeContext()
+    backend = RecordingBackend(now=ORIGIN + timedelta(hours=3))
+
+    rebuilt = RuntimeRebuilder(
+        store,
+        context=context,
+    ).rebuild(
+        backend,
+        on_due=lambda _: None,
+    )
+
+    assert rebuilt == 0
+    assert context.clock.now == ORIGIN
+    assert context.clock.tick == 0
+    assert context.scenarios.restored == [None]
+
+
+def test_scheduler_attached_backend_schedules_and_detach_stops_callbacks():
+    store = MemoryPersistence()
+    backend = RecordingBackend(now=ORIGIN)
+    scheduler = DurableScheduler(store)
+    observed = []
+    scheduler.attach_backend(
+        backend,
+        on_due=lambda item: observed.append(item.command.command_id),
+    )
+
+    first = scheduler.schedule(command("cmd-attached", ORIGIN + timedelta(minutes=30)))
+    assert [(at, key) for at, _, key, _ in backend.calls] == [
+        (first.due_at, ("durable-work", first.work_id))
+    ]
+
+    backend.calls[0][3]()
+    assert observed == ["cmd-attached"]
+
+    scheduler.detach_backend()
+    scheduler.schedule(command("cmd-detached", ORIGIN + timedelta(minutes=45)))
+    assert len(backend.calls) == 1
+
+
+def test_scheduler_rejects_duplicate_and_past_due_work_with_attached_backend():
+    store = MemoryPersistence()
+    scheduler = DurableScheduler(store)
+    scheduler.schedule(command("cmd-1", ORIGIN + timedelta(minutes=5)))
+
+    with pytest.raises(ValueError, match="already scheduled"):
+        scheduler.schedule(command("cmd-1", ORIGIN + timedelta(minutes=15)))
+
+    scheduler.attach_backend(RecordingBackend(now=ORIGIN + timedelta(minutes=10)), on_due=lambda _: None)
+    with pytest.raises(ValueError, match="before backend logical time"):
+        scheduler.schedule(command("cmd-past", ORIGIN + timedelta(minutes=9)))
+
+
+def test_scheduler_find_pending_due_and_cancel_pending_paths():
+    store = MemoryPersistence()
+    scheduler = DurableScheduler(store)
+    early = scheduler.schedule(command("cmd-early", ORIGIN + timedelta(minutes=5)))
+    scheduler.schedule(
+        Command(
+            "cmd-late",
+            "other",
+            "demo",
+            "2",
+            ORIGIN + timedelta(hours=1),
+        )
+    )
+
+    assert [item.work.work_id for item in scheduler.due(ORIGIN + timedelta(minutes=30))] == [
+        early.work_id
+    ]
+
+    assert (
+        scheduler.find_pending(
+            entity_type="demo",
+            entity_id="1",
+            name="missing",
+        )
+        is None
+    )
+    assert scheduler.cancel_pending(
+        entity_type="demo",
+        entity_id="1",
+        name="missing",
+    ) is False
+    assert scheduler.cancel_pending(
+        entity_type="demo",
+        entity_id="1",
+        name="advance",
+    ) is True
+    assert scheduler.cancel_pending(
+        entity_type="demo",
+        entity_id="1",
+        name="advance",
+    ) is False
+
+
+def test_scheduler_find_pending_rejects_duplicate_semantic_matches():
+    store = MemoryPersistence()
+    scheduler = DurableScheduler(store)
+    scheduler.schedule(command("cmd-1", ORIGIN + timedelta(minutes=1)))
+    scheduler.schedule(command("cmd-2", ORIGIN + timedelta(minutes=2)))
+
+    with pytest.raises(RuntimeError, match="multiple pending scheduled commands"):
+        scheduler.find_pending(
+            entity_type="demo",
+            entity_id="1",
+            name="advance",
+        )
+
+
+def test_scheduler_pending_and_cancel_reject_missing_command_reference():
+    store = MemoryPersistence()
+    scheduler = DurableScheduler(store)
+    work = scheduler.schedule(command("cmd-1", ORIGIN + timedelta(minutes=1)))
+    with store.transaction() as uow:
+        uow.delete_command("cmd-1")
+
+    with pytest.raises(RuntimeError, match="references missing command"):
+        scheduler.pending()
+    with pytest.raises(RuntimeError, match="references missing command"):
+        scheduler.cancel(work.work_id)
+
+
+def test_scheduler_cancel_returns_false_when_target_not_found():
+    scheduler = DurableScheduler(MemoryPersistence())
+    assert scheduler.cancel("missing-work") is False
+
+
+def test_recovery_participant_validate_and_rebuild_normalize_return_type():
+    class Manager:
+        def __init__(self):
+            self.validated = False
+            self.rebuilt = []
+
+        def validate_rebuild(self):
+            self.validated = True
+
+        def rebuild_backend(self, backend):
+            self.rebuilt.append(backend)
+            return None
+
+    manager = Manager()
+    participant = RecoveryParticipant("demo", manager)
+
+    participant.validate()
+    rebuilt = participant.rebuild(RecordingBackend(now=ORIGIN))
+
+    assert manager.validated is True
+    assert rebuilt == 0
+    assert len(manager.rebuilt) == 1

@@ -4,6 +4,11 @@ from dataclasses import dataclass
 from datetime import datetime
 
 
+def _require_non_negative(value: int, *, label: str) -> None:
+    if value < 0:
+        raise ValueError(f"{label} must be >= 0")
+
+
 @dataclass(frozen=True, slots=True)
 class CompletedJobTrigger:
     trigger_id: str
@@ -56,20 +61,24 @@ class SimulationJobState:
             raise ValueError("domain_name cannot be empty")
         if self.config_revision < 1:
             raise ValueError("config_revision must be >= 1")
-        if self.next_tick < 0:
-            raise ValueError("next_tick must be >= 0")
-        if self.run_count < 0:
-            raise ValueError("run_count must be >= 0")
-        if self.active_batch_total_ticks < 0:
-            raise ValueError("active_batch_total_ticks must be >= 0")
-        if self.active_batch_completed_ticks < 0:
-            raise ValueError("active_batch_completed_ticks must be >= 0")
+        _require_non_negative(self.next_tick, label="next_tick")
+        _require_non_negative(self.run_count, label="run_count")
+        _require_non_negative(
+            self.active_batch_total_ticks,
+            label="active_batch_total_ticks",
+        )
+        _require_non_negative(
+            self.active_batch_completed_ticks,
+            label="active_batch_completed_ticks",
+        )
         if self.active_batch_completed_ticks > self.active_batch_total_ticks:
             raise ValueError(
                 "active_batch_completed_ticks cannot exceed active_batch_total_ticks"
             )
-        if self.last_completed_batch_ticks < 0:
-            raise ValueError("last_completed_batch_ticks must be >= 0")
+        _require_non_negative(
+            self.last_completed_batch_ticks,
+            label="last_completed_batch_ticks",
+        )
         if self.status not in {"ready", "running", "paused", "failed"}:
             raise ValueError(f"unsupported job status: {self.status}")
         if self.phase not in {"idle", "advance", "reconcile"}:

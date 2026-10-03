@@ -124,30 +124,11 @@ class SinkOutbox:
         try:
             binding.sink.publish(delivery.batch)
         except Exception as exc:
-            failed = replace(
-                delivery,
-                attempts=delivery.attempts + 1,
-                last_error=f"{type(exc).__name__}: {exc}",
-            )
-            with self.persistence.transaction() as uow:
-                current = uow.get_sink_delivery(delivery.delivery_id)
-                if current is not None and current.status != "delivered":
-                    uow.save_sink_delivery(failed)
+            self._record_failed_delivery(delivery, exc)
             raise
 
-        completed = replace(
-            delivery,
-            status="delivered",
-            attempts=delivery.attempts + 1,
-            last_error=None,
-            delivered_at=delivery.batch.logical_time,
-        )
-        checkpoint = SinkCheckpoint(
-            job_id=delivery.batch.job_id,
-            sink_name=binding.name,
-            event_offset=delivery.batch.to_event_offset,
-            last_delivery_id=delivery.delivery_id,
-        )
+        completed = self._completed_delivery(delivery)
+        checkpoint = self._delivery_checkpoint(binding, delivery)
         with self.persistence.transaction() as uow:
             current = uow.get_sink_delivery(delivery.delivery_id)
             if current is not None and current.status == "delivered":
@@ -175,6 +156,39 @@ class SinkOutbox:
             uow.save_sink_checkpoint(checkpoint)
             uow.delete_sink_delivery(delivery.delivery_id)
         return completed
+
+    def _record_failed_delivery(self, delivery: SinkDelivery, exc: Exception) -> None:
+        failed = replace(
+            delivery,
+            attempts=delivery.attempts + 1,
+            last_error=f"{type(exc).__name__}: {exc}",
+        )
+        with self.persistence.transaction() as uow:
+            current = uow.get_sink_delivery(delivery.delivery_id)
+            if current is not None and current.status != "delivered":
+                uow.save_sink_delivery(failed)
+
+    @staticmethod
+    def _completed_delivery(delivery: SinkDelivery) -> SinkDelivery:
+        return replace(
+            delivery,
+            status="delivered",
+            attempts=delivery.attempts + 1,
+            last_error=None,
+            delivered_at=delivery.batch.logical_time,
+        )
+
+    @staticmethod
+    def _delivery_checkpoint(
+        binding: SinkBinding,
+        delivery: SinkDelivery,
+    ) -> SinkCheckpoint:
+        return SinkCheckpoint(
+            job_id=delivery.batch.job_id,
+            sink_name=binding.name,
+            event_offset=delivery.batch.to_event_offset,
+            last_delivery_id=delivery.delivery_id,
+        )
 
     def flush(
         self,

@@ -5,6 +5,26 @@ import math
 from datetime import datetime
 
 
+def _require_non_empty(value: str, *, label: str) -> None:
+    if not value:
+        raise ValueError(f"{label} cannot be empty")
+
+
+def _require_positive_finite(value: float, *, label: str) -> None:
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{label} must be finite and > 0")
+
+
+def _require_nonnegative_finite(value: float, *, label: str) -> None:
+    if not math.isfinite(value) or value < 0:
+        raise ValueError(f"{label} must be finite and >= 0")
+
+
+def _require_container_level(value: float) -> None:
+    if not math.isfinite(value) or value < 0:
+        raise ValueError("container levels must be finite and >= 0")
+
+
 @dataclass(frozen=True, order=True, slots=True)
 class ScheduledWork:
     """Durable semantic intent for future command execution."""
@@ -359,20 +379,12 @@ class ContainerOperationResult:
     sequence: int
 
     def __post_init__(self) -> None:
-        if not self.request_id:
-            raise ValueError("request_id cannot be empty")
-        if not self.container_name:
-            raise ValueError("container_name cannot be empty")
+        _require_non_empty(self.request_id, label="request_id")
+        _require_non_empty(self.container_name, label="container_name")
         if self.operation not in {"put", "get"}:
             raise ValueError("container operation must be put or get")
-        if not math.isfinite(self.amount) or self.amount <= 0:
-            raise ValueError("container amount must be finite and > 0")
-        if (
-            not math.isfinite(self.level_before)
-            or not math.isfinite(self.level_after)
-            or self.level_before < 0
-            or self.level_after < 0
-        ):
-            raise ValueError("container levels must be finite and >= 0")
+        _require_positive_finite(self.amount, label="container amount")
+        _require_container_level(self.level_before)
+        _require_container_level(self.level_after)
         if self.sequence < 1:
             raise ValueError("container result sequence must be >= 1")
