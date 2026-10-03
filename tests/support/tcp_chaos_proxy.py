@@ -66,7 +66,11 @@ async def _main(args) -> None:
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, stop.set)
+        try:
+            loop.add_signal_handler(sig, stop.set)
+        except NotImplementedError:
+            # Windows event loops do not implement add_signal_handler.
+            pass
 
     server = await asyncio.start_server(
         lambda reader, writer: _handle(

@@ -263,11 +263,18 @@ def test_postgres_backend_termination_recovers_same_semantic_state(tmp_path, nam
             termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
         )
         if timed_out:
-            assert process.returncode == -signal.SIGKILL, (
-                "PostgreSQL chaos worker hung after backend termination and "
-                "required forced kill\n"
-                f"stdout={stdout}\nstderr={stderr}"
-            )
+            if os.name == "posix":
+                assert process.returncode == -signal.SIGKILL, (
+                    "PostgreSQL chaos worker hung after backend termination and "
+                    "required forced kill\n"
+                    f"stdout={stdout}\nstderr={stderr}"
+                )
+            else:
+                assert process.returncode != 0, (
+                    "PostgreSQL chaos worker hung after backend termination and "
+                    "required forced kill\n"
+                    f"stdout={stdout}\nstderr={stderr}"
+                )
         assert process.returncode != 0
 
         reopened = PostgresPersistence(POSTGRES_DSN, namespace=namespace)
