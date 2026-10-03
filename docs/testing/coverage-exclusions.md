@@ -39,10 +39,11 @@ them would require invalidating an already-tested stronger contract.
 | `backends/simpy.py:626` | Preemptive resource lifecycle executes inside an active SimPy process |
 | `persistence/postgres.py:100` | Metadata singleton cannot disappear after transactional bootstrap |
 | `persistence/postgres.py:210` | Record changes have a closed internal operation set |
-| `persistence/postgres.py:307` | Metadata singleton cannot disappear during revision update |
-| `persistence/sqlite_incremental.py:114` | Metadata singleton cannot disappear after transactional bootstrap |
-| `persistence/sqlite_incremental.py:253` | Record changes have a closed internal operation set |
-| `persistence/sqlite_incremental.py:292` | Writer metadata cannot disappear after a successful compare-and-swap update |
+| `persistence/postgres.py:324` | Metadata singleton cannot disappear during revision update |
+| `persistence/sqlite_incremental.py:144` | Metadata singleton cannot disappear after transactional bootstrap |
+| `persistence/sqlite_incremental.py:288` | Record changes have a closed internal operation set |
+| `persistence/sqlite_incremental.py:327` | Writer metadata cannot disappear after a successful compare-and-swap update |
+| `core/stores.py:392` | Store-item consume helper is only called after caller-level presence checks |
 | `core/engine.py:91` | Engine construction requires a statechart factory |
 | `core/engine.py:129` | Engine construction requires a statechart factory |
 | `core/engine.py:222` | Engine construction requires a statechart factory |
