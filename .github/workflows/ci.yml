@@ -69,6 +69,9 @@ jobs:
       SOSE_RUN_PROCESS_CHAOS: "1"
       SOSE_RUN_FENCING_CHAOS: "1"
       SOSE_RUN_STORAGE_CHAOS: "1"
+      SOSE_FULL_CHAOS_CANONICALS: "1"
+      SOSE_FULL_CHAOS_PHASES: "1"
+      SOSE_FULL_PROCESS_CHAOS: "1"
 
     steps:
       - name: Checkout
@@ -223,6 +226,8 @@ jobs:
     name: chaos-test gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      SOSE_FULL_CHAOS_CANONICALS: "1"
 
     steps:
       - name: Checkout
@@ -279,6 +284,9 @@ jobs:
 
     env:
       SOSE_RUN_PROCESS_CHAOS: "1"
+      SOSE_FULL_CHAOS_CANONICALS: "1"
+      SOSE_FULL_CHAOS_PHASES: "1"
+      SOSE_FULL_PROCESS_CHAOS: "1"
       SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
 
     steps:
@@ -335,6 +343,7 @@ jobs:
 
     env:
       SOSE_RUN_FENCING_CHAOS: "1"
+      SOSE_FULL_CHAOS_CANONICALS: "1"
       SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
 
     steps:
@@ -390,6 +399,8 @@ jobs:
 
     env:
       SOSE_RUN_POSTGRES_INFRA_CHAOS: "1"
+      SOSE_FULL_CHAOS_CANONICALS: "1"
+      SOSE_FULL_CHAOS_PHASES: "1"
       SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
 
     steps:
