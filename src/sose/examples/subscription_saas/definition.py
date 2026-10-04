@@ -21,15 +21,46 @@ def _seed(persistence: Persistence, config: SubscriptionSaaSConfig):
         term_duration=config.term_duration,
     )
 
-def _reconcile_tick(persistence, engine, backend, config, entities):
-    if not config.auto_progress_plan_change:
-        return
+def _subscription_or_error(persistence, entities):
     subscription = persistence.entity(
         "saas_subscription",
         entities.subscription_id,
     )
     if subscription is None:
         raise RuntimeError("configured subscription was not persisted")
+    return subscription
+
+
+def _effective_plan_change_at(*, config, backend):
+    desired = config.start_at + config.plan_change_after
+    if desired > backend.now:
+        return desired
+    return backend.now + config.tick_step
+
+
+def _request_initial_plan_change(
+    persistence,
+    engine,
+    backend,
+    config,
+    *,
+    entities,
+) -> None:
+    request_plan_change(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=1,
+        target_plan=config.target_plan,
+        effective_at=_effective_plan_change_at(config=config, backend=backend),
+    )
+
+
+def _reconcile_tick(persistence, engine, backend, config, entities):
+    if not config.auto_progress_plan_change:
+        return
+    subscription = _subscription_or_error(persistence, entities)
     if subscription.state != "active" or config.target_plan is None:
         return
     if subscription.attributes["plan_code"] == config.target_plan:
@@ -40,20 +71,12 @@ def _reconcile_tick(persistence, engine, backend, config, entities):
         for value in subscription.attributes.get("change_request_ids", [])
     ]
     if not change_ids:
-        desired = config.start_at + config.plan_change_after
-        effective_at = (
-            desired
-            if desired > backend.now
-            else backend.now + config.tick_step
-        )
-        request_plan_change(
+        _request_initial_plan_change(
             persistence,
             engine,
             backend,
+            config,
             entities=entities,
-            ordinal=1,
-            target_plan=config.target_plan,
-            effective_at=effective_at,
         )
         return
 

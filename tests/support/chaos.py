@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+import os
 from pathlib import Path
 from typing import Iterator, Literal
 
+from sose.examples.catalog import builtin_catalog
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
@@ -67,3 +69,25 @@ class TransactionChaosSQLite(SQLiteIncrementalPersistence):
             raise InjectedProcessCrash(
                 f"crash after commit at transaction {transaction_index}"
             )
+
+
+_SAMPLED_CHAOS_CANONICALS = (
+    "producer_consumer",
+    "readers_writers",
+)
+
+
+def chaos_canonical_names(*, full_env: str = "SOSE_FULL_CHAOS_CANONICALS") -> tuple[str, ...]:
+    """Return canonical names for chaos suites.
+
+    Default scope is a representative sampled matrix for faster local runs.
+    Set `full_env=1` to run the full canonical matrix.
+    """
+    all_canonicals = tuple(builtin_catalog().names(kind="canonical"))
+    if os.environ.get(full_env) == "1":
+        return all_canonicals
+
+    sampled = tuple(
+        name for name in _SAMPLED_CHAOS_CANONICALS if name in all_canonicals
+    )
+    return sampled or all_canonicals

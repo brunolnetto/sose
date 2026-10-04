@@ -25,58 +25,109 @@ def _seed(persistence: Persistence, config: ITSMConfig):
         incident_queue_capacity=config.incident_queue_capacity,
     )
 
-def _reconcile_tick(persistence, engine, backend, config, entities):
+def _incident_or_error(persistence, entities):
     incident = persistence.entity("itsm_incident", entities.incident_id)
     if incident is None:
         raise RuntimeError("configured incident was not persisted")
+    return incident
+
+
+def _reload_incident(persistence, incident_id: str):
+    return persistence.entity("itsm_incident", incident_id)
+
+
+def _reconcile_opened_incident(persistence, engine, backend, config, *, incident):
+    if incident.state != "opened":
+        return incident
+    triage_and_queue(
+        persistence,
+        engine,
+        backend,
+        incident_id=incident.id,
+        sla_delay=config.sla_delay,
+    )
+    return _reload_incident(persistence, incident.id)
+
+
+def _reconcile_triaged_incident(persistence, engine, backend, *, incident, claim_id: str):
+    if incident is None or incident.state != "triaged":
+        return incident
+    claim_next_incident(
+        persistence,
+        engine,
+        backend,
+        claim_id=claim_id,
+    )
+    return _reload_incident(persistence, incident.id)
+
+
+def _reconcile_escalated_incident(persistence, engine, backend, *, incident, claim_id: str):
+    if incident is None or incident.state != "escalated":
+        return incident
+    reconcile_escalation(
+        persistence,
+        engine,
+        backend,
+        incident_id=incident.id,
+        claim_id=claim_id,
+    )
+    return _reload_incident(persistence, incident.id)
+
+
+def _reconcile_resolution(persistence, engine, backend, *, incident, claim_id: str):
+    if incident is None:
+        return
+    if incident.state == "in_progress":
+        resolve_incident(
+            persistence,
+            engine,
+            backend,
+            incident_id=incident.id,
+            claim_id=claim_id,
+            close=True,
+        )
+    elif incident.state == "resolved":
+        resolve_incident(
+            persistence,
+            engine,
+            backend,
+            incident_id=incident.id,
+            close=True,
+        )
+
+
+def _reconcile_tick(persistence, engine, backend, config, entities):
+    incident = _incident_or_error(persistence, entities)
     claim_id = f"job:{entities.incident_id}"
 
-    if incident.state == "opened":
-        triage_and_queue(
-            persistence,
-            engine,
-            backend,
-            incident_id=incident.id,
-            sla_delay=config.sla_delay,
-        )
-        incident = persistence.entity("itsm_incident", incident.id)
-
-    if incident is not None and incident.state == "triaged":
-        claim_next_incident(
-            persistence,
-            engine,
-            backend,
-            claim_id=claim_id,
-        )
-        incident = persistence.entity("itsm_incident", incident.id)
-
-    if incident is not None and incident.state == "escalated":
-        reconcile_escalation(
-            persistence,
-            engine,
-            backend,
-            incident_id=incident.id,
-            claim_id=claim_id,
-        )
-        incident = persistence.entity("itsm_incident", incident.id)
-
-    if incident is not None and incident.state == "in_progress":
-        resolve_incident(
-            persistence,
-            engine,
-            backend,
-            incident_id=incident.id,
-            claim_id=claim_id,
-            close=True,
-        )
-    elif incident is not None and incident.state == "resolved":
-        resolve_incident(
-            persistence,
-            engine,
-            backend,
-            incident_id=incident.id,
-            close=True,
-        )
+    incident = _reconcile_opened_incident(
+        persistence,
+        engine,
+        backend,
+        config,
+        incident=incident,
+    )
+    incident = _reconcile_triaged_incident(
+        persistence,
+        engine,
+        backend,
+        incident=incident,
+        claim_id=claim_id,
+    )
+    incident = _reconcile_escalated_incident(
+        persistence,
+        engine,
+        backend,
+        incident=incident,
+        claim_id=claim_id,
+    )
+    _reconcile_resolution(
+        persistence,
+        engine,
+        backend,
+        incident=incident,
+        claim_id=claim_id,
+    )
 
 definition = DomainDefinition(
     name="itsm",

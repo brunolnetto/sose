@@ -537,13 +537,11 @@ def reconcile_work_start(
 ) -> bool:
     appointment = _appointment(persistence, appointment_id_value)
     work_order = _work_order(persistence, entities)
-    if appointment.state != "in_progress":
-        return False
-    if work_order.attributes.get("active_appointment_id") != appointment.id:
-        return False
-    if work_order.state != "scheduled":
-        return False
-    if not engine.context.scenarios.attribute("field_service.dispatch.available", True):
+    if not _can_reconcile_work_start(
+        engine,
+        appointment=appointment,
+        work_order=work_order,
+    ):
         return False
     if not reserve_required_part(
         persistence,
@@ -558,17 +556,65 @@ def reconcile_work_start(
         raise RuntimeError("appointment has no technician")
     technician = _technician(persistence, str(technician_id))
     request_id = f"field-tech:{appointment.id}"
-    reservation = engine.resources.ensure_requested(
+    if engine.resources.ensure_requested(
         backend,
         resource_name=f"field-tech:{technician.id}",
         request_id=request_id,
         requested_at=backend.now,
-    )
-    if reservation is None:
+    ) is None:
         return False
 
     correlation_id = flow_correlation_id(work_order.id)
-    technician = _technician(persistence, technician.id)
+    _dispatch_work_start_events(
+        persistence,
+        engine,
+        entities=entities,
+        appointment=appointment,
+        technician_id=technician.id,
+        correlation_id=correlation_id,
+    )
+
+    # The durable booking owns the whole appointment window. Resource capacity is
+    # only the start-time concurrency gate, so release it immediately after the
+    # semantic assignment has been committed. This prevents an expiry callback
+    # from leaking backend capacity while the Technician entity remains the
+    # durable assignment truth.
+    engine.resources.withdraw(backend, request_id)
+    _schedule_technician_window_release(
+        persistence,
+        engine,
+        appointment=appointment,
+        technician_id=technician.id,
+        correlation_id=correlation_id,
+    )
+    return True
+
+
+def _can_reconcile_work_start(
+    engine: Engine,
+    *,
+    appointment: Appointment,
+    work_order: WorkOrder,
+) -> bool:
+    if appointment.state != "in_progress":
+        return False
+    if work_order.attributes.get("active_appointment_id") != appointment.id:
+        return False
+    if work_order.state != "scheduled":
+        return False
+    return bool(engine.context.scenarios.attribute("field_service.dispatch.available", True))
+
+
+def _dispatch_work_start_events(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: FieldServiceEntities,
+    appointment: Appointment,
+    technician_id: str,
+    correlation_id: str,
+) -> None:
+    technician = _technician(persistence, technician_id)
     if technician.state == "available":
         _dispatch(
             engine,
@@ -587,28 +633,33 @@ def reconcile_work_start(
             correlation_id=correlation_id,
         )
 
-    # The durable booking owns the whole appointment window. Resource capacity is
-    # only the start-time concurrency gate, so release it immediately after the
-    # semantic assignment has been committed. This prevents an expiry callback
-    # from leaking backend capacity while the Technician entity remains the
-    # durable assignment truth.
-    engine.resources.withdraw(backend, request_id)
-    end_at = _at(appointment.attributes["end_at"])
-    technician = _technician(persistence, technician.id)
-    if technician.state == "assigned" and engine.scheduler.find_pending(
+
+def _schedule_technician_window_release(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    appointment: Appointment,
+    technician_id: str,
+    correlation_id: str,
+) -> None:
+    technician = _technician(persistence, technician_id)
+    if technician.state != "assigned":
+        return
+    if engine.scheduler.find_pending(
         entity_type="field_technician",
         entity_id=technician.id,
         name="release",
-    ) is None:
-        command = engine.context.commands.create(
-            "release",
-            target=technician,
-            due_at=end_at,
-            correlation_id=correlation_id,
-            key=("field-technician", technician.id, appointment.id, "window-end"),
-        )
-        engine.context.schedules.at(end_at, command=command)
-    return True
+    ) is not None:
+        return
+    end_at = _at(appointment.attributes["end_at"])
+    command = engine.context.commands.create(
+        "release",
+        target=technician,
+        due_at=end_at,
+        correlation_id=correlation_id,
+        key=("field-technician", technician.id, appointment.id, "window-end"),
+    )
+    engine.context.schedules.at(end_at, command=command)
 
 
 def _release_technician(

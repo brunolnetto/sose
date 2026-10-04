@@ -44,6 +44,49 @@ def _seed(persistence: Persistence, config: ConstructionConfig):
         predecessor_completed=config.predecessor_completed,
     )
 
+def _reconcile_material_stage(persistence, engine, backend, config, *, entities, current) -> bool:
+    if current.state not in {"ready", "waiting_material"}:
+        return False
+    if bool(current.attributes.get("material_staged", False)):
+        return False
+    if config.auto_seed_material:
+        seed_material(
+            persistence,
+            engine,
+            backend,
+            quantity=config.quantity,
+        )
+    reconcile_material_availability(
+        persistence,
+        engine,
+        entities=entities,
+    )
+    current = activity(persistence, entities.activity_id)
+    if current.state == "ready":
+        stage_material(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+        )
+    return True
+
+
+def _execution_cycle(persistence, *, entities) -> str:
+    inspected = persistence.entity(
+        "construction_inspection",
+        inspection_id(entities.activity_id, 1),
+    )
+    return "rework-1" if inspected is not None else "initial"
+
+
+def _inspection_ordinal(persistence, *, entities) -> int:
+    first = persistence.entity(
+        "construction_inspection",
+        inspection_id(entities.activity_id, 1),
+    )
+    return 2 if first is not None and first.state == "failed" else 1
+
 
 def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
     current = activity(persistence, entities.activity_id)
@@ -52,29 +95,14 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
         reconcile_dependency(persistence, engine, entities=entities)
         return
 
-    if current.state in {"ready", "waiting_material"} and not bool(
-        current.attributes.get("material_staged", False)
+    if _reconcile_material_stage(
+        persistence,
+        engine,
+        backend,
+        config,
+        entities=entities,
+        current=current,
     ):
-        if config.auto_seed_material:
-            seed_material(
-                persistence,
-                engine,
-                backend,
-                quantity=config.quantity,
-            )
-        reconcile_material_availability(
-            persistence,
-            engine,
-            entities=entities,
-        )
-        current = activity(persistence, entities.activity_id)
-        if current.state == "ready":
-            stage_material(
-                persistence,
-                engine,
-                backend,
-                entities=entities,
-            )
         return
 
     if current.state == "ready":
@@ -107,40 +135,22 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
         return
 
     if current.state == "executing":
-        cycle = "rework-1" if persistence.entity(
-            "construction_inspection",
-            inspection_id(entities.activity_id, 1),
-        ) is not None else "initial"
         finish_execution(
             persistence,
             engine,
             backend,
             entities=entities,
-            cycle=cycle,
+            cycle=_execution_cycle(persistence, entities=entities),
         )
         return
 
     if current.state == "inspection":
-        first = next(
-            (
-                item
-                for item in (
-                    persistence.entity(
-                        "construction_inspection",
-                        inspection_id(entities.activity_id, 1),
-                    ),
-                )
-                if item is not None
-            ),
-            None,
-        )
-        ordinal = 2 if first is not None and first.state == "failed" else 1
         reconcile_inspection(
             persistence,
             engine,
             backend,
             entities=entities,
-            ordinal=ordinal,
+            ordinal=_inspection_ordinal(persistence, entities=entities),
             outcome=config.inspection_outcome,
         )
         return

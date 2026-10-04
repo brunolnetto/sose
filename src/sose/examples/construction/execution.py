@@ -85,59 +85,72 @@ def complete_predecessor(
     )
 
 
-def request_execution_resources(
+def _execution_request_ids(activity_id: str, cycle: str) -> tuple[str, str]:
+    return (f"crew:{activity_id}:{cycle}", f"equipment:{activity_id}:{cycle}")
+
+
+def _advance_rework_if_needed(
     persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    current_id: str,
+    cycle: str,
+):
+    current = activity(persistence, current_id)
+    if current.state != "rework":
+        return current
+    dispatch(
+        engine,
+        current,
+        "schedule_rework",
+        key=("construction", current.id, cycle, "schedule-rework"),
+        correlation_id=flow_correlation_id(current.id),
+    )
+    return activity(persistence, current.id)
+
+
+def _request_resources_if_ready(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    current_id: str,
+    cycle: str,
+):
+    current = activity(persistence, current_id)
+    if current.state != "ready":
+        return current
+    if not bool(current.attributes.get("material_staged", False)):
+        raise RuntimeError(
+            "execution resources cannot be requested before material staging"
+        )
+    dispatch(
+        engine,
+        current,
+        "request_resources",
+        key=("construction", current.id, cycle, "request-resources"),
+        correlation_id=flow_correlation_id(current.id),
+    )
+    return activity(persistence, current.id)
+
+
+def _withdraw_execution_requests(
     engine: Engine,
     backend: SimPyBackend,
     *,
-    entities: ConstructionEntities,
-    cycle: str = "initial",
+    request_ids: tuple[str, str],
+) -> None:
+    for request_id in request_ids:
+        engine.resources.withdraw(backend, request_id)
+
+
+def _ensure_execution_capacity(
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    current_id: str,
+    request_ids: tuple[str, str],
 ) -> bool:
-    current = activity(persistence, entities.activity_id)
-    if current.state == "executing":
-        return True
-
-    if current.state == "rework":
-        dispatch(
-            engine,
-            current,
-            "schedule_rework",
-            key=("construction", current.id, cycle, "schedule-rework"),
-            correlation_id=flow_correlation_id(current.id),
-        )
-        current = activity(persistence, current.id)
-
-    if current.state == "ready":
-        if not bool(current.attributes.get("material_staged", False)):
-            raise RuntimeError(
-                "execution resources cannot be requested before material staging"
-            )
-        dispatch(
-            engine,
-            current,
-            "request_resources",
-            key=("construction", current.id, cycle, "request-resources"),
-            correlation_id=flow_correlation_id(current.id),
-        )
-        current = activity(persistence, current.id)
-
-    if current.state != "waiting_resource":
-        return False
-
-    crew_request = f"crew:{current.id}:{cycle}"
-    equipment_request = f"equipment:{current.id}:{cycle}"
-
-    if not engine.context.scenarios.attribute(
-        "construction.site.available",
-        True,
-    ):
-        # Capacity requests can outlive the context that made them legal.
-        # Cancel queued demand first, then release any grant that raced with
-        # the scenario change, so disrupted work cannot hoard capacity.
-        for request_id in (crew_request, equipment_request):
-            engine.resources.withdraw(backend, request_id)
-        return False
-
+    crew_request, equipment_request = request_ids
     crew = engine.resources.ensure_requested(
         backend,
         resource_name="crew",
@@ -150,12 +163,64 @@ def request_execution_resources(
         request_id=equipment_request,
         requested_at=backend.now,
     )
-
     if crew is None or equipment is None:
         if crew is not None:
             engine.resources.withdraw(backend, crew_request)
         if equipment is not None:
             engine.resources.withdraw(backend, equipment_request)
+        return False
+    return True
+
+
+def request_execution_resources(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: ConstructionEntities,
+    cycle: str = "initial",
+) -> bool:
+    current = activity(persistence, entities.activity_id)
+    if current.state == "executing":
+        return True
+    request_ids = _execution_request_ids(current.id, cycle)
+
+    current = _advance_rework_if_needed(
+        persistence,
+        engine,
+        current_id=current.id,
+        cycle=cycle,
+    )
+    current = _request_resources_if_ready(
+        persistence,
+        engine,
+        current_id=current.id,
+        cycle=cycle,
+    )
+
+    if current.state != "waiting_resource":
+        return False
+
+    if not engine.context.scenarios.attribute(
+        "construction.site.available",
+        True,
+    ):
+        # Capacity requests can outlive the context that made them legal.
+        # Cancel queued demand first, then release any grant that raced with
+        # the scenario change, so disrupted work cannot hoard capacity.
+        _withdraw_execution_requests(
+            engine,
+            backend,
+            request_ids=request_ids,
+        )
+        return False
+
+    if not _ensure_execution_capacity(
+        engine,
+        backend,
+        current_id=current.id,
+        request_ids=request_ids,
+    ):
         return False
 
     current = activity(persistence, current.id)
@@ -262,12 +327,12 @@ def reconcile_inspection(
     # Acceptance/rejection may commit before inspector release. Reconciliation
     # must still complete cleanup from the advanced Activity state.
     if current.state != "inspection":
-        if occurrence is None or occurrence.state not in {"passed", "failed"}:
-            return False
-        request_id = f"inspector:{occurrence.id}"
-        engine.resources.withdraw(backend, request_id)
-        expected_activity = "measured" if occurrence.state == "passed" else "rework"
-        return current.state == expected_activity
+        return _reconcile_inspection_after_transition(
+            engine,
+            backend,
+            current_state=current.state,
+            occurrence=occurrence,
+        )
 
     occurrence = ensure_inspection(
         persistence,
@@ -276,44 +341,41 @@ def reconcile_inspection(
         ordinal=ordinal,
     )
     request_id = f"inspector:{occurrence.id}"
-    reservation = engine.resources.ensure_requested(
+    if engine.resources.ensure_requested(
         backend,
         resource_name="inspector",
         request_id=request_id,
         requested_at=backend.now,
-    )
-    if reservation is None:
+    ) is None:
         return False
 
     correlation_id = flow_correlation_id(current.id)
-    occurrence = inspection(persistence, current.id, ordinal)
-    if occurrence is None:
-        raise RuntimeError("inspection occurrence disappeared")
-    if occurrence.state == "pending":
-        dispatch(
-            engine,
-            occurrence,
-            "begin",
-            key=("construction-inspection", occurrence.id, "begin"),
-            correlation_id=correlation_id,
-        )
-
-    occurrence = inspection(persistence, current.id, ordinal)
-    if occurrence is None:
-        raise RuntimeError("inspection occurrence disappeared")
-    result_event = "pass_inspection" if outcome == "pass" else "fail_inspection"
-    if occurrence.state == "inspecting":
-        dispatch(
-            engine,
-            occurrence,
-            result_event,
-            key=("construction-inspection", occurrence.id, result_event),
-            correlation_id=correlation_id,
-        )
-
-    occurrence = inspection(persistence, current.id, ordinal)
-    if occurrence is None:
-        raise RuntimeError("inspection occurrence disappeared")
+    occurrence = _inspection_or_error(
+        persistence,
+        current_id=current.id,
+        ordinal=ordinal,
+    )
+    _begin_inspection_if_pending(
+        engine,
+        occurrence,
+        correlation_id=correlation_id,
+    )
+    occurrence = _inspection_or_error(
+        persistence,
+        current_id=current.id,
+        ordinal=ordinal,
+    )
+    _dispatch_outcome_if_inspecting(
+        engine,
+        occurrence,
+        outcome=outcome,
+        correlation_id=correlation_id,
+    )
+    occurrence = _inspection_or_error(
+        persistence,
+        current_id=current.id,
+        ordinal=ordinal,
+    )
     expected = "passed" if outcome == "pass" else "failed"
     if occurrence.state != expected:
         raise RuntimeError(
@@ -336,6 +398,69 @@ def reconcile_inspection(
     )
     engine.resources.withdraw(backend, request_id)
     return True
+
+
+def _reconcile_inspection_after_transition(
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    current_state: str,
+    occurrence: ConstructionInspection | None,
+) -> bool:
+    if occurrence is None or occurrence.state not in {"passed", "failed"}:
+        return False
+    request_id = f"inspector:{occurrence.id}"
+    engine.resources.withdraw(backend, request_id)
+    expected_activity = "measured" if occurrence.state == "passed" else "rework"
+    return current_state == expected_activity
+
+
+def _inspection_or_error(
+    persistence: MemoryPersistence,
+    *,
+    current_id: str,
+    ordinal: int,
+) -> ConstructionInspection:
+    occurrence = inspection(persistence, current_id, ordinal)
+    if occurrence is None:
+        raise RuntimeError("inspection occurrence disappeared")
+    return occurrence
+
+
+def _begin_inspection_if_pending(
+    engine: Engine,
+    occurrence: ConstructionInspection,
+    *,
+    correlation_id: str,
+) -> None:
+    if occurrence.state != "pending":
+        return
+    dispatch(
+        engine,
+        occurrence,
+        "begin",
+        key=("construction-inspection", occurrence.id, "begin"),
+        correlation_id=correlation_id,
+    )
+
+
+def _dispatch_outcome_if_inspecting(
+    engine: Engine,
+    occurrence: ConstructionInspection,
+    *,
+    outcome: str,
+    correlation_id: str,
+) -> None:
+    if occurrence.state != "inspecting":
+        return
+    result_event = "pass_inspection" if outcome == "pass" else "fail_inspection"
+    dispatch(
+        engine,
+        occurrence,
+        result_event,
+        key=("construction-inspection", occurrence.id, result_event),
+        correlation_id=correlation_id,
+    )
 
 
 def record_measurement(

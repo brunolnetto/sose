@@ -41,11 +41,81 @@ def _seed(persistence: Persistence, config: OrderToCashConfig):
         currency=config.currency,
     )
 
-
-def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
+def _order_or_error(persistence, entities):
     order = persistence.entity("sales_order", entities.order_id)
     if order is None:
         raise RuntimeError("sales order was not persisted")
+    return order
+
+
+def _receivable_or_create(persistence, engine, *, entities):
+    receivable = persistence.entity(
+        "receivable",
+        receivable_id(entities.order_id),
+    )
+    if receivable is not None:
+        return receivable
+    return ship_invoice_and_ensure_receivable(
+        persistence,
+        engine,
+        entities=entities,
+    )
+
+
+def _reconcile_receivable_state(
+    persistence,
+    engine,
+    backend,
+    config,
+    *,
+    entities,
+    receivable,
+) -> None:
+    if receivable.state == "open":
+        schedule_due(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            delay=config.due_delay,
+        )
+        return
+    if receivable.state == "due":
+        if config.auto_collect:
+            collect_receivable(
+                persistence,
+                engine,
+                entities=entities,
+            )
+        else:
+            schedule_overdue(
+                persistence,
+                engine,
+                backend,
+                entities=entities,
+                delay=config.overdue_delay,
+            )
+        return
+    if receivable.state != "overdue":
+        return
+    if config.auto_collect:
+        collect_receivable(
+            persistence,
+            engine,
+            entities=entities,
+        )
+        return
+    reconcile_collection(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        promise=config.collection_promise,
+    )
+
+
+def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
+    order = _order_or_error(persistence, entities)
 
     if order.state in {"submitted", "credit_hold"}:
         reconcile_credit(
@@ -76,59 +146,19 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
     if order.state != "invoiced":
         return
 
-    receivable = persistence.entity(
-        "receivable",
-        receivable_id(entities.order_id),
+    receivable = _receivable_or_create(
+        persistence,
+        engine,
+        entities=entities,
     )
-    if receivable is None:
-        receivable = ship_invoice_and_ensure_receivable(
-            persistence,
-            engine,
-            entities=entities,
-        )
-
-    if receivable.state == "open":
-        schedule_due(
-            persistence,
-            engine,
-            backend,
-            entities=entities,
-            delay=config.due_delay,
-        )
-        return
-
-    if receivable.state == "due":
-        if config.auto_collect:
-            collect_receivable(
-                persistence,
-                engine,
-                entities=entities,
-            )
-        else:
-            schedule_overdue(
-                persistence,
-                engine,
-                backend,
-                entities=entities,
-                delay=config.overdue_delay,
-            )
-        return
-
-    if receivable.state == "overdue":
-        if config.auto_collect:
-            collect_receivable(
-                persistence,
-                engine,
-                entities=entities,
-            )
-        else:
-            reconcile_collection(
-                persistence,
-                engine,
-                backend,
-                entities=entities,
-                promise=config.collection_promise,
-            )
+    _reconcile_receivable_state(
+        persistence,
+        engine,
+        backend,
+        config,
+        entities=entities,
+        receivable=receivable,
+    )
 
 
 definition = DomainDefinition(

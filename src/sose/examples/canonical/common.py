@@ -41,7 +41,14 @@ class CanonicalConfig(DomainConfig):
     capacity: int = Field(default=1, ge=1)
 
 
-def build_runtime(persistence, config: CanonicalConfig, now: datetime, tick: int):
+def build_runtime(
+    persistence,
+    config: CanonicalConfig | None = None,
+    now: datetime | None = None,
+    tick: int = 0,
+):
+    config = CanonicalConfig() if config is None else config
+    now = config.start_at if now is None else now
     context = SimulationContext(
         clock=SimulationClock(now=now, step=config.tick_step, tick=tick),
         random=RandomSource(root_seed=config.random_seed),

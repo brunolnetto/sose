@@ -28,14 +28,24 @@ async def _handle(
     client_reader: asyncio.StreamReader,
     client_writer: asyncio.StreamWriter,
     *,
-    upstream_host: str,
+    upstream_host: str | None,
+    upstream_unix_socket_dir: str | None,
     upstream_port: int,
 ) -> None:
     try:
-        server_reader, server_writer = await asyncio.open_connection(
-            upstream_host,
-            upstream_port,
-        )
+        if upstream_unix_socket_dir is not None:
+            socket_path = (
+                f"{upstream_unix_socket_dir.rstrip('/')}/.s.PGSQL.{upstream_port}"
+            )
+            server_reader, server_writer = await asyncio.open_unix_connection(
+                path=socket_path,
+            )
+        else:
+            assert upstream_host is not None
+            server_reader, server_writer = await asyncio.open_connection(
+                upstream_host,
+                upstream_port,
+            )
     except OSError:
         client_writer.close()
         await client_writer.wait_closed()
@@ -63,6 +73,7 @@ async def _main(args) -> None:
             reader,
             writer,
             upstream_host=args.upstream_host,
+            upstream_unix_socket_dir=args.upstream_unix_socket_dir,
             upstream_port=args.upstream_port,
         ),
         args.listen_host,
@@ -81,10 +92,16 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--listen-host", default="127.0.0.1")
     parser.add_argument("--listen-port", type=int, required=True)
-    parser.add_argument("--upstream-host", required=True)
+    parser.add_argument("--upstream-host")
+    parser.add_argument("--upstream-unix-socket-dir")
     parser.add_argument("--upstream-port", type=int, required=True)
     parser.add_argument("--marker", type=Path, required=True)
     args = parser.parse_args()
+    if bool(args.upstream_host) == bool(args.upstream_unix_socket_dir):
+        raise ValueError(
+            "Provide exactly one of --upstream-host or "
+            "--upstream-unix-socket-dir"
+        )
     asyncio.run(_main(args))
 
 

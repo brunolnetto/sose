@@ -35,10 +35,10 @@ def _pause(
     *,
     payload: str = "ready",
 ) -> None:
-    _checkpoint_coverage()
     if not marker.exists():
         _publish_marker(marker, payload)
     if continue_file is None:
+        _checkpoint_coverage()
         while True:
             time.sleep(60)
     deadline = time.monotonic() + 30

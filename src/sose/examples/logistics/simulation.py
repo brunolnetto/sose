@@ -242,6 +242,62 @@ def reconcile_origin_hub(
     return True
 
 
+def _has_store_get_result(persistence: MemoryPersistence, request_id: str) -> bool:
+    return any(
+        result.request_id == request_id
+        for result in persistence.store_get_results()
+    )
+
+
+def _has_store_get_request(persistence: MemoryPersistence, request_id: str) -> bool:
+    return any(
+        request.request_id == request_id
+        for request in persistence.store_get_requests()
+    )
+
+
+def _ensure_origin_queue_dequeue(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    shipment_id: str,
+) -> bool:
+    dequeue_id = f"origin-dequeue:{shipment_id}"
+    if _has_store_get_result(persistence, dequeue_id):
+        return True
+    if not _has_store_get_request(persistence, dequeue_id):
+        engine.stores.get(
+            backend,
+            store_name="origin_hub_queue",
+            request_id=dequeue_id,
+            requested_at=backend.now,
+        )
+    backend.run_until(backend.now)
+    return _has_store_get_result(persistence, dequeue_id)
+
+
+def _ensure_destination_queue_dequeue(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    shipment_id: str,
+) -> bool:
+    dequeue_id = f"destination-dequeue:{shipment_id}"
+    if _has_store_get_result(persistence, dequeue_id):
+        return True
+    if not _has_store_get_request(persistence, dequeue_id):
+        engine.stores.get(
+            backend,
+            store_name="destination_hub_queue",
+            request_id=dequeue_id,
+            requested_at=backend.now,
+        )
+    backend.run_until(backend.now)
+    return _has_store_get_result(persistence, dequeue_id)
+
+
 def reconcile_transfer(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -261,27 +317,11 @@ def reconcile_transfer(
         )
         if vehicle is None:
             return False
-
-        dequeue_id = f"origin-dequeue:{shipment.id}"
-        if not any(
-            result.request_id == dequeue_id
-            for result in persistence.store_get_results()
-        ):
-            if not any(
-                request.request_id == dequeue_id
-                for request in persistence.store_get_requests()
-            ):
-                engine.stores.get(
-                    backend,
-                    store_name="origin_hub_queue",
-                    request_id=dequeue_id,
-                    requested_at=backend.now,
-                )
-            backend.run_until(backend.now)
-
-        if not any(
-            result.request_id == dequeue_id
-            for result in persistence.store_get_results()
+        if not _ensure_origin_queue_dequeue(
+            persistence,
+            engine,
+            backend,
+            shipment_id=shipment.id,
         ):
             return False
 
@@ -356,6 +396,83 @@ def ensure_delivery_attempt(
     return attempt
 
 
+def _resume_destination_hub_if_available(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: LogisticsEntities,
+    ordinal: int,
+    courier_available: bool,
+):
+    shipment = _shipment(persistence, entities)
+    if shipment.state != "delayed_destination_hub" or not courier_available:
+        return shipment
+    _dispatch(
+        engine,
+        shipment,
+        "resume",
+        key=("logistics-delivery", shipment.id, ordinal, "capacity-resume"),
+    )
+    return _shipment(persistence, entities)
+
+
+def _eligible_delivery_dispatch_state(shipment) -> bool:
+    return shipment.state in {"at_destination_hub", "out_for_delivery"}
+
+
+def _attempt_ready_for_dispatch(attempt: DeliveryAttempt) -> bool:
+    if attempt.state == "out_for_delivery":
+        return True
+    return attempt.state == "pending"
+
+
+def _dispatch_delay_if_unavailable(
+    engine: Engine,
+    *,
+    shipment,
+    ordinal: int,
+    courier_available: bool,
+) -> bool:
+    if courier_available:
+        return False
+    if shipment.state == "at_destination_hub":
+        _dispatch(
+            engine,
+            shipment,
+            "delay",
+            key=("logistics-delivery", shipment.id, ordinal, "capacity-delay"),
+        )
+    return True
+
+
+def _dispatch_shipment_for_delivery(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: LogisticsEntities,
+    shipment,
+    ordinal: int,
+) -> bool:
+    if shipment.state != "at_destination_hub":
+        return True
+    if not _ensure_destination_queue_dequeue(
+        persistence,
+        engine,
+        backend,
+        shipment_id=shipment.id,
+    ):
+        return False
+    shipment = _shipment(persistence, entities)
+    _dispatch(
+        engine,
+        shipment,
+        "dispatch_delivery",
+        key=("logistics-delivery", shipment.id, ordinal, "dispatch-shipment"),
+    )
+    return True
+
+
 def reconcile_delivery_dispatch(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -364,79 +481,51 @@ def reconcile_delivery_dispatch(
     entities: LogisticsEntities,
     ordinal: int,
 ) -> bool:
-    shipment = _shipment(persistence, entities)
     courier_available = engine.context.scenarios.attribute(
         "logistics.courier.available", True
     )
-    if shipment.state == "delayed_destination_hub" and courier_available:
-        _dispatch(
-            engine,
-            shipment,
-            "resume",
-            key=("logistics-delivery", shipment.id, ordinal, "capacity-resume"),
-        )
-        shipment = _shipment(persistence, entities)
-
-    if shipment.state not in {"at_destination_hub", "out_for_delivery"}:
+    shipment = _resume_destination_hub_if_available(
+        persistence,
+        engine,
+        entities=entities,
+        ordinal=ordinal,
+        courier_available=courier_available,
+    )
+    if not _eligible_delivery_dispatch_state(shipment):
         return False
 
     attempt = ensure_delivery_attempt(persistence, engine, ordinal=ordinal)
     if attempt.state == "out_for_delivery":
         return True
-    if attempt.state != "pending":
+    if not _attempt_ready_for_dispatch(attempt):
         return False
 
-    if not courier_available:
-        if shipment.state == "at_destination_hub":
-            _dispatch(
-                engine,
-                shipment,
-                "delay",
-                key=("logistics-delivery", shipment.id, ordinal, "capacity-delay"),
-            )
+    if _dispatch_delay_if_unavailable(
+        engine,
+        shipment=shipment,
+        ordinal=ordinal,
+        courier_available=courier_available,
+    ):
         return False
 
     request_id = f"delivery-courier:{attempt.id}"
-    courier = engine.resources.ensure_requested(
+    if engine.resources.ensure_requested(
         backend,
         resource_name="delivery_courier",
         request_id=request_id,
         requested_at=backend.now,
-    )
-    if courier is None:
+    ) is None:
         return False
 
-    if shipment.state == "at_destination_hub":
-        dequeue_id = f"destination-dequeue:{shipment.id}"
-        if not any(
-            result.request_id == dequeue_id
-            for result in persistence.store_get_results()
-        ):
-            if not any(
-                request.request_id == dequeue_id
-                for request in persistence.store_get_requests()
-            ):
-                engine.stores.get(
-                    backend,
-                    store_name="destination_hub_queue",
-                    request_id=dequeue_id,
-                    requested_at=backend.now,
-                )
-            backend.run_until(backend.now)
-
-        if not any(
-            result.request_id == dequeue_id
-            for result in persistence.store_get_results()
-        ):
-            return False
-
-        shipment = _shipment(persistence, entities)
-        _dispatch(
-            engine,
-            shipment,
-            "dispatch_delivery",
-            key=("logistics-delivery", shipment.id, ordinal, "dispatch-shipment"),
-        )
+    if not _dispatch_shipment_for_delivery(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        shipment=shipment,
+        ordinal=ordinal,
+    ):
+        return False
 
     attempt = _attempt(persistence, ordinal)
     if attempt is None:

@@ -26,23 +26,69 @@ def seed(persistence, config):
                      attributes={"customers": config.participants, "waiting_chairs": config.waiting_chairs})
 
 
+def _candidate_for_state(persistence, *, current) -> str:
+    if current.state == "ready":
+        return "ready"
+    if current.state != "active":
+        return "noop"
+    reservations = sorted(
+        persistence.resource_reservations(),
+        key=lambda reservation: (reservation.sequence, reservation.request_id),
+    )
+    target = reservations[0].request_id if reservations else "noop"
+    return f"active:{target}"
+
+
+def _reconcile_ready_action(
+    persistence,
+    engine,
+    backend,
+    config,
+    *,
+    current,
+    resources,
+) -> bool:
+    if current.state != "ready":
+        return False
+    accepted = min(config.participants, config.waiting_chairs + config.capacity)
+    stores = DurableStoreManager(persistence)
+    for index in range(accepted, config.participants):
+        stores.ensure_put(
+            backend,
+            store_name="abandoned",
+            item_id=f"customer-{index}",
+            value={"customer": index},
+            requested_at=engine.context.clock.now,
+        )
+    for index in range(accepted):
+        resources.ensure_requested(
+            backend,
+            resource_name="barber",
+            request_id=f"customer-{index}",
+            requested_at=engine.context.clock.now,
+        )
+    transition(engine, current, "advance")
+    return True
+
+
+def _reconcile_active_action(persistence, engine, backend, *, current, action, resources) -> None:
+    if current.state != "active":
+        return
+    target = action.removeprefix("active:")
+    if target != "noop":
+        reservation = resources.reservation_for(target)
+        if reservation is not None:
+            resources.release(backend, reservation.reservation_id)
+    if not persistence.resource_demands() and not persistence.resource_reservations():
+        transition(engine, current, "finish")
+
+
 def reconcile(persistence, engine, backend, config, case):
     if not config.enabled:
         return
     current = persistence.entity("canonical_case", case.id)
     resources = engine.resources
-
-    if current.state == "ready":
-        candidate = "ready"
-    elif current.state == "active":
-        reservations = sorted(
-            persistence.resource_reservations(),
-            key=lambda reservation: (reservation.sequence, reservation.request_id),
-        )
-        target = reservations[0].request_id if reservations else "noop"
-        candidate = f"active:{target}"
-    else:
-        candidate = "noop"
+    candidate = _candidate_for_state(persistence, current=current)
 
     action = resolve_tick_action(
         persistence,
@@ -54,38 +100,25 @@ def reconcile(persistence, engine, backend, config, case):
     )
 
     if action == "ready":
-        if current.state != "ready":
-            return
-        accepted = min(config.participants, config.waiting_chairs + config.capacity)
-        stores = DurableStoreManager(persistence)
-        for index in range(accepted, config.participants):
-            stores.ensure_put(
-                backend,
-                store_name="abandoned",
-                item_id=f"customer-{index}",
-                value={"customer": index},
-                requested_at=engine.context.clock.now,
-            )
-        for index in range(accepted):
-            resources.ensure_requested(
-                backend,
-                resource_name="barber",
-                request_id=f"customer-{index}",
-                requested_at=engine.context.clock.now,
-            )
-        transition(engine, current, "advance")
+        _reconcile_ready_action(
+            persistence,
+            engine,
+            backend,
+            config,
+            current=current,
+            resources=resources,
+        )
         return
 
     if action.startswith("active:"):
-        if current.state != "active":
-            return
-        target = action.removeprefix("active:")
-        if target != "noop":
-            reservation = resources.reservation_for(target)
-            if reservation is not None:
-                resources.release(backend, reservation.reservation_id)
-        if not persistence.resource_demands() and not persistence.resource_reservations():
-            transition(engine, current, "finish")
+        _reconcile_active_action(
+            persistence,
+            engine,
+            backend,
+            current=current,
+            action=action,
+            resources=resources,
+        )
 
 
 definition = DomainDefinition(

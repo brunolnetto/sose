@@ -300,45 +300,30 @@ def reconcile_departure(
     request_id = f"flight-crew:{flight.id}"
 
     if flight.state == "airborne":
-        if aircraft.state == "assigned":
-            _dispatch(
-                engine,
-                aircraft,
-                "dispatch",
-                key=("aviation-aircraft", aircraft.id, flight.id, "dispatch"),
-                correlation_id=correlation_id,
-            )
-            aircraft = _aircraft(persistence, entities)
-        return aircraft.state == "airborne"
+        return _reconcile_departure_airborne(
+            persistence,
+            engine,
+            entities=entities,
+            flight_id=flight.id,
+            aircraft=aircraft,
+            correlation_id=correlation_id,
+        )
     if flight.state not in {"due", "delayed", "ready"}:
         return False
 
-    predecessor_id = flight.attributes.get("predecessor_flight_id")
-    predecessor_ready = True
-    if predecessor_id is not None:
-        predecessor = _flight(persistence, str(predecessor_id))
-        predecessor_ready = predecessor.state == "released"
-
-    departure_available = engine.context.scenarios.attribute(
-        "aviation.departure.available",
-        True,
-    )
-    crew_available = engine.context.scenarios.attribute(
-        "aviation.crew.available",
-        True,
-    )
-    aircraft_ready = aircraft.state in {"available", "released"}
-
-    if not (predecessor_ready and departure_available and crew_available and aircraft_ready):
-        engine.resources.withdraw(backend, request_id)
-        if flight.state in {"due", "ready"}:
-            _dispatch(
-                engine,
-                flight,
-                "delay",
-                key=("aviation", flight.id, "delay"),
-                correlation_id=correlation_id,
-            )
+    if not _departure_prerequisites_ready(
+        persistence,
+        engine,
+        aircraft=aircraft,
+        flight=flight,
+    ):
+        _handle_departure_unavailable(
+            engine,
+            backend,
+            flight=flight,
+            request_id=request_id,
+            correlation_id=correlation_id,
+        )
         return False
 
     if flight.state == "delayed":
@@ -351,70 +336,23 @@ def reconcile_departure(
         )
         flight = _flight(persistence, flight.id)
 
-    if crew.state == "planned":
-        _dispatch(
-            engine,
-            crew,
-            "reserve",
-            key=("aviation-crew", crew.id, "reserve"),
-            correlation_id=correlation_id,
-        )
-        crew = _crew(persistence, crew.id)
-
-    reservation = engine.resources.ensure_requested(
+    if not _ensure_crew_reservation(
+        persistence,
+        engine,
         backend,
-        resource_name="flight_crew",
+        crew=crew,
         request_id=request_id,
-        requested_at=backend.now,
-    )
-    if reservation is None:
+        correlation_id=correlation_id,
+    ):
         return False
 
-    crew = _crew(persistence, crew.id)
-    if crew.state == "reserved":
-        _dispatch(
-            engine,
-            crew,
-            "activate",
-            key=("aviation-crew", crew.id, "activate"),
-            correlation_id=correlation_id,
-        )
-    flight = _flight(persistence, flight.id)
-    if flight.state == "due":
-        _dispatch(
-            engine,
-            flight,
-            "mark_ready",
-            key=("aviation", flight.id, "ready"),
-            correlation_id=correlation_id,
-        )
-    aircraft = _aircraft(persistence, entities)
-    if aircraft.state in {"available", "released"}:
-        _dispatch(
-            engine,
-            aircraft,
-            "assign",
-            key=("aviation-aircraft", aircraft.id, flight.id, "assign"),
-            correlation_id=correlation_id,
-        )
-
-    flight = _flight(persistence, flight.id)
-    aircraft = _aircraft(persistence, entities)
-    if flight.state == "ready" and aircraft.state == "assigned":
-        _dispatch(
-            engine,
-            flight,
-            "depart",
-            key=("aviation", flight.id, "depart"),
-            correlation_id=correlation_id,
-        )
-        _dispatch(
-            engine,
-            aircraft,
-            "dispatch",
-            key=("aviation-aircraft", aircraft.id, flight.id, "dispatch"),
-            correlation_id=correlation_id,
-        )
+    _progress_departure_dispatch(
+        persistence,
+        engine,
+        entities=entities,
+        flight_id=flight.id,
+        correlation_id=correlation_id,
+    )
     return _flight(persistence, flight.id).state == "airborne"
 
 
@@ -517,51 +455,15 @@ def reconcile_inspection(
     request_id = f"inspection-team:{inspection.id}"
     correlation_id = flow_correlation_id(aircraft.id)
 
-    if inspection.state not in {"passed", "failed"}:
-        reservation = engine.resources.ensure_requested(
+    inspection = _progress_inspection_until_terminal(
+        persistence,
+        engine,
         backend,
-        resource_name="inspection_team",
+        inspection=inspection,
         request_id=request_id,
-        requested_at=backend.now,
+        fail=fail,
+        correlation_id=correlation_id,
     )
-        if reservation is None:
-            return False
-
-        inspection = _entity(
-            persistence,
-            "aviation_inspection",
-            inspection.id,
-        )
-        if inspection.state == "pending":
-            _dispatch(
-                engine,
-                inspection,
-                "begin",
-                key=("aviation-inspection", inspection.id, "begin"),
-                correlation_id=correlation_id,
-            )
-            inspection = _entity(
-                persistence,
-                "aviation_inspection",
-                inspection.id,
-            )
-        if inspection.state == "inspecting":
-            _dispatch(
-                engine,
-                inspection,
-                "fail_inspection" if fail else "pass_inspection",
-                key=(
-                    "aviation-inspection",
-                    inspection.id,
-                    "fail" if fail else "pass",
-                ),
-                correlation_id=correlation_id,
-            )
-            inspection = _entity(
-                persistence,
-                "aviation_inspection",
-                inspection.id,
-            )
 
     if inspection.state not in {"passed", "failed"}:
         return False
@@ -571,23 +473,13 @@ def reconcile_inspection(
     aircraft = _aircraft(persistence, entities)
     flight = _flight(persistence, flight.id)
     if inspection.state == "passed":
-        if aircraft.state == "inspection":
-            _dispatch(
-                engine,
-                aircraft,
-                "release",
-                key=("aviation-aircraft", aircraft.id, flight.id, "release"),
-                correlation_id=correlation_id,
-            )
-        flight = _flight(persistence, flight.id)
-        if flight.state == "inspection":
-            _dispatch(
-                engine,
-                flight,
-                "release",
-                key=("aviation", flight.id, "release"),
-                correlation_id=correlation_id,
-            )
+        _release_after_passed_inspection(
+            persistence,
+            engine,
+            entities=entities,
+            flight_id=flight.id,
+            correlation_id=correlation_id,
+        )
         return True
 
     if aircraft.state == "inspection":
@@ -736,21 +628,12 @@ def reconcile_part_issue(
             correlation_id=correlation_id,
         )
 
-    result_id = f"part-issue:{demand.id}"
-    result = engine.stores.selection(result_id)
-    if result is None:
-        part_items = sorted(
-            (i for i in persistence.store_items() if i.store_name == "part_lots"),
-            key=lambda item: (item.priority, item.sequence, item.item_id),
-        )
-        if not part_items:
-            return False
-        result = engine.stores.ensure_selection(
-            backend,
-            store_name="part_lots",
-            request_id=result_id,
-            requested_at=backend.now,
-        )
+    result = _ensure_part_issue_selection(
+        persistence,
+        engine,
+        backend,
+        demand_id=demand.id,
+    )
     if result is None:
         return False
 
@@ -815,41 +698,362 @@ def reconcile_aog_maintenance(
         )
         work = _entity(persistence, "aviation_maintenance_work_order", work.id)
 
-    queue_request = f"maintenance-pick:{work.id}"
-    queue_result = engine.stores.selection(queue_request)
-    if queue_result is None:
-        queue_items = sorted(
-            (
-                item
-                for item in persistence.store_items()
-                if item.store_name == "maintenance_queue"
-            ),
-            key=lambda item: (item.priority, item.sequence, item.item_id),
-        )
-        if not queue_items or str(queue_items[0].value["work_order_id"]) != work.id:
-            return False
-        queue_result = engine.stores.ensure_selection(
-            backend,
-            store_name="maintenance_queue",
-            request_id=queue_request,
-            requested_at=backend.now,
-        )
-    if queue_result is None:
+    if not _ensure_maintenance_queue_selection(
+        persistence,
+        engine,
+        backend,
+        work_id=work.id,
+    ):
         return False
 
     request_id = f"maintenance-bay:{work.id}"
-    reservation = engine.preemptive_resources.ensure_requested(
+    if engine.preemptive_resources.ensure_requested(
         backend,
         resource_name="maintenance_bay",
         request_id=request_id,
         requested_at=backend.now,
         priority=1,
         preempt=True,
-    )
-    if reservation is None:
+    ) is None:
         return False
 
-    work = _entity(persistence, "aviation_maintenance_work_order", work.id)
+    _start_aog_maintenance_if_ready(
+        persistence,
+        engine,
+        entities=entities,
+        work_id=work.id,
+        flight_id=flight.id,
+        correlation_id=correlation_id,
+    )
+    return True
+
+
+def _reconcile_departure_airborne(
+    persistence,
+    engine,
+    *,
+    entities,
+    flight_id: str,
+    aircraft,
+    correlation_id: str,
+) -> bool:
+    if aircraft.state == "assigned":
+        _dispatch(
+            engine,
+            aircraft,
+            "dispatch",
+            key=("aviation-aircraft", aircraft.id, flight_id, "dispatch"),
+            correlation_id=correlation_id,
+        )
+        aircraft = _aircraft(persistence, entities)
+    return aircraft.state == "airborne"
+
+
+def _departure_prerequisites_ready(
+    persistence,
+    engine,
+    *,
+    aircraft,
+    flight,
+) -> bool:
+    predecessor_id = flight.attributes.get("predecessor_flight_id")
+    predecessor_ready = True
+    if predecessor_id is not None:
+        predecessor = _flight(persistence, str(predecessor_id))
+        predecessor_ready = predecessor.state == "released"
+    departure_available = engine.context.scenarios.attribute(
+        "aviation.departure.available",
+        True,
+    )
+    crew_available = engine.context.scenarios.attribute(
+        "aviation.crew.available",
+        True,
+    )
+    aircraft_ready = aircraft.state in {"available", "released"}
+    return predecessor_ready and departure_available and crew_available and aircraft_ready
+
+
+def _handle_departure_unavailable(
+    engine,
+    backend,
+    *,
+    flight,
+    request_id: str,
+    correlation_id: str,
+) -> None:
+    engine.resources.withdraw(backend, request_id)
+    if flight.state not in {"due", "ready"}:
+        return
+    _dispatch(
+        engine,
+        flight,
+        "delay",
+        key=("aviation", flight.id, "delay"),
+        correlation_id=correlation_id,
+    )
+
+
+def _ensure_crew_reservation(
+    persistence,
+    engine,
+    backend,
+    *,
+    crew,
+    request_id: str,
+    correlation_id: str,
+) -> bool:
+    if crew.state == "planned":
+        _dispatch(
+            engine,
+            crew,
+            "reserve",
+            key=("aviation-crew", crew.id, "reserve"),
+            correlation_id=correlation_id,
+        )
+        crew = _crew(persistence, crew.id)
+    if engine.resources.ensure_requested(
+        backend,
+        resource_name="flight_crew",
+        request_id=request_id,
+        requested_at=backend.now,
+    ) is None:
+        return False
+    crew = _crew(persistence, crew.id)
+    if crew.state == "reserved":
+        _dispatch(
+            engine,
+            crew,
+            "activate",
+            key=("aviation-crew", crew.id, "activate"),
+            correlation_id=correlation_id,
+        )
+    return True
+
+
+def _progress_departure_dispatch(
+    persistence,
+    engine,
+    *,
+    entities,
+    flight_id: str,
+    correlation_id: str,
+) -> None:
+    flight = _flight(persistence, flight_id)
+    if flight.state == "due":
+        _dispatch(
+            engine,
+            flight,
+            "mark_ready",
+            key=("aviation", flight.id, "ready"),
+            correlation_id=correlation_id,
+        )
+    aircraft = _aircraft(persistence, entities)
+    if aircraft.state in {"available", "released"}:
+        _dispatch(
+            engine,
+            aircraft,
+            "assign",
+            key=("aviation-aircraft", aircraft.id, flight.id, "assign"),
+            correlation_id=correlation_id,
+        )
+    flight = _flight(persistence, flight_id)
+    aircraft = _aircraft(persistence, entities)
+    if flight.state == "ready" and aircraft.state == "assigned":
+        _dispatch(
+            engine,
+            flight,
+            "depart",
+            key=("aviation", flight.id, "depart"),
+            correlation_id=correlation_id,
+        )
+        _dispatch(
+            engine,
+            aircraft,
+            "dispatch",
+            key=("aviation-aircraft", aircraft.id, flight.id, "dispatch"),
+            correlation_id=correlation_id,
+        )
+
+
+def _progress_inspection_until_terminal(
+    persistence,
+    engine,
+    backend,
+    *,
+    inspection,
+    request_id: str,
+    fail: bool,
+    correlation_id: str,
+):
+    if inspection.state in {"passed", "failed"}:
+        return inspection
+    if engine.resources.ensure_requested(
+        backend,
+        resource_name="inspection_team",
+        request_id=request_id,
+        requested_at=backend.now,
+    ) is None:
+        return inspection
+    inspection = _entity(
+        persistence,
+        "aviation_inspection",
+        inspection.id,
+    )
+    if inspection.state == "pending":
+        _dispatch(
+            engine,
+            inspection,
+            "begin",
+            key=("aviation-inspection", inspection.id, "begin"),
+            correlation_id=correlation_id,
+        )
+        inspection = _entity(
+            persistence,
+            "aviation_inspection",
+            inspection.id,
+        )
+    if inspection.state == "inspecting":
+        _dispatch(
+            engine,
+            inspection,
+            "fail_inspection" if fail else "pass_inspection",
+            key=(
+                "aviation-inspection",
+                inspection.id,
+                "fail" if fail else "pass",
+            ),
+            correlation_id=correlation_id,
+        )
+        inspection = _entity(
+            persistence,
+            "aviation_inspection",
+            inspection.id,
+        )
+    return inspection
+
+
+def _release_after_passed_inspection(
+    persistence,
+    engine,
+    *,
+    entities,
+    flight_id: str,
+    correlation_id: str,
+) -> None:
+    aircraft = _aircraft(persistence, entities)
+    if aircraft.state == "inspection":
+        _dispatch(
+            engine,
+            aircraft,
+            "release",
+            key=("aviation-aircraft", aircraft.id, flight_id, "release"),
+            correlation_id=correlation_id,
+        )
+    flight = _flight(persistence, flight_id)
+    if flight.state == "inspection":
+        _dispatch(
+            engine,
+            flight,
+            "release",
+            key=("aviation", flight.id, "release"),
+            correlation_id=correlation_id,
+        )
+
+
+def _ensure_part_issue_selection(
+    persistence,
+    engine,
+    backend,
+    *,
+    demand_id: str,
+):
+    result_id = f"part-issue:{demand_id}"
+    result = engine.stores.selection(result_id)
+    if result is not None:
+        return result
+    part_items = sorted(
+        (i for i in persistence.store_items() if i.store_name == "part_lots"),
+        key=lambda item: (item.priority, item.sequence, item.item_id),
+    )
+    if not part_items:
+        return None
+    return engine.stores.ensure_selection(
+        backend,
+        store_name="part_lots",
+        request_id=result_id,
+        requested_at=backend.now,
+    )
+
+
+def _progress_part_demand_issue(
+    persistence,
+    engine,
+    *,
+    demand_id: str,
+    correlation_id: str,
+) -> None:
+    demand = _entity(persistence, "aviation_part_demand", demand_id)
+    if demand.state == "open":
+        _dispatch(
+            engine,
+            demand,
+            "allocate",
+            key=("aviation-part", demand.id, "allocate"),
+            correlation_id=correlation_id,
+        )
+        demand = _entity(persistence, "aviation_part_demand", demand.id)
+    if demand.state == "allocated":
+        _dispatch(
+            engine,
+            demand,
+            "issue",
+            key=("aviation-part", demand.id, "issue"),
+            correlation_id=correlation_id,
+        )
+
+
+def _ensure_maintenance_queue_selection(
+    persistence,
+    engine,
+    backend,
+    *,
+    work_id: str,
+) -> bool:
+    queue_request = f"maintenance-pick:{work_id}"
+    queue_result = engine.stores.selection(queue_request)
+    if queue_result is not None:
+        return True
+    queue_items = sorted(
+        (
+            item
+            for item in persistence.store_items()
+            if item.store_name == "maintenance_queue"
+        ),
+        key=lambda item: (item.priority, item.sequence, item.item_id),
+    )
+    if not queue_items or str(queue_items[0].value["work_order_id"]) != work_id:
+        return False
+    return (
+        engine.stores.ensure_selection(
+            backend,
+            store_name="maintenance_queue",
+            request_id=queue_request,
+            requested_at=backend.now,
+        )
+        is not None
+    )
+
+
+def _start_aog_maintenance_if_ready(
+    persistence,
+    engine,
+    *,
+    entities,
+    work_id: str,
+    flight_id: str,
+    correlation_id: str,
+) -> None:
+    work = _entity(persistence, "aviation_maintenance_work_order", work_id)
     if work.state == "waiting_bay":
         _dispatch(
             engine,
@@ -859,15 +1063,15 @@ def reconcile_aog_maintenance(
             correlation_id=correlation_id,
         )
     aircraft = _aircraft(persistence, entities)
-    if aircraft.state == "aog":
-        _dispatch(
-            engine,
-            aircraft,
-            "start_maintenance",
-            key=("aviation-aircraft", aircraft.id, flight.id, "maintenance"),
-            correlation_id=correlation_id,
-        )
-    return True
+    if aircraft.state != "aog":
+        return
+    _dispatch(
+        engine,
+        aircraft,
+        "start_maintenance",
+        key=("aviation-aircraft", aircraft.id, flight_id, "maintenance"),
+        correlation_id=correlation_id,
+    )
 
 
 def complete_aog_maintenance(

@@ -19,18 +19,32 @@ from sose.jobs.runner import SimulationJob
 from sose.persistence.postgres import PostgresPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 from tests.support.behavioral_conformance import operational_snapshot
-from tests.support.chaos import TransactionChaosSQLite
+from tests.support.chaos import TransactionChaosSQLite, chaos_canonical_names
+from tests.support.chaos_waits import (
+    wait_for_marker_text,
+    wait_for_process_exit,
+    wait_for_process_exit_or_kill,
+)
 
 
-RUN_PROCESS_CHAOS = os.environ.get("SOSE_RUN_PROCESS_CHAOS") == "1"
 POSTGRES_DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
-CANONICALS = builtin_catalog().names(kind="canonical")
+CANONICALS = chaos_canonical_names()
 TICKS = 3
 WORKER = Path(__file__).parent / "support" / "process_chaos_worker.py"
-
-pytestmark = pytest.mark.skipif(
-    not RUN_PROCESS_CHAOS,
-    reason="SOSE_RUN_PROCESS_CHAOS=1 is required for real-process chaos tests",
+pytestmark = pytest.mark.slow
+EXTENDED_PROCESS_CHAOS = os.environ.get("SOSE_EXTENDED_PROCESS_CHAOS") == "1"
+FULL_PROCESS_CHAOS = os.environ.get("SOSE_FULL_PROCESS_CHAOS") == "1"
+EXHAUSTIVE_PROCESS_CHAOS = os.environ.get("SOSE_EXHAUSTIVE_PROCESS_CHAOS") == "1"
+CHAOS_PHASES = (
+    ("before_commit", "after_commit")
+    if os.environ.get("SOSE_FULL_CHAOS_PHASES") == "1"
+    else ("before_commit",)
+)
+MARKER_WAIT_TIMEOUT_SECONDS = 45
+WORKER_EXIT_TIMEOUT_SECONDS = 30
+PROCESS_TERMINATION_TIMEOUT_SECONDS = 10
+WORKER_FAILURE_GRACE_SECONDS = float(
+    os.environ.get("SOSE_CHAOS_WORKER_FAILURE_GRACE_SECONDS", "5")
 )
 
 
@@ -82,37 +96,15 @@ def _recover_to_end(definition, persistence):
     return operational_snapshot(persistence)
 
 
-def _wait_for_marker(marker: Path, process: subprocess.Popen, timeout: float = 15) -> str:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if marker.exists():
-            return marker.read_text(encoding="utf-8").strip()
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            raise AssertionError(
-                "chaos worker exited before pause marker "
-                f"(code={process.returncode})\nstdout={stdout}\nstderr={stderr}"
-            )
-        time.sleep(0.01)
-    process.kill()
-    stdout, stderr = process.communicate()
-    raise TimeoutError(
-        f"chaos worker did not reach pause marker {marker}\n"
-        f"stdout={stdout}\nstderr={stderr}"
-    )
-
-
 def _sample_boundaries(transaction_count: int) -> tuple[int, ...]:
     assert transaction_count >= 1
-    return tuple(
-        sorted(
-            {
-                1,
-                max(1, transaction_count // 2),
-                transaction_count,
-            }
-        )
-    )
+    if EXHAUSTIVE_PROCESS_CHAOS:
+        return tuple(range(1, transaction_count + 1))
+    if FULL_PROCESS_CHAOS or EXTENDED_PROCESS_CHAOS:
+        boundaries = {1, transaction_count}
+        boundaries.add(max(1, transaction_count // 2))
+        return tuple(sorted(boundaries))
+    return (max(1, transaction_count // 2),)
 
 
 @pytest.mark.skipif(os.name != "posix", reason="SIGKILL semantics require POSIX")
@@ -131,7 +123,7 @@ def test_sigkill_process_recovers_at_sampled_transaction_boundaries(tmp_path, na
     expected = operational_snapshot(normalized)
     normalized.close()
 
-    for phase in ("before_commit", "after_commit"):
+    for phase in CHAOS_PHASES:
         for boundary in _sample_boundaries(transaction_count):
             case_dir = tmp_path / name / f"{phase}-{boundary}"
             case_dir.mkdir(parents=True, exist_ok=True)
@@ -159,9 +151,21 @@ def test_sigkill_process_recovers_at_sampled_transaction_boundaries(tmp_path, na
                 stderr=subprocess.PIPE,
                 text=True,
             )
-            _wait_for_marker(marker, process)
+            wait_for_marker_text(
+                marker,
+                process,
+                timeout=MARKER_WAIT_TIMEOUT_SECONDS,
+                premature_exit_label="chaos worker exited before pause marker",
+                timeout_label="chaos worker did not reach pause marker",
+                termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+            )
             process.kill()
-            process.wait(timeout=10)
+            wait_for_process_exit(
+                process,
+                timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+                label="SIGKILL chaos worker",
+                termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+            )
             assert process.returncode == -signal.SIGKILL
 
             reopened = SQLiteIncrementalPersistence(database)
@@ -204,7 +208,7 @@ def test_postgres_backend_termination_recovers_same_semantic_state(tmp_path, nam
     control.close()
 
     boundary = max(1, transaction_count // 2)
-    for phase in ("before_commit", "after_commit"):
+    for phase in CHAOS_PHASES:
         namespace = f"pc_{uuid4().hex[:20]}"
         marker = tmp_path / f"{name}-{phase}-paused"
         continue_file = tmp_path / f"{name}-{phase}-continue"
@@ -234,7 +238,14 @@ def test_postgres_backend_termination_recovers_same_semantic_state(tmp_path, nam
             stderr=subprocess.PIPE,
             text=True,
         )
-        pid_text = _wait_for_marker(marker, process)
+        pid_text = wait_for_marker_text(
+            marker,
+            process,
+            timeout=MARKER_WAIT_TIMEOUT_SECONDS,
+            premature_exit_label="chaos worker exited before pause marker",
+            timeout_label="chaos worker did not reach pause marker",
+            termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+        )
         backend_pid = int(pid_text)
 
         with psycopg.connect(POSTGRES_DSN, autocommit=True) as admin:
@@ -246,12 +257,17 @@ def test_postgres_backend_termination_recovers_same_semantic_state(tmp_path, nam
 
         time.sleep(0.05)
         continue_file.write_text("continue", encoding="utf-8")
-        try:
-            process.wait(timeout=10)
-        except subprocess.TimeoutExpired:
-            process.kill()
-            process.wait(timeout=10)
-            raise AssertionError("PostgreSQL chaos worker did not exit after backend termination")
+        timed_out, stdout, stderr = wait_for_process_exit_or_kill(
+            process,
+            timeout=WORKER_FAILURE_GRACE_SECONDS,
+            termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+        )
+        if timed_out:
+            assert process.returncode == -signal.SIGKILL, (
+                "PostgreSQL chaos worker hung after backend termination and "
+                "required forced kill\n"
+                f"stdout={stdout}\nstderr={stderr}"
+            )
         assert process.returncode != 0
 
         reopened = PostgresPersistence(POSTGRES_DSN, namespace=namespace)

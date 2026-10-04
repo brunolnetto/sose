@@ -456,6 +456,38 @@ def _apply_trip_projection(
     block_delay_seconds: int | None = None,
     latest_update_sequence: int | None = None,
 ) -> ScheduledTrip:
+    projection = _compute_trip_projection(
+        trip,
+        direct_delay_seconds=direct_delay_seconds,
+        block_delay_seconds=block_delay_seconds,
+    )
+    _persist_trip_projection(
+        persistence,
+        trip=trip,
+        projection=projection,
+        latest_update_sequence=latest_update_sequence,
+    )
+
+    if projection["changed"]:
+        _reconcile_changed_projection(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            trip_id=trip.id,
+            trip_state=trip.state,
+            projected_start=projection["projected_start"],
+            projected_end=projection["projected_end"],
+        )
+    return _trip(persistence, trip.id)
+
+
+def _compute_trip_projection(
+    trip: ScheduledTrip,
+    *,
+    direct_delay_seconds: int | None,
+    block_delay_seconds: int | None,
+) -> dict[str, object]:
     direct = (
         int(trip.attributes.get("direct_delay_seconds", 0))
         if direct_delay_seconds is None
@@ -473,17 +505,33 @@ def _apply_trip_projection(
     projected_end = scheduled_end + timedelta(seconds=effective)
     previous_projected_start = _at(trip.attributes["projected_start_at"])
     previous_projected_end = _at(trip.attributes["projected_end_at"])
-    projection_changed = (
+    changed = (
         previous_projected_start != projected_start
         or previous_projected_end != projected_end
     )
+    return {
+        "direct": direct,
+        "block": block,
+        "effective": effective,
+        "projected_start": projected_start,
+        "projected_end": projected_end,
+        "changed": changed,
+    }
 
-    trip.attributes["direct_delay_seconds"] = direct
-    trip.attributes["block_delay_seconds"] = block
-    trip.attributes["current_delay_seconds"] = effective
-    trip.attributes["projected_start_at"] = projected_start.isoformat()
-    trip.attributes["projected_end_at"] = projected_end.isoformat()
-    if projection_changed:
+
+def _persist_trip_projection(
+    persistence: MemoryPersistence,
+    *,
+    trip: ScheduledTrip,
+    projection: dict[str, object],
+    latest_update_sequence: int | None,
+) -> None:
+    trip.attributes["direct_delay_seconds"] = projection["direct"]
+    trip.attributes["block_delay_seconds"] = projection["block"]
+    trip.attributes["current_delay_seconds"] = projection["effective"]
+    trip.attributes["projected_start_at"] = projection["projected_start"].isoformat()
+    trip.attributes["projected_end_at"] = projection["projected_end"].isoformat()
+    if projection["changed"]:
         trip.attributes["projection_revision"] = (
             int(trip.attributes.get("projection_revision", 0)) + 1
         )
@@ -492,82 +540,127 @@ def _apply_trip_projection(
     with persistence.transaction() as uow:
         uow.save_entity(trip)
 
-    if projection_changed:
-        if trip.state == "running" and projected_end <= backend.now:
-            engine.scheduler.cancel_pending(
-                entity_type="transit_scheduled_trip",
-                entity_id=trip.id,
-                name="complete",
-            )
-            current = _trip(persistence, trip.id)
-            _dispatch(
-                engine,
-                current,
-                "complete",
-                key=(
-                    "transit-trip",
-                    current.id,
-                    "complete-from-projection",
-                    projected_end.isoformat(),
-                ),
-                correlation_id=flow_correlation_id(
-                    str(current.attributes["block_id"])
-                ),
-            )
-        elif trip.state == "planned" and projected_start <= backend.now:
-            for name in ("start", "complete"):
-                engine.scheduler.cancel_pending(
-                    entity_type="transit_scheduled_trip",
-                    entity_id=trip.id,
-                    name=name,
-                )
-            current = _trip(persistence, trip.id)
-            _dispatch(
-                engine,
-                current,
-                "start",
-                key=(
-                    "transit-trip",
-                    current.id,
-                    "start-from-projection",
-                    projected_start.isoformat(),
-                ),
-                correlation_id=flow_correlation_id(
-                    str(current.attributes["block_id"])
-                ),
-            )
-            current = _trip(persistence, trip.id)
-            if projected_end <= backend.now:
-                _dispatch(
-                    engine,
-                    current,
-                    "complete",
-                    key=(
-                        "transit-trip",
-                        current.id,
-                        "complete-from-projection",
-                        projected_end.isoformat(),
-                    ),
-                    correlation_id=flow_correlation_id(
-                        str(current.attributes["block_id"])
-                    ),
-                )
-            else:
-                _ensure_boundary(
-                    engine,
-                    trip=current,
-                    name="complete",
-                    due_at=projected_end,
-                )
-        else:
-            _reschedule_trip_boundaries(
-                persistence,
-                engine,
-                backend,
-                entities=entities,
-                trip_id=trip.id,
-            )
-    return _trip(persistence, trip.id)
+
+def _reconcile_changed_projection(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: TransitEntities,
+    trip_id: str,
+    trip_state: str,
+    projected_start: datetime,
+    projected_end: datetime,
+) -> None:
+    if trip_state == "running" and projected_end <= backend.now:
+        _complete_running_trip_from_projection(
+            persistence,
+            engine,
+            trip_id=trip_id,
+            projected_end=projected_end,
+        )
+        return
+    if trip_state == "planned" and projected_start <= backend.now:
+        _start_planned_trip_from_projection(
+            persistence,
+            engine,
+            trip_id=trip_id,
+            projected_start=projected_start,
+            projected_end=projected_end,
+            backend_now=backend.now,
+        )
+        return
+    _reschedule_trip_boundaries(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        trip_id=trip_id,
+    )
+
+
+def _complete_running_trip_from_projection(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    trip_id: str,
+    projected_end: datetime,
+) -> None:
+    engine.scheduler.cancel_pending(
+        entity_type="transit_scheduled_trip",
+        entity_id=trip_id,
+        name="complete",
+    )
+    current = _trip(persistence, trip_id)
+    _dispatch(
+        engine,
+        current,
+        "complete",
+        key=(
+            "transit-trip",
+            current.id,
+            "complete-from-projection",
+            projected_end.isoformat(),
+        ),
+        correlation_id=flow_correlation_id(
+            str(current.attributes["block_id"])
+        ),
+    )
+
+
+def _start_planned_trip_from_projection(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    trip_id: str,
+    projected_start: datetime,
+    projected_end: datetime,
+    backend_now: datetime,
+) -> None:
+    for name in ("start", "complete"):
+        engine.scheduler.cancel_pending(
+            entity_type="transit_scheduled_trip",
+            entity_id=trip_id,
+            name=name,
+        )
+    current = _trip(persistence, trip_id)
+    _dispatch(
+        engine,
+        current,
+        "start",
+        key=(
+            "transit-trip",
+            current.id,
+            "start-from-projection",
+            projected_start.isoformat(),
+        ),
+        correlation_id=flow_correlation_id(
+            str(current.attributes["block_id"])
+        ),
+    )
+    current = _trip(persistence, trip_id)
+    if projected_end <= backend_now:
+        _dispatch(
+            engine,
+            current,
+            "complete",
+            key=(
+                "transit-trip",
+                current.id,
+                "complete-from-projection",
+                projected_end.isoformat(),
+            ),
+            correlation_id=flow_correlation_id(
+                str(current.attributes["block_id"])
+            ),
+        )
+        return
+    _ensure_boundary(
+        engine,
+        trip=current,
+        name="complete",
+        due_at=projected_end,
+    )
 
 
 def _reconcile_trip_update_projection(
@@ -765,83 +858,45 @@ def record_vehicle_position(
     latitude: float,
     longitude: float,
 ) -> VehiclePositionOccurrence | None:
-    if sequence <= 0:
-        raise ValueError("vehicle position sequence must be positive")
-    if stop_sequence <= 0:
-        raise ValueError("stop_sequence must be positive")
-    if (
-        not math.isfinite(latitude)
-        or not math.isfinite(longitude)
-        or not -90 <= latitude <= 90
-        or not -180 <= longitude <= 180
-    ):
-        raise ValueError("vehicle position coordinates are invalid")
+    _validate_vehicle_position_inputs(
+        sequence=sequence,
+        stop_sequence=stop_sequence,
+        latitude=latitude,
+        longitude=longitude,
+    )
 
     trip = _trip(persistence, trip_id)
     vehicle = _vehicle(persistence, entities)
     pid = vehicle_position_id(vehicle.id, trip.id, sequence)
     existing = persistence.entity("transit_vehicle_position", pid)
     if existing is not None:
-        if (
-            existing.attributes["observed_at"] != observed_at.isoformat()
-            or int(existing.attributes["stop_sequence"]) != stop_sequence
-            or float(existing.attributes["latitude"]) != float(latitude)
-            or float(existing.attributes["longitude"]) != float(longitude)
-        ):
-            raise ValueError(
-                "vehicle position identity already exists with different observation"
-            )
-        if existing.state == "captured":
-            _dispatch(
-                engine,
-                existing,
-                "commit",
-                key=("transit-position", existing.id, "commit"),
-                correlation_id=flow_correlation_id(
-                    str(trip.attributes["block_id"])
-                ),
-            )
-            existing = _entity(
-                persistence,
-                "transit_vehicle_position",
-                existing.id,
-            )
-        _reconcile_vehicle_position_projection(
+        return _reconcile_existing_vehicle_position(
             persistence,
+            engine,
             entities=entities,
-            position=existing,
+            trip=trip,
+            existing=existing,
+            observed_at=observed_at,
+            stop_sequence=stop_sequence,
+            latitude=latitude,
+            longitude=longitude,
         )
-        return existing
 
     if not engine.context.scenarios.attribute("transit.realtime.available", True):
         return None
-    if trip.state != "running":
-        raise RuntimeError("vehicle position requires running trip")
-    if (
-        vehicle.state != "in_service"
-        or vehicle.attributes.get("active_trip_id") != trip.id
-    ):
-        raise RuntimeError("vehicle position requires vehicle assigned to trip")
-
-    position = engine.context.entities.create(
-        VehiclePositionOccurrence,
-        key=(
-            "transit-reference",
-            vehicle.id,
-            trip.id,
-            "position",
-            sequence,
-        ),
-        state="captured",
-        attributes={
-            "vehicle_id": vehicle.id,
-            "trip_id": trip.id,
-            "sequence": sequence,
-            "observed_at": observed_at.isoformat(),
-            "stop_sequence": stop_sequence,
-            "latitude": float(latitude),
-            "longitude": float(longitude),
-        },
+    _assert_vehicle_position_preconditions(
+        trip=trip,
+        vehicle=vehicle,
+    )
+    position = _create_vehicle_position(
+        engine,
+        vehicle=vehicle,
+        trip=trip,
+        sequence=sequence,
+        observed_at=observed_at,
+        stop_sequence=stop_sequence,
+        latitude=latitude,
+        longitude=longitude,
     )
     with persistence.transaction() as uow:
         uow.save_entity(position)
@@ -863,6 +918,113 @@ def record_vehicle_position(
         position=position,
     )
     return position
+
+
+def _validate_vehicle_position_inputs(
+    *,
+    sequence: int,
+    stop_sequence: int,
+    latitude: float,
+    longitude: float,
+) -> None:
+    if sequence <= 0:
+        raise ValueError("vehicle position sequence must be positive")
+    if stop_sequence <= 0:
+        raise ValueError("stop_sequence must be positive")
+    if not _coordinates_valid(latitude=latitude, longitude=longitude):
+        raise ValueError("vehicle position coordinates are invalid")
+
+
+def _coordinates_valid(*, latitude: float, longitude: float) -> bool:
+    if not math.isfinite(latitude) or not math.isfinite(longitude):
+        return False
+    return -90 <= latitude <= 90 and -180 <= longitude <= 180
+
+
+def _assert_vehicle_position_preconditions(*, trip: ScheduledTrip, vehicle) -> None:
+    if trip.state != "running":
+        raise RuntimeError("vehicle position requires running trip")
+    if vehicle.state != "in_service":
+        raise RuntimeError("vehicle position requires vehicle assigned to trip")
+    if vehicle.attributes.get("active_trip_id") != trip.id:
+        raise RuntimeError("vehicle position requires vehicle assigned to trip")
+
+
+def _create_vehicle_position(
+    engine: Engine,
+    *,
+    vehicle,
+    trip: ScheduledTrip,
+    sequence: int,
+    observed_at: datetime,
+    stop_sequence: int,
+    latitude: float,
+    longitude: float,
+) -> VehiclePositionOccurrence:
+    return engine.context.entities.create(
+        VehiclePositionOccurrence,
+        key=(
+            "transit-reference",
+            vehicle.id,
+            trip.id,
+            "position",
+            sequence,
+        ),
+        state="captured",
+        attributes={
+            "vehicle_id": vehicle.id,
+            "trip_id": trip.id,
+            "sequence": sequence,
+            "observed_at": observed_at.isoformat(),
+            "stop_sequence": stop_sequence,
+            "latitude": float(latitude),
+            "longitude": float(longitude),
+        },
+    )
+
+
+def _reconcile_existing_vehicle_position(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: TransitEntities,
+    trip: ScheduledTrip,
+    existing: VehiclePositionOccurrence,
+    observed_at: datetime,
+    stop_sequence: int,
+    latitude: float,
+    longitude: float,
+) -> VehiclePositionOccurrence:
+    if (
+        existing.attributes["observed_at"] != observed_at.isoformat()
+        or int(existing.attributes["stop_sequence"]) != stop_sequence
+        or float(existing.attributes["latitude"]) != float(latitude)
+        or float(existing.attributes["longitude"]) != float(longitude)
+    ):
+        raise ValueError(
+            "vehicle position identity already exists with different observation"
+        )
+    if existing.state == "captured":
+        _dispatch(
+            engine,
+            existing,
+            "commit",
+            key=("transit-position", existing.id, "commit"),
+            correlation_id=flow_correlation_id(
+                str(trip.attributes["block_id"])
+            ),
+        )
+        existing = _entity(
+            persistence,
+            "transit_vehicle_position",
+            existing.id,
+        )
+    _reconcile_vehicle_position_projection(
+        persistence,
+        entities=entities,
+        position=existing,
+    )
+    return existing
 
 
 
@@ -957,6 +1119,47 @@ def schedule_service_alert(
     start_at: datetime,
     end_at: datetime,
 ) -> ServiceAlert:
+    requested = _validate_and_resolve_alert_scope(
+        persistence,
+        alert_key=alert_key,
+        affected_trip_ids=affected_trip_ids,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    alert, start_at, end_at = _load_or_create_service_alert(
+        persistence,
+        engine,
+        alert_key=alert_key,
+        requested=requested,
+        start_at=start_at,
+        end_at=end_at,
+    )
+    _schedule_alert_boundary_if_missing(
+        engine,
+        alert=alert,
+        name="activate",
+        due_at=start_at,
+        allowed_states={"scheduled"},
+    )
+    _schedule_alert_boundary_if_missing(
+        engine,
+        alert=alert,
+        name="clear",
+        due_at=end_at,
+        allowed_states={"scheduled", "active"},
+    )
+
+    return _entity(persistence, "transit_service_alert", alert.id)
+
+
+def _validate_and_resolve_alert_scope(
+    persistence: MemoryPersistence,
+    *,
+    alert_key: str,
+    affected_trip_ids: tuple[str, ...],
+    start_at: datetime,
+    end_at: datetime,
+) -> tuple[str, ...]:
     if not alert_key:
         raise ValueError("alert_key must be non-empty")
     if not affected_trip_ids:
@@ -965,10 +1168,19 @@ def schedule_service_alert(
         raise ValueError("service alert end must be after start")
     for trip_id in affected_trip_ids:
         _trip(persistence, trip_id)
+    return tuple(dict.fromkeys(affected_trip_ids))
 
-    aid = service_alert_id(alert_key)
-    alert = persistence.entity("transit_service_alert", aid)
-    requested = tuple(dict.fromkeys(affected_trip_ids))
+
+def _load_or_create_service_alert(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    alert_key: str,
+    requested: tuple[str, ...],
+    start_at: datetime,
+    end_at: datetime,
+) -> tuple[ServiceAlert, datetime, datetime]:
+    alert = persistence.entity("transit_service_alert", service_alert_id(alert_key))
     if alert is None:
         alert = engine.context.entities.create(
             ServiceAlert,
@@ -983,45 +1195,41 @@ def schedule_service_alert(
         )
         with persistence.transaction() as uow:
             uow.save_entity(alert)
-    else:
-        if tuple(alert.attributes["affected_trip_ids"]) != requested:
-            raise ValueError("service alert scope cannot change on replay")
-        persisted_start = _at(alert.attributes["start_at"])
-        persisted_end = _at(alert.attributes["end_at"])
-        if start_at != persisted_start or end_at != persisted_end:
-            raise ValueError("service alert time range cannot change on replay")
-        start_at = persisted_start
-        end_at = persisted_end
+        return alert, start_at, end_at
 
-    if alert.state == "scheduled" and engine.scheduler.find_pending(
+    if tuple(alert.attributes["affected_trip_ids"]) != requested:
+        raise ValueError("service alert scope cannot change on replay")
+    persisted_start = _at(alert.attributes["start_at"])
+    persisted_end = _at(alert.attributes["end_at"])
+    if start_at != persisted_start or end_at != persisted_end:
+        raise ValueError("service alert time range cannot change on replay")
+    return alert, persisted_start, persisted_end
+
+
+def _schedule_alert_boundary_if_missing(
+    engine: Engine,
+    *,
+    alert: ServiceAlert,
+    name: str,
+    due_at: datetime,
+    allowed_states: set[str],
+) -> None:
+    if alert.state not in allowed_states:
+        return
+    if engine.scheduler.find_pending(
         entity_type="transit_service_alert",
         entity_id=alert.id,
-        name="activate",
-    ) is None:
-        command = engine.context.commands.create(
-            "activate",
-            target=alert,
-            due_at=start_at,
-            correlation_id=deterministic_id("transit-alert", alert.id),
-            key=("transit-alert", alert.id, "activate"),
-        )
-        engine.context.schedules.at(start_at, command=command)
-
-    if alert.state in {"scheduled", "active"} and engine.scheduler.find_pending(
-        entity_type="transit_service_alert",
-        entity_id=alert.id,
-        name="clear",
-    ) is None:
-        command = engine.context.commands.create(
-            "clear",
-            target=alert,
-            due_at=end_at,
-            correlation_id=deterministic_id("transit-alert", alert.id),
-            key=("transit-alert", alert.id, "clear"),
-        )
-        engine.context.schedules.at(end_at, command=command)
-
-    return _entity(persistence, "transit_service_alert", alert.id)
+        name=name,
+    ) is not None:
+        return
+    command = engine.context.commands.create(
+        name,
+        target=alert,
+        due_at=due_at,
+        correlation_id=deterministic_id("transit-alert", alert.id),
+        key=("transit-alert", alert.id, name),
+    )
+    engine.context.schedules.at(due_at, command=command)
 
 
 def cancel_service_alert(

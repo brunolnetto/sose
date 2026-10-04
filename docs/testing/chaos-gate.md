@@ -54,11 +54,21 @@ the SQLite reference adapters; those require adapter-specific chaos suites.
 A second required CI job, `chaos process/backend gate`, moves failures outside
 the SOSE call stack.
 
+By default, local runs of level-1/2/3/4 suites execute a representative
+canonical sample (`producer_consumer`, `readers_writers`) to keep feedback time
+practical. Set `SOSE_FULL_CHAOS_CANONICALS=1` to run the full canonical matrix.
+Level-2/4 local runs also sample only the `before_commit` phase by default; set
+`SOSE_FULL_CHAOS_PHASES=1` to include both `before_commit` and `after_commit`.
+For level-2 process death boundaries, local runs default to a representative
+midpoint; set `SOSE_FULL_PROCESS_CHAOS=1` for first/middle/final or
+`SOSE_EXHAUSTIVE_PROCESS_CHAOS=1` for every boundary. CI sets these flags so
+required gates continue covering the full matrix.
+
 ### Real process death
 
 For every canonical example, a clean run first counts Engine OLTP transactions.
-The gate then samples the first, middle, and final transaction boundaries and
-starts the workload in a separate Python process. The child pauses immediately
+The gate then samples transaction boundaries and starts the workload in a
+separate Python process. The child pauses immediately
 before or after the selected SQLite COMMIT and the parent sends a real POSIX
 `SIGKILL`.
 

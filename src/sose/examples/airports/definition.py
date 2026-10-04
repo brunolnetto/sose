@@ -30,13 +30,63 @@ def _seed(persistence: Persistence, config: AirportsConfig):
         departure_queue_capacity=config.departure_queue_capacity,
     )
 
-def _reconcile_tick(persistence, engine, backend, config, entities):
+def _turnaround_or_error(persistence, entities):
     turnaround = persistence.entity(
         "airport_flight_turnaround",
         entities.turnaround_id,
     )
     if turnaround is None:
         raise RuntimeError("configured turnaround was not persisted")
+    return turnaround
+
+
+def _refresh_turnaround(persistence, entities):
+    return persistence.entity(
+        "airport_flight_turnaround",
+        entities.turnaround_id,
+    )
+
+
+def _reconcile_gate_stage(persistence, engine, backend, *, entities, turnaround):
+    if turnaround is None or turnaround.state not in {"arrived", "gate_hold"}:
+        return turnaround, True
+    if not reconcile_gate(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ):
+        return turnaround, False
+    return _refresh_turnaround(persistence, entities), True
+
+
+def _reconcile_ground_stage(persistence, engine, backend, *, entities, turnaround):
+    if turnaround is None or turnaround.state not in {"gate_assigned", "deboarding", "servicing"}:
+        return turnaround, True
+    if not reconcile_ground_service(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ):
+        return turnaround, False
+    return _refresh_turnaround(persistence, entities), True
+
+
+def _reconcile_baggage_stage(persistence, engine, *, entities, turnaround):
+    if turnaround is None or turnaround.state not in {"boarding", "waiting_baggage"}:
+        return turnaround, True
+    if not reconcile_baggage(
+        persistence,
+        engine,
+        entities=entities,
+    ):
+        return turnaround, False
+    return _refresh_turnaround(persistence, entities), True
+
+
+def _reconcile_tick(persistence, engine, backend, config, entities):
+    turnaround = _turnaround_or_error(persistence, entities)
     if turnaround.state == "departed":
         return
 
@@ -57,50 +107,32 @@ def _reconcile_tick(persistence, engine, backend, config, entities):
         )
         return
 
-    if turnaround.state in {"arrived", "gate_hold"}:
-        if not reconcile_gate(
-            persistence,
-            engine,
-            backend,
-            entities=entities,
-        ):
-            return
-        turnaround = persistence.entity(
-            "airport_flight_turnaround",
-            entities.turnaround_id,
-        )
-
-    if turnaround is not None and turnaround.state in {
-        "gate_assigned",
-        "deboarding",
-        "servicing",
-    }:
-        if not reconcile_ground_service(
-            persistence,
-            engine,
-            backend,
-            entities=entities,
-        ):
-            return
-        turnaround = persistence.entity(
-            "airport_flight_turnaround",
-            entities.turnaround_id,
-        )
-
-    if turnaround is not None and turnaround.state in {
-        "boarding",
-        "waiting_baggage",
-    }:
-        if not reconcile_baggage(
-            persistence,
-            engine,
-            entities=entities,
-        ):
-            return
-        turnaround = persistence.entity(
-            "airport_flight_turnaround",
-            entities.turnaround_id,
-        )
+    turnaround, progressed = _reconcile_gate_stage(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        turnaround=turnaround,
+    )
+    if not progressed:
+        return
+    turnaround, progressed = _reconcile_ground_stage(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        turnaround=turnaround,
+    )
+    if not progressed:
+        return
+    turnaround, progressed = _reconcile_baggage_stage(
+        persistence,
+        engine,
+        entities=entities,
+        turnaround=turnaround,
+    )
+    if not progressed:
+        return
 
     if turnaround is not None and turnaround.state == "boarding":
         queue_departure(
@@ -109,10 +141,7 @@ def _reconcile_tick(persistence, engine, backend, config, entities):
             backend,
             entities=entities,
         )
-        turnaround = persistence.entity(
-            "airport_flight_turnaround",
-            entities.turnaround_id,
-        )
+        turnaround = _refresh_turnaround(persistence, entities)
 
     if turnaround is not None and turnaround.state in {
         "waiting_slot",

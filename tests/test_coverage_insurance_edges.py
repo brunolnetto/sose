@@ -270,7 +270,7 @@ def test_complete_assessment_requires_claim_to_be_assessing():
 def test_fraud_investigation_requires_fraud_review_claim():
     persistence, entities, engine, _ = _runtime()
 
-    with pytest.raises(RuntimeError, match="Claim\(fraud_review\)"):
+    with pytest.raises(RuntimeError, match=r"Claim\(fraud_review\)"):
         ensure_fraud_investigation(
             persistence,
             engine,

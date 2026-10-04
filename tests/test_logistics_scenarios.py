@@ -1,5 +1,9 @@
 from sose.backends.simpy import SimPyBackend
-from sose.examples.logistics.scenarios import courier_capacity_loss_scenario
+from sose.examples.logistics.scenarios import (
+    courier_capacity_loss_scenario,
+    hub_congestion_scenario,
+    weather_delay_scenario,
+)
 from sose.examples.logistics.simulation import (
     ORIGIN,
     build_runtime,
@@ -7,6 +11,19 @@ from sose.examples.logistics.simulation import (
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
+
+
+def test_logistics_scenario_builders_are_well_formed():
+    hub = hub_congestion_scenario()
+    courier = courier_capacity_loss_scenario()
+    weather = weather_delay_scenario()
+
+    assert hub.name == "logistics-hub-congestion"
+    assert courier.name == "logistics-courier-capacity-loss"
+    assert weather.name == "logistics-weather-delay"
+    assert hub.duration.total_seconds() == 6 * 3600
+    assert courier.duration.total_seconds() == 4 * 3600
+    assert weather.duration.total_seconds() == 8 * 3600
 
 
 def test_finite_courier_loss_routes_through_delay_and_recovers():

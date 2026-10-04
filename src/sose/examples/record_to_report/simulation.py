@@ -390,18 +390,12 @@ def post_adjustment(
     request_id = f"posting-adjustment:{adjustment.id}"
     if adjustment.state in {"posted", "rejected"}:
         engine.resources.withdraw(backend, request_id)
-        if adjustment.state == "posted":
-            item = _reconciliation(persistence, entities)
-            if item.state == "adjustment_required":
-                _dispatch(
-                    engine,
-                    item,
-                    "apply_adjustment",
-                    key=("r2r", item.id, adjustment.id, "apply-adjustment"),
-                    correlation_id=flow_correlation_id(entities.period_id),
-                )
-            return True
-        return False
+        return _apply_posted_adjustment_if_needed(
+            persistence,
+            engine,
+            entities=entities,
+            adjustment=adjustment,
+        )
 
     available = bool(
         engine.context.scenarios.attribute("r2r.posting.available", True)
@@ -420,59 +414,32 @@ def post_adjustment(
         return False
 
     correlation_id = flow_correlation_id(entities.period_id)
-    adjustment = _adjustment(persistence, entities)
-    if adjustment is None:
-        raise RuntimeError("adjustment disappeared")
-
-    if adjustment.state == "proposed":
-        _dispatch(
-            engine,
-            adjustment,
-            "submit",
-            key=("r2r-adjustment", adjustment.id, "submit"),
-            correlation_id=correlation_id,
-        )
-        adjustment = _adjustment(persistence, entities)
-
-    if adjustment is not None and adjustment.state == "submitted":
-        _dispatch(
-            engine,
-            adjustment,
-            "approve",
-            key=("r2r-adjustment", adjustment.id, "approve"),
-            correlation_id=correlation_id,
-        )
-        adjustment = _adjustment(persistence, entities)
-
-    if adjustment is not None and adjustment.state == "approved":
-        _dispatch(
-            engine,
-            adjustment,
-            "reject" if reject else "post",
-            key=(
-                "r2r-adjustment",
-                adjustment.id,
-                "reject" if reject else "post",
-            ),
-            correlation_id=correlation_id,
-        )
+    adjustment = _adjustment_or_error(persistence, entities)
+    adjustment = _progress_adjustment_submission(
+        persistence,
+        engine,
+        entities=entities,
+        adjustment=adjustment,
+        correlation_id=correlation_id,
+    )
+    _post_or_reject_adjustment_if_approved(
+        engine,
+        adjustment=adjustment,
+        correlation_id=correlation_id,
+        reject=reject,
+    )
 
     engine.resources.withdraw(backend, request_id)
 
     adjustment = _adjustment(persistence, entities)
     if adjustment is None or adjustment.state != "posted":
         return False
-
-    item = _reconciliation(persistence, entities)
-    if item.state == "adjustment_required":
-        _dispatch(
-            engine,
-            item,
-            "apply_adjustment",
-            key=("r2r", item.id, adjustment.id, "apply-adjustment"),
-            correlation_id=correlation_id,
-        )
-    return True
+    return _apply_posted_adjustment_if_needed(
+        persistence,
+        engine,
+        entities=entities,
+        adjustment=adjustment,
+    )
 
 
 def _scheduled_close_work(
@@ -569,6 +536,110 @@ def reconcile_close(
         return False
 
     correlation_id = flow_correlation_id(period.id)
+    _reconcile_period_close_transitions(
+        persistence,
+        engine,
+        entities=entities,
+        correlation_id=correlation_id,
+    )
+    _complete_close_task_if_active(
+        persistence,
+        engine,
+        task_id=task.id,
+        correlation_id=correlation_id,
+    )
+
+    engine.resources.withdraw(backend, request_id)
+    return _period(persistence, entities).state == "closed"
+
+
+def _apply_posted_adjustment_if_needed(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: R2REntities,
+    adjustment: Adjustment,
+) -> bool:
+    if adjustment.state != "posted":
+        return False
+    item = _reconciliation(persistence, entities)
+    if item.state == "adjustment_required":
+        _dispatch(
+            engine,
+            item,
+            "apply_adjustment",
+            key=("r2r", item.id, adjustment.id, "apply-adjustment"),
+            correlation_id=flow_correlation_id(entities.period_id),
+        )
+    return True
+
+
+def _adjustment_or_error(
+    persistence: MemoryPersistence,
+    entities: R2REntities,
+) -> Adjustment:
+    adjustment = _adjustment(persistence, entities)
+    if adjustment is None:
+        raise RuntimeError("adjustment disappeared")
+    return adjustment
+
+
+def _progress_adjustment_submission(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: R2REntities,
+    adjustment: Adjustment,
+    correlation_id: str,
+) -> Adjustment:
+    if adjustment.state == "proposed":
+        _dispatch(
+            engine,
+            adjustment,
+            "submit",
+            key=("r2r-adjustment", adjustment.id, "submit"),
+            correlation_id=correlation_id,
+        )
+        adjustment = _adjustment_or_error(persistence, entities)
+
+    if adjustment.state == "submitted":
+        _dispatch(
+            engine,
+            adjustment,
+            "approve",
+            key=("r2r-adjustment", adjustment.id, "approve"),
+            correlation_id=correlation_id,
+        )
+        adjustment = _adjustment_or_error(persistence, entities)
+    return adjustment
+
+
+def _post_or_reject_adjustment_if_approved(
+    engine: Engine,
+    *,
+    adjustment: Adjustment,
+    correlation_id: str,
+    reject: bool,
+) -> None:
+    if adjustment.state != "approved":
+        return
+    event = "reject" if reject else "post"
+    _dispatch(
+        engine,
+        adjustment,
+        event,
+        key=("r2r-adjustment", adjustment.id, event),
+        correlation_id=correlation_id,
+    )
+
+
+def _reconcile_period_close_transitions(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: R2REntities,
+    correlation_id: str,
+) -> None:
     period = _period(persistence, entities)
     if period.state in {"open", "reopened"}:
         _dispatch(
@@ -589,18 +660,24 @@ def reconcile_close(
             correlation_id=correlation_id,
         )
 
-    task = _close_task(persistence, task.id)
-    if task.state == "in_progress":
-        _dispatch(
-            engine,
-            task,
-            "complete",
-            key=("r2r-close", task.id, "complete"),
-            correlation_id=correlation_id,
-        )
 
-    engine.resources.withdraw(backend, request_id)
-    return _period(persistence, entities).state == "closed"
+def _complete_close_task_if_active(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    task_id: str,
+    correlation_id: str,
+) -> None:
+    task = _close_task(persistence, task_id)
+    if task.state != "in_progress":
+        return
+    _dispatch(
+        engine,
+        task,
+        "complete",
+        key=("r2r-close", task.id, "complete"),
+        correlation_id=correlation_id,
+    )
 
 
 def reopen_period(

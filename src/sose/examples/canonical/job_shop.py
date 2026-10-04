@@ -26,47 +26,115 @@ def seed(persistence, config):
                      attributes={"jobs": config.participants, "machines": config.machines})
 
 
+def _route(job: int, machines: int) -> tuple[int, int]:
+    return (job % machines, (job + 1) % machines)
+
+
+def _completed_markers(persistence) -> set[str]:
+    return {
+        item.item_id
+        for item in persistence.store_items()
+        if item.store_name == "completed_operations"
+    }
+
+
+def _active_request_target(resources, participants: int) -> str | None:
+    for job in range(participants):
+        for operation in (0, 1):
+            request_id = f"job-{job}-op-{operation}"
+            if resources.reservation_for(request_id) is not None:
+                return request_id
+    return None
+
+
+def _candidate_state(
+    *,
+    current_state: str,
+    resources,
+    persistence,
+    participants: int,
+) -> str:
+    if current_state == "ready":
+        return "ready"
+    if current_state != "active":
+        return "noop"
+
+    target = _active_request_target(resources, participants)
+    completed = _completed_markers(persistence)
+    all_complete = all(
+        f"job-{job}-op-1-done" in completed
+        for job in range(participants)
+    )
+    if target is not None:
+        return f"active:{target}"
+    if all_complete:
+        return "active:finish"
+    return "active:admit-successors"
+
+
+def _release_completed_operation(
+    *,
+    action: str,
+    resources,
+    stores: DurableStoreManager,
+    backend,
+    requested_at,
+) -> None:
+    _, job_value, _, operation_value = action.split("-")
+    job = int(job_value)
+    operation = int(operation_value)
+    marker = f"{action}-done"
+    stores.ensure_put(
+        backend,
+        store_name="completed_operations",
+        item_id=marker,
+        value={"job": job, "operation": operation},
+        requested_at=requested_at,
+    )
+    reservation = resources.reservation_for(action)
+    if reservation is not None:
+        resources.release(backend, reservation.reservation_id)
+
+
+def _admit_successors(
+    *,
+    persistence,
+    resources,
+    backend,
+    requested_at,
+    participants: int,
+    machines: int,
+) -> None:
+    completed = _completed_markers(persistence)
+    for job in range(participants):
+        predecessor = f"job-{job}-op-0-done"
+        successor = f"job-{job}-op-1"
+        successor_done = f"{successor}-done"
+        if predecessor not in completed or successor_done in completed:
+            continue
+        if resources.has_request(successor):
+            continue
+        machine = _route(job, machines)[1]
+        resources.ensure_requested(
+            backend,
+            resource_name=f"machine-{machine}",
+            request_id=successor,
+            requested_at=requested_at,
+        )
+
+
 def reconcile(persistence, engine, backend, config, case):
     if not config.enabled:
         return
     current = persistence.entity("canonical_case", case.id)
     resources = engine.resources
     stores = DurableStoreManager(persistence)
-
-    def route(job):
-        return (job % config.machines, (job + 1) % config.machines)
-
-    completed = {
-        item.item_id
-        for item in persistence.store_items()
-        if item.store_name == "completed_operations"
-    }
-
-    if current.state == "ready":
-        candidate = "ready"
-    elif current.state == "active":
-        target = None
-        for job in range(config.participants):
-            for operation in (0, 1):
-                request_id = f"job-{job}-op-{operation}"
-                if resources.reservation_for(request_id) is not None:
-                    target = request_id
-                    break
-            if target is not None:
-                break
-
-        all_complete = all(
-            f"job-{job}-op-1-done" in completed
-            for job in range(config.participants)
-        )
-        if target is not None:
-            candidate = f"active:{target}"
-        elif all_complete:
-            candidate = "active:finish"
-        else:
-            candidate = "active:admit-successors"
-    else:
-        candidate = "noop"
+    candidate = _candidate_state(
+        current_state=current.state,
+        resources=resources,
+        persistence=persistence,
+        participants=config.participants,
+    )
 
     action = resolve_tick_action(
         persistence,
@@ -81,7 +149,7 @@ def reconcile(persistence, engine, backend, config, case):
         if current.state != "ready":
             return
         for job in range(config.participants):
-            machine = route(job)[0]
+            machine = _route(job, config.machines)[0]
             resources.ensure_requested(
                 backend,
                 resource_name=f"machine-{machine}",
@@ -96,41 +164,24 @@ def reconcile(persistence, engine, backend, config, case):
 
     active_action = action.removeprefix("active:")
     if active_action.startswith("job-"):
-        _, job_value, _, operation_value = active_action.split("-")
-        job = int(job_value)
-        operation = int(operation_value)
-        marker = f"{active_action}-done"
-        stores.ensure_put(
-            backend,
-            store_name="completed_operations",
-            item_id=marker,
-            value={"job": job, "operation": operation},
+        _release_completed_operation(
+            action=active_action,
+            resources=resources,
+            stores=stores,
+            backend=backend,
             requested_at=engine.context.clock.now,
         )
-        reservation = resources.reservation_for(active_action)
-        if reservation is not None:
-            resources.release(backend, reservation.reservation_id)
         return
 
     if active_action == "admit-successors":
-        completed = {
-            item.item_id
-            for item in persistence.store_items()
-            if item.store_name == "completed_operations"
-        }
-        for job in range(config.participants):
-            predecessor = f"job-{job}-op-0-done"
-            successor = f"job-{job}-op-1"
-            successor_done = f"{successor}-done"
-            if predecessor in completed and successor_done not in completed:
-                if not resources.has_request(successor):
-                    machine = route(job)[1]
-                    resources.ensure_requested(
-                        backend,
-                        resource_name=f"machine-{machine}",
-                        request_id=successor,
-                        requested_at=engine.context.clock.now,
-                    )
+        _admit_successors(
+            persistence=persistence,
+            resources=resources,
+            backend=backend,
+            requested_at=engine.context.clock.now,
+            participants=config.participants,
+            machines=config.machines,
+        )
         return
 
     if active_action == "finish":

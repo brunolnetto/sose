@@ -212,57 +212,21 @@ def reconcile_material_availability(
     if _part_issue_complete(persistence):
         return True
 
-    scenario_available = engine.context.scenarios.attribute(
-        "mro.spare_parts.available", True
-    )
-    lot_available = (
-        any(item.item_id == "part-lot-1" for item in persistence.store_items())
-        if scenario_available
-        else False
-    )
-    available = (
-        next(
-            (s.level for s in persistence.container_states() if s.name == "spare_parts"),
-            0.0,
-        )
-        if scenario_available
-        else 0.0
-    )
+    lot_available, available = _available_spare_parts(persistence, engine)
     wo = persistence.entity("work_order", entities.work_order_id)
     demand = persistence.entity("part_demand", entities.part_demand_id)
     if wo is None or demand is None:
         raise RuntimeError("MRO entities were not persisted")
 
-    if not lot_available or available < quantity:
-        if wo.state == "waiting_resource":
-            tech_id = f"technician:{entities.work_order_id}"
-            bay_id = f"bay:{entities.work_order_id}"
-            release_capacity(
-                persistence,
-                engine,
-                backend,
-                entities=entities,
-            )
-            wo = persistence.entity("work_order", entities.work_order_id)
-
-        if wo is not None and wo.state in {"released", "waiting_resource"}:
-            engine.dispatch(
-                engine.context.commands.create(
-                    "wait_for_material",
-                    target=wo,
-                    correlation_id=flow_correlation_id(),
-                    key=("mro", wo.id, "wait-material"),
-                )
-            )
-        if demand.state == "open":
-            engine.dispatch(
-                engine.context.commands.create(
-                    "wait",
-                    target=demand,
-                    correlation_id=flow_correlation_id(),
-                    key=("mro", demand.id, "wait"),
-                )
-            )
+    if not _material_is_available(lot_available, available, quantity):
+        _reconcile_material_shortage(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            wo=wo,
+            demand=demand,
+        )
         return False
 
     if wo.state == "waiting_material":
@@ -328,6 +292,106 @@ def reconcile_capacity(
     )
 
 
+def _can_issue_part_now(
+    persistence: MemoryPersistence,
+    *,
+    quantity: float,
+) -> bool:
+    lot_available = any(item.item_id == "part-lot-1" for item in persistence.store_items())
+    available = next(
+        (s.level for s in persistence.container_states() if s.name == "spare_parts"),
+        0.0,
+    )
+    return lot_available and available >= quantity
+
+
+def _dispatch_material_wait(engine: Engine, *, wo, demand) -> None:
+    if wo.state == "released":
+        engine.dispatch(
+            engine.context.commands.create(
+                "wait_for_material",
+                target=wo,
+                correlation_id=flow_correlation_id(),
+                key=("mro", wo.id, "wait-material"),
+            )
+        )
+    if demand.state == "open":
+        engine.dispatch(
+            engine.context.commands.create(
+                "wait",
+                target=demand,
+                correlation_id=flow_correlation_id(),
+                key=("mro", demand.id, "wait"),
+            )
+        )
+
+
+def _ensure_part_issue_requests(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    quantity: float,
+) -> None:
+    lot_request = "consume-part-lot-1"
+    qty_request = "consume-spare-part-1"
+
+    lot_pending = any(r.request_id == lot_request for r in persistence.store_get_requests())
+    lot_done = any(r.request_id == lot_request for r in persistence.store_get_results())
+    if not lot_pending and not lot_done:
+        engine.stores.get(
+            backend,
+            store_name="spare_part_lots",
+            request_id=lot_request,
+            requested_at=backend.now,
+        )
+
+    qty_pending = any(
+        i.request_id == qty_request
+        for i in persistence.container_operation_intents()
+    )
+    qty_done = any(
+        r.request_id == qty_request
+        for r in persistence.container_operation_results()
+    )
+    if not qty_pending and not qty_done:
+        engine.containers.get(
+            backend,
+            container_name="spare_parts",
+            request_id=qty_request,
+            amount=quantity,
+            requested_at=backend.now,
+        )
+
+
+def _dispatch_part_demand_progress(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: MROEntities,
+) -> None:
+    demand = persistence.entity("part_demand", entities.part_demand_id)
+    if demand is not None and demand.state in {"open", "waiting_inventory"}:
+        engine.dispatch(
+            engine.context.commands.create(
+                "allocate",
+                target=demand,
+                correlation_id=flow_correlation_id(),
+                key=("mro", demand.id, "allocate"),
+            )
+        )
+        demand = persistence.entity("part_demand", entities.part_demand_id)
+    if demand is not None and demand.state == "allocated":
+        engine.dispatch(
+            engine.context.commands.create(
+                "consume",
+                target=demand,
+                correlation_id=flow_correlation_id(),
+                key=("mro", demand.id, "consume"),
+            )
+        )
+
+
 def reconcile_part_issue(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -342,91 +406,27 @@ def reconcile_part_issue(
         raise RuntimeError("MRO entities were not persisted")
 
     already_issued = _part_issue_complete(persistence)
-    lot_available = any(
-        item.item_id == "part-lot-1" for item in persistence.store_items()
-    )
-    available = next(
-        (s.level for s in persistence.container_states() if s.name == "spare_parts"),
-        0.0,
-    )
-    if not already_issued and (not lot_available or available < quantity):
-        if wo.state == "released":
-            engine.dispatch(
-                engine.context.commands.create(
-                    "wait_for_material",
-                    target=wo,
-                    correlation_id=flow_correlation_id(),
-                    key=("mro", wo.id, "wait-material"),
-                )
-            )
-        if demand.state == "open":
-            engine.dispatch(
-                engine.context.commands.create(
-                    "wait",
-                    target=demand,
-                    correlation_id=flow_correlation_id(),
-                    key=("mro", demand.id, "wait"),
-                )
-            )
+    if not already_issued and not _can_issue_part_now(persistence, quantity=quantity):
+        _dispatch_material_wait(engine, wo=wo, demand=demand)
         return False
 
-    lot_request = "consume-part-lot-1"
-    qty_request = "consume-spare-part-1"
-    if already_issued:
-        lot_done = qty_done = True
-    else:
-        lot_done = qty_done = False
-
-    if not already_issued and not any(r.request_id == lot_request for r in persistence.store_get_requests()) and not any(
-        r.request_id == lot_request for r in persistence.store_get_results()
-    ):
-        engine.stores.get(
+    if not already_issued:
+        _ensure_part_issue_requests(
+            persistence,
+            engine,
             backend,
-            store_name="spare_part_lots",
-            request_id=lot_request,
-            requested_at=backend.now,
-        )
-    if not already_issued and not any(i.request_id == qty_request for i in persistence.container_operation_intents()) and not any(
-        r.request_id == qty_request for r in persistence.container_operation_results()
-    ):
-        engine.containers.get(
-            backend,
-            container_name="spare_parts",
-            request_id=qty_request,
-            amount=quantity,
-            requested_at=backend.now,
+            quantity=quantity,
         )
     backend.run_until(backend.now)
 
-    lot_done = lot_done or any(
-        r.request_id == lot_request for r in persistence.store_get_results()
-    )
-    qty_done = qty_done or any(
-        r.request_id == qty_request for r in persistence.container_operation_results()
-    )
-    if not lot_done or not qty_done:
+    if not _part_issue_now_complete(persistence, already_issued=already_issued):
         return False
 
-    demand = persistence.entity("part_demand", entities.part_demand_id)
-    if demand.state in {"open", "waiting_inventory"}:
-        engine.dispatch(
-            engine.context.commands.create(
-                "allocate",
-                target=demand,
-                correlation_id=flow_correlation_id(),
-                key=("mro", demand.id, "allocate"),
-            )
-        )
-        demand = persistence.entity("part_demand", entities.part_demand_id)
-    if demand.state == "allocated":
-        engine.dispatch(
-            engine.context.commands.create(
-                "consume",
-                target=demand,
-                correlation_id=flow_correlation_id(),
-                key=("mro", demand.id, "consume"),
-            )
-        )
+    _dispatch_part_demand_progress(
+        persistence,
+        engine,
+        entities=entities,
+    )
     return True
 
 
@@ -658,37 +658,13 @@ def reconcile_emergency_interrupt(
     normal_id = f"bay:{entities.work_order_id}"
     normal = engine.preemptive_resources.reservation_for(normal_id)
     if normal is None:
-        active_emergency_id = _active_emergency_request_id(
+        return _reconcile_committed_emergency_interrupt(
             persistence,
-            entities.work_order_id,
-            prefix=request_prefix,
+            engine,
+            wo=wo,
+            work_order_id=entities.work_order_id,
+            request_prefix=request_prefix,
         )
-        if active_emergency_id is None:
-            return False
-        committed = _committed_emergency_result(
-            persistence,
-            entities.work_order_id,
-            prefix=request_prefix,
-        )
-        if (
-            committed is None
-            or committed.preempting_request_id != active_emergency_id
-        ):
-            return False
-        engine.dispatch(
-            engine.context.commands.create(
-                "interrupt",
-                target=wo,
-                correlation_id=flow_correlation_id(),
-                key=(
-                    "mro-emergency",
-                    wo.id,
-                    committed.preempting_request_id,
-                    "interrupt",
-                ),
-            )
-        )
-        return True
 
     emergency_id = _next_emergency_request_id(
         persistence,
@@ -719,17 +695,136 @@ def reconcile_emergency_interrupt(
         engine.preemptive_resources.withdraw(backend, emergency_id)
         return False
 
-    wo = persistence.entity("work_order", entities.work_order_id)
-    if wo is not None and wo.state == "in_progress":
+    _dispatch_work_order_interrupt(
+        engine,
+        wo=persistence.entity("work_order", entities.work_order_id),
+        emergency_id=emergency_id,
+    )
+    return True
+
+
+def _available_spare_parts(
+    persistence: MemoryPersistence,
+    engine: Engine,
+) -> tuple[bool, float]:
+    scenario_available = engine.context.scenarios.attribute(
+        "mro.spare_parts.available", True
+    )
+    if not scenario_available:
+        return False, 0.0
+    lot_available = any(item.item_id == "part-lot-1" for item in persistence.store_items())
+    available = next(
+        (s.level for s in persistence.container_states() if s.name == "spare_parts"),
+        0.0,
+    )
+    return lot_available, available
+
+
+def _material_is_available(lot_available: bool, available: float, quantity: float) -> bool:
+    return lot_available and available >= quantity
+
+
+def _reconcile_material_shortage(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: MROEntities,
+    wo,
+    demand,
+) -> None:
+    if wo.state == "waiting_resource":
+        release_capacity(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+        )
+        wo = persistence.entity("work_order", entities.work_order_id)
+    if wo is not None and wo.state in {"released", "waiting_resource"}:
         engine.dispatch(
             engine.context.commands.create(
-                "interrupt",
+                "wait_for_material",
                 target=wo,
                 correlation_id=flow_correlation_id(),
-                key=("mro-emergency", wo.id, emergency_id, "interrupt"),
+                key=("mro", wo.id, "wait-material"),
             )
         )
+    if demand.state == "open":
+        engine.dispatch(
+            engine.context.commands.create(
+                "wait",
+                target=demand,
+                correlation_id=flow_correlation_id(),
+                key=("mro", demand.id, "wait"),
+            )
+        )
+
+
+def _part_issue_now_complete(
+    persistence: MemoryPersistence,
+    *,
+    already_issued: bool,
+) -> bool:
+    if already_issued:
+        return True
+    lot_done = any(
+        r.request_id == "consume-part-lot-1"
+        for r in persistence.store_get_results()
+    )
+    qty_done = any(
+        r.request_id == "consume-spare-part-1"
+        for r in persistence.container_operation_results()
+    )
+    return lot_done and qty_done
+
+
+def _reconcile_committed_emergency_interrupt(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    wo,
+    work_order_id: str,
+    request_prefix: str | None,
+) -> bool:
+    active_emergency_id = _active_emergency_request_id(
+        persistence,
+        work_order_id,
+        prefix=request_prefix,
+    )
+    if active_emergency_id is None:
+        return False
+    committed = _committed_emergency_result(
+        persistence,
+        work_order_id,
+        prefix=request_prefix,
+    )
+    if committed is None or committed.preempting_request_id != active_emergency_id:
+        return False
+    _dispatch_work_order_interrupt(
+        engine,
+        wo=wo,
+        emergency_id=committed.preempting_request_id,
+    )
     return True
+
+
+def _dispatch_work_order_interrupt(
+    engine: Engine,
+    *,
+    wo,
+    emergency_id: str,
+) -> None:
+    if wo is None or wo.state != "in_progress":
+        return
+    engine.dispatch(
+        engine.context.commands.create(
+            "interrupt",
+            target=wo,
+            correlation_id=flow_correlation_id(),
+            key=("mro-emergency", wo.id, emergency_id, "interrupt"),
+        )
+    )
 
 
 def reconcile_emergency_resume(

@@ -196,36 +196,28 @@ def _available_quantity(lot: InventoryLot) -> float:
     )
 
 
-def allocate_order(
+def _resolve_existing_allocations(
     persistence: MemoryPersistence,
-    engine: Engine,
+    order: FulfillmentOrder,
+) -> bool:
+    existing_ids = list(order.attributes.get("allocation_ids", []))
+    if not existing_ids:
+        return False
+    if all(
+        persistence.entity("warehouse_allocation", str(aid)) is not None
+        for aid in existing_ids
+    ):
+        return True
+    raise RuntimeError("allocation index references missing durable allocation")
+
+
+def _eligible_lots_for_order(
+    persistence: MemoryPersistence,
     *,
     entities: WarehouseEntities,
-) -> bool:
-    order = _order_entity(persistence, entities)
-    if order.state in {"allocated", "picking", "packed", "shipped"}:
-        return True
-    if order.state != "requested":
-        return False
-
-    existing_ids = list(order.attributes.get("allocation_ids", []))
-    if existing_ids:
-        if all(
-            persistence.entity("warehouse_allocation", str(aid)) is not None
-            for aid in existing_ids
-        ):
-            _dispatch(
-                engine,
-                order,
-                "allocate",
-                key=("warehouse-order", order.id, "allocate"),
-            )
-            return True
-        raise RuntimeError("allocation index references missing durable allocation")
-
-    requested_sku = str(order.attributes["requested_sku"])
-    acceptable = tuple(str(v) for v in order.attributes["acceptable_skus"])
-    needed = float(order.attributes["requested_quantity"])
+    requested_sku: str,
+    acceptable: tuple[str, ...],
+) -> list[InventoryLot]:
     lots = [_lot_entity(persistence, lot_id) for lot_id in entities.lot_ids]
     eligible = [
         lot
@@ -239,10 +231,17 @@ def allocate_order(
             lot.id,
         )
     )
+    return eligible
 
+
+def _build_allocation_plan(
+    eligible_lots: list[InventoryLot],
+    *,
+    needed: float,
+) -> list[tuple[InventoryLot, float]] | None:
     plan: list[tuple[InventoryLot, float]] = []
     remaining = needed
-    for lot in eligible:
+    for lot in eligible_lots:
         quantity = min(remaining, _available_quantity(lot))
         if quantity > 0:
             plan.append((lot, quantity))
@@ -250,8 +249,17 @@ def allocate_order(
         if remaining <= 1e-9:
             break
     if remaining > 1e-9:
-        return False
+        return None
+    return plan
 
+
+def _materialize_allocations(
+    engine: Engine,
+    order: FulfillmentOrder,
+    plan: list[tuple[InventoryLot, float]],
+    *,
+    requested_sku: str,
+) -> list[Allocation]:
     allocations: list[Allocation] = []
     for lot, quantity in plan:
         allocation = engine.context.entities.create(
@@ -271,6 +279,49 @@ def allocate_order(
             float(lot.attributes["allocated"]) + quantity
         )
         allocations.append(allocation)
+    return allocations
+
+
+def allocate_order(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: WarehouseEntities,
+) -> bool:
+    order = _order_entity(persistence, entities)
+    if order.state in {"allocated", "picking", "packed", "shipped"}:
+        return True
+    if order.state != "requested":
+        return False
+
+    if _resolve_existing_allocations(persistence, order):
+        _dispatch(
+            engine,
+            order,
+            "allocate",
+            key=("warehouse-order", order.id, "allocate"),
+        )
+        return True
+
+    requested_sku = str(order.attributes["requested_sku"])
+    acceptable = tuple(str(v) for v in order.attributes["acceptable_skus"])
+    needed = float(order.attributes["requested_quantity"])
+    eligible = _eligible_lots_for_order(
+        persistence,
+        entities=entities,
+        requested_sku=requested_sku,
+        acceptable=acceptable,
+    )
+    plan = _build_allocation_plan(eligible, needed=needed)
+    if plan is None:
+        return False
+
+    allocations = _materialize_allocations(
+        engine,
+        order,
+        plan,
+        requested_sku=requested_sku,
+    )
 
     order.attributes["allocation_ids"] = [
         allocation.id for allocation in allocations
@@ -306,12 +357,7 @@ def _ensure_occurrence(
     oid = occurrence_id(kind, subject_id, sequence)
     existing = persistence.entity("warehouse_inventory_occurrence", oid)
     if existing is not None:
-        for key, value in attributes.items():
-            if existing.attributes.get(key) != value:
-                raise ValueError(
-                    "occurrence identity already exists with different evidence"
-                )
-        occurrence = existing
+        _validate_occurrence_identity(existing, attributes)
     else:
         occurrence = engine.context.entities.create(
             InventoryOccurrence,
@@ -324,22 +370,14 @@ def _ensure_occurrence(
                 **attributes,
             },
         )
-        if owner is not None:
-            occurrence_ids = list(owner.attributes.get("occurrence_ids", []))
-            if occurrence.id not in occurrence_ids:
-                occurrence_ids.append(occurrence.id)
-                owner.attributes["occurrence_ids"] = occurrence_ids
-        if lot is not None:
-            lot_occurrences = list(lot.attributes.get("occurrence_ids", []))
-            if occurrence.id not in lot_occurrences:
-                lot_occurrences.append(occurrence.id)
-                lot.attributes["occurrence_ids"] = lot_occurrences
-        with persistence.transaction() as uow:
-            uow.save_entity(occurrence)
-            if owner is not None:
-                uow.save_entity(owner)
-            if lot is not None:
-                uow.save_entity(lot)
+        _append_occurrence_id(owner, occurrence.id)
+        _append_occurrence_id(lot, occurrence.id)
+        _persist_occurrence_scope(
+            persistence,
+            occurrence=occurrence,
+            owner=owner,
+            lot=lot,
+        )
 
     occurrence = _entity(
         persistence,
@@ -358,6 +396,42 @@ def _ensure_occurrence(
         "warehouse_inventory_occurrence",
         oid,
     )
+
+
+def _validate_occurrence_identity(
+    occurrence: InventoryOccurrence,
+    attributes: dict[str, object],
+) -> None:
+    for key, value in attributes.items():
+        if occurrence.attributes.get(key) != value:
+            raise ValueError(
+                "occurrence identity already exists with different evidence"
+            )
+
+
+def _append_occurrence_id(entity, occurrence_id_value: str) -> None:
+    if entity is None:
+        return
+    occurrence_ids = list(entity.attributes.get("occurrence_ids", []))
+    if occurrence_id_value in occurrence_ids:
+        return
+    occurrence_ids.append(occurrence_id_value)
+    entity.attributes["occurrence_ids"] = occurrence_ids
+
+
+def _persist_occurrence_scope(
+    persistence: MemoryPersistence,
+    *,
+    occurrence: InventoryOccurrence,
+    owner,
+    lot: InventoryLot | None,
+) -> None:
+    with persistence.transaction() as uow:
+        uow.save_entity(occurrence)
+        if owner is not None:
+            uow.save_entity(owner)
+        if lot is not None:
+            uow.save_entity(lot)
 
 
 def pick_allocation(

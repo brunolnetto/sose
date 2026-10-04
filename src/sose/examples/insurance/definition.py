@@ -47,11 +47,95 @@ def _seed(persistence: Persistence, config: InsuranceConfig):
         currency=config.currency,
     )
 
-
-def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
+def _claim_or_error(persistence, entities):
     claim = persistence.entity("insurance_claim", entities.claim_id)
     if claim is None:
         raise RuntimeError("insurance claim was not persisted")
+    return claim
+
+
+def _maybe_satisfy_documents(
+    persistence,
+    engine,
+    config,
+    *,
+    entities,
+    claim,
+) -> bool:
+    if claim.state != "pending_documents":
+        return False
+    request = persistence.entity(
+        "insurance_document_request",
+        document_request_id(claim.id, 1),
+    )
+    if (
+        config.auto_satisfy_documents
+        and request is not None
+        and request.state == "open"
+    ):
+        satisfy_documents(
+            persistence,
+            engine,
+            entities=entities,
+        )
+    return True
+
+
+def _maybe_assess_claim(
+    persistence,
+    engine,
+    backend,
+    config,
+    *,
+    entities,
+    claim,
+) -> bool:
+    if claim.state != "assessing":
+        return False
+    assessment = persistence.entity(
+        "insurance_assessment",
+        assessment_id(claim.id, 1),
+    )
+    if assessment is not None and assessment.state == "in_progress":
+        complete_assessment(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            worker_id="recurring-job",
+            outcome=config.assessment_outcome,
+        )
+    return True
+
+
+def _maybe_reconcile_payment(
+    persistence,
+    engine,
+    backend,
+    config,
+    *,
+    entities,
+    claim,
+) -> None:
+    if claim.state != "payment_scheduled":
+        return
+    payment = persistence.entity(
+        "insurance_payment",
+        payment_id(claim.id),
+    )
+    if payment is None or payment.state not in {"due", "partially_paid", "paid"}:
+        return
+    reconcile_payment(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        partial=config.partial_payment,
+    )
+
+
+def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
+    claim = _claim_or_error(persistence, entities)
 
     if claim.state in {"opened", "reopened"}:
         ensure_document_request(
@@ -63,21 +147,13 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
         )
         return
 
-    if claim.state == "pending_documents":
-        request = persistence.entity(
-            "insurance_document_request",
-            document_request_id(claim.id, 1),
-        )
-        if (
-            config.auto_satisfy_documents
-            and request is not None
-            and request.state == "open"
-        ):
-            satisfy_documents(
-                persistence,
-                engine,
-                entities=entities,
-            )
+    if _maybe_satisfy_documents(
+        persistence,
+        engine,
+        config,
+        entities=entities,
+        claim=claim,
+    ):
         return
 
     if claim.state == "ready_for_assessment":
@@ -95,20 +171,14 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
         )
         return
 
-    if claim.state == "assessing":
-        assessment = persistence.entity(
-            "insurance_assessment",
-            assessment_id(claim.id, 1),
-        )
-        if assessment is not None and assessment.state == "in_progress":
-            complete_assessment(
-                persistence,
-                engine,
-                backend,
-                entities=entities,
-                worker_id="recurring-job",
-                outcome=config.assessment_outcome,
-            )
+    if _maybe_assess_claim(
+        persistence,
+        engine,
+        backend,
+        config,
+        entities=entities,
+        claim=claim,
+    ):
         return
 
     if claim.state == "fraud_review":
@@ -136,23 +206,14 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
         )
         return
 
-    if claim.state == "payment_scheduled":
-        payment = persistence.entity(
-            "insurance_payment",
-            payment_id(claim.id),
-        )
-        if payment is not None and payment.state in {
-            "due",
-            "partially_paid",
-            "paid",
-        }:
-            reconcile_payment(
-                persistence,
-                engine,
-                backend,
-                entities=entities,
-                partial=config.partial_payment,
-            )
+    _maybe_reconcile_payment(
+        persistence,
+        engine,
+        backend,
+        config,
+        entities=entities,
+        claim=claim,
+    )
 
 
 definition = DomainDefinition(

@@ -374,23 +374,13 @@ def reconcile_activation(
     correlation_id = flow_correlation_id(order.id)
 
     if service.state == "active":
-        if service_order.state == "provisioning":
-            _dispatch(
-                engine,
-                service_order,
-                "complete",
-                key=("telecom-service-order", service_order.id, "complete"),
-                correlation_id=correlation_id,
-            )
-        order = _product_order(persistence, entities)
-        if order.state == "in_progress":
-            _dispatch(
-                engine,
-                order,
-                "complete",
-                key=("telecom-product-order", order.id, "complete"),
-                correlation_id=correlation_id,
-            )
+        _complete_activation_if_active(
+            persistence,
+            engine,
+            entities=entities,
+            service_order=service_order,
+            correlation_id=correlation_id,
+        )
         engine.resources.withdraw(backend, request_id)
         return True
 
@@ -403,50 +393,27 @@ def reconcile_activation(
         engine.resources.withdraw(backend, request_id)
         return False
 
-    reservation = engine.resources.ensure_requested(
+    if engine.resources.ensure_requested(
         backend,
         resource_name="provisioning_worker",
         request_id=request_id,
         requested_at=backend.now,
-    )
-    if reservation is None:
+    ) is None:
         return False
 
-    service = _entity(
+    _activate_service_if_ready(
         persistence,
-        "telecom_subscription_service",
-        service.id,
+        engine,
+        service_id=service.id,
+        correlation_id=correlation_id,
     )
-    if service.state == "activation_ready":
-        _dispatch(
-            engine,
-            service,
-            "activate",
-            key=("telecom-service", service.id, "activate"),
-            correlation_id=correlation_id,
-        )
-    service_order = _entity(
+    _complete_activation_if_active(
         persistence,
-        "telecom_service_order",
-        service_order.id,
+        engine,
+        entities=entities,
+        service_order=service_order,
+        correlation_id=correlation_id,
     )
-    if service_order.state == "provisioning":
-        _dispatch(
-            engine,
-            service_order,
-            "complete",
-            key=("telecom-service-order", service_order.id, "complete"),
-            correlation_id=correlation_id,
-        )
-    order = _product_order(persistence, entities)
-    if order.state == "in_progress":
-        _dispatch(
-            engine,
-            order,
-            "complete",
-            key=("telecom-product-order", order.id, "complete"),
-            correlation_id=correlation_id,
-        )
     engine.resources.withdraw(backend, request_id)
     return True
 
@@ -535,40 +502,15 @@ def raise_service_alarm(
 
     aid = alarm_id(service.id, incident_key)
     tid = trouble_ticket_id(service.id, incident_key)
-    alarm = persistence.entity("telecom_network_alarm", aid)
-    ticket = persistence.entity("telecom_trouble_ticket", tid)
-
-    if alarm is None:
-        alarm = engine.context.entities.create(
-            NetworkAlarm,
-            key=("telecom-reference", service.id, "alarm", incident_key),
-            state="raised",
-            attributes={
-                "service_id": service.id,
-                "incident_key": incident_key,
-                "severity": severity,
-            },
-        )
-    if ticket is None:
-        ticket = engine.context.entities.create(
-            TroubleTicket,
-            key=("telecom-reference", service.id, "ticket", incident_key),
-            state="open",
-            attributes={
-                "service_id": service.id,
-                "alarm_id": alarm.id,
-                "incident_key": incident_key,
-                "severity": severity,
-            },
-        )
-    with persistence.transaction() as uow:
-        if persistence.entity("telecom_network_alarm", alarm.id) is None:
-            uow.save_entity(alarm)
-        if persistence.entity("telecom_trouble_ticket", ticket.id) is None:
-            uow.save_entity(ticket)
-
-    alarm = _entity(persistence, "telecom_network_alarm", alarm.id)
-    ticket = _entity(persistence, "telecom_trouble_ticket", ticket.id)
+    alarm, ticket = _load_or_create_alarm_and_ticket(
+        persistence,
+        engine,
+        service_id=service.id,
+        incident_key=incident_key,
+        severity=severity,
+        alarm_entity_id=aid,
+        ticket_entity_id=tid,
+    )
     unresolved = alarm.state != "cleared" or ticket.state != "closed"
 
     service = _entity(
@@ -576,12 +518,12 @@ def raise_service_alarm(
         "telecom_subscription_service",
         service.id,
     )
-    open_incidents = list(service.attributes.get("open_incident_keys", []))
-    if unresolved and incident_key not in open_incidents:
-        open_incidents.append(incident_key)
-        service.attributes["open_incident_keys"] = open_incidents
-        with persistence.transaction() as uow:
-            uow.save_entity(service)
+    _append_open_incident_if_needed(
+        persistence,
+        service=service,
+        incident_key=incident_key,
+        unresolved=unresolved,
+    )
     if unresolved and service.state == "active":
         _dispatch(
             engine,
@@ -657,32 +599,17 @@ def restore_service(
         trouble_ticket_id(service.id, incident_key),
     )
 
-    if alarm.state in {"raised", "acknowledged"}:
-        _dispatch(
-            engine,
-            alarm,
-            "clear",
-            key=("telecom-alarm", alarm.id, "clear"),
-            correlation_id=correlation_id,
-        )
-    ticket = _entity(persistence, "telecom_trouble_ticket", ticket.id)
-    if ticket.state in {"open", "acknowledged"}:
-        _dispatch(
-            engine,
-            ticket,
-            "resolve",
-            key=("telecom-ticket", ticket.id, "resolve"),
-            correlation_id=correlation_id,
-        )
-        ticket = _entity(persistence, "telecom_trouble_ticket", ticket.id)
-    if ticket.state == "resolved":
-        _dispatch(
-            engine,
-            ticket,
-            "close",
-            key=("telecom-ticket", ticket.id, "close"),
-            correlation_id=correlation_id,
-        )
+    _clear_alarm_if_needed(
+        engine,
+        alarm=alarm,
+        correlation_id=correlation_id,
+    )
+    _progress_ticket_resolution(
+        persistence,
+        engine,
+        ticket=ticket,
+        correlation_id=correlation_id,
+    )
     alarm = _entity(persistence, "telecom_network_alarm", alarm.id)
     ticket = _entity(persistence, "telecom_trouble_ticket", ticket.id)
     service = _entity(
@@ -690,21 +617,13 @@ def restore_service(
         "telecom_subscription_service",
         service.id,
     )
-    if alarm.state == "cleared" and ticket.state == "closed":
-        open_incidents = [
-            key
-            for key in service.attributes.get("open_incident_keys", [])
-            if key != incident_key
-        ]
-        if open_incidents != service.attributes.get("open_incident_keys", []):
-            service.attributes["open_incident_keys"] = open_incidents
-            with persistence.transaction() as uow:
-                uow.save_entity(service)
-            service = _entity(
-                persistence,
-                "telecom_subscription_service",
-                service.id,
-            )
+    service = _drop_open_incident_if_resolved(
+        persistence,
+        service=service,
+        incident_key=incident_key,
+        alarm=alarm,
+        ticket=ticket,
+    )
 
     if (
         service.state == "suspended"
@@ -718,6 +637,191 @@ def restore_service(
             correlation_id=correlation_id,
         )
     return True
+
+
+def _complete_activation_if_active(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: TelecomEntities,
+    service_order,
+    correlation_id: str,
+) -> None:
+    if service_order.state == "provisioning":
+        _dispatch(
+            engine,
+            service_order,
+            "complete",
+            key=("telecom-service-order", service_order.id, "complete"),
+            correlation_id=correlation_id,
+        )
+    order = _product_order(persistence, entities)
+    if order.state == "in_progress":
+        _dispatch(
+            engine,
+            order,
+            "complete",
+            key=("telecom-product-order", order.id, "complete"),
+            correlation_id=correlation_id,
+        )
+
+
+def _activate_service_if_ready(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    service_id: str,
+    correlation_id: str,
+) -> None:
+    service = _entity(
+        persistence,
+        "telecom_subscription_service",
+        service_id,
+    )
+    if service.state != "activation_ready":
+        return
+    _dispatch(
+        engine,
+        service,
+        "activate",
+        key=("telecom-service", service.id, "activate"),
+        correlation_id=correlation_id,
+    )
+
+
+def _load_or_create_alarm_and_ticket(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    service_id: str,
+    incident_key: str,
+    severity: str,
+    alarm_entity_id: str,
+    ticket_entity_id: str,
+) -> tuple[NetworkAlarm, TroubleTicket]:
+    alarm = persistence.entity("telecom_network_alarm", alarm_entity_id)
+    ticket = persistence.entity("telecom_trouble_ticket", ticket_entity_id)
+    if alarm is None:
+        alarm = engine.context.entities.create(
+            NetworkAlarm,
+            key=("telecom-reference", service_id, "alarm", incident_key),
+            state="raised",
+            attributes={
+                "service_id": service_id,
+                "incident_key": incident_key,
+                "severity": severity,
+            },
+        )
+    if ticket is None:
+        ticket = engine.context.entities.create(
+            TroubleTicket,
+            key=("telecom-reference", service_id, "ticket", incident_key),
+            state="open",
+            attributes={
+                "service_id": service_id,
+                "alarm_id": alarm.id,
+                "incident_key": incident_key,
+                "severity": severity,
+            },
+        )
+    with persistence.transaction() as uow:
+        if persistence.entity("telecom_network_alarm", alarm.id) is None:
+            uow.save_entity(alarm)
+        if persistence.entity("telecom_trouble_ticket", ticket.id) is None:
+            uow.save_entity(ticket)
+    return (
+        _entity(persistence, "telecom_network_alarm", alarm.id),
+        _entity(persistence, "telecom_trouble_ticket", ticket.id),
+    )
+
+
+def _append_open_incident_if_needed(
+    persistence: MemoryPersistence,
+    *,
+    service,
+    incident_key: str,
+    unresolved: bool,
+) -> None:
+    if not unresolved:
+        return
+    open_incidents = list(service.attributes.get("open_incident_keys", []))
+    if incident_key in open_incidents:
+        return
+    open_incidents.append(incident_key)
+    service.attributes["open_incident_keys"] = open_incidents
+    with persistence.transaction() as uow:
+        uow.save_entity(service)
+
+
+def _clear_alarm_if_needed(
+    engine: Engine,
+    *,
+    alarm,
+    correlation_id: str,
+) -> None:
+    if alarm.state not in {"raised", "acknowledged"}:
+        return
+    _dispatch(
+        engine,
+        alarm,
+        "clear",
+        key=("telecom-alarm", alarm.id, "clear"),
+        correlation_id=correlation_id,
+    )
+
+
+def _progress_ticket_resolution(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    ticket,
+    correlation_id: str,
+) -> None:
+    ticket_state = _entity(persistence, "telecom_trouble_ticket", ticket.id)
+    if ticket_state.state in {"open", "acknowledged"}:
+        _dispatch(
+            engine,
+            ticket_state,
+            "resolve",
+            key=("telecom-ticket", ticket_state.id, "resolve"),
+            correlation_id=correlation_id,
+        )
+        ticket_state = _entity(persistence, "telecom_trouble_ticket", ticket.id)
+    if ticket_state.state == "resolved":
+        _dispatch(
+            engine,
+            ticket_state,
+            "close",
+            key=("telecom-ticket", ticket_state.id, "close"),
+            correlation_id=correlation_id,
+        )
+
+
+def _drop_open_incident_if_resolved(
+    persistence: MemoryPersistence,
+    *,
+    service,
+    incident_key: str,
+    alarm,
+    ticket,
+):
+    if alarm.state != "cleared" or ticket.state != "closed":
+        return service
+    open_incidents = [
+        key
+        for key in service.attributes.get("open_incident_keys", [])
+        if key != incident_key
+    ]
+    if open_incidents == service.attributes.get("open_incident_keys", []):
+        return service
+    service.attributes["open_incident_keys"] = open_incidents
+    with persistence.transaction() as uow:
+        uow.save_entity(service)
+    return _entity(
+        persistence,
+        "telecom_subscription_service",
+        service.id,
+    )
 
 
 def run_happy_path() -> tuple[MemoryPersistence, TelecomEntities]:

@@ -3,6 +3,8 @@ from __future__ import annotations
 import pytest
 
 from sose.examples.catalog import builtin_catalog
+from sose.examples.canonical import producer_consumer
+from sose.examples.canonical.readers_writers import ReadersWritersConfig
 from sose.jobs.scaffold import render_sose_toml
 from sose.jobs.runner import SimulationJob
 from sose.backends.simpy import SimPyBackend
@@ -18,6 +20,46 @@ CANONICALS = (
     "readers_writers",
     "job_shop",
 )
+
+
+def test_readers_writers_config_requires_at_least_one_writer():
+    with pytest.raises(ValueError, match="at least one writer"):
+        ReadersWritersConfig(participants=3, readers=3)
+
+
+def test_producer_consumer_reconcile_ready_action_is_guarded_by_case_state(monkeypatch):
+    persistence = MemoryPersistence()
+    config = producer_consumer.definition.default_config()
+    case = producer_consumer.seed(persistence, config)
+    current = persistence.entity("canonical_case", case.id)
+    assert current is not None
+    current.state = "active"
+    with persistence.transaction() as uow:
+        uow.save_entity(current)
+
+    _, engine = producer_consumer.build_runtime(persistence)
+    backend = SimPyBackend(origin=config.start_at)
+    engine.rebuild_backend(backend)
+
+    monkeypatch.setattr(producer_consumer, "resolve_tick_action", lambda *args, **kwargs: "ready")
+    producer_consumer.reconcile(persistence, engine, backend, config, case)
+
+    assert persistence.store_put_intents() == ()
+
+
+def test_producer_consumer_reconcile_active_action_is_guarded_by_case_state(monkeypatch):
+    persistence = MemoryPersistence()
+    config = producer_consumer.definition.default_config()
+    case = producer_consumer.seed(persistence, config)
+
+    _, engine = producer_consumer.build_runtime(persistence)
+    backend = SimPyBackend(origin=config.start_at)
+    engine.rebuild_backend(backend)
+
+    monkeypatch.setattr(producer_consumer, "resolve_tick_action", lambda *args, **kwargs: "active")
+    producer_consumer.reconcile(persistence, engine, backend, config, case)
+
+    assert persistence.store_get_requests() == ()
 
 
 @pytest.mark.parametrize("name", CANONICALS)

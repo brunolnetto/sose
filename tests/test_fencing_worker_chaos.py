@@ -17,17 +17,18 @@ from sose.jobs.runner import SimulationJob
 from sose.persistence.postgres import PostgresPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 from tests.support.behavioral_conformance import operational_snapshot
+from tests.support.chaos import chaos_canonical_names
+from tests.support.chaos_waits import wait_for_marker_parsed, wait_for_process_exit
 
 
-RUN = os.environ.get("SOSE_RUN_FENCING_CHAOS") == "1"
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
-CANONICALS = builtin_catalog().names(kind="canonical")
+CANONICALS = chaos_canonical_names()
 WORKER = Path(__file__).parent / "support" / "fencing_chaos_worker.py"
-
-pytestmark = pytest.mark.skipif(
-    not RUN,
-    reason="SOSE_RUN_FENCING_CHAOS=1 is required",
-)
+pytestmark = pytest.mark.slow
+TAKEOVER_WORKER_TIMEOUT_SECONDS = 45
+CLAIM_MARKER_TIMEOUT_SECONDS = 45
+WORKER_EXIT_TIMEOUT_SECONDS = 30
+PROCESS_TERMINATION_TIMEOUT_SECONDS = 10
 
 
 def _backend(origin):
@@ -55,26 +56,28 @@ def _open(backend: str, *, path: Path | None = None, namespace: str | None = Non
     return PostgresPersistence(DSN, namespace=namespace)
 
 
-def _wait(marker: Path, process: subprocess.Popen, timeout: float = 15) -> int:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if marker.exists():
-            payload = marker.read_text(encoding="utf-8").strip()
-            if payload:
-                try:
-                    return int(payload)
-                except ValueError:
-                    pass
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            raise AssertionError(
-                f"worker exited before claim pause (code={process.returncode})\n"
-                f"stdout={stdout}\nstderr={stderr}"
-            )
-        time.sleep(0.01)
-    process.kill()
-    process.wait(timeout=10)
-    raise TimeoutError(f"worker did not reach claim pause: {marker}")
+def _wait(
+    marker: Path,
+    process: subprocess.Popen,
+    timeout: float = CLAIM_MARKER_TIMEOUT_SECONDS,
+) -> int:
+    def _parse_epoch(payload: str) -> int | None:
+        if not payload:
+            return None
+        try:
+            return int(payload)
+        except ValueError:
+            return None
+
+    return wait_for_marker_parsed(
+        marker,
+        process,
+        timeout=timeout,
+        parser=_parse_epoch,
+        premature_exit_label="worker exited before claim pause",
+        timeout_label="worker did not reach claim pause",
+        termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+    )
 
 
 def _worker_command(
@@ -196,7 +199,12 @@ def test_dead_worker_is_fenced_out_and_successor_recovers(tmp_path, backend, nam
     )
     epoch_a = _wait(marker, worker)
     worker.kill()
-    worker.wait(timeout=10)
+    wait_for_process_exit(
+        worker,
+        timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+        label="dead-worker scenario worker-a",
+        termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+    )
     assert worker.returncode == -signal.SIGKILL
 
     actual = _finish_after_takeover(
@@ -281,10 +289,28 @@ def test_takeover_waits_for_open_fenced_transaction_then_recovers(
     assert not takeover_result.exists()
 
     worker_a.kill()
-    worker_a.wait(timeout=10)
+    wait_for_process_exit(
+        worker_a,
+        timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+        label="open-tx scenario worker-a",
+        termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+    )
     assert worker_a.returncode == -signal.SIGKILL
 
-    stdout_b, stderr_b = worker_b.communicate(timeout=15)
+    try:
+        stdout_b, stderr_b = worker_b.communicate(
+            timeout=TAKEOVER_WORKER_TIMEOUT_SECONDS
+        )
+    except subprocess.TimeoutExpired as exc:
+        worker_b.kill()
+        stdout_b, stderr_b = worker_b.communicate(
+            timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS
+        )
+        raise AssertionError(
+            "takeover worker timed out waiting for fenced transaction release "
+            f"(timeout={TAKEOVER_WORKER_TIMEOUT_SECONDS}s)\n"
+            f"stdout={stdout_b}\nstderr={stderr_b}"
+        ) from exc
     assert worker_b.returncode == 0, (
         f"takeover worker failed\nstdout={stdout_b}\nstderr={stderr_b}"
     )
@@ -360,8 +386,13 @@ def test_zombie_worker_cannot_commit_after_successor_claims_epoch(
     )
 
     continue_file.write_text("continue", encoding="utf-8")
-    worker.wait(timeout=10)
-    stdout, stderr = worker.communicate()
+    wait_for_process_exit(
+        worker,
+        timeout=WORKER_EXIT_TIMEOUT_SECONDS,
+        label="zombie scenario worker-a",
+        termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+    )
+    stdout, stderr = worker.communicate(timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS)
     assert worker.returncode != 0
     assert "StaleWriterError" in stderr
 

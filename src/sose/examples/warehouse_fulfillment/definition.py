@@ -24,42 +24,65 @@ def _seed(persistence: Persistence, config: WarehouseFulfillmentConfig):
         allow_substitute=config.allow_substitute,
     )
 
-def _reconcile_tick(persistence, engine, backend, config, entities):
-    if not config.auto_progress_fulfillment:
-        return
+def _order_or_error(persistence, entities):
     order = persistence.entity(
         "warehouse_fulfillment_order",
         entities.order_id,
     )
     if order is None:
         raise RuntimeError("configured fulfillment order was not persisted")
-    if order.state == "shipped":
-        return
+    return order
 
-    if order.state == "requested":
-        if not allocate_order(persistence, engine, entities=entities):
-            return
-        order = persistence.entity(
-            "warehouse_fulfillment_order",
-            entities.order_id,
-        )
 
+def _reload_order(persistence, entities):
+    return persistence.entity(
+        "warehouse_fulfillment_order",
+        entities.order_id,
+    )
+
+
+def _reconcile_requested(persistence, engine, *, entities, order):
+    if order.state != "requested":
+        return order
+    if not allocate_order(persistence, engine, entities=entities):
+        return None
+    return _reload_order(persistence, entities)
+
+
+def _reconcile_pick_pack_ship(persistence, engine, *, entities, order):
     if order is not None and order.state in {"allocated", "picking"}:
         pick_order(persistence, engine, entities=entities)
-        order = persistence.entity(
-            "warehouse_fulfillment_order",
-            entities.order_id,
-        )
+        order = _reload_order(persistence, entities)
 
     if order is not None and order.state == "picking":
         pack_order(persistence, engine, entities=entities)
-        order = persistence.entity(
-            "warehouse_fulfillment_order",
-            entities.order_id,
-        )
+        order = _reload_order(persistence, entities)
 
     if order is not None and order.state == "packed":
         ship_order(persistence, engine, entities=entities)
+
+
+def _reconcile_tick(persistence, engine, backend, config, entities):
+    if not config.auto_progress_fulfillment:
+        return
+    order = _order_or_error(persistence, entities)
+    if order.state == "shipped":
+        return
+
+    order = _reconcile_requested(
+        persistence,
+        engine,
+        entities=entities,
+        order=order,
+    )
+    if order is None:
+        return
+    _reconcile_pick_pack_ship(
+        persistence,
+        engine,
+        entities=entities,
+        order=order,
+    )
 
 
 definition = DomainDefinition(

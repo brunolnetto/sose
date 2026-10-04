@@ -1,7 +1,10 @@
 from datetime import timedelta
 
 from sose.backends.simpy import SimPyBackend
-from sose.examples.itsm.scenarios import staff_shortage_scenario
+from sose.examples.itsm.scenarios import (
+    incident_storm_scenario,
+    staff_shortage_scenario,
+)
 from sose.examples.itsm.simulation import (
     ORIGIN,
     build_runtime,
@@ -10,6 +13,16 @@ from sose.examples.itsm.simulation import (
     triage_and_queue,
 )
 from sose.persistence.memory import MemoryPersistence
+
+
+def test_itsm_scenario_builders_are_well_formed():
+    storm = incident_storm_scenario()
+    shortage = staff_shortage_scenario()
+
+    assert storm.name == "itsm-incident-storm"
+    assert shortage.name == "itsm-staff-shortage"
+    assert storm.duration.total_seconds() == 6 * 3600
+    assert shortage.duration.total_seconds() == 4 * 3600
 
 
 def test_finite_staff_shortage_preserves_queue_and_recovers():

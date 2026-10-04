@@ -32,9 +32,9 @@ def _publish_marker(marker: Path, payload: str) -> None:
 
 
 def _pause(marker: Path, continue_file: Path | None, epoch: int) -> None:
-    _checkpoint_coverage()
     _publish_marker(marker, str(epoch))
     if continue_file is None:
+        _checkpoint_coverage()
         while True:
             time.sleep(60)
     deadline = time.monotonic() + 30

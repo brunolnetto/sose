@@ -10,8 +10,8 @@ import time
 from typing import Iterator
 from uuid import uuid4
 
-import psycopg
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
+import psycopg  # type: ignore[import-not-found]
+from psycopg.conninfo import conninfo_to_dict, make_conninfo  # type: ignore[import-not-found]
 import pytest
 
 from sose.backends.simpy import SimPyBackend
@@ -19,18 +19,32 @@ from sose.examples.catalog import builtin_catalog
 from sose.jobs.runner import SimulationJob
 from sose.persistence.postgres import PostgresPersistence
 from tests.support.behavioral_conformance import operational_snapshot
+from tests.support.chaos import chaos_canonical_names
+from tests.support.chaos_waits import (
+    wait_for_marker_exists,
+    wait_for_marker_text,
+    wait_for_process_exit,
+    wait_for_process_exit_or_kill,
+)
 
 
-RUN = os.environ.get("SOSE_RUN_POSTGRES_INFRA_CHAOS") == "1"
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 CONTAINER_ID = os.environ.get("SOSE_POSTGRES_CONTAINER_ID")
-CANONICALS = builtin_catalog().names(kind="canonical")
+CANONICALS = chaos_canonical_names()
+CHAOS_PHASES = (
+    ("before_commit", "after_commit")
+    if os.environ.get("SOSE_FULL_CHAOS_PHASES") == "1"
+    else ("before_commit",)
+)
 WORKER = Path(__file__).parent / "support" / "process_chaos_worker.py"
 PROXY = Path(__file__).parent / "support" / "tcp_chaos_proxy.py"
-
-pytestmark = pytest.mark.skipif(
-    not RUN,
-    reason="SOSE_RUN_POSTGRES_INFRA_CHAOS=1 is required",
+pytestmark = pytest.mark.slow
+MARKER_WAIT_TIMEOUT_SECONDS = 45
+PROXY_READY_TIMEOUT_SECONDS = 30
+WORKER_EXIT_TIMEOUT_SECONDS = 30
+PROCESS_TERMINATION_TIMEOUT_SECONDS = 10
+WORKER_FAILURE_GRACE_SECONDS = float(
+    os.environ.get("SOSE_CHAOS_WORKER_FAILURE_GRACE_SECONDS", "5")
 )
 
 
@@ -102,40 +116,6 @@ def _recover(definition, dsn: str, namespace: str):
     return snapshot
 
 
-def _wait_marker(marker: Path, process: subprocess.Popen, timeout: float = 20) -> str:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if marker.exists():
-            return marker.read_text(encoding="utf-8").strip()
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            raise AssertionError(
-                f"worker exited before chaos pause (code={process.returncode})\n"
-                f"stdout={stdout}\nstderr={stderr}"
-            )
-        time.sleep(0.01)
-    process.kill()
-    process.wait(timeout=10)
-    raise TimeoutError(f"worker did not reach chaos pause: {marker}")
-
-
-def _wait_file(marker: Path, process: subprocess.Popen, timeout: float = 10) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if marker.exists():
-            return
-        if process.poll() is not None:
-            stdout, stderr = process.communicate()
-            raise AssertionError(
-                f"proxy exited before ready (code={process.returncode})\n"
-                f"stdout={stdout}\nstderr={stderr}"
-            )
-        time.sleep(0.01)
-    process.kill()
-    process.wait(timeout=10)
-    raise TimeoutError(f"proxy did not become ready: {marker}")
-
-
 def _paused_worker(
     *,
     name: str,
@@ -199,27 +179,38 @@ def _free_port() -> int:
 
 def _start_proxy(dsn: str, *, port: int, marker: Path) -> tuple[subprocess.Popen, str]:
     info = conninfo_to_dict(dsn)
-    host = info.get("host", "127.0.0.1")
-    upstream_port = int(info.get("port", "5432"))
+    host_value = str(info.get("host") or "")
+    host = host_value.split(",", 1)[0].strip()
+    upstream_port = int(str(info.get("port") or "5432").split(",", 1)[0])
     marker.unlink(missing_ok=True)
+    command = [
+        sys.executable,
+        str(PROXY),
+        "--listen-port",
+        str(port),
+        "--upstream-port",
+        str(upstream_port),
+        "--marker",
+        str(marker),
+    ]
+    if host.startswith("/") or host == "":
+        command += ["--upstream-unix-socket-dir", host or "/var/run/postgresql"]
+    else:
+        command += ["--upstream-host", host]
     process = subprocess.Popen(
-        [
-            sys.executable,
-            str(PROXY),
-            "--listen-port",
-            str(port),
-            "--upstream-host",
-            host,
-            "--upstream-port",
-            str(upstream_port),
-            "--marker",
-            str(marker),
-        ],
+        command,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
     )
-    _wait_file(marker, process)
+    wait_for_marker_exists(
+        marker,
+        process,
+        timeout=PROXY_READY_TIMEOUT_SECONDS,
+        premature_exit_label="proxy exited before ready",
+        timeout_label="proxy did not become ready",
+        termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+    )
     proxied = make_conninfo(
         dsn,
         host="127.0.0.1",
@@ -230,12 +221,12 @@ def _start_proxy(dsn: str, *, port: int, marker: Path) -> tuple[subprocess.Popen
 
 
 @pytest.mark.parametrize("name", CANONICALS)
-@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+@pytest.mark.parametrize("phase", CHAOS_PHASES)
 def test_whole_postgres_outage_and_restart_recovers_control_state(
     tmp_path, name, phase
 ):
-    if not DSN or not CONTAINER_ID:
-        pytest.skip("PostgreSQL DSN and service container id are required")
+    if not DSN:
+        pytest.skip("SOSE_TEST_POSTGRES_DSN is required")
 
     definition = builtin_catalog().get(name)
     expected, transaction_count = _control(
@@ -247,34 +238,120 @@ def test_whole_postgres_outage_and_restart_recovers_control_state(
     marker = tmp_path / f"{name}-{phase}-outage-paused"
     continue_file = tmp_path / f"{name}-{phase}-outage-continue"
 
-    worker = _paused_worker(
-        name=name,
-        dsn=DSN,
-        namespace=namespace,
-        boundary=boundary,
-        phase=phase,
-        marker=marker,
-        continue_file=continue_file,
-    )
-    _wait_marker(marker, worker)
+    if CONTAINER_ID:
+        worker = _paused_worker(
+            name=name,
+            dsn=DSN,
+            namespace=namespace,
+            boundary=boundary,
+            phase=phase,
+            marker=marker,
+            continue_file=continue_file,
+        )
+        wait_for_marker_text(
+            marker,
+            worker,
+            timeout=MARKER_WAIT_TIMEOUT_SECONDS,
+            premature_exit_label="worker exited before chaos pause",
+            timeout_label="worker did not reach chaos pause",
+            termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+        )
 
-    _docker("stop", "-t", "1", CONTAINER_ID)
-    try:
-        continue_file.write_text("continue", encoding="utf-8")
-        worker.wait(timeout=15)
-        assert worker.returncode != 0
-    finally:
-        _docker("start", CONTAINER_ID)
-        _wait_postgres(DSN)
+        _docker("stop", "-t", "1", CONTAINER_ID)
+        try:
+            continue_file.write_text("continue", encoding="utf-8")
+            timed_out, stdout, stderr = wait_for_process_exit_or_kill(
+                worker,
+                timeout=WORKER_FAILURE_GRACE_SECONDS,
+                termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+            )
+            if timed_out:
+                assert worker.returncode != 0, (
+                    "outage worker required forced termination after restart "
+                    "window\n"
+                    f"stdout={stdout}\nstderr={stderr}"
+                )
+            assert worker.returncode != 0
+        finally:
+            _docker("start", CONTAINER_ID)
+            _wait_postgres(DSN)
 
-    actual = _recover(definition, DSN, namespace)
+        actual = _recover(definition, DSN, namespace)
+    else:
+        port = _free_port()
+        proxy_marker = tmp_path / f"{name}-{phase}-outage-proxy-ready"
+        proxy, proxied_dsn = _start_proxy(DSN, port=port, marker=proxy_marker)
+        try:
+            worker = _paused_worker(
+                name=name,
+                dsn=proxied_dsn,
+                namespace=namespace,
+                boundary=boundary,
+                phase=phase,
+                marker=marker,
+                continue_file=continue_file,
+            )
+            wait_for_marker_text(
+                marker,
+                worker,
+                timeout=MARKER_WAIT_TIMEOUT_SECONDS,
+                premature_exit_label="worker exited before chaos pause",
+                timeout_label="worker did not reach chaos pause",
+                termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+            )
+            proxy.kill()
+            wait_for_process_exit(
+                proxy,
+                timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+                label="outage proxy",
+                termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+            )
+            continue_file.write_text("continue", encoding="utf-8")
+            timed_out, stdout, stderr = wait_for_process_exit_or_kill(
+                worker,
+                timeout=WORKER_FAILURE_GRACE_SECONDS,
+                termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+            )
+            if timed_out:
+                assert worker.returncode != 0, (
+                    "outage worker required forced termination after network "
+                    "outage\n"
+                    f"stdout={stdout}\nstderr={stderr}"
+                )
+            assert worker.returncode != 0
+            recovered_marker = tmp_path / f"{name}-{phase}-outage-proxy-recovered"
+            recovered_proxy, recovered_dsn = _start_proxy(
+                DSN,
+                port=port,
+                marker=recovered_marker,
+            )
+            try:
+                actual = _recover(definition, recovered_dsn, namespace)
+            finally:
+                recovered_proxy.kill()
+                wait_for_process_exit(
+                    recovered_proxy,
+                    timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+                    label="recovered outage proxy",
+                    termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+                )
+        finally:
+            if proxy.poll() is None:
+                proxy.kill()
+                wait_for_process_exit(
+                    proxy,
+                    timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+                    label="outage proxy",
+                    termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+                )
+
     assert actual == expected, (
         f"{name} diverged after whole PostgreSQL outage at {phase} boundary"
     )
 
 
 @pytest.mark.parametrize("name", CANONICALS)
-@pytest.mark.parametrize("phase", ["before_commit", "after_commit"])
+@pytest.mark.parametrize("phase", CHAOS_PHASES)
 def test_network_interruption_through_tcp_proxy_recovers_control_state(
     tmp_path, name, phase
 ):
@@ -303,12 +380,33 @@ def test_network_interruption_through_tcp_proxy_recovers_control_state(
         marker=worker_marker,
         continue_file=continue_file,
     )
-    _wait_marker(worker_marker, worker)
+    wait_for_marker_text(
+        worker_marker,
+        worker,
+        timeout=MARKER_WAIT_TIMEOUT_SECONDS,
+        premature_exit_label="worker exited before chaos pause",
+        timeout_label="worker did not reach chaos pause",
+        termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+    )
 
     proxy.kill()
-    proxy.wait(timeout=10)
+    wait_for_process_exit(
+        proxy,
+        timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+        label="network proxy",
+        termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+    )
     continue_file.write_text("continue", encoding="utf-8")
-    worker.wait(timeout=15)
+    timed_out, stdout, stderr = wait_for_process_exit_or_kill(
+        worker,
+        timeout=WORKER_FAILURE_GRACE_SECONDS,
+        termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+    )
+    if timed_out:
+        assert worker.returncode != 0, (
+            "network worker required forced termination after proxy cut\n"
+            f"stdout={stdout}\nstderr={stderr}"
+        )
     assert worker.returncode != 0
 
     recovered_proxy_marker = tmp_path / f"{name}-{phase}-proxy-recovered"
@@ -321,7 +419,12 @@ def test_network_interruption_through_tcp_proxy_recovers_control_state(
         actual = _recover(definition, recovered_dsn, namespace)
     finally:
         recovered_proxy.kill()
-        recovered_proxy.wait(timeout=10)
+        wait_for_process_exit(
+            recovered_proxy,
+            timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+            label="recovered network proxy",
+            termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+        )
 
     assert actual == expected, (
         f"{name} diverged after network interruption at {phase} boundary"

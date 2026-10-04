@@ -288,7 +288,7 @@ def test_illegal_cross_entity_transitions_are_rejected():
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
-    with pytest.raises(RuntimeError, match="requires SalesOrder\(invoiced\)"):
+    with pytest.raises(RuntimeError, match=r"requires SalesOrder\(invoiced\)"):
         from sose.examples.order_to_cash.simulation import ensure_receivable
         ensure_receivable(
             persistence,
@@ -317,7 +317,7 @@ def test_illegal_cross_entity_transitions_are_rejected():
             entities=entities,
         )
 
-    with pytest.raises(RuntimeError, match="requires Receivable\(overdue\)"):
+    with pytest.raises(RuntimeError, match=r"requires Receivable\(overdue\)"):
         ensure_collection_case(
             persistence,
             engine,

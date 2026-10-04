@@ -40,14 +40,75 @@ def _seed(persistence: Persistence, config: ManufacturingConfig):
         quantity=config.quantity,
     )
 
-
-def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
+def _order_or_error(persistence, entities):
     order = persistence.entity(
         "production_order",
         entities.production_order_id,
     )
     if order is None:
         raise RuntimeError("production order was not persisted")
+    return order
+
+
+def _refresh_order(persistence, entities):
+    return persistence.entity(
+        "production_order",
+        entities.production_order_id,
+    )
+
+
+def _reconcile_released_order(
+    persistence,
+    engine,
+    backend,
+    *,
+    entities,
+    order,
+):
+    if order.state != "released":
+        return False
+    reconcile_material_availability(
+        persistence,
+        engine,
+        entities=entities,
+    )
+    order = _refresh_order(persistence, entities)
+    if order is not None and order.state == "released":
+        reconcile_setup_resources(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+        )
+    return True
+
+
+def _reconcile_inspection_state(
+    persistence,
+    engine,
+    backend,
+    config,
+    *,
+    entities,
+) -> None:
+    if config.quality_outcome == "pass":
+        reconcile_quality_pass(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            quantity=config.quantity,
+        )
+        return
+    reconcile_quality_hold(
+        persistence,
+        engine,
+        entities=entities,
+    )
+
+
+def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
+    order = _order_or_error(persistence, entities)
 
     if config.auto_seed_material and order.state in {
         "planned",
@@ -64,23 +125,13 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
         )
         return
 
-    if order.state == "released":
-        reconcile_material_availability(
-            persistence,
-            engine,
-            entities=entities,
-        )
-        order = persistence.entity(
-            "production_order",
-            entities.production_order_id,
-        )
-        if order is not None and order.state == "released":
-            reconcile_setup_resources(
-                persistence,
-                engine,
-                backend,
-                entities=entities,
-            )
+    if _reconcile_released_order(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        order=order,
+    ):
         return
 
     if order.state == "setup":
@@ -104,20 +155,13 @@ def _reconcile_tick(persistence, engine, backend, config, entities) -> None:
         return
 
     if order.state == "inspection":
-        if config.quality_outcome == "pass":
-            reconcile_quality_pass(
-                persistence,
-                engine,
-                backend,
-                entities=entities,
-                quantity=config.quantity,
-            )
-        else:
-            reconcile_quality_hold(
-                persistence,
-                engine,
-                entities=entities,
-            )
+        _reconcile_inspection_state(
+            persistence,
+            engine,
+            backend,
+            config,
+            entities=entities,
+        )
         return
 
     if order.state == "completed":

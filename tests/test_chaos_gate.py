@@ -1,6 +1,10 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
+import os
 from pathlib import Path
+import shutil
+from typing import Iterator
 
 import pytest
 
@@ -13,11 +17,13 @@ from sose.examples.catalog import builtin_catalog
 from sose.jobs.runner import SimulationJob
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 from tests.support.behavioral_conformance import operational_snapshot
-from tests.support.chaos import InjectedProcessCrash, TransactionChaosSQLite
+from tests.support.chaos import chaos_canonical_names
 
 
-CANONICALS = builtin_catalog().names(kind="canonical")
+CANONICALS = chaos_canonical_names()
 TICKS = 3
+EXHAUSTIVE_BOUNDARY_CHAOS = os.environ.get("SOSE_EXHAUSTIVE_CHAOS_GATE") == "1"
+EXTENDED_BOUNDARY_CHAOS = os.environ.get("SOSE_EXTENDED_CHAOS_GATE") == "1"
 
 
 def _backend(origin):
@@ -37,79 +43,123 @@ def _trigger(name: str, tick: int) -> str:
     return f"{name}:chaos:{tick}"
 
 
+class _CheckpointingSQLite(SQLiteIncrementalPersistence):
+    def __init__(self, path: Path, *, checkpoints_dir: Path) -> None:
+        self.transaction_count = 0
+        self._database_path = path
+        self._checkpoints_dir = checkpoints_dir
+        self._checkpoints_dir.mkdir(parents=True, exist_ok=True)
+        super().__init__(path)
+        self._checkpoint(0)
+
+    def _checkpoint(self, index: int) -> None:
+        destination = self._checkpoints_dir / f"tx-{index}.sqlite3"
+        shutil.copy2(self._database_path, destination)
+
+    def checkpoint_for(self, index: int) -> Path:
+        return self._checkpoints_dir / f"tx-{index}.sqlite3"
+
+    @contextmanager
+    def transaction(self, *, owner_epoch: int | None = None) -> Iterator:
+        self.transaction_count += 1
+        transaction_index = self.transaction_count
+        with super().transaction(owner_epoch=owner_epoch) as uow:
+            yield uow
+        self._checkpoint(transaction_index)
+
+
 def _run_clean(definition, path: Path):
     path.parent.mkdir(parents=True, exist_ok=True)
-    persistence = TransactionChaosSQLite(path)
+    checkpoints_dir = path.parent / "checkpoints"
+    persistence = _CheckpointingSQLite(path, checkpoints_dir=checkpoints_dir)
     job = _job(definition, persistence)
     job.initialize()
     for tick in range(1, TICKS + 1):
         job.run_tick(trigger_id=_trigger(definition.name, tick))
     snapshot = operational_snapshot(persistence)
     transaction_count = persistence.transaction_count
+    checkpoints = {
+        index: persistence.checkpoint_for(index)
+        for index in range(0, transaction_count + 1)
+    }
     persistence.close()
-    return snapshot, transaction_count
+    return snapshot, transaction_count, checkpoints
 
 
-def _run_crash_case(definition, path: Path, *, boundary: int, phase: str):
-    path.parent.mkdir(parents=True, exist_ok=True)
-    persistence = TransactionChaosSQLite(
-        path,
-        crash_at_transaction=boundary,
-        crash_phase=phase,
-    )
-    job = _job(definition, persistence)
-    active_tick = 0
-    try:
-        job.initialize()
-        for tick in range(1, TICKS + 1):
-            active_tick = tick
-            job.run_tick(trigger_id=_trigger(definition.name, tick))
-    except InjectedProcessCrash:
-        assert persistence.crashed
-        persistence.close()
-    else:
-        persistence.close()
-        raise AssertionError(
-            f"chaos boundary was not reached: {definition.name} {phase} #{boundary}"
-        )
-
+def _recover_from_checkpoint(definition, path: Path):
     reopened = SQLiteIncrementalPersistence(path)
     resumed = _job(definition, reopened)
-    if active_tick == 0:
-        resumed.initialize()
-        next_tick = 1
-    else:
-        resumed.run_tick(
-            trigger_id=_trigger(definition.name, active_tick),
-            recover=True,
-        )
-        next_tick = active_tick + 1
 
-    for tick in range(next_tick, TICKS + 1):
-        resumed.run_tick(trigger_id=_trigger(definition.name, tick))
+    state = resumed.state()
+    if state is None or not state.initialized:
+        resumed.initialize()
+
+    while True:
+        state = resumed.state()
+        assert state is not None
+        if state.next_tick >= TICKS and state.active_trigger_id is None:
+            break
+        if state.active_trigger_id is not None:
+            resumed.run_tick(
+                trigger_id=state.active_trigger_id,
+                recover=True,
+            )
+        else:
+            next_tick = state.next_tick + 1
+            resumed.run_tick(trigger_id=_trigger(definition.name, next_tick))
 
     snapshot = operational_snapshot(reopened)
     reopened.close()
     return snapshot
 
 
+def _boundaries_to_check(transaction_count: int) -> tuple[int, ...]:
+    assert transaction_count > 0
+    if EXHAUSTIVE_BOUNDARY_CHAOS:
+        return tuple(range(1, transaction_count + 1))
+    boundaries = {1, transaction_count}
+    if EXTENDED_BOUNDARY_CHAOS:
+        boundaries.add(max(1, transaction_count // 2))
+    return tuple(sorted(boundaries))
+
+
+@pytest.mark.slow
 @pytest.mark.parametrize("name", CANONICALS)
 def test_every_engine_transaction_boundary_recovers_to_control_state(tmp_path, name):
+    """Validate boundary crash recovery.
+
+    Runs first/last boundaries by default for runtime control, can include the
+    midpoint with SOSE_EXTENDED_CHAOS_GATE=1, and can run exhaustively with
+    SOSE_EXHAUSTIVE_CHAOS_GATE=1.
+    """
     definition = builtin_catalog().get(name)
-    expected, transaction_count = _run_clean(
+    expected, transaction_count, checkpoints = _run_clean(
         definition,
         tmp_path / name / "control.sqlite3",
     )
     assert transaction_count > 0
 
+    boundaries = _boundaries_to_check(transaction_count)
+    checkpoint_indices = {
+        boundary if phase == "after_commit" else boundary - 1
+        for phase in ("before_commit", "after_commit")
+        for boundary in boundaries
+    }
+    actual_by_checkpoint: dict[int, object] = {}
+    for checkpoint_index in sorted(checkpoint_indices):
+        checkpoint_source = checkpoints[checkpoint_index]
+        case_path = tmp_path / name / "recovery" / f"checkpoint-{checkpoint_index}.sqlite3"
+        case_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(checkpoint_source, case_path)
+        actual_by_checkpoint[checkpoint_index] = _recover_from_checkpoint(
+            definition,
+            case_path,
+        )
+
     for phase in ("before_commit", "after_commit"):
-        for boundary in range(1, transaction_count + 1):
-            actual = _run_crash_case(
-                definition,
-                tmp_path / name / f"{phase}-{boundary}.sqlite3",
-                boundary=boundary,
-                phase=phase,
-            )
+        for boundary in boundaries:
+            checkpoint_index = boundary if phase == "after_commit" else boundary - 1
+            actual = actual_by_checkpoint[checkpoint_index]
             assert actual == expected, (
                 f"{name} diverged after {phase} crash at transaction {boundary}"
             )

@@ -130,6 +130,93 @@ def reconcile_material_availability(
     return feasible
 
 
+def _store_get_result(persistence: MemoryPersistence, request_id: str):
+    return next(
+        (
+            result
+            for result in persistence.store_get_results()
+            if result.request_id == request_id
+        ),
+        None,
+    )
+
+
+def _has_store_get_request(persistence: MemoryPersistence, request_id: str) -> bool:
+    return any(request.request_id == request_id for request in persistence.store_get_requests())
+
+
+def _has_container_result(persistence: MemoryPersistence, request_id: str) -> bool:
+    return any(
+        result.request_id == request_id
+        for result in persistence.container_operation_results()
+    )
+
+
+def _has_container_intent(persistence: MemoryPersistence, request_id: str) -> bool:
+    return any(
+        intent.request_id == request_id
+        for intent in persistence.container_operation_intents()
+    )
+
+
+def _staging_request_ids(activity_id: str) -> tuple[str, str]:
+    return (f"stage-lot:{activity_id}", f"stage-quantity:{activity_id}")
+
+
+def _prerequisites_or_reconcile(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: ConstructionEntities,
+    lot_result,
+    quantity_done: bool,
+) -> bool:
+    if lot_result is not None or quantity_done:
+        return True
+    if material_feasible(persistence, engine, entities=entities):
+        return True
+    reconcile_material_availability(
+        persistence,
+        engine,
+        entities=entities,
+    )
+    return False
+
+
+def _ensure_staging_requests(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    lot_request: str,
+    qty_request: str,
+    quantity: float,
+) -> None:
+    if _store_get_result(persistence, lot_request) is None and not _has_store_get_request(
+        persistence,
+        lot_request,
+    ):
+        engine.stores.get(
+            backend,
+            store_name="material_lots",
+            request_id=lot_request,
+            requested_at=backend.now,
+        )
+
+    if _has_container_result(persistence, qty_request) or _has_container_intent(
+        persistence,
+        qty_request,
+    ):
+        return
+    engine.containers.get(
+        backend,
+        container_name="material_quantity",
+        request_id=qty_request,
+        amount=quantity,
+        requested_at=backend.now,
+    )
+
+
 def stage_material(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -144,78 +231,35 @@ def stage_material(
         return False
 
     quantity = float(current.attributes["quantity"])
-    lot_request = f"stage-lot:{current.id}"
-    qty_request = f"stage-quantity:{current.id}"
+    lot_request, qty_request = _staging_request_ids(current.id)
 
-    lot_result = next(
-        (
-            result
-            for result in persistence.store_get_results()
-            if result.request_id == lot_request
-        ),
-        None,
-    )
-    qty_done = any(
-        result.request_id == qty_request
-        for result in persistence.container_operation_results()
-    )
+    lot_result = _store_get_result(persistence, lot_request)
+    qty_done = _has_container_result(persistence, qty_request)
 
     # Once either durable staging operation has committed, recovery must
     # continue from that committed result rather than re-evaluating fresh
     # supply. A crash may already have consumed one side of the pair.
-    if lot_result is None and not qty_done and not material_feasible(
+    if not _prerequisites_or_reconcile(
         persistence,
         engine,
         entities=entities,
+        lot_result=lot_result,
+        quantity_done=qty_done,
     ):
-        reconcile_material_availability(
-            persistence,
-            engine,
-            entities=entities,
-        )
         return False
 
-    if lot_result is None:
-        if not any(
-            request.request_id == lot_request
-            for request in persistence.store_get_requests()
-        ):
-            engine.stores.get(
-                backend,
-                store_name="material_lots",
-                request_id=lot_request,
-                requested_at=backend.now,
-            )
-
-    if not any(
-        result.request_id == qty_request
-        for result in persistence.container_operation_results()
-    ):
-        if not any(
-            intent.request_id == qty_request
-            for intent in persistence.container_operation_intents()
-        ):
-            engine.containers.get(
-                backend,
-                container_name="material_quantity",
-                request_id=qty_request,
-                amount=quantity,
-                requested_at=backend.now,
-            )
+    _ensure_staging_requests(
+        persistence,
+        engine,
+        backend,
+        lot_request=lot_request,
+        qty_request=qty_request,
+        quantity=quantity,
+    )
 
     backend.run_until(backend.now)
-    lot_result = next(
-        (
-            result
-            for result in persistence.store_get_results()
-            if result.request_id == lot_request
-        ),
-        None,
-    )
-    qty_done = any(
-        result.request_id == qty_request
-        for result in persistence.container_operation_results()
-    )
+    lot_result = _store_get_result(persistence, lot_request)
+    qty_done = _has_container_result(persistence, qty_request)
     if lot_result is None or not qty_done:
         return False
 

@@ -26,58 +26,113 @@ def _seed(persistence: Persistence, config: LogisticsConfig):
         pickup_delay=config.pickup_delay,
     )
 
-def _reconcile_tick(persistence, engine, backend, config, entities):
-    if not config.auto_progress_shipment:
-        return
+def _shipment_or_error(persistence, entities):
     shipment = persistence.entity("shipment", entities.shipment_id)
     if shipment is None:
         raise RuntimeError("configured shipment was not persisted")
+    return shipment
 
-    if shipment.state in {"pickup_scheduled", "delayed_pickup"}:
-        reconcile_pickup(
-            persistence,
-            engine,
-            backend,
-            entities=entities,
-        )
-        shipment = persistence.entity("shipment", entities.shipment_id)
 
-    if shipment is not None and shipment.state == "picked_up":
-        reconcile_origin_hub(
-            persistence,
-            engine,
-            backend,
-            entities=entities,
-        )
-        shipment = persistence.entity("shipment", entities.shipment_id)
+def _reconcile_pickup_stage(persistence, engine, backend, *, entities, shipment):
+    if shipment.state not in {"pickup_scheduled", "delayed_pickup"}:
+        return shipment
+    reconcile_pickup(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    return persistence.entity("shipment", entities.shipment_id)
 
-    if shipment is not None and shipment.state in {"at_origin_hub", "in_transfer"}:
-        reconcile_transfer(
-            persistence,
-            engine,
-            backend,
-            entities=entities,
-        )
-        shipment = persistence.entity("shipment", entities.shipment_id)
 
-    if shipment is not None and shipment.state == "at_destination_hub":
-        reconcile_delivery_dispatch(
-            persistence,
-            engine,
-            backend,
-            entities=entities,
-            ordinal=1,
-        )
-        shipment = persistence.entity("shipment", entities.shipment_id)
+def _reconcile_origin_stage(persistence, engine, backend, *, entities, shipment):
+    if shipment is None or shipment.state != "picked_up":
+        return shipment
+    reconcile_origin_hub(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    return persistence.entity("shipment", entities.shipment_id)
 
-    if shipment is not None and shipment.state == "out_for_delivery":
-        reconcile_delivery_success(
-            persistence,
-            engine,
-            backend,
-            entities=entities,
-            ordinal=1,
-        )
+
+def _reconcile_transfer_stage(persistence, engine, backend, *, entities, shipment):
+    if shipment is None or shipment.state not in {"at_origin_hub", "in_transfer"}:
+        return shipment
+    reconcile_transfer(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    return persistence.entity("shipment", entities.shipment_id)
+
+
+def _reconcile_dispatch_stage(persistence, engine, backend, *, entities, shipment):
+    if shipment is None or shipment.state != "at_destination_hub":
+        return shipment
+    reconcile_delivery_dispatch(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=1,
+    )
+    return persistence.entity("shipment", entities.shipment_id)
+
+
+def _reconcile_delivery_stage(persistence, engine, backend, *, entities, shipment):
+    if shipment is None or shipment.state != "out_for_delivery":
+        return
+    reconcile_delivery_success(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=1,
+    )
+
+
+def _reconcile_tick(persistence, engine, backend, config, entities):
+    if not config.auto_progress_shipment:
+        return
+    shipment = _shipment_or_error(persistence, entities)
+    shipment = _reconcile_pickup_stage(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        shipment=shipment,
+    )
+    shipment = _reconcile_origin_stage(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        shipment=shipment,
+    )
+    shipment = _reconcile_transfer_stage(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        shipment=shipment,
+    )
+    shipment = _reconcile_dispatch_stage(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        shipment=shipment,
+    )
+    _reconcile_delivery_stage(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        shipment=shipment,
+    )
 
 
 definition = DomainDefinition(

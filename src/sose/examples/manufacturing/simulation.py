@@ -415,31 +415,21 @@ def reconcile_material_issue(
     _validate_quantity(quantity)
     lot_request = "issue-raw-lot-1"
     qty_request = "issue-raw-material-1"
-
-    if not any(r.request_id == lot_request for r in persistence.store_get_requests()) and not any(
-        r.request_id == lot_request for r in persistence.store_get_results()
-    ):
-        engine.stores.get(
-            backend,
-            store_name="raw_material_lots",
-            request_id=lot_request,
-            requested_at=backend.now,
-        )
-    if not any(i.request_id == qty_request for i in persistence.container_operation_intents()) and not any(
-        r.request_id == qty_request for r in persistence.container_operation_results()
-    ):
-        engine.containers.get(
-            backend,
-            container_name="raw_material",
-            request_id=qty_request,
-            amount=quantity,
-            requested_at=backend.now,
-        )
+    _ensure_material_issue_requests(
+        persistence,
+        engine,
+        backend,
+        lot_request=lot_request,
+        qty_request=qty_request,
+        quantity=quantity,
+    )
     backend.run_until(backend.now)
 
-    lot_done = any(r.request_id == lot_request for r in persistence.store_get_results())
-    qty_done = any(r.request_id == qty_request for r in persistence.container_operation_results())
-    if not lot_done or not qty_done:
+    if not _material_issue_completed(
+        persistence,
+        lot_request=lot_request,
+        qty_request=qty_request,
+    ):
         raise RuntimeError("raw material issue is still pending")
 
     order = persistence.entity("production_order", entities.production_order_id)
@@ -453,6 +443,65 @@ def reconcile_material_issue(
             key=("manufacturing-reference", order.id, "start-production"),
         )
         engine.dispatch(command)
+
+
+def _ensure_material_issue_requests(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    lot_request: str,
+    qty_request: str,
+    quantity: float,
+) -> None:
+    if not _has_store_get_activity(persistence, lot_request):
+        engine.stores.get(
+            backend,
+            store_name="raw_material_lots",
+            request_id=lot_request,
+            requested_at=backend.now,
+        )
+    if _has_container_withdraw_activity(persistence, qty_request):
+        return
+    engine.containers.get(
+        backend,
+        container_name="raw_material",
+        request_id=qty_request,
+        amount=quantity,
+        requested_at=backend.now,
+    )
+
+
+def _has_store_get_activity(
+    persistence: MemoryPersistence,
+    request_id: str,
+) -> bool:
+    return any(r.request_id == request_id for r in persistence.store_get_requests()) or any(
+        r.request_id == request_id for r in persistence.store_get_results()
+    )
+
+
+def _has_container_withdraw_activity(
+    persistence: MemoryPersistence,
+    request_id: str,
+) -> bool:
+    return any(i.request_id == request_id for i in persistence.container_operation_intents()) or any(
+        r.request_id == request_id for r in persistence.container_operation_results()
+    )
+
+
+def _material_issue_completed(
+    persistence: MemoryPersistence,
+    *,
+    lot_request: str,
+    qty_request: str,
+) -> bool:
+    lot_done = any(r.request_id == lot_request for r in persistence.store_get_results())
+    qty_done = any(
+        r.request_id == qty_request
+        for r in persistence.container_operation_results()
+    )
+    return lot_done and qty_done
 
 
 def reconcile_wip_output(
@@ -473,23 +522,16 @@ def reconcile_wip_output(
         raise ValueError("manufacturing yield factor must be in (0, 1]")
     output_quantity = quantity * yield_factor
     wip_id = "wip-1"
-
-    wip_exists = any(i.item_id == wip_id for i in persistence.store_items())
-    wip_pending = any(i.item_id == wip_id for i in persistence.store_put_intents())
-    wip_consumed = any(
-        result.item.item_id == wip_id for result in persistence.store_get_results()
+    _ensure_wip_store_record(
+        persistence,
+        engine,
+        backend,
+        wip_id=wip_id,
+        output_quantity=output_quantity,
     )
-    if not (wip_exists or wip_pending or wip_consumed):
-        engine.stores.put(
-            backend,
-            store_name="wip_buffer",
-            item_id=wip_id,
-            value={"sku": SKU, "quantity": output_quantity},
-            requested_at=backend.now,
-        )
     backend.run_until(backend.now)
 
-    if not any(i.item_id == wip_id for i in persistence.store_items()) and not wip_consumed:
+    if not _wip_durable(persistence, wip_id):
         raise RuntimeError("production WIP is not durably committed")
 
     order = persistence.entity("production_order", entities.production_order_id)
@@ -518,6 +560,106 @@ def reconcile_wip_output(
     return output_quantity
 
 
+def _ensure_wip_store_record(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    wip_id: str,
+    output_quantity: float,
+) -> None:
+    if _wip_durable_or_pending(persistence, wip_id):
+        return
+    engine.stores.put(
+        backend,
+        store_name="wip_buffer",
+        item_id=wip_id,
+        value={"sku": SKU, "quantity": output_quantity},
+        requested_at=backend.now,
+    )
+
+
+def _wip_durable_or_pending(
+    persistence: MemoryPersistence,
+    wip_id: str,
+) -> bool:
+    return any(i.item_id == wip_id for i in persistence.store_items()) or any(
+        i.item_id == wip_id for i in persistence.store_put_intents()
+    ) or any(
+        result.item.item_id == wip_id for result in persistence.store_get_results()
+    )
+
+
+def _wip_durable(
+    persistence: MemoryPersistence,
+    wip_id: str,
+) -> bool:
+    return any(i.item_id == wip_id for i in persistence.store_items()) or any(
+        result.item.item_id == wip_id for result in persistence.store_get_results()
+    )
+
+
+def _wip_for_quality_release(persistence: MemoryPersistence):
+    wip = next((item for item in persistence.store_items() if item.item_id == "wip-1"), None)
+    consumed = next(
+        (
+            result
+            for result in persistence.store_get_results()
+            if result.request_id == "consume-wip-1"
+        ),
+        None,
+    )
+    return wip, consumed
+
+
+def _ensure_quality_release_requests(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    output_quantity: float,
+    wip_exists: bool,
+) -> None:
+    fg_request = "finish-goods-1"
+    consume_wip = "consume-wip-1"
+    if not any(
+        i.request_id == fg_request for i in persistence.container_operation_intents()
+    ) and not any(
+        r.request_id == fg_request for r in persistence.container_operation_results()
+    ):
+        engine.containers.put(
+            backend,
+            container_name="finished_goods",
+            request_id=fg_request,
+            amount=output_quantity,
+            requested_at=backend.now,
+        )
+
+    if wip_exists and not any(
+        r.request_id == consume_wip for r in persistence.store_get_requests()
+    ) and not any(
+        r.request_id == consume_wip for r in persistence.store_get_results()
+    ):
+        engine.stores.get(
+            backend,
+            store_name="wip_buffer",
+            request_id=consume_wip,
+            requested_at=backend.now,
+        )
+
+
+def _quality_release_committed(persistence: MemoryPersistence) -> bool:
+    fg_done = any(
+        r.request_id == "finish-goods-1"
+        for r in persistence.container_operation_results()
+    )
+    wip_done = any(
+        r.request_id == "consume-wip-1"
+        for r in persistence.store_get_results()
+    )
+    return fg_done and wip_done
+
+
 def reconcile_quality_pass(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -535,56 +677,23 @@ def reconcile_quality_pass(
     if order.state != "inspection" and order.state != "completed":
         raise RuntimeError(f"production order is not ready for quality release: {order.state}")
 
-    wip = next((item for item in persistence.store_items() if item.item_id == "wip-1"), None)
-    consumed = next(
-        (
-            result
-            for result in persistence.store_get_results()
-            if result.request_id == "consume-wip-1"
-        ),
-        None,
-    )
+    wip, consumed = _wip_for_quality_release(persistence)
     if wip is None and consumed is None:
         raise RuntimeError("quality release requires durable WIP")
 
     output_quantity = float(
         (wip.value if wip is not None else consumed.item.value)["quantity"]
     )
-    fg_request = "finish-goods-1"
-    if not any(
-        i.request_id == fg_request for i in persistence.container_operation_intents()
-    ) and not any(
-        r.request_id == fg_request for r in persistence.container_operation_results()
-    ):
-        engine.containers.put(
-            backend,
-            container_name="finished_goods",
-            request_id=fg_request,
-            amount=output_quantity,
-            requested_at=backend.now,
-        )
-
-    consume_wip = "consume-wip-1"
-    if wip is not None and not any(
-        r.request_id == consume_wip for r in persistence.store_get_requests()
-    ) and not any(
-        r.request_id == consume_wip for r in persistence.store_get_results()
-    ):
-        engine.stores.get(
-            backend,
-            store_name="wip_buffer",
-            request_id=consume_wip,
-            requested_at=backend.now,
-        )
+    _ensure_quality_release_requests(
+        persistence,
+        engine,
+        backend,
+        output_quantity=output_quantity,
+        wip_exists=wip is not None,
+    )
     backend.run_until(backend.now)
 
-    fg_done = any(
-        r.request_id == fg_request for r in persistence.container_operation_results()
-    )
-    wip_done = any(
-        r.request_id == consume_wip for r in persistence.store_get_results()
-    )
-    if not fg_done or not wip_done:
+    if not _quality_release_committed(persistence):
         raise RuntimeError("quality release is not durably committed")
 
     order = persistence.entity("production_order", entities.production_order_id)

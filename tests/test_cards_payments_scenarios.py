@@ -1,5 +1,8 @@
 from sose.backends.simpy import SimPyBackend
-from sose.examples.cards_payments.scenarios import processor_outage_scenario
+from sose.examples.cards_payments.scenarios import (
+    fraud_pressure_scenario,
+    processor_outage_scenario,
+)
 from sose.examples.cards_payments.simulation import (
     ORIGIN,
     build_runtime,
@@ -7,6 +10,16 @@ from sose.examples.cards_payments.simulation import (
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
+
+
+def test_cards_payment_scenario_builders_are_well_formed():
+    outage = processor_outage_scenario()
+    fraud = fraud_pressure_scenario()
+
+    assert outage.name == "cards-processor-outage"
+    assert fraud.name == "cards-fraud-pressure"
+    assert outage.duration.total_seconds() == 2 * 3600
+    assert fraud.duration.total_seconds() == 6 * 3600
 
 
 def test_finite_processor_outage_gates_authorization_and_recovers():

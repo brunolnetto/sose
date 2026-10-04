@@ -143,6 +143,56 @@ def preemption_result(
     )
 
 
+def _dispatch_emergency_start_if_waiting(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    emergency_id: str,
+    normal_id: str,
+) -> bool:
+    emergency = maybe_episode(persistence, emergency_id)
+    reservation = engine.preemptive_resources.reservation_for(
+        emergency_request_id(normal_id)
+    )
+    if (
+        emergency is None
+        or emergency.state != "waiting_capacity"
+        or reservation is None
+    ):
+        return False
+    dispatch(
+        engine,
+        emergency,
+        "start",
+        key=("hospital-emergency", emergency.id, "start"),
+        correlation_id=flow_correlation_id(
+            str(emergency.attributes["admission_id"])
+        ),
+    )
+    return True
+
+
+def _ensure_emergency_episode_ready(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    normal_episode_id: str,
+):
+    emergency = ensure_emergency_episode(
+        persistence,
+        engine,
+        normal_episode_id=normal_episode_id,
+    )
+    if emergency.state != "planned":
+        return emergency
+    queue_treatment_episode(
+        persistence,
+        engine,
+        episode_id=emergency.id,
+    )
+    return episode(persistence, emergency.id)
+
+
 def commit_emergency_preemption(
     persistence: MemoryPersistence,
     engine: Engine,
@@ -159,41 +209,19 @@ def commit_emergency_preemption(
         result = preemption_result(persistence, normal.id)
         if result is None:
             return False
-        emergency = maybe_episode(
+        _dispatch_emergency_start_if_waiting(
             persistence,
-            emergency_episode_id(normal.id),
+            engine,
+            emergency_id=emergency_episode_id(normal.id),
+            normal_id=normal.id,
         )
-        emergency_reservation = engine.preemptive_resources.reservation_for(
-            emergency_request_id(normal.id)
-        )
-        if (
-            emergency is not None
-            and emergency.state == "waiting_capacity"
-            and emergency_reservation is not None
-        ):
-            dispatch(
-                engine,
-                emergency,
-                "start",
-                key=("hospital-emergency", emergency.id, "start"),
-                correlation_id=flow_correlation_id(
-                    str(emergency.attributes["admission_id"])
-                ),
-            )
         return True
 
-    emergency = ensure_emergency_episode(
+    emergency = _ensure_emergency_episode_ready(
         persistence,
         engine,
         normal_episode_id=normal.id,
     )
-    if emergency.state == "planned":
-        queue_treatment_episode(
-            persistence,
-            engine,
-            episode_id=emergency.id,
-        )
-        emergency = episode(persistence, emergency.id)
 
     request_id = emergency_request_id(normal.id)
     reservation = engine.preemptive_resources.ensure_requested(
@@ -208,17 +236,12 @@ def commit_emergency_preemption(
     if reservation is None or result is None:
         return False
 
-    emergency = episode(persistence, emergency.id)
-    if emergency.state == "waiting_capacity":
-        dispatch(
-            engine,
-            emergency,
-            "start",
-            key=("hospital-emergency", emergency.id, "start"),
-            correlation_id=flow_correlation_id(
-                str(emergency.attributes["admission_id"])
-            ),
-        )
+    _dispatch_emergency_start_if_waiting(
+        persistence,
+        engine,
+        emergency_id=emergency.id,
+        normal_id=normal.id,
+    )
     return True
 
 

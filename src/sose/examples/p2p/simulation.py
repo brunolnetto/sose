@@ -209,86 +209,181 @@ def reconcile_receiving_resources(
     rejected -> reject before inventory effects.
     """
 
-    if outcome not in {"accepted", "partial", "rejected"}:
-        raise ValueError(f"unsupported receipt outcome: {outcome}")
+    _validate_receiving_outcome(outcome)
 
     correlation_id = flow_correlation_id()
     dock_request_id = f"receiving-dock:{entities.receipt_id}"
     inspector_request_id = f"inspector:{entities.receipt_id}"
 
-    receipt = persistence.entity("receipt", entities.receipt_id)
-    if receipt is None:
-        raise RuntimeError("receipt was not persisted")
-
-    dock = None
-    if receipt.state == "pending":
-        dock = request_receiving_slot(
-            engine,
-            backend,
-            receipt_id=entities.receipt_id,
-            requested_at=backend.now,
-        )
-    if receipt.state == "pending" and dock is None:
+    receipt = _receipt_or_error(persistence, entities.receipt_id)
+    if not _ensure_receiving_dock_if_pending(
+        engine,
+        backend,
+        receipt=receipt,
+        receipt_id=entities.receipt_id,
+    ):
         return False
 
-    if receipt.state == "pending":
-        begin = engine.context.commands.create(
-            "begin_receiving",
-            target=receipt,
-            correlation_id=correlation_id,
-            key=("p2p-receiving", receipt.id, "begin"),
-        )
-        engine.dispatch(begin)
-        receipt = persistence.entity("receipt", entities.receipt_id)
-
-    if receipt.state == "receiving" and outcome == "rejected":
-        reject = engine.context.commands.create(
-            "reject",
-            target=receipt,
-            correlation_id=correlation_id,
-            key=("p2p-receiving", receipt.id, "reject"),
-        )
-        engine.dispatch(reject)
-        receipt = persistence.entity("receipt", entities.receipt_id)
-        engine.resources.withdraw(backend, dock_request_id)
+    receipt, completed = _apply_preinspection_receipt_transitions(
+        persistence,
+        engine,
+        backend,
+        receipt=receipt,
+        receipt_id=entities.receipt_id,
+        outcome=outcome,
+        correlation_id=correlation_id,
+        dock_request_id=dock_request_id,
+    )
+    if completed:
         return True
 
-    if receipt.state == "receiving" and outcome == "partial":
-        partial = engine.context.commands.create(
-            "mark_partial",
-            target=receipt,
-            correlation_id=correlation_id,
-            key=("p2p-receiving", receipt.id, "partial"),
-        )
-        engine.dispatch(partial)
-        receipt = persistence.entity("receipt", entities.receipt_id)
-
-    inspector = None
-    if receipt.state in {"receiving", "partial"}:
-        inspector = request_inspector(
-            engine,
-            backend,
-            receipt_id=entities.receipt_id,
-            requested_at=backend.now,
-        )
-    if receipt.state in {"receiving", "partial"} and inspector is None:
+    if not _ensure_inspector_if_required(
+        engine,
+        backend,
+        receipt=receipt,
+        receipt_id=entities.receipt_id,
+    ):
         return False
 
     if receipt.state in {"receiving", "partial"}:
-        inspect = engine.context.commands.create(
-            "inspect",
-            target=receipt,
-            correlation_id=correlation_id,
+        _dispatch_receipt_event(
+            engine,
+            receipt,
+            event="inspect",
             key=("p2p-receiving", receipt.id, "inspect"),
+            correlation_id=correlation_id,
         )
-        engine.dispatch(inspect)
-        receipt = persistence.entity("receipt", entities.receipt_id)
+        receipt = _receipt_or_error(persistence, entities.receipt_id)
+    return _finalize_receiving_result(
+        engine,
+        backend,
+        receipt=receipt,
+        inspector_request_id=inspector_request_id,
+        dock_request_id=dock_request_id,
+    )
 
+
+def _validate_receiving_outcome(outcome: str) -> None:
+    if outcome not in {"accepted", "partial", "rejected"}:
+        raise ValueError(f"unsupported receipt outcome: {outcome}")
+
+
+def _receipt_or_error(persistence: MemoryPersistence, receipt_id: str):
+    receipt = persistence.entity("receipt", receipt_id)
+    if receipt is None:
+        raise RuntimeError("receipt was not persisted")
+    return receipt
+
+
+def _dispatch_receipt_event(
+    engine: Engine,
+    receipt,
+    *,
+    event: str,
+    key: tuple[object, ...],
+    correlation_id: str,
+) -> None:
+    command = engine.context.commands.create(
+        event,
+        target=receipt,
+        correlation_id=correlation_id,
+        key=key,
+    )
+    engine.dispatch(command)
+
+
+def _ensure_receiving_dock_if_pending(
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    receipt,
+    receipt_id: str,
+) -> bool:
+    if receipt.state != "pending":
+        return True
+    dock = request_receiving_slot(
+        engine,
+        backend,
+        receipt_id=receipt_id,
+        requested_at=backend.now,
+    )
+    return dock is not None
+
+
+def _ensure_inspector_if_required(
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    receipt,
+    receipt_id: str,
+) -> bool:
+    if receipt.state not in {"receiving", "partial"}:
+        return True
+    inspector = request_inspector(
+        engine,
+        backend,
+        receipt_id=receipt_id,
+        requested_at=backend.now,
+    )
+    return inspector is not None
+
+
+def _apply_preinspection_receipt_transitions(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    receipt,
+    receipt_id: str,
+    outcome: str,
+    correlation_id: str,
+    dock_request_id: str,
+):
+    if receipt.state == "pending":
+        _dispatch_receipt_event(
+            engine,
+            receipt,
+            event="begin_receiving",
+            key=("p2p-receiving", receipt.id, "begin"),
+            correlation_id=correlation_id,
+        )
+        receipt = _receipt_or_error(persistence, receipt_id)
+
+    if receipt.state == "receiving" and outcome == "rejected":
+        _dispatch_receipt_event(
+            engine,
+            receipt,
+            event="reject",
+            key=("p2p-receiving", receipt.id, "reject"),
+            correlation_id=correlation_id,
+        )
+        engine.resources.withdraw(backend, dock_request_id)
+        return _receipt_or_error(persistence, receipt_id), True
+
+    if receipt.state == "receiving" and outcome == "partial":
+        _dispatch_receipt_event(
+            engine,
+            receipt,
+            event="mark_partial",
+            key=("p2p-receiving", receipt.id, "partial"),
+            correlation_id=correlation_id,
+        )
+        receipt = _receipt_or_error(persistence, receipt_id)
+    return receipt, False
+
+
+def _finalize_receiving_result(
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    receipt,
+    inspector_request_id: str,
+    dock_request_id: str,
+) -> bool:
     if receipt.state == "inspected":
         for request_id in (inspector_request_id, dock_request_id):
             engine.resources.withdraw(backend, request_id)
         return True
-
     return receipt.state == "stocked"
 
 
@@ -313,48 +408,19 @@ def reconcile_stocking(
     lot_id = "receipt-lot-1"
     stock_request_id = "stock-receipt-1"
 
-    lot_exists = any(item.item_id == lot_id for item in persistence.store_items())
-    lot_pending = any(
-        intent.item_id == lot_id for intent in persistence.store_put_intents()
+    _ensure_stocking_side_effects(
+        persistence,
+        engine,
+        backend,
+        lot_id=lot_id,
+        stock_request_id=stock_request_id,
+        quantity=quantity,
     )
-    lot_consumed = any(
-        result.item.item_id == lot_id for result in persistence.store_get_results()
-    )
-    if not (lot_exists or lot_pending or lot_consumed):
-        engine.stores.put(
-            backend,
-            store_name="received_lots",
-            item_id=lot_id,
-            value={"sku": SKU, "quantity": quantity},
-            requested_at=backend.now,
-        )
-
-    stock_done = any(
-        result.request_id == stock_request_id
-        for result in persistence.container_operation_results()
-    )
-    stock_pending = any(
-        intent.request_id == stock_request_id
-        for intent in persistence.container_operation_intents()
-    )
-    if not (stock_done or stock_pending):
-        engine.containers.put(
-            backend,
-            container_name="inventory",
-            request_id=stock_request_id,
-            amount=quantity,
-            requested_at=backend.now,
-        )
 
     backend.run_until(backend.now)
 
-    lot_durable = any(item.item_id == lot_id for item in persistence.store_items()) or any(
-        result.item.item_id == lot_id for result in persistence.store_get_results()
-    )
-    stock_done = any(
-        result.request_id == stock_request_id
-        for result in persistence.container_operation_results()
-    )
+    lot_durable = _lot_durable(persistence, lot_id)
+    stock_done = _container_result_exists(persistence, stock_request_id)
     if not lot_durable or not stock_done:
         raise RuntimeError("receipt inventory is not durably stocked yet")
 
@@ -440,45 +506,19 @@ def reconcile_consumption(
     lot_request_id = "consume-receipt-lot-1"
     quantity_request_id = "consume-demand-1"
 
-    if not any(
-        request.request_id == lot_request_id
-        for request in persistence.store_get_requests()
-    ) and not any(
-        result.request_id == lot_request_id
-        for result in persistence.store_get_results()
-    ):
-        engine.stores.get(
-            backend,
-            store_name="received_lots",
-            request_id=lot_request_id,
-            requested_at=backend.now,
-        )
-
-    if not any(
-        intent.request_id == quantity_request_id
-        for intent in persistence.container_operation_intents()
-    ) and not any(
-        result.request_id == quantity_request_id
-        for result in persistence.container_operation_results()
-    ):
-        engine.containers.get(
-            backend,
-            container_name="inventory",
-            request_id=quantity_request_id,
-            amount=quantity,
-            requested_at=backend.now,
-        )
+    _ensure_consumption_side_effects(
+        persistence,
+        engine,
+        backend,
+        lot_request_id=lot_request_id,
+        quantity_request_id=quantity_request_id,
+        quantity=quantity,
+    )
 
     backend.run_until(backend.now)
 
-    lot_done = any(
-        result.request_id == lot_request_id
-        for result in persistence.store_get_results()
-    )
-    quantity_done = any(
-        result.request_id == quantity_request_id
-        for result in persistence.container_operation_results()
-    )
+    lot_done = _store_get_result_exists(persistence, lot_request_id)
+    quantity_done = _container_result_exists(persistence, quantity_request_id)
     if not lot_done or not quantity_done:
         raise RuntimeError("material demand inventory withdrawal is still pending")
 
@@ -505,6 +545,133 @@ def reconcile_consumption(
         engine.dispatch(consume)
     elif demand.state != "consumed":
         raise RuntimeError(f"material demand is not ready to consume: {demand.state}")
+
+
+def _store_get_request_exists(
+    persistence: MemoryPersistence,
+    request_id: str,
+) -> bool:
+    return any(
+        request.request_id == request_id
+        for request in persistence.store_get_requests()
+    )
+
+
+def _store_get_result_exists(
+    persistence: MemoryPersistence,
+    request_id: str,
+) -> bool:
+    return any(
+        result.request_id == request_id
+        for result in persistence.store_get_results()
+    )
+
+
+def _container_intent_exists(
+    persistence: MemoryPersistence,
+    request_id: str,
+) -> bool:
+    return any(
+        intent.request_id == request_id
+        for intent in persistence.container_operation_intents()
+    )
+
+
+def _container_result_exists(
+    persistence: MemoryPersistence,
+    request_id: str,
+) -> bool:
+    return any(
+        result.request_id == request_id
+        for result in persistence.container_operation_results()
+    )
+
+
+def _lot_visible_or_pending(
+    persistence: MemoryPersistence,
+    lot_id: str,
+) -> bool:
+    return any(item.item_id == lot_id for item in persistence.store_items()) or any(
+        intent.item_id == lot_id for intent in persistence.store_put_intents()
+    ) or any(
+        result.item.item_id == lot_id for result in persistence.store_get_results()
+    )
+
+
+def _lot_durable(
+    persistence: MemoryPersistence,
+    lot_id: str,
+) -> bool:
+    return any(item.item_id == lot_id for item in persistence.store_items()) or any(
+        result.item.item_id == lot_id for result in persistence.store_get_results()
+    )
+
+
+def _ensure_stocking_side_effects(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    lot_id: str,
+    stock_request_id: str,
+    quantity: float,
+) -> None:
+    if not _lot_visible_or_pending(persistence, lot_id):
+        engine.stores.put(
+            backend,
+            store_name="received_lots",
+            item_id=lot_id,
+            value={"sku": SKU, "quantity": quantity},
+            requested_at=backend.now,
+        )
+    if _container_result_exists(persistence, stock_request_id) or _container_intent_exists(
+        persistence,
+        stock_request_id,
+    ):
+        return
+    engine.containers.put(
+        backend,
+        container_name="inventory",
+        request_id=stock_request_id,
+        amount=quantity,
+        requested_at=backend.now,
+    )
+
+
+def _ensure_consumption_side_effects(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    lot_request_id: str,
+    quantity_request_id: str,
+    quantity: float,
+) -> None:
+    if not _store_get_request_exists(
+        persistence,
+        lot_request_id,
+    ) and not _store_get_result_exists(
+        persistence,
+        lot_request_id,
+    ):
+        engine.stores.get(
+            backend,
+            store_name="received_lots",
+            request_id=lot_request_id,
+            requested_at=backend.now,
+        )
+    if _container_intent_exists(persistence, quantity_request_id) or _container_result_exists(
+        persistence,
+        quantity_request_id,
+    ):
+        return
+    engine.containers.get(
+        backend,
+        container_name="inventory",
+        request_id=quantity_request_id,
+        amount=quantity,
+        requested_at=backend.now,
+    )
 
 
 def run_happy_path(
