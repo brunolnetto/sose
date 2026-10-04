@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from sose.backends.simpy import SimPyBackend
+from sose.examples.hospitals import patient_flow as patient_flow_module
 from sose.examples.hospitals.patient_flow import (
     claim_next_ward_admission,
     deteriorate_to_icu_wait,
@@ -112,6 +113,56 @@ def test_ward_claim_with_empty_queue_releases_both_resources():
         reservation.request_id in {"ward-bed:empty", "ward-team:empty"}
         for reservation in persistence.resource_reservations()
     )
+
+
+def test_triage_queue_does_not_duplicate_existing_admission_item():
+    persistence, entities, engine, backend = _runtime()
+    triage_and_queue(
+        persistence,
+        engine,
+        backend,
+        admission_id=entities.admission_id,
+    )
+    item_id = f"triage:{entities.admission_id}"
+    before = [item for item in persistence.store_items() if item.item_id == item_id]
+
+    triage_and_queue(
+        persistence,
+        engine,
+        backend,
+        admission_id=entities.admission_id,
+    )
+    after = [item for item in persistence.store_items() if item.item_id == item_id]
+
+    assert len(before) == 1
+    assert len(after) == 1
+
+
+def test_ward_claim_skips_allocation_and_treatment_when_state_is_not_waiting_or_allocated(monkeypatch):
+    persistence, entities, engine, backend = _runtime()
+    triage_and_queue(
+        persistence,
+        engine,
+        backend,
+        admission_id=entities.admission_id,
+    )
+    _set_state(persistence, entities.admission_id, "triaged")
+    dispatched: list[str] = []
+    monkeypatch.setattr(
+        patient_flow_module,
+        "dispatch",
+        lambda _engine, _entity, event, **kwargs: dispatched.append(event),
+    )
+
+    claimed = claim_next_ward_admission(
+        persistence,
+        engine,
+        backend,
+        claim_id="no-progress",
+    )
+
+    assert claimed == entities.admission_id
+    assert dispatched == []
 
 
 def test_ward_discharge_and_deterioration_reject_wrong_states():

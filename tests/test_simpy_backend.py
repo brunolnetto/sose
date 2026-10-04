@@ -1,11 +1,14 @@
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from zoneinfo import ZoneInfo
 
 import pytest
 
 pytest.importorskip("simpy")
+import simpy
 
 from sose.backends import ContainerRequest, ContainerSnapshot, ResourceLease, ResourceSnapshot, ScheduledCall
+from sose.backends import simpy as simpy_backend_module
 from sose.backends.simpy import SimPyBackend
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
@@ -407,6 +410,19 @@ def test_cancel_triggered_resource_request_before_grant_callback_releases_capaci
     assert runtime.resource_snapshot("technicians").in_use == 0
 
 
+def test_cancel_triggered_resource_request_succeeds_when_request_is_not_a_current_user():
+    runtime = backend()
+    request = SimpleNamespace(triggered=True, callbacks=[])
+    state = SimpleNamespace(
+        requests={"detached-request": request},
+        resource=SimpleNamespace(users=[], release=lambda _request: None),
+    )
+    runtime._resources = {"technicians": state}
+
+    assert runtime.cancel_resource_request("detached-request") is True
+    assert "detached-request" not in state.requests
+
+
 def test_cancel_preemptive_request_before_lifecycle_registration_never_acquires():
     runtime = backend()
     runtime.create_preemptive_resource("bay", capacity=1)
@@ -448,3 +464,73 @@ def test_cancel_unknown_preemptive_request_does_not_poison_future_same_id():
 
     assert [lease.request_id for lease in acquired] == ["future"]
     assert runtime.preemptive_resource_snapshot("bay").in_use == 1
+
+
+def test_scheduled_callback_rejects_negative_delay():
+    env = simpy.Environment()
+
+    with pytest.raises(ValueError, match="delay cannot be negative"):
+        simpy_backend_module._ScheduledCallback(
+            env,
+            delay=-0.1,
+            priority=0,
+            callback=lambda: None,
+        )
+
+
+def test_cancel_triggered_resource_request_returns_false_when_callbacks_already_detached():
+    runtime = backend()
+    request = SimpleNamespace(triggered=True, callbacks=None)
+    state = SimpleNamespace(
+        requests={"ghost-request": request},
+        resource=SimpleNamespace(users=[request], release=lambda _request: None),
+    )
+    runtime._resources = {"technicians": state}
+
+    assert runtime.cancel_resource_request("ghost-request") is False
+
+
+def test_cancel_preemptive_request_releases_triggered_user_without_registered_lease():
+    runtime = backend()
+    request = SimpleNamespace(triggered=True)
+    released: list[object] = []
+    state = SimpleNamespace(
+        requests={"ghost-preemptive": request},
+        resource=SimpleNamespace(
+            users=[request],
+            release=lambda released_request: released.append(released_request),
+        ),
+    )
+    runtime._preemptive_resources = {"bay": state}
+
+    assert runtime.cancel_preemptive_resource_request("ghost-preemptive") is True
+    assert released == [request]
+    assert "ghost-preemptive" not in state.requests
+
+
+def test_cancel_preemptive_request_succeeds_for_triggered_request_not_in_users():
+    runtime = backend()
+    request = SimpleNamespace(triggered=True)
+    state = SimpleNamespace(
+        requests={"detached-preemptive": request},
+        resource=SimpleNamespace(users=[], release=lambda _request: None),
+    )
+    runtime._preemptive_resources = {"bay": state}
+
+    assert runtime.cancel_preemptive_resource_request("detached-preemptive") is True
+    assert "detached-preemptive" not in state.requests
+
+
+def test_release_preemptive_resource_skips_signaling_when_hold_is_already_triggered():
+    runtime = backend()
+    called: list[str] = []
+    runtime._preemptive_leases["lease-1"] = SimpleNamespace(
+        hold=SimpleNamespace(
+            triggered=True,
+            succeed=lambda: called.append("succeed"),
+        )
+    )
+
+    runtime.release_preemptive_resource("lease-1")
+
+    assert called == []

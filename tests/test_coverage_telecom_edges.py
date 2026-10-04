@@ -5,6 +5,7 @@ from datetime import timedelta
 import pytest
 
 from sose.backends.simpy import SimPyBackend
+from sose.examples.telecom import simulation as telecom_simulation
 from sose.examples.telecom.simulation import (
     ORIGIN,
     _entity,
@@ -446,3 +447,76 @@ def test_restore_closed_incident_is_idempotent():
         incident_key="incident-c",
     )
     assert tuple(persistence.events()) == events_before
+
+
+def test_complete_activation_helper_skips_dispatch_for_terminal_states(monkeypatch):
+    persistence, entities, engine, _ = _active_service()
+    service_order = persistence.entity(
+        "telecom_service_order",
+        service_order_id(entities.product_order_id),
+    )
+    assert service_order is not None and service_order.state == "completed"
+    calls: list[str] = []
+    monkeypatch.setattr(
+        telecom_simulation,
+        "_dispatch",
+        lambda _engine, _entity, event, **kwargs: calls.append(event),
+    )
+
+    telecom_simulation._complete_activation_if_active(
+        persistence,
+        engine,
+        entities=entities,
+        service_order=service_order,
+        correlation_id="corr",
+    )
+
+    assert calls == []
+
+
+def test_activate_service_helper_returns_early_when_service_not_activation_ready(monkeypatch):
+    persistence, entities, engine, _ = _active_service()
+    service_id = subscription_service_id(entities.product_order_id)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        telecom_simulation,
+        "_dispatch",
+        lambda _engine, _entity, event, **kwargs: calls.append(event),
+    )
+
+    telecom_simulation._activate_service_if_ready(
+        persistence,
+        engine,
+        service_id=service_id,
+        correlation_id="corr",
+    )
+
+    assert calls == []
+
+
+def test_drop_open_incident_returns_service_when_resolution_is_incomplete():
+    persistence, entities, _engine, _ = _active_service()
+    service = _entity(
+        persistence,
+        "telecom_subscription_service",
+        subscription_service_id(entities.product_order_id),
+    )
+    alarm = type("Alarm", (), {"state": "active"})()
+    ticket = type("Ticket", (), {"state": "open"})()
+
+    result = telecom_simulation._drop_open_incident_if_resolved(
+        persistence,
+        service=service,
+        incident_key="incident-x",
+        alarm=alarm,
+        ticket=ticket,
+    )
+
+    assert result is service
+
+
+def test_run_happy_path_raises_when_activation_cannot_be_reconciled(monkeypatch):
+    monkeypatch.setattr(telecom_simulation, "reconcile_activation", lambda *args, **kwargs: False)
+
+    with pytest.raises(RuntimeError, match="telecom activation failed"):
+        telecom_simulation.run_happy_path()

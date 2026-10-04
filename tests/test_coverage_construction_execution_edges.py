@@ -3,6 +3,7 @@ from __future__ import annotations
 import pytest
 
 from sose.backends.simpy import SimPyBackend
+from sose.examples.construction import execution as execution_module
 from sose.examples.construction.execution import (
     complete_activity,
     complete_predecessor,
@@ -64,6 +65,19 @@ def test_dependency_blocks_then_releases_when_predecessor_completes():
         entities=entities,
     )
     assert activity(persistence, entities.activity_id).state == "ready"
+
+
+def test_reconcile_dependency_returns_false_when_already_blocked_and_predecessor_not_completed():
+    persistence, entities, engine, _ = _runtime(predecessor_completed=False)
+    current = activity(persistence, entities.activity_id)
+    current.state = "blocked_dependency"
+    _save(persistence, current)
+
+    assert reconcile_dependency(
+        persistence,
+        engine,
+        entities=entities,
+    ) is False
 
 
 def test_complete_predecessor_is_idempotent():
@@ -336,6 +350,99 @@ def test_inspection_waits_with_durable_inspector_demand():
     request_id = f"inspector:{occurrence.id}"
     assert engine.resources.has_request(request_id)
     assert engine.resources.reservation_for(request_id) is None
+
+
+def test_reconcile_inspection_raises_when_occurrence_state_does_not_match_outcome(monkeypatch):
+    current = type("Current", (), {"id": "A1", "state": "inspection"})()
+    occurrence = type("Occurrence", (), {"id": "I1", "state": "inspecting"})()
+    engine = type(
+        "EngineStub",
+        (),
+        {
+            "resources": type(
+                "ResourcesStub",
+                (),
+                {
+                    "ensure_requested": staticmethod(lambda *args, **kwargs: object()),
+                    "withdraw": staticmethod(lambda *args, **kwargs: None),
+                },
+            )()
+        },
+    )()
+    backend = type("BackendStub", (), {"now": ORIGIN})()
+    sequence = iter([occurrence, occurrence, occurrence])
+    monkeypatch.setattr(execution_module, "activity", lambda *args, **kwargs: current)
+    monkeypatch.setattr(execution_module, "inspection", lambda *args, **kwargs: occurrence)
+    monkeypatch.setattr(execution_module, "ensure_inspection", lambda *args, **kwargs: occurrence)
+    monkeypatch.setattr(
+        execution_module,
+        "_inspection_or_error",
+        lambda *args, **kwargs: next(sequence),
+    )
+    monkeypatch.setattr(
+        execution_module,
+        "_begin_inspection_if_pending",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        execution_module,
+        "_dispatch_outcome_if_inspecting",
+        lambda *args, **kwargs: None,
+    )
+
+    with pytest.raises(RuntimeError, match="did not reach expected outcome"):
+        reconcile_inspection(
+            object(),
+            engine,
+            backend,
+            entities=type("Entities", (), {"activity_id": "A1"})(),
+            ordinal=1,
+            outcome="pass",
+        )
+
+
+def test_inspection_or_error_raises_when_occurrence_disappears(monkeypatch):
+    monkeypatch.setattr(execution_module, "inspection", lambda *args, **kwargs: None)
+
+    with pytest.raises(RuntimeError, match="occurrence disappeared"):
+        execution_module._inspection_or_error(
+            object(),
+            current_id="A1",
+            ordinal=1,
+        )
+
+
+def test_begin_inspection_is_noop_when_occurrence_is_not_pending(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        execution_module,
+        "dispatch",
+        lambda *args, **kwargs: calls.append("dispatch"),
+    )
+    execution_module._begin_inspection_if_pending(
+        object(),
+        type("Occurrence", (), {"state": "inspecting", "id": "I1"})(),
+        correlation_id="c1",
+    )
+
+    assert calls == []
+
+
+def test_dispatch_outcome_is_noop_when_occurrence_is_not_inspecting(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        execution_module,
+        "dispatch",
+        lambda *args, **kwargs: calls.append("dispatch"),
+    )
+    execution_module._dispatch_outcome_if_inspecting(
+        object(),
+        type("Occurrence", (), {"state": "pending", "id": "I2"})(),
+        outcome="pass",
+        correlation_id="c2",
+    )
+
+    assert calls == []
 
 
 @pytest.mark.parametrize("value", [0.0, -1.0])
