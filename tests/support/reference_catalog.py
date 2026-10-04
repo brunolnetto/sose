@@ -402,12 +402,12 @@ REFERENCE_CATALOG = (
         evidence=_evidence(
             statecharts=("tests/test_hospitality_statecharts.py",),
             happy_path=("tests/test_hospitality_happy_path.py",),
-            sad_paths=("tests/test_hospitality_sad_paths.py",),
+            sad_paths=("tests/integration/sose/examples/hospitality/test_sad_paths.py",),
             restart_equivalence=("tests/test_hospitality_restart_equivalence.py",),
             scheduled_work=("tests/test_hospitality_restart_equivalence.py",),
-            illegal_prerequisites=("tests/test_hospitality_sad_paths.py",),
+            illegal_prerequisites=("tests/integration/sose/examples/hospitality/test_sad_paths.py",),
             immutable_occurrences=(
-                "tests/test_hospitality_sad_paths.py",
+                "tests/integration/sose/examples/hospitality/test_sad_paths.py",
                 "tests/test_hospitality_restart_equivalence.py",
             ),
         ),
