@@ -344,6 +344,32 @@ def test_create_hold_guard_edges_and_identity_drift():
         )
 
 
+def test_create_hold_returns_existing_reservation_for_identical_identity():
+    persistence, entities, engine, backend = _runtime()
+    arrival, departure = _stay(2)
+    first = create_hold(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=4,
+        arrival_at=arrival,
+        departure_at=departure,
+    )
+
+    second = create_hold(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=4,
+        arrival_at=arrival,
+        departure_at=departure,
+    )
+
+    assert second.id == first.id
+
+
 def test_confirmation_checkout_and_cancellation_guard_edges():
     persistence, entities, engine, backend = _runtime()
     arrival, departure = _stay(1)
@@ -408,4 +434,51 @@ def test_confirmation_checkout_and_cancellation_guard_edges():
             persistence,
             engine,
             reservation_id_value=held_reservation.id,
+        )
+
+
+def test_confirm_reservation_requires_held_booking_state():
+    persistence, entities, engine, backend = _runtime()
+    arrival, departure = _stay(1)
+    reservation = create_hold(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=6,
+        arrival_at=arrival,
+        departure_at=departure,
+    )
+    booking = persistence.entity("hospitality_room_booking", booking_id(reservation.id))
+    assert booking is not None
+    booking.state = "released"
+    with persistence.transaction() as uow:
+        uow.save_entity(booking)
+
+    with pytest.raises(RuntimeError, match="active held reservation and booking"):
+        confirm_reservation(
+            persistence,
+            engine,
+            reservation_id_value=reservation.id,
+        )
+
+
+def test_record_no_show_occurrence_requires_terminal_no_show_evidence():
+    persistence, entities, engine, backend = _runtime()
+    arrival, departure = _stay(1)
+    reservation = create_hold(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=7,
+        arrival_at=arrival,
+        departure_at=departure,
+    )
+
+    with pytest.raises(RuntimeError, match="terminal no-show evidence"):
+        record_no_show_occurrence(
+            persistence,
+            engine,
+            reservation_id_value=reservation.id,
         )

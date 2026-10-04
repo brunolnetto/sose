@@ -5,7 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from sose.examples.aviation import definition as aviation_definition
+from sose.examples.construction import definition as construction_definition
 from sose.examples.credit_loans import definition as credit_definition
+from sose.examples.record_to_report import definition as r2r_definition
 
 
 class _FakePersistence:
@@ -135,6 +137,38 @@ def test_aviation_reconcile_aog_branch_calls_part_issue_when_demand_missing(monk
     assert calls == ["issue"]
 
 
+def test_aviation_reconcile_aog_branch_returns_false_for_non_actionable_work_state():
+    flight_id = "F3"
+    work_id = aviation_definition.maintenance_work_order_id(flight_id)
+    demand_id = aviation_definition.part_demand_id(flight_id)
+    persistence = _FakePersistence(
+        {
+            ("aviation_maintenance_work_order", work_id): SimpleNamespace(
+                id=work_id,
+                state="queued",
+            ),
+            ("aviation_part_demand", demand_id): SimpleNamespace(
+                id=demand_id,
+                state="issued",
+            ),
+        }
+    )
+
+    handled = aviation_definition._reconcile_aog_branch(
+        persistence,
+        object(),
+        object(),
+        _config_with(
+            aviation_definition.definition.default_config(),
+            auto_seed_aog_part=False,
+        ),
+        SimpleNamespace(),
+        flight_id=flight_id,
+    )
+
+    assert handled is False
+
+
 @pytest.mark.parametrize(
     ("flight_state", "auto_land", "expected"),
     [
@@ -208,6 +242,103 @@ def test_aviation_reconcile_tick_raises_for_missing_persisted_flight(monkeypatch
             aviation_definition.definition.default_config(),
             entities,
         )
+
+
+def test_aviation_reconcile_tick_returns_after_aog_branch_handles_first_flight(monkeypatch):
+    entities = SimpleNamespace(leg1_id="L1", leg2_id="L2")
+    persistence = _FakePersistence(
+        {
+            ("aviation_flight", "L1"): _flight(flight_id="L1", state="ready"),
+            ("aviation_flight", "L2"): _flight(flight_id="L2", state="ready"),
+        }
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(aviation_definition, "schedule_departure", lambda *a, **k: None)
+    monkeypatch.setattr(
+        aviation_definition,
+        "_reconcile_aog_branch",
+        lambda *args, **kwargs: calls.append(kwargs["flight_id"]) or True,
+    )
+    monkeypatch.setattr(
+        aviation_definition,
+        "reconcile_departure",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("reconcile_departure should not run when AOG branch handled")
+        ),
+    )
+
+    aviation_definition._reconcile_tick(
+        persistence,
+        object(),
+        object(),
+        aviation_definition.definition.default_config(),
+        entities,
+    )
+
+    assert calls == ["L1"]
+
+
+def test_construction_reconcile_tick_routes_rework_cycle(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        construction_definition,
+        "activity",
+        lambda *args, **kwargs: SimpleNamespace(state="rework"),
+    )
+    monkeypatch.setattr(
+        construction_definition,
+        "request_execution_resources",
+        lambda *args, **kwargs: calls.append(kwargs["cycle"]),
+    )
+
+    construction_definition._reconcile_tick(
+        object(),
+        object(),
+        object(),
+        construction_definition.definition.default_config(),
+        SimpleNamespace(activity_id="A1"),
+    )
+
+    assert calls == ["rework-1"]
+
+
+def test_record_to_report_reconcile_tick_routes_unmatched_items_to_adjustment(monkeypatch):
+    entities = SimpleNamespace(
+        journal_id="J1",
+        reconciliation_id="R1",
+        close_task_id="C1",
+        period_id="P1",
+    )
+    persistence = _FakePersistence(
+        {
+            ("journal_entry", "J1"): SimpleNamespace(state="posted"),
+            ("reconciliation_item", "R1"): SimpleNamespace(state="unmatched"),
+            ("close_task", "C1"): SimpleNamespace(state="pending"),
+        }
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(
+        r2r_definition,
+        "post_adjustment",
+        lambda *args, **kwargs: calls.append("adjust"),
+    )
+    monkeypatch.setattr(
+        r2r_definition,
+        "schedule_close",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("schedule_close should not run for unmatched item")
+        ),
+    )
+
+    r2r_definition._reconcile_tick(
+        persistence,
+        object(),
+        object(),
+        r2r_definition.definition.default_config(),
+        entities,
+    )
+
+    assert calls == ["adjust"]
 
 
 def _installment(*, installment_id: str, state: str, amount: float, paid_amount: float):
@@ -284,6 +415,35 @@ def test_credit_process_due_installment_schedules_overdue_when_auto_pay_disabled
     assert calls == ["overdue"]
 
 
+def test_credit_process_due_installment_auto_pay_skips_when_remaining_is_zero(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        credit_definition,
+        "post_payment",
+        lambda *args, **kwargs: calls.append("pay"),
+    )
+    config = _config_with(
+        credit_definition.definition.default_config(),
+        auto_pay_due_installments=True,
+    )
+
+    handled = credit_definition._process_due_installment(
+        object(),
+        object(),
+        object(),
+        config,
+        installment=_installment(
+            installment_id="I1",
+            state="due",
+            amount=100,
+            paid_amount=100,
+        ),
+    )
+
+    assert handled is True
+    assert calls == []
+
+
 def test_credit_process_overdue_installment_auto_pay_and_cure(monkeypatch):
     calls: list[str] = []
     monkeypatch.setattr(
@@ -321,6 +481,45 @@ def test_credit_process_overdue_installment_auto_pay_and_cure(monkeypatch):
 
     assert handled is True
     assert calls == ["collect", "pay", "cure"]
+
+
+def test_credit_process_overdue_installment_auto_pay_skips_payment_when_settled(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        credit_definition,
+        "reconcile_collection",
+        lambda *args, **kwargs: calls.append("collect"),
+    )
+    monkeypatch.setattr(
+        credit_definition,
+        "post_payment",
+        lambda *args, **kwargs: calls.append("pay"),
+    )
+    monkeypatch.setattr(
+        credit_definition,
+        "cure_delinquency",
+        lambda *args, **kwargs: calls.append("cure"),
+    )
+    config = _config_with(
+        credit_definition.definition.default_config(),
+        auto_pay_due_installments=True,
+    )
+
+    handled = credit_definition._process_overdue_installment(
+        object(),
+        object(),
+        object(),
+        config,
+        installment=_installment(
+            installment_id="I2",
+            state="overdue",
+            amount=80,
+            paid_amount=80,
+        ),
+    )
+
+    assert handled is True
+    assert calls == ["collect", "cure"]
 
 
 def test_credit_reconcile_application_state_submitted_and_rejected(monkeypatch):

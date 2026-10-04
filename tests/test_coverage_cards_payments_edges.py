@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from sose.backends.simpy import SimPyBackend
+from sose.examples.cards_payments import simulation as cards_simulation
 from sose.examples.cards_payments.scenarios import ORIGIN
 from sose.examples.cards_payments.simulation import (
     _payment,
@@ -16,6 +18,9 @@ from sose.examples.cards_payments.simulation import (
     reconcile_refund,
     reconcile_reversal,
     reconcile_settlement,
+    run_dispute_path,
+    run_refund_path,
+    run_retry_path,
     seed_reference,
     start_dispute,
 )
@@ -387,3 +392,126 @@ def test_dispute_reconciliation_waits_for_analyst_capacity():
         demand.request_id == f"dispute-analyst:{dispute.id}"
         for demand in persistence.resource_demands()
     )
+
+
+def test_start_dispute_raises_when_dispute_disappears_after_evidence_request(monkeypatch):
+    dispute = SimpleNamespace(id="D1", state="opened")
+    monkeypatch.setattr(cards_simulation, "ensure_dispute", lambda *args, **kwargs: dispute)
+    monkeypatch.setattr(cards_simulation, "_dispatch", lambda *args, **kwargs: None)
+    monkeypatch.setattr(cards_simulation, "_dispute", lambda persistence: None)
+
+    with pytest.raises(RuntimeError, match="dispute disappeared"):
+        start_dispute(
+            object(),
+            object(),
+            SimpleNamespace(now=ORIGIN),
+            entities=SimpleNamespace(),
+        )
+
+
+def test_reconcile_dispute_raises_when_dispute_disappears_before_chargeback(monkeypatch):
+    dispute = SimpleNamespace(id="D2", state="under_review")
+    states = iter([dispute, None])
+    monkeypatch.setattr(cards_simulation, "_dispute", lambda persistence: next(states))
+
+    engine = SimpleNamespace(
+        resources=SimpleNamespace(
+            ensure_requested=lambda *args, **kwargs: object(),
+            withdraw=lambda *args, **kwargs: None,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="dispute disappeared"):
+        reconcile_dispute(
+            object(),
+            engine,
+            SimpleNamespace(now=ORIGIN),
+        )
+
+
+def test_reconcile_dispute_raises_when_dispute_disappears_before_resolution(monkeypatch):
+    first = SimpleNamespace(id="D3", state="under_review")
+    second = SimpleNamespace(id="D3", state="under_review")
+    states = iter([first, second, None])
+    monkeypatch.setattr(cards_simulation, "_dispute", lambda persistence: next(states))
+    monkeypatch.setattr(cards_simulation, "_dispatch", lambda *args, **kwargs: None)
+
+    engine = SimpleNamespace(
+        resources=SimpleNamespace(
+            ensure_requested=lambda *args, **kwargs: object(),
+            withdraw=lambda *args, **kwargs: None,
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="dispute disappeared"):
+        reconcile_dispute(
+            object(),
+            engine,
+            SimpleNamespace(now=ORIGIN),
+        )
+
+
+def test_prepare_authorized_raises_when_authorization_capacity_is_unavailable(monkeypatch):
+    engine = SimpleNamespace(rebuild_backend=lambda backend: None)
+    monkeypatch.setattr(cards_simulation, "seed_reference", lambda persistence: SimpleNamespace())
+    monkeypatch.setattr(cards_simulation, "build_runtime", lambda persistence: (None, engine))
+    monkeypatch.setattr(cards_simulation, "reconcile_authorization", lambda *args, **kwargs: False)
+
+    with pytest.raises(RuntimeError, match="authorization capacity unavailable"):
+        cards_simulation._prepare_authorized(MemoryPersistence())
+
+
+def test_run_retry_path_raises_when_retry_is_not_scheduled(monkeypatch):
+    backend = SimpleNamespace(
+        now=ORIGIN,
+        run_until=lambda due_at: None,
+    )
+    monkeypatch.setattr(
+        cards_simulation,
+        "_prepare_authorized",
+        lambda persistence: (SimpleNamespace(), object(), backend),
+    )
+    monkeypatch.setattr(
+        cards_simulation,
+        "reconcile_capture_and_schedule_settlement",
+        lambda *args, **kwargs: ORIGIN,
+    )
+    monkeypatch.setattr(cards_simulation, "reconcile_settlement", lambda *args, **kwargs: None)
+
+    with pytest.raises(RuntimeError, match="settlement retry was not scheduled"):
+        run_retry_path()
+
+
+def test_run_refund_path_raises_when_refund_capacity_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        cards_simulation,
+        "run_happy_path",
+        lambda: (MemoryPersistence(), SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        cards_simulation,
+        "build_runtime",
+        lambda persistence, now, tick: (None, SimpleNamespace(rebuild_backend=lambda backend: None)),
+    )
+    monkeypatch.setattr(cards_simulation, "reconcile_refund", lambda *args, **kwargs: False)
+
+    with pytest.raises(RuntimeError, match="refund capacity unavailable"):
+        run_refund_path()
+
+
+def test_run_dispute_path_raises_when_dispute_analyst_is_unavailable(monkeypatch):
+    monkeypatch.setattr(
+        cards_simulation,
+        "run_happy_path",
+        lambda: (MemoryPersistence(), SimpleNamespace()),
+    )
+    monkeypatch.setattr(
+        cards_simulation,
+        "build_runtime",
+        lambda persistence, now, tick: (None, SimpleNamespace(rebuild_backend=lambda backend: None)),
+    )
+    monkeypatch.setattr(cards_simulation, "start_dispute", lambda *args, **kwargs: ORIGIN)
+    monkeypatch.setattr(cards_simulation, "reconcile_dispute", lambda *args, **kwargs: False)
+
+    with pytest.raises(RuntimeError, match="dispute analyst unavailable"):
+        run_dispute_path()

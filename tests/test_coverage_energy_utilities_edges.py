@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from datetime import timedelta
+from types import SimpleNamespace
 
 import pytest
 
 from sose.backends.simpy import SimPyBackend
+from sose.examples.energy_utilities import simulation as energy_simulation
 from sose.examples.energy_utilities.scenarios import ORIGIN
 from sose.examples.energy_utilities.simulation import (
     EnergyEntities,
@@ -19,6 +21,7 @@ from sose.examples.energy_utilities.simulation import (
     record_meter_reading,
     report_outage,
     restore_outage,
+    run_happy_path,
     schedule_demand_response,
     seed_reference,
 )
@@ -166,6 +169,47 @@ def test_correction_requires_same_interval():
         )
 
 
+def test_correction_requires_superseded_reading_identifier():
+    persistence, entities, engine, _ = _runtime()
+
+    with pytest.raises(ValueError, match="requires supersedes_reading_id"):
+        record_meter_reading(
+            persistence,
+            engine,
+            entities=entities,
+            interval_end=ORIGIN,
+            quantity_kwh=2.0,
+            quality="corrected",
+            correction_ordinal=1,
+        )
+
+
+def test_correction_requires_committed_prior_reading():
+    persistence, entities, engine, _ = _runtime()
+    base = record_meter_reading(
+        persistence,
+        engine,
+        entities=entities,
+        interval_end=ORIGIN,
+        quantity_kwh=1.0,
+    )
+    assert base is not None
+    base.state = "captured"
+    _save(persistence, base)
+
+    with pytest.raises(RuntimeError, match="requires committed prior reading"):
+        record_meter_reading(
+            persistence,
+            engine,
+            entities=entities,
+            interval_end=ORIGIN,
+            quantity_kwh=2.0,
+            quality="corrected",
+            correction_ordinal=1,
+            supersedes_reading_id=base.id,
+        )
+
+
 def test_outage_requires_nonempty_incident_key():
     persistence, entities, engine, _ = _runtime()
 
@@ -201,6 +245,27 @@ def test_restored_outage_replay_is_idempotent():
         incident_key="outage-a",
     )
     assert tuple(persistence.events()) == events_before
+
+
+def test_restore_outage_returns_false_when_outage_state_does_not_advance(monkeypatch):
+    persistence, entities, engine, _ = _runtime()
+    report_outage(
+        persistence,
+        engine,
+        entities=entities,
+        incident_key="outage-stalled",
+    )
+    monkeypatch.setattr(energy_simulation, "_dispatch", lambda *args, **kwargs: None)
+
+    assert (
+        restore_outage(
+            persistence,
+            engine,
+            entities=entities,
+            incident_key="outage-stalled",
+        )
+        is False
+    )
 
 
 @pytest.mark.parametrize(
@@ -281,6 +346,33 @@ def test_cancelled_demand_response_is_idempotent():
     assert tuple(persistence.events()) == events_before
 
 
+def test_cancel_demand_response_skips_terminal_participation_states(monkeypatch):
+    persistence, entities, engine, backend = _runtime()
+    event, participation, _, _ = schedule_demand_response(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        event_key="terminal-participation",
+    )
+    participation.state = "opted_out"
+    _save(persistence, participation)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        energy_simulation,
+        "_dispatch",
+        lambda _engine, entity, event_name, **kwargs: calls.append(event_name),
+    )
+
+    assert cancel_demand_response(
+        persistence,
+        engine,
+        entities=entities,
+        event_key="terminal-participation",
+    )
+    assert calls == ["cancel"]
+
+
 def test_completed_demand_response_cannot_be_cancelled():
     persistence, entities, engine, backend = _runtime()
     event, _, _, _ = schedule_demand_response(
@@ -299,6 +391,34 @@ def test_completed_demand_response_cannot_be_cancelled():
         entities=entities,
         event_key="completed",
     ) is False
+
+
+def test_run_happy_path_raises_when_metering_ingestion_is_unavailable(monkeypatch):
+    monkeypatch.setattr(energy_simulation, "record_meter_reading", lambda *args, **kwargs: None)
+
+    with pytest.raises(RuntimeError, match="meter reading ingestion unavailable"):
+        run_happy_path()
+
+
+def test_run_happy_path_raises_when_demand_response_cannot_begin(monkeypatch):
+    backend = SimpleNamespace(run_until=lambda due_at: None)
+    monkeypatch.setattr(energy_simulation, "seed_reference", lambda persistence: SimpleNamespace())
+    monkeypatch.setattr(
+        energy_simulation,
+        "build_runtime",
+        lambda persistence: (None, SimpleNamespace(rebuild_backend=lambda active_backend: None)),
+    )
+    monkeypatch.setattr(energy_simulation, "SimPyBackend", lambda origin: backend)
+    monkeypatch.setattr(energy_simulation, "record_meter_reading", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        energy_simulation,
+        "schedule_demand_response",
+        lambda *args, **kwargs: (None, None, ORIGIN, ORIGIN),
+    )
+    monkeypatch.setattr(energy_simulation, "reconcile_demand_response", lambda *args, **kwargs: False)
+
+    with pytest.raises(RuntimeError, match="participation failed to begin"):
+        run_happy_path()
 
 
 def test_opt_out_is_idempotent_after_terminal_participation():
