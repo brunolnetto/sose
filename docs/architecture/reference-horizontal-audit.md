@@ -70,7 +70,7 @@ stale.
 
 ## Executable anti-drift gate
 
-`tests/test_reference_horizontal_audit.py` walks every Python module belonging
+`tests/e2e/sose/testing/reference/test_reference_horizontal_audit.py` walks every Python module belonging
 to every contract in `REFERENCE_CATALOG` using the AST.
 
 Reference domains may not:

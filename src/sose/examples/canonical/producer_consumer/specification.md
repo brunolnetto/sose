@@ -24,4 +24,4 @@ Items enter the bounded buffer, consumers obtain selections, and the case comple
 When producers exceed immediate buffer capacity, excess work remains governed by Store backpressure rather than bypassing capacity.
 
 ## Evidence
-`tests/test_canonical_conformance.py` proves restart equivalence. Catalog-wide dual-store and recurring-job tests also execute this example.
+`tests/unit/sose/examples/canonical/test_canonical_conformance.py` proves restart equivalence. Catalog-wide dual-store and recurring-job tests also execute this example.

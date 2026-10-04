@@ -36,7 +36,7 @@ This is a durable semantic gap, not presentation metadata: after restart, a
 numeric amount without its currency cannot be interpreted independently.
 
 This audit fixes those lineages and adds executable regression coverage in
-`tests/test_reference_money_semantics.py`.
+`tests/unit/sose/testing/reference/test_reference_money_semantics.py`.
 
 ### 2. Numeric representation is still inconsistent
 

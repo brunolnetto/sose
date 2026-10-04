@@ -24,4 +24,4 @@ First operations contend for machines and reservations are progressively release
 The current implementation models only `op-0` for each job. Multi-operation routing and precedence constraints are not yet implemented, so this example must not be used as evidence of full job-shop precedence correctness.
 
 ## Evidence
-Restart equivalence is in `tests/test_canonical_conformance.py`; generic Resource conformance covers exclusive machine ownership.
+Restart equivalence is in `tests/unit/sose/examples/canonical/test_canonical_conformance.py`; generic Resource conformance covers exclusive machine ownership.

@@ -25,4 +25,4 @@ Admitted customers queue, acquire service capacity, release it, and the case com
 Arrivals beyond service plus waiting capacity are deliberately not admitted, representing abandonment.
 
 ## Evidence
-Restart equivalence is in `tests/test_canonical_conformance.py`; generic resource/restart gates exercise lease reconstruction.
+Restart equivalence is in `tests/unit/sose/examples/canonical/test_canonical_conformance.py`; generic resource/restart gates exercise lease reconstruction.

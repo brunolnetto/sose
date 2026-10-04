@@ -13,7 +13,7 @@ domain semantics
     ↓ implemented by
 src/sose/examples/<domain>/
     ↓ verified by
-tests/test_<domain>_*.py
+tests/<layer>/sose/examples/<domain>/test_<domain>_*.py
 ```
 
 ## 1. Purpose and scope

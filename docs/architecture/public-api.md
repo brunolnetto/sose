@@ -53,7 +53,7 @@ Before 1.0, public symbols may still evolve at a minor release, but:
 2. the public import must not disappear silently;
 3. patch releases should preserve the public contract.
 
-`tests/test_public_api_contract.py` is the executable anti-drift gate.
+`tests/unit/sose/cli/test_public_api_contract.py` is the executable anti-drift gate.
 
 ## Advanced supported surfaces
 

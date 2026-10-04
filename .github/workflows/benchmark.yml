@@ -12,7 +12,7 @@ on:
     paths:
       - "benchmarks/persistence_scaling.py"
       - "src/sose/persistence/**"
-      - "tests/test_uow_*.py"
+      - "tests/unit/sose/domain/test_uow_*.py"
       - ".github/workflows/benchmark.yml"
   schedule:
     - cron: "17 5 * * 1"

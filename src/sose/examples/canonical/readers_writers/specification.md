@@ -24,4 +24,4 @@ Readers can occupy reader slots concurrently; writer requests serialize through 
 The current canonical demonstrates durable shared-read capacity and exclusive writer gating, but it is not yet a formal proof of starvation freedom or a complete readers-preference/writers-preference algorithm.
 
 ## Evidence
-Capacity invariants are asserted in `tests/test_canonical_examples.py`; restart equivalence is in `tests/test_canonical_conformance.py`.
+Capacity invariants are asserted in `tests/unit/sose/examples/canonical/test_canonical_examples.py`; restart equivalence is in `tests/unit/sose/examples/canonical/test_canonical_conformance.py`.
