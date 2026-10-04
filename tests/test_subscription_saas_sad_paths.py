@@ -4,10 +4,12 @@ import pytest
 
 from sose.backends.simpy import SimPyBackend
 from sose.examples.subscription_saas.scenarios import ORIGIN
+from sose.examples.subscription_saas import simulation as saas_simulation
 from sose.examples.subscription_saas.simulation import (
     build_runtime,
     request_cancellation,
     request_plan_change,
+    run_happy_path,
     seed_reference,
     withdraw_cancellation,
 )
@@ -136,3 +138,136 @@ def test_no_new_plan_change_after_cancellation_request():
             target_plan="pro",
             effective_at=ORIGIN + timedelta(days=5),
         )
+
+
+def test_plan_change_ordinal_must_be_positive():
+    persistence, entities, engine, backend = _runtime()
+    with pytest.raises(ValueError, match="ordinal must be positive"):
+        request_plan_change(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            ordinal=0,
+            target_plan="pro",
+            effective_at=ORIGIN + timedelta(days=5),
+        )
+
+
+def test_existing_change_identity_is_idempotent_and_rejects_drift():
+    persistence, entities, engine, backend = _runtime()
+    original = request_plan_change(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=1,
+        target_plan="pro",
+        effective_at=ORIGIN + timedelta(days=5),
+    )
+    replay = request_plan_change(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=1,
+        target_plan="pro",
+        effective_at=ORIGIN + timedelta(days=5),
+    )
+    assert replay.id == original.id
+
+    with pytest.raises(ValueError, match="identity already exists with different intent"):
+        request_plan_change(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            ordinal=1,
+            target_plan="enterprise",
+            effective_at=ORIGIN + timedelta(days=5),
+        )
+
+
+def test_reconcile_plan_change_state_guards_and_missing_entity_error():
+    persistence, entities, engine, backend = _runtime()
+    change = request_plan_change(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=1,
+        target_plan="pro",
+        effective_at=ORIGIN + timedelta(days=5),
+    )
+    assert saas_simulation.reconcile_plan_change(
+        persistence,
+        engine,
+        entities=entities,
+        change_id=change.id,
+    ) is None
+
+    cancelled = persistence.entity("saas_change_request", change.id)
+    assert cancelled is not None
+    cancelled.state = "cancelled"
+    with persistence.transaction() as uow:
+        uow.save_entity(cancelled)
+    with pytest.raises(RuntimeError, match="only an applied change"):
+        saas_simulation.reconcile_plan_change(
+            persistence,
+            engine,
+            entities=entities,
+            change_id=change.id,
+        )
+
+    with pytest.raises(RuntimeError, match="saas_change_request was not persisted"):
+        saas_simulation._entity(persistence, "saas_change_request", "missing")
+
+
+def test_request_and_withdraw_cancellation_terminal_and_guard_paths():
+    persistence, entities, engine, _ = _runtime()
+    subscription = persistence.entity("saas_subscription", entities.subscription_id)
+    assert subscription is not None
+
+    with pytest.raises(RuntimeError, match="withdrawal requires pending cancellation"):
+        withdraw_cancellation(persistence, engine, entities=entities)
+
+    subscription.state = "ended"
+    with persistence.transaction() as uow:
+        uow.save_entity(subscription)
+    term_end = request_cancellation(persistence, engine, entities=entities)
+    assert term_end.isoformat() == subscription.attributes["term_end_at"]
+
+    subscription.state = "draft"
+    with persistence.transaction() as uow:
+        uow.save_entity(subscription)
+    with pytest.raises(RuntimeError, match="cancellation requires active subscription"):
+        request_cancellation(persistence, engine, entities=entities)
+
+
+def test_request_cancellation_skips_non_scheduled_change_and_keeps_single_boundaries():
+    persistence, entities, engine, backend = _runtime()
+    change = request_plan_change(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=1,
+        target_plan="pro",
+        effective_at=ORIGIN + timedelta(days=5),
+    )
+    staged = persistence.entity("saas_change_request", change.id)
+    assert staged is not None
+    staged.state = "applied"
+    with persistence.transaction() as uow:
+        uow.save_entity(staged)
+
+    request_cancellation(persistence, engine, entities=entities)
+    first_len = len(persistence.scheduled_work())
+    request_cancellation(persistence, engine, entities=entities)
+    assert len(persistence.scheduled_work()) == first_len
+
+
+def test_run_happy_path_raises_when_plan_change_not_reconciled(monkeypatch):
+    monkeypatch.setattr(saas_simulation, "reconcile_plan_change", lambda *args, **kwargs: None)
+    with pytest.raises(RuntimeError, match="did not become applicable"):
+        run_happy_path()

@@ -4,11 +4,13 @@ import pytest
 
 from sose.backends.simpy import SimPyBackend
 from sose.examples.hospitality.scenarios import ORIGIN
+from sose.examples.hospitality import simulation as hospitality_simulation
 from sose.examples.hospitality.simulation import (
     available_room_ids,
     booking_id,
     build_runtime,
     cancel_reservation,
+    check_out,
     check_in,
     confirm_reservation,
     create_hold,
@@ -258,4 +260,152 @@ def test_check_in_rejects_time_outside_reserved_interval():
             engine,
             reservation_id_value=reservation.id,
             at=arrival - timedelta(minutes=1),
+        )
+
+
+def test_hospitality_private_entity_and_interval_guards():
+    persistence, entities, _engine, _backend = _runtime()
+    with pytest.raises(RuntimeError, match="was not persisted"):
+        hospitality_simulation._entity(persistence, "hospitality_room_booking", "missing")
+
+    with pytest.raises(ValueError, match="departure must be after arrival"):
+        available_room_ids(
+            persistence,
+            entities=entities,
+            arrival_at=ORIGIN + timedelta(days=2),
+            departure_at=ORIGIN + timedelta(days=2),
+        )
+
+
+def test_create_hold_guard_edges_and_identity_drift():
+    persistence, entities, engine, backend = _runtime()
+    arrival, departure = _stay(1)
+
+    with pytest.raises(ValueError, match="ordinal must be positive"):
+        create_hold(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            ordinal=0,
+            arrival_at=arrival,
+            departure_at=departure,
+        )
+    with pytest.raises(ValueError, match="departure must be after arrival"):
+        create_hold(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            ordinal=1,
+            arrival_at=arrival,
+            departure_at=arrival,
+        )
+    with pytest.raises(ValueError, match="arrival must be in the future"):
+        create_hold(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            ordinal=1,
+            arrival_at=backend.now,
+            departure_at=backend.now + timedelta(days=1),
+        )
+    with pytest.raises(ValueError, match="hold duration must be positive"):
+        create_hold(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            ordinal=1,
+            arrival_at=arrival,
+            departure_at=departure,
+            hold_for=timedelta(0),
+        )
+
+    create_hold(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=2,
+        arrival_at=arrival,
+        departure_at=departure,
+    )
+    with pytest.raises(ValueError, match="identity already exists with different stay"):
+        create_hold(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            ordinal=2,
+            arrival_at=arrival + timedelta(hours=1),
+            departure_at=departure + timedelta(hours=1),
+        )
+
+
+def test_confirmation_checkout_and_cancellation_guard_edges():
+    persistence, entities, engine, backend = _runtime()
+    arrival, departure = _stay(1)
+    reservation = create_hold(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=1,
+        arrival_at=arrival,
+        departure_at=departure,
+    )
+
+    confirmed = confirm_reservation(
+        persistence,
+        engine,
+        reservation_id_value=reservation.id,
+    )
+    assert confirm_reservation(
+        persistence,
+        engine,
+        reservation_id_value=reservation.id,
+    ).id == confirmed.id
+
+    with pytest.raises(RuntimeError, match="check-out requires occupied room booking"):
+        check_out(
+            persistence,
+            engine,
+            reservation_id_value=reservation.id,
+        )
+
+    check_in(
+        persistence,
+        engine,
+        reservation_id_value=reservation.id,
+        at=arrival,
+    )
+    with pytest.raises(ValueError, match="cannot occur before arrival"):
+        check_out(
+            persistence,
+            engine,
+            reservation_id_value=reservation.id,
+            at=arrival - timedelta(minutes=1),
+        )
+
+    held_reservation = create_hold(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+        ordinal=2,
+        arrival_at=arrival + timedelta(days=2),
+        departure_at=departure + timedelta(days=2),
+    )
+    cancel_reservation(
+        persistence,
+        engine,
+        reservation_id_value=held_reservation.id,
+    )
+    with pytest.raises(RuntimeError, match="requires held or confirmed reservation"):
+        cancel_reservation(
+            persistence,
+            engine,
+            reservation_id_value=held_reservation.id,
         )

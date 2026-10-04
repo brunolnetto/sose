@@ -1,6 +1,7 @@
 import pytest
 
 from sose.backends.simpy import SimPyBackend
+from sose.examples.order_to_cash import simulation as o2c_simulation
 from sose.examples.order_to_cash.simulation import (
     ORIGIN,
     build_runtime,
@@ -323,3 +324,98 @@ def test_illegal_cross_entity_transitions_are_rejected():
             engine,
             entities=entities,
         )
+
+
+def test_o2c_seed_and_order_guard_edges():
+    persistence = MemoryPersistence()
+    with pytest.raises(ValueError, match="amount must be positive"):
+        o2c_simulation.seed_reference(persistence, amount=0.0)
+    with pytest.raises(RuntimeError, match="sales order was not persisted"):
+        o2c_simulation._order(persistence, "missing")
+
+
+def test_o2c_due_overdue_idempotency_and_missing_receivable_guards():
+    persistence = MemoryPersistence()
+    entities, engine, backend, receivable = _prepare_invoiced(persistence)
+
+    first_due = schedule_due(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    assert schedule_due(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ) == first_due
+    backend.run_until(first_due)
+
+    first_overdue = schedule_overdue(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    assert schedule_overdue(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ) == first_overdue
+
+    with pytest.raises(RuntimeError, match="receivable was not persisted"):
+        schedule_overdue(
+            MemoryPersistence(),
+            engine,
+            backend,
+            entities=entities,
+        )
+
+    current = persistence.entity("receivable", receivable.id)
+    assert current is not None
+    current.state = "due"
+    with persistence.transaction() as uow:
+        uow.save_entity(current)
+    assert schedule_due(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ) == backend.now
+
+
+def test_o2c_collect_receivable_guard_edges():
+    persistence = MemoryPersistence()
+    entities, engine, backend, _receivable = _prepare_invoiced(persistence)
+
+    assert collect_receivable(
+        MemoryPersistence(),
+        engine,
+        entities=entities,
+    ) is False
+
+    assert collect_receivable(
+        persistence,
+        engine,
+        entities=entities,
+    ) is False
+
+    due_at = schedule_due(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    )
+    backend.run_until(due_at)
+    assert collect_receivable(
+        persistence,
+        engine,
+        entities=entities,
+    ) is True
+    assert collect_receivable(
+        persistence,
+        engine,
+        entities=entities,
+    ) is True
