@@ -408,3 +408,106 @@ def test_credit_reconcile_application_state_returns_existing_loan_when_not_handl
 
     assert result_loan is loan
     assert handled is False
+
+
+def test_credit_process_overdue_installment_auto_pay_disabled_short_circuits(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        credit_definition,
+        "reconcile_collection",
+        lambda *args, **kwargs: calls.append("collect"),
+    )
+    monkeypatch.setattr(
+        credit_definition,
+        "post_payment",
+        lambda *args, **kwargs: calls.append("pay"),
+    )
+    monkeypatch.setattr(
+        credit_definition,
+        "cure_delinquency",
+        lambda *args, **kwargs: calls.append("cure"),
+    )
+    config = _config_with(
+        credit_definition.definition.default_config(),
+        auto_pay_due_installments=False,
+    )
+
+    handled = credit_definition._process_overdue_installment(
+        object(),
+        object(),
+        object(),
+        config,
+        installment=_installment(
+            installment_id="I3",
+            state="overdue",
+            amount=50,
+            paid_amount=0,
+        ),
+    )
+
+    assert handled is True
+    assert calls == ["collect"]
+
+
+def test_credit_reconcile_installments_skips_missing_and_returns_on_overdue(monkeypatch):
+    calls: list[str] = []
+    monkeypatch.setattr(
+        credit_definition,
+        "_process_due_installment",
+        lambda *args, **kwargs: False,
+    )
+    monkeypatch.setattr(
+        credit_definition,
+        "_process_overdue_installment",
+        lambda *args, **kwargs: calls.append("overdue") or True,
+    )
+    loan = SimpleNamespace(id="L1", attributes={"installment_count": 2})
+    present = _installment(
+        installment_id=credit_definition.installment_id("L1", 2),
+        state="overdue",
+        amount=10,
+        paid_amount=0,
+    )
+    persistence = _FakePersistence(
+        {
+            ("loan_installment", credit_definition.installment_id("L1", 1)): None,
+            ("loan_installment", credit_definition.installment_id("L1", 2)): present,
+        }
+    )
+
+    credit_definition._reconcile_installments(
+        persistence,
+        object(),
+        object(),
+        credit_definition.definition.default_config(),
+        loan=loan,
+    )
+    assert calls == ["overdue"]
+
+
+def test_credit_reconcile_tick_returns_when_no_loan_is_available(monkeypatch):
+    monkeypatch.setattr(
+        credit_definition,
+        "_application_or_error",
+        lambda persistence, entities: SimpleNamespace(id="A1"),
+    )
+    monkeypatch.setattr(
+        credit_definition,
+        "_reconcile_application_state",
+        lambda *args, **kwargs: (None, False),
+    )
+    monkeypatch.setattr(
+        credit_definition,
+        "_reconcile_installments",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("installment reconciliation should not run without loan")
+        ),
+    )
+
+    credit_definition._reconcile_tick(
+        object(),
+        object(),
+        object(),
+        credit_definition.definition.default_config(),
+        SimpleNamespace(application_id="A1"),
+    )

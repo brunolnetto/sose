@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from sose.backends.simpy import SimPyBackend
+from sose.examples.hospitals import procedures as hospital_procedures
 from sose.examples.hospitals.patient_flow import (
     claim_next_ward_admission,
     triage_and_queue,
@@ -364,3 +367,107 @@ def test_scenario_emergency_active_commits_and_interrupts(monkeypatch):
     assert engine.preemptive_resources.reservation_for(
         emergency_request_id(normal.id)
     ) is not None
+
+
+def test_dispatch_emergency_start_if_waiting_guard_and_happy_paths():
+    persistence, entities, engine, backend = _treatment_ready()
+    assert hospital_procedures._dispatch_emergency_start_if_waiting(
+        persistence,
+        engine,
+        emergency_id="missing",
+        normal_id=entities.treatment_episode_id,
+    ) is False
+
+    emergency = ensure_emergency_episode(
+        persistence,
+        engine,
+        normal_episode_id=entities.treatment_episode_id,
+    )
+    queue_treatment_episode(
+        persistence,
+        engine,
+        episode_id=emergency.id,
+    )
+    engine.preemptive_resources.ensure_requested(
+        backend,
+        resource_name="procedure_suite",
+        request_id=emergency_request_id(entities.treatment_episode_id),
+        requested_at=backend.now,
+        priority=1,
+        preempt=True,
+    )
+    assert hospital_procedures._dispatch_emergency_start_if_waiting(
+        persistence,
+        engine,
+        emergency_id=emergency.id,
+        normal_id=entities.treatment_episode_id,
+    ) is True
+
+
+def test_ensure_emergency_episode_ready_returns_existing_non_planned():
+    persistence, entities, engine, _ = _treatment_ready()
+    emergency = ensure_emergency_episode(
+        persistence,
+        engine,
+        normal_episode_id=entities.treatment_episode_id,
+    )
+    queue_treatment_episode(
+        persistence,
+        engine,
+        episode_id=emergency.id,
+    )
+    ready = hospital_procedures._ensure_emergency_episode_ready(
+        persistence,
+        engine,
+        normal_episode_id=entities.treatment_episode_id,
+    )
+    assert ready.state == "waiting_capacity"
+
+
+def test_commit_preemption_result_only_and_failed_emergency_reservation_paths(monkeypatch):
+    persistence, entities, engine, backend = _treatment_ready()
+    normal = persistence.entity(
+        "hospital_treatment_episode",
+        entities.treatment_episode_id,
+    )
+    assert normal is not None
+    normal.state = "in_progress"
+    _save(persistence, normal)
+
+    calls: list[str] = []
+    monkeypatch.setattr(
+        hospital_procedures,
+        "preemption_result",
+        lambda *_args, **_kwargs: object(),
+    )
+    monkeypatch.setattr(
+        hospital_procedures,
+        "_dispatch_emergency_start_if_waiting",
+        lambda *args, **kwargs: calls.append("dispatch") or True,
+    )
+    assert commit_emergency_preemption(
+        persistence,
+        engine,
+        backend,
+        normal_episode_id=normal.id,
+    ) is True
+    assert calls == ["dispatch"]
+
+    persistence2, entities2, engine2, backend2 = _normal_in_progress()
+    monkeypatch.setattr(
+        hospital_procedures,
+        "_ensure_emergency_episode_ready",
+        lambda *args, **kwargs: SimpleNamespace(id="E1"),
+    )
+    monkeypatch.setattr(
+        hospital_procedures,
+        "preemption_result",
+        lambda *_args, **_kwargs: object(),
+    )
+    engine2.preemptive_resources.ensure_requested = lambda *args, **kwargs: None
+    assert commit_emergency_preemption(
+        persistence2,
+        engine2,
+        backend2,
+        normal_episode_id=entities2.treatment_episode_id,
+    ) is False
