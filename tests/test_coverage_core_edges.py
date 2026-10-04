@@ -55,6 +55,7 @@ def test_codec_round_trips_all_supported_semantic_types(tmp_path):
         "bytes": b"\x00\xff",
         "path": tmp_path / "state.json",
         "enum": DomainApplyResult.APPLIED,
+        "custom_enum": SampleEnum.FIRST,
         "dataclass": record,
         "tuple": (1, "two"),
         "list": [1, 2],

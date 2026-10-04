@@ -244,6 +244,19 @@ def test_test_file_has_test_rejects_invalid_utf8_and_syntax(tmp_path):
     assert _test_file_has_test(broken) is False
 
 
+def test_test_file_has_test_accepts_test_class_methods(tmp_path):
+    case_file = tmp_path / "tests" / "test_class_case.py"
+    case_file.parent.mkdir(parents=True)
+    case_file.write_text(
+        "class TestSmoke:\n"
+        "    async def test_async_path(self):\n"
+        "        return None\n",
+        encoding="utf-8",
+    )
+
+    assert _test_file_has_test(case_file) is True
+
+
 def test_contract_reports_undeclared_and_missing_evidence(tmp_path):
     evidence = tmp_path / "tests" / "test_real.py"
     evidence.parent.mkdir(parents=True)

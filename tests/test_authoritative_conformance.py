@@ -72,6 +72,18 @@ def test_suite_refuses_to_issue_authoritative_qualification_for_partial_evidence
         suite.qualify(suite.run())
 
 
+def test_qualification_failure_message_includes_failed_checks():
+    suite = AuthoritativePersistenceConformanceSuite(
+        Harness(failing={"schema_migration"})
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match="failed=schema_migration",
+    ):
+        suite.qualify(suite.run())
+
+
 def test_qualification_uses_harness_concurrency_envelope():
     harness = Harness()
     result = AuthoritativePersistenceConformanceSuite(harness).run()

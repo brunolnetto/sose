@@ -1,4 +1,5 @@
 from datetime import datetime, timedelta, timezone
+from contextlib import contextmanager
 
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
@@ -415,3 +416,38 @@ def test_backend_callback_after_schedule_cancellation_is_stale_and_harmless():
     stored = persistence.entity("work_order", work_order.id)
     assert stored is not None and stored.state == "planned"
     assert persistence.events() == ()
+
+
+def test_cancel_returns_false_when_work_changes_mid_transaction():
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release",
+        target=work_order,
+        due_at=now + timedelta(hours=2),
+        key=("cancel-mismatch", work_order.id),
+    )
+    scheduled = engine.scheduler.schedule(command)
+
+    class _MismatchPersistence(MemoryPersistence):
+        @contextmanager
+        def transaction(self):
+            with super().transaction() as uow:
+                class _Proxy:
+                    def __getattr__(self, name):
+                        return getattr(uow, name)
+
+                    def get_scheduled_work(self, _work_id):
+                        return None
+
+                yield _Proxy()
+
+    mismatch = _MismatchPersistence()
+    with mismatch.transaction() as uow:
+        uow.save_command(command)
+        uow.save_scheduled_work(scheduled)
+        uow.save_entity(work_order)
+
+    scheduler = DurableScheduler(mismatch)
+    assert scheduler.cancel(scheduled.work_id) is False
+    assert mismatch.command(command.command_id) == command
+    assert mismatch.scheduled_work() == (scheduled,)

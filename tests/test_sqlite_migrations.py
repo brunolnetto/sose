@@ -9,6 +9,9 @@ from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.sqlite_migrations import (
     CURRENT_CODEC_VERSION,
     CURRENT_SCHEMA_VERSION,
+    MIGRATIONS,
+    ensure_schema,
+    read_schema_info,
 )
 
 
@@ -147,3 +150,46 @@ def test_future_codec_is_rejected_without_interpreting_payload(tmp_path):
 
     with pytest.raises(RuntimeError, match="codec is newer"):
         SQLitePersistence(path)
+
+
+def test_missing_migration_path_is_rejected(monkeypatch):
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        """
+        CREATE TABLE sose_state (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            schema_version INTEGER NOT NULL,
+            codec_version INTEGER NOT NULL,
+            payload TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "INSERT INTO sose_state(singleton, schema_version, codec_version, payload) "
+        "VALUES (1, 1, 1, ?)",
+        (dumps(_State()),),
+    )
+    monkeypatch.setitem(MIGRATIONS, 1, None)
+    with pytest.raises(RuntimeError, match="no SQLitePersistence migration path"):
+        ensure_schema(connection)
+    connection.close()
+
+
+def test_read_schema_info_defaults_when_state_row_is_absent():
+    connection = sqlite3.connect(":memory:")
+    connection.execute(
+        """
+        CREATE TABLE sose_state (
+            singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+            schema_version INTEGER NOT NULL,
+            codec_version INTEGER NOT NULL,
+            payload TEXT NOT NULL
+        )
+        """
+    )
+
+    info = read_schema_info(connection)
+
+    assert info.schema_version == CURRENT_SCHEMA_VERSION
+    assert info.codec_version == CURRENT_CODEC_VERSION
+    connection.close()
