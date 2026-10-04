@@ -161,23 +161,64 @@ def _finish_after_takeover(
     return snapshot
 
 
-@pytest.mark.skipif(os.name != "posix", reason="SIGKILL requires POSIX")
-@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
-@pytest.mark.parametrize("name", CANONICALS)
-def test_dead_worker_is_fenced_out_and_successor_recovers(tmp_path, backend, name):
-    if backend == "postgres" and not DSN:
-        pytest.skip("SOSE_TEST_POSTGRES_DSN is required")
+@pytest.fixture(scope="module")
+def _control_cache(tmp_path_factory):
+    return {
+        "root": tmp_path_factory.mktemp("fencing-control-cache"),
+        "snapshots": {},
+    }
 
-    definition = builtin_catalog().get(name)
-    control_path = tmp_path / name / backend / "control.sqlite3"
-    data_path = tmp_path / name / backend / "takeover.sqlite3"
-    control_namespace = f"fc_{uuid4().hex[:20]}" if backend == "postgres" else None
-    namespace = f"ft_{uuid4().hex[:20]}" if backend == "postgres" else None
-    expected = _control(
+
+def _cached_control_snapshot(
+    definition,
+    *,
+    backend: str,
+    name: str,
+    control_cache,
+):
+    snapshots = control_cache["snapshots"]
+    key = (backend, name)
+    cached = snapshots.get(key)
+    if cached is not None:
+        return cached
+
+    root = control_cache["root"]
+    control_path = root / f"{name}-{backend}-control.sqlite3"
+    control_namespace = (
+        f"fc_{uuid4().hex[:20]}"
+        if backend == "postgres"
+        else None
+    )
+    snapshot = _control(
         definition,
         backend,
         path=control_path if backend == "sqlite" else None,
         namespace=control_namespace,
+    )
+    snapshots[key] = snapshot
+    return snapshot
+
+
+@pytest.mark.skipif(os.name != "posix", reason="SIGKILL requires POSIX")
+@pytest.mark.parametrize("backend", ["sqlite", "postgres"])
+@pytest.mark.parametrize("name", CANONICALS)
+def test_dead_worker_is_fenced_out_and_successor_recovers(
+    tmp_path,
+    backend,
+    name,
+    _control_cache,
+):
+    if backend == "postgres" and not DSN:
+        pytest.skip("SOSE_TEST_POSTGRES_DSN is required")
+
+    definition = builtin_catalog().get(name)
+    data_path = tmp_path / name / backend / "takeover.sqlite3"
+    namespace = f"ft_{uuid4().hex[:20]}" if backend == "postgres" else None
+    expected = _cached_control_snapshot(
+        definition,
+        backend=backend,
+        name=name,
+        control_cache=_control_cache,
     )
 
     marker = tmp_path / name / backend / "worker-a-claimed"
@@ -222,21 +263,22 @@ def test_dead_worker_is_fenced_out_and_successor_recovers(tmp_path, backend, nam
 @pytest.mark.parametrize("backend", ["sqlite", "postgres"])
 @pytest.mark.parametrize("name", CANONICALS)
 def test_takeover_waits_for_open_fenced_transaction_then_recovers(
-    tmp_path, backend, name
+    tmp_path,
+    backend,
+    name,
+    _control_cache,
 ):
     if backend == "postgres" and not DSN:
         pytest.skip("SOSE_TEST_POSTGRES_DSN is required")
 
     definition = builtin_catalog().get(name)
-    control_path = tmp_path / name / backend / "open-tx-control.sqlite3"
     data_path = tmp_path / name / backend / "open-tx.sqlite3"
-    control_namespace = f"oc_{uuid4().hex[:20]}" if backend == "postgres" else None
     namespace = f"ot_{uuid4().hex[:20]}" if backend == "postgres" else None
-    expected = _control(
+    expected = _cached_control_snapshot(
         definition,
-        backend,
-        path=control_path if backend == "sqlite" else None,
-        namespace=control_namespace,
+        backend=backend,
+        name=name,
+        control_cache=_control_cache,
     )
 
     trigger = _trigger(name, 1)
@@ -338,21 +380,22 @@ def test_takeover_waits_for_open_fenced_transaction_then_recovers(
 @pytest.mark.parametrize("backend", ["sqlite", "postgres"])
 @pytest.mark.parametrize("name", CANONICALS)
 def test_zombie_worker_cannot_commit_after_successor_claims_epoch(
-    tmp_path, backend, name
+    tmp_path,
+    backend,
+    name,
+    _control_cache,
 ):
     if backend == "postgres" and not DSN:
         pytest.skip("SOSE_TEST_POSTGRES_DSN is required")
 
     definition = builtin_catalog().get(name)
-    control_path = tmp_path / name / backend / "zombie-control.sqlite3"
     data_path = tmp_path / name / backend / "zombie.sqlite3"
-    control_namespace = f"zc_{uuid4().hex[:20]}" if backend == "postgres" else None
     namespace = f"zz_{uuid4().hex[:20]}" if backend == "postgres" else None
-    expected = _control(
+    expected = _cached_control_snapshot(
         definition,
-        backend,
-        path=control_path if backend == "sqlite" else None,
-        namespace=control_namespace,
+        backend=backend,
+        name=name,
+        control_cache=_control_cache,
     )
 
     marker = tmp_path / name / backend / "zombie-claimed"

@@ -90,6 +90,23 @@ def _control(definition, namespace: str):
     return snapshot, count
 
 
+@pytest.fixture(scope="module")
+def _control_cache():
+    return {}
+
+
+def _cached_control_snapshot(definition, name: str, control_cache):
+    cached = control_cache.get(name)
+    if cached is not None:
+        return cached
+    baseline = _control(
+        definition,
+        f"infra_control_{uuid4().hex[:16]}",
+    )
+    control_cache[name] = baseline
+    return baseline
+
+
 def _recover(definition, dsn: str, namespace: str):
     persistence = PostgresPersistence(dsn, namespace=namespace)
     job = _job(definition, persistence)
@@ -223,15 +240,19 @@ def _start_proxy(dsn: str, *, port: int, marker: Path) -> tuple[subprocess.Popen
 @pytest.mark.parametrize("name", CANONICALS)
 @pytest.mark.parametrize("phase", CHAOS_PHASES)
 def test_whole_postgres_outage_and_restart_recovers_control_state(
-    tmp_path, name, phase
+    tmp_path,
+    name,
+    phase,
+    _control_cache,
 ):
     if not DSN:
         pytest.skip("SOSE_TEST_POSTGRES_DSN is required")
 
     definition = builtin_catalog().get(name)
-    expected, transaction_count = _control(
+    expected, transaction_count = _cached_control_snapshot(
         definition,
-        f"outage_control_{uuid4().hex[:16]}",
+        name,
+        _control_cache,
     )
     boundary = max(1, transaction_count // 2)
     namespace = f"outage_{uuid4().hex[:20]}"
@@ -353,15 +374,19 @@ def test_whole_postgres_outage_and_restart_recovers_control_state(
 @pytest.mark.parametrize("name", CANONICALS)
 @pytest.mark.parametrize("phase", CHAOS_PHASES)
 def test_network_interruption_through_tcp_proxy_recovers_control_state(
-    tmp_path, name, phase
+    tmp_path,
+    name,
+    phase,
+    _control_cache,
 ):
     if not DSN:
         pytest.skip("SOSE_TEST_POSTGRES_DSN is required")
 
     definition = builtin_catalog().get(name)
-    expected, transaction_count = _control(
+    expected, transaction_count = _cached_control_snapshot(
         definition,
-        f"network_control_{uuid4().hex[:16]}",
+        name,
+        _control_cache,
     )
     boundary = max(1, transaction_count // 2)
     namespace = f"network_{uuid4().hex[:20]}"
