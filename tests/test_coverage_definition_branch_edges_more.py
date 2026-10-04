@@ -2,12 +2,19 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from sose.examples.airports import definition as airports_definition
 from sose.examples.energy_utilities import definition as energy_definition
 from sose.examples.field_service import definition as field_service_definition
+from sose.examples.hospitality import definition as hospitality_definition
+from sose.examples.insurance import definition as insurance_definition
+from sose.examples.itsm import definition as itsm_definition
 from sose.examples.manufacturing import definition as manufacturing_definition
 from sose.examples.manufacturing import scenarios as manufacturing_scenarios
 from sose.examples.order_to_cash import definition as order_to_cash_definition
+from sose.examples.p2p import definition as p2p_definition
+from sose.examples.subscription_saas import definition as subscription_definition
 from sose.examples.warehouse_fulfillment import definition as warehouse_definition
 
 
@@ -683,3 +690,216 @@ def test_manufacturing_released_order_skips_setup_when_refresh_not_released(monk
 def test_manufacturing_demand_surge_scenario_is_constructible():
     scenario = manufacturing_scenarios.demand_surge_scenario()
     assert scenario.name == "manufacturing-demand-surge"
+
+
+def test_hospitality_definition_reservation_auto_progress_guards(monkeypatch):
+    entities = SimpleNamespace()
+    config = _default_config(
+        hospitality_definition,
+        auto_progress_reservation=False,
+    )
+    monkeypatch.setattr(
+        hospitality_definition,
+        "create_hold",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("create_hold should not run when auto progression is disabled")
+        ),
+    )
+    hospitality_definition._reconcile_tick(
+        object(),
+        object(),
+        SimpleNamespace(now="N/A"),
+        config,
+        entities,
+    )
+
+    arrival_calls: list[object] = []
+    monkeypatch.setattr(
+        hospitality_definition,
+        "create_hold",
+        lambda *args, **kwargs: arrival_calls.append(kwargs["arrival_at"]) or SimpleNamespace(id="R1"),
+    )
+    monkeypatch.setattr(
+        hospitality_definition,
+        "confirm_reservation",
+        lambda *args, **kwargs: None,
+    )
+    config = _default_config(
+        hospitality_definition,
+        auto_progress_reservation=True,
+    )
+    backend = SimpleNamespace(now=config.start_at + config.arrival_after, tick_step=config.tick_step)
+    hospitality_definition._reconcile_tick(
+        _EntityPersistence({("hospitality_reservation", hospitality_definition.reservation_id(1)): None}),
+        object(),
+        backend,
+        config,
+        entities,
+    )
+    assert arrival_calls == [backend.now + config.tick_step]
+
+
+def test_subscription_definition_effective_time_and_inactive_guard():
+    config = subscription_definition.definition.default_config()
+    assert subscription_definition._effective_plan_change_at(
+        config=config,
+        backend=SimpleNamespace(now=config.start_at + config.plan_change_after),
+    ) == config.start_at + config.plan_change_after + config.tick_step
+
+    subscription_definition._reconcile_tick(
+        _EntityPersistence(
+            {
+                (
+                    "saas_subscription",
+                    "S1",
+                ): SimpleNamespace(
+                    state="ended",
+                    attributes={"plan_code": "starter", "change_request_ids": []},
+                )
+            }
+        ),
+        object(),
+        SimpleNamespace(now=config.start_at),
+        config,
+        SimpleNamespace(subscription_id="S1"),
+    )
+
+
+def test_p2p_definition_missing_reference_and_no_auto_consume_branch(monkeypatch):
+    with pytest.raises(RuntimeError, match="reference entities were not persisted"):
+        p2p_definition._reconcile_tick(
+            _EntityPersistence({}),
+            object(),
+            object(),
+            p2p_definition.definition.default_config(),
+            SimpleNamespace(
+                purchase_order_id="PO1",
+                receipt_id="R1",
+                material_demand_id="D1",
+            ),
+        )
+
+    monkeypatch.setattr(
+        p2p_definition,
+        "reconcile_consumption",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("reconcile_consumption should not run when auto consume is disabled")
+        ),
+    )
+    p2p_definition._reconcile_tick(
+        _EntityPersistence(
+            {
+                ("purchase_order", "PO1"): SimpleNamespace(state="received"),
+                ("receipt", "R1"): SimpleNamespace(state="stocked"),
+                ("material_demand", "D1"): SimpleNamespace(state="pending"),
+            }
+        ),
+        object(),
+        object(),
+        _default_config(p2p_definition, auto_consume_inventory=False),
+        SimpleNamespace(
+            purchase_order_id="PO1",
+            receipt_id="R1",
+            material_demand_id="D1",
+            quantity=10.0,
+        ),
+    )
+
+
+def test_itsm_and_insurance_definition_guard_edges(monkeypatch):
+    escalation_calls: list[str] = []
+    monkeypatch.setattr(
+        itsm_definition,
+        "reconcile_escalation",
+        lambda *args, **kwargs: escalation_calls.append("escalate"),
+    )
+    monkeypatch.setattr(
+        itsm_definition,
+        "_reload_incident",
+        lambda persistence, incident_id: SimpleNamespace(id=incident_id, state="in_progress"),
+    )
+    escalated = itsm_definition._reconcile_escalated_incident(
+        object(),
+        object(),
+        object(),
+        incident=SimpleNamespace(id="I1", state="escalated"),
+        claim_id="claim-1",
+    )
+    assert escalated is not None and escalated.state == "in_progress"
+    assert escalation_calls == ["escalate"]
+    assert itsm_definition._reconcile_resolution(
+        object(),
+        object(),
+        object(),
+        incident=None,
+        claim_id="claim-1",
+    ) is None
+
+    insurance_calls: list[str] = []
+    monkeypatch.setattr(
+        insurance_definition,
+        "satisfy_documents",
+        lambda *args, **kwargs: insurance_calls.append("docs"),
+    )
+    handled = insurance_definition._maybe_satisfy_documents(
+        _EntityPersistence({("insurance_document_request", insurance_definition.document_request_id("C1", 1)): None}),
+        object(),
+        _default_config(insurance_definition, auto_satisfy_documents=True),
+        entities=SimpleNamespace(),
+        claim=SimpleNamespace(id="C1", state="pending_documents"),
+    )
+    assert handled is True
+    assert insurance_calls == []
+
+    monkeypatch.setattr(
+        insurance_definition,
+        "complete_assessment",
+        lambda *args, **kwargs: insurance_calls.append("assess"),
+    )
+    assert insurance_definition._maybe_assess_claim(
+        _EntityPersistence(
+            {
+                ("insurance_assessment", insurance_definition.assessment_id("C1", 1)): SimpleNamespace(state="queued")
+            }
+        ),
+        object(),
+        object(),
+        _default_config(insurance_definition),
+        entities=SimpleNamespace(),
+        claim=SimpleNamespace(id="C1", state="assessing"),
+    ) is True
+    assert insurance_calls == []
+
+    monkeypatch.setattr(
+        insurance_definition,
+        "reconcile_payment",
+        lambda *args, **kwargs: insurance_calls.append("pay"),
+    )
+    insurance_definition._maybe_reconcile_payment(
+        _EntityPersistence(
+            {
+                ("insurance_payment", insurance_definition.payment_id("C1")): SimpleNamespace(state="scheduled")
+            }
+        ),
+        object(),
+        object(),
+        _default_config(insurance_definition),
+        entities=SimpleNamespace(),
+        claim=SimpleNamespace(state="payment_scheduled", id="C1"),
+    )
+    assert insurance_calls == []
+
+    fraud_calls: list[str] = []
+    monkeypatch.setattr(
+        insurance_definition,
+        "reconcile_fraud",
+        lambda *args, **kwargs: fraud_calls.append("fraud"),
+    )
+    insurance_definition._reconcile_tick(
+        _EntityPersistence({("insurance_claim", "C1"): SimpleNamespace(id="C1", state="fraud_review")}),
+        object(),
+        object(),
+        _default_config(insurance_definition),
+        SimpleNamespace(claim_id="C1"),
+    )
+    assert fraud_calls == ["fraud"]
