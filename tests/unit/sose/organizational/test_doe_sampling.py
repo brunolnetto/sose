@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import isfinite
+
 from sose.organizational.experiment import ParameterRange, SamplingDesign
 from sose.organizational.sampling import sample_parameter_space
 
@@ -83,6 +85,23 @@ def test_all_sampled_values_are_inside_half_open_configured_bounds() -> None:
                 assert parameter_range.low <= value < parameter_range.high
 
 
+def test_extreme_finite_ranges_do_not_overflow_when_scaled() -> None:
+    parameter_range = ParameterRange(low=-1e308, high=1e308)
+
+    for design in SamplingDesign:
+        points = sample_parameter_space(
+            parameter_ranges={"extreme": parameter_range},
+            design=design,
+            sample_size=8,
+            seed=314159,
+        )
+        assert all(isfinite(point["extreme"]) for point in points)
+        assert all(
+            parameter_range.low <= point["extreme"] < parameter_range.high
+            for point in points
+        )
+
+
 def test_sobol_is_deterministic_and_seed_scramble_changes_sequence() -> None:
     baseline = sample_parameter_space(
         parameter_ranges=_ranges(),
@@ -125,6 +144,20 @@ def test_sobol_support_limit_is_explicit() -> None:
         assert "at most 10 dimensions" in str(exc)
     else:  # pragma: no cover - assertion helper
         raise AssertionError("expected Sobol dimension guard")
+
+
+def test_sobol_rejects_sequence_capacity_before_allocating_points() -> None:
+    try:
+        sample_parameter_space(
+            parameter_ranges={"p": ParameterRange(low=0.0, high=1.0)},
+            design=SamplingDesign.SOBOL,
+            sample_size=(1 << 32) + 1,
+            seed=1,
+        )
+    except ValueError as exc:
+        assert "32-bit sequence" in str(exc)
+    else:  # pragma: no cover - assertion helper
+        raise AssertionError("expected Sobol sequence-capacity guard")
 
 
 def test_sampler_rejects_empty_space_and_too_small_sample() -> None:
