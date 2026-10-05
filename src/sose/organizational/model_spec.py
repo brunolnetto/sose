@@ -71,7 +71,11 @@ class ModelSpec(BaseModel):
             value = getattr(self, name)
             _validate_json(value, path=f"/{name}")
             object.__setattr__(self, name, _freeze(value))
-        object.__setattr__(self, "parameter_evidence", MappingProxyType(dict(self.parameter_evidence)))
+        object.__setattr__(
+            self,
+            "parameter_evidence",
+            MappingProxyType(dict(self.parameter_evidence)),
+        )
         return self
 
     def canonical_payload(self) -> dict[str, object]:
@@ -125,6 +129,7 @@ _JSON_MAPPING_FIELDS = (
     "agency",
     "parameters",
 )
+_MISSING = object()
 
 
 class ModelIntervention(BaseModel):
@@ -221,8 +226,19 @@ def _diff_values(
                 changed=changed,
             )
         return
-    if before != after:
+    if not _same_json_value(before, after):
         changed[path] = (before, after)
+
+
+def _same_json_value(before: object, after: object) -> bool:
+    if type(before) is not type(after):
+        return False
+    if isinstance(before, list) and isinstance(after, list):
+        return len(before) == len(after) and all(
+            _same_json_value(left, right)
+            for left, right in zip(before, after, strict=True)
+        )
+    return before == after
 
 
 def _join_pointer(parent: str, child: str) -> str:
@@ -234,8 +250,8 @@ def _set_path(payload: dict[str, Any], path: str, value: object) -> None:
     parts = _pointer_parts(path)
     current: dict[str, Any] = payload
     for part in parts[:-1]:
-        child = current.get(part)
-        if child is None:
+        child = current.get(part, _MISSING)
+        if child is _MISSING:
             child = {}
             current[part] = child
         if not isinstance(child, dict):
