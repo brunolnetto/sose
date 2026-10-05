@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict, deque
 from datetime import datetime
 from enum import StrEnum
 import json
@@ -48,7 +49,15 @@ class ObservedPREvent(BaseModel):
 
     @model_validator(mode="after")
     def freeze_metadata(self) -> "ObservedPREvent":
-        encoded = json.dumps(self.metadata, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        try:
+            encoded = json.dumps(
+                self.metadata,
+                sort_keys=True,
+                separators=(",", ":"),
+                allow_nan=False,
+            )
+        except (TypeError, ValueError) as exc:
+            raise ValueError("metadata must contain finite JSON-compatible data") from exc
         object.__setattr__(self, "metadata", MappingProxyType(json.loads(encoded)))
         return self
 
@@ -95,8 +104,12 @@ class ObservedPRTrace(BaseModel):
         ]
         if len(terminal) > 1:
             raise ValueError("observed trace allows at most one terminal event")
-        if terminal and terminal[0].occurred_at < open_time:
-            raise ValueError("terminal event cannot precede opened event")
+        if terminal:
+            terminal_time = terminal[0].occurred_at
+            if terminal_time < open_time:
+                raise ValueError("terminal event cannot precede opened event")
+            if any(event.occurred_at > terminal_time for event in ordered):
+                raise ValueError("observed trace contains event after terminal event")
 
         object.__setattr__(self, "events", ordered)
         return self
@@ -107,7 +120,7 @@ class ObservedPRTrace(BaseModel):
 
     @property
     def terminal_at(self) -> datetime | None:
-        terminal = next(
+        return next(
             (
                 event.occurred_at
                 for event in self.events
@@ -115,7 +128,6 @@ class ObservedPRTrace(BaseModel):
             ),
             None,
         )
-        return terminal
 
     @property
     def lead_time_seconds(self) -> float | None:
@@ -125,20 +137,18 @@ class ObservedPRTrace(BaseModel):
         return (terminal - self.opened_at).total_seconds()
 
     def review_response_latencies_seconds(self) -> tuple[float, ...]:
-        pending: dict[str, datetime] = {}
+        pending: dict[str, deque[datetime]] = defaultdict(deque)
         latencies: list[float] = []
         for event in self.events:
             actor = event.actor_key
             if actor is None:
                 continue
             if event.kind is ObservedEventKind.REVIEW_REQUESTED:
-                pending[actor] = event.occurred_at
+                pending[actor].append(event.occurred_at)
                 continue
-            if event.kind is not ObservedEventKind.REVIEW_SUBMITTED:
+            if event.kind is not ObservedEventKind.REVIEW_SUBMITTED or not pending[actor]:
                 continue
-            requested_at = pending.pop(actor, None)
-            if requested_at is None:
-                continue
+            requested_at = pending[actor].popleft()
             latencies.append((event.occurred_at - requested_at).total_seconds())
         return tuple(latencies)
 
