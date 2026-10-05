@@ -92,6 +92,18 @@ def test_structural_diff_reports_json_pointer_paths() -> None:
     assert diff.changed["/routing/submitted"] == ("legacy", "review")
 
 
+def test_diff_distinguishes_equal_python_values_with_different_json_types() -> None:
+    before = _spec(policies={"enabled": 1})
+    after = _spec(policies={"enabled": True})
+
+    assert before.model_spec_hash != after.model_spec_hash
+    assert diff_value(before, after, "/policies/enabled") == (1, True)
+
+
+def diff_value(before: ModelSpec, after: ModelSpec, path: str) -> tuple[object, object]:
+    return before.diff(after).changed[path]
+
+
 def test_json_pointer_can_address_keys_containing_dots() -> None:
     before = _spec()
     intervention = ModelIntervention(
@@ -104,6 +116,18 @@ def test_json_pointer_can_address_keys_containing_dots() -> None:
 
     assert after.parameters["review.capacity"] == 2
     assert diff.changed["/parameters/review.capacity"] == (1, 2)
+
+
+def test_intervention_rejects_traversal_through_existing_null() -> None:
+    before = _spec(policies={"dispatch": None})
+    intervention = ModelIntervention(
+        intervention_id="nested-dispatch-v1",
+        intervention_class=InterventionClass.POLICY,
+        set_values={"/policies/dispatch/kind": "fifo"},
+    )
+
+    with pytest.raises(ValueError, match="not a mapping"):
+        intervention.apply(before)
 
 
 def test_intervention_is_a_versioned_spec_transformation() -> None:
