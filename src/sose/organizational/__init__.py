@@ -1,5 +1,6 @@
 """Organizational-dynamics modeling layer built on SOSE primitives."""
 
+from .calibration import ObservedItemFlowCalibration, calibrate_observed_item_flow
 from .dataset import ObservedPRDataset, ObservedPRSplit
 from .experiment import (
     ExperimentProtocol,
@@ -42,6 +43,7 @@ __all__ = [
     "ModelSpec",
     "MultipleComparisonMethod",
     "ObservedEventKind",
+    "ObservedItemFlowCalibration",
     "ObservedPRDataset",
     "ObservedPREvent",
     "ObservedPRSplit",
@@ -52,6 +54,7 @@ __all__ = [
     "SamplingDesign",
     "StatisticalPlan",
     "StructuralDiff",
+    "calibrate_observed_item_flow",
     "compare_lead_time_distributions",
     "empirical_cdf_max_distance",
     "normalize_github_pr_trace",
