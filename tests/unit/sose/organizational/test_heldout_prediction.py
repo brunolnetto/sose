@@ -100,16 +100,40 @@ def test_changing_only_holdout_outcomes_cannot_change_calibration_or_predictions
     assert changed_holdout.validation != baseline.validation
 
 
-def test_training_ci_duration_is_used_as_observed_but_actor_parameters_remain_assumed() -> None:
+def test_training_ci_gate_duration_is_used_as_observed_but_actor_parameters_remain_assumed() -> None:
     result = predict_pr_review_holdout(split=_split(), assumptions=_assumptions(), seed=31)
 
-    # Training CI durations are 0.5h, 1h and 0.75h: mean = 0.75h.
+    # Each training PR has one CI job, so mean gate latency is 0.75h.
     assert result.config.ci_time == pytest.approx(2700.0)
     assert result.evidence.ci_time is EvidenceClass.OBSERVED
     assert result.evidence.reviewer_count is EvidenceClass.ASSUMED
     assert result.evidence.mean_review_time is EvidenceClass.ASSUMED
     assert result.evidence.mean_revision_time is EvidenceClass.ASSUMED
     assert result.evidence.rework_probability is EvidenceClass.ASSUMED
+
+
+def test_parallel_training_ci_jobs_use_per_pr_gate_latency_not_mean_job_duration() -> None:
+    train_trace = ObservedPRTrace(
+        repository="example/repo",
+        pr_number=1,
+        events=(
+            _event("1:open", ObservedEventKind.OPENED, 0),
+            _event("1:ci-start-a", ObservedEventKind.CI_STARTED, 0.25),
+            _event("1:ci-start-b", ObservedEventKind.CI_STARTED, 0.25),
+            _event("1:ci-end-a", ObservedEventKind.CI_COMPLETED, 0.25 + 1 / 60),
+            _event("1:ci-end-b", ObservedEventKind.CI_COMPLETED, 0.75),
+            _event("1:merged", ObservedEventKind.MERGED, 2),
+        ),
+    )
+    train = ObservedPRDataset(dataset_version="train-v1", traces=(train_trace,))
+    split = ObservedPRSplit(train=train, holdout=_split().holdout)
+
+    result = predict_pr_review_holdout(split=split, assumptions=_assumptions(), seed=37)
+
+    assert result.calibration.ci_duration_seconds is not None
+    assert result.calibration.ci_duration_seconds.mean == pytest.approx(15.5 * 60)
+    assert result.calibration.ci_gate_duration_seconds is not None
+    assert result.config.ci_time == pytest.approx(30 * 60)
 
 
 def test_missing_training_ci_evidence_uses_declared_fallback_and_marks_it_assumed() -> None:
@@ -152,6 +176,38 @@ def test_split_boundary_rejects_nonterminal_holdout_before_prediction() -> None:
 
     with pytest.raises(ValueError, match="holdout traces must be terminal"):
         ObservedPRSplit(train=_split().train, holdout=bad_holdout)
+
+
+def test_prediction_rejects_closed_abandoned_outcomes_not_modeled_by_canonical() -> None:
+    closed_trace = ObservedPRTrace(
+        repository="example/repo",
+        pr_number=99,
+        events=(
+            _event("99:open", ObservedEventKind.OPENED, 20),
+            _event("99:closed", ObservedEventKind.CLOSED, 22),
+        ),
+    )
+    closed_holdout = ObservedPRDataset(dataset_version="closed", traces=(closed_trace,))
+    split = ObservedPRSplit(train=_split().train, holdout=closed_holdout)
+
+    with pytest.raises(ValueError, match="merged-only"):
+        predict_pr_review_holdout(split=split, assumptions=_assumptions(), seed=71)
+
+
+def test_prediction_rejects_closed_training_outcomes_too() -> None:
+    closed_trace = ObservedPRTrace(
+        repository="example/repo",
+        pr_number=98,
+        events=(
+            _event("98:open", ObservedEventKind.OPENED, 0),
+            _event("98:closed", ObservedEventKind.CLOSED, 2),
+        ),
+    )
+    closed_train = ObservedPRDataset(dataset_version="closed-train", traces=(closed_trace,))
+    split = ObservedPRSplit(train=closed_train, holdout=_split().holdout)
+
+    with pytest.raises(ValueError, match="merged-only"):
+        predict_pr_review_holdout(split=split, assumptions=_assumptions(), seed=73)
 
 
 def test_canonical_evidence_defaults_remain_backward_compatible() -> None:
