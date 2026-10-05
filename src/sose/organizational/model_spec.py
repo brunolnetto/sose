@@ -10,6 +10,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from .agency import AgencySpec
+
 
 class EvidenceClass(StrEnum):
     OBSERVED = "observed"
@@ -49,7 +51,7 @@ class ModelSpec(BaseModel):
     policies: dict[str, object] = Field(default_factory=dict)
     demand: dict[str, object] = Field(default_factory=dict)
     costs: dict[str, object] = Field(default_factory=dict)
-    agency: dict[str, object] = Field(default_factory=dict)
+    agency: AgencySpec = Field(default_factory=AgencySpec)
     parameters: dict[str, object] = Field(default_factory=dict)
     parameter_evidence: dict[str, EvidenceClass] = Field(default_factory=dict)
 
@@ -82,6 +84,7 @@ class ModelSpec(BaseModel):
         payload: dict[str, object] = {"version": self.version}
         for name in _JSON_MAPPING_FIELDS:
             payload[name] = _thaw(getattr(self, name))
+        payload["agency"] = self.agency.canonical_payload()
         payload["parameter_evidence"] = {
             key: value.value for key, value in self.parameter_evidence.items()
         }
@@ -126,7 +129,6 @@ _JSON_MAPPING_FIELDS = (
     "policies",
     "demand",
     "costs",
-    "agency",
     "parameters",
 )
 _MISSING = object()
@@ -144,9 +146,9 @@ class ModelIntervention(BaseModel):
     mechanisms_added: list[str] = Field(default_factory=list)
     mechanisms_removed: list[str] = Field(default_factory=list)
     mechanisms_changed: list[str] = Field(default_factory=list)
-    operating_cost: float = Field(default=0.0, ge=0.0)
-    transition_cost: float = Field(default=0.0, ge=0.0)
-    transition_time: float = Field(default=0.0, ge=0.0)
+    operating_cost: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
+    transition_cost: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
+    transition_time: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
 
     def apply(self, spec: ModelSpec) -> tuple[ModelSpec, StructuralDiff]:
         payload = deepcopy(spec.canonical_payload())
