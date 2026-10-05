@@ -18,6 +18,7 @@ from .model_spec import (
     ModelSpec,
     StructuralDiff,
 )
+from .observations import ObservedEventKind, ObservedPREvent, ObservedPRTrace
 from .sampling import sample_parameter_space
 
 __all__ = [
@@ -29,6 +30,9 @@ __all__ = [
     "ModelIntervention",
     "ModelSpec",
     "MultipleComparisonMethod",
+    "ObservedEventKind",
+    "ObservedPREvent",
+    "ObservedPRTrace",
     "OutcomeMetric",
     "ParameterRange",
     "ReplicationPlan",
