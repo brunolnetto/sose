@@ -19,6 +19,7 @@ class ObservedEventKind(StrEnum):
     CLOSED = "closed"
     MERGED = "merged"
     REVIEW_REQUESTED = "review_requested"
+    REVIEW_REQUEST_REMOVED = "review_request_removed"
     REVIEW_SUBMITTED = "review_submitted"
     ASSIGNED = "assigned"
     UNASSIGNED = "unassigned"
@@ -146,6 +147,10 @@ class ObservedPRTrace(BaseModel):
                 continue
             if event.kind is ObservedEventKind.REVIEW_REQUESTED:
                 pending[actor].append(event.occurred_at)
+                continue
+            if event.kind is ObservedEventKind.REVIEW_REQUEST_REMOVED:
+                if pending[actor]:
+                    pending[actor].popleft()
                 continue
             if event.kind is not ObservedEventKind.REVIEW_SUBMITTED or not pending[actor]:
                 continue
