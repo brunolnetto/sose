@@ -11,6 +11,7 @@ from .experiment import (
     SamplingDesign,
     StatisticalPlan,
 )
+from .github_observations import normalize_github_pr_trace
 from .model_spec import (
     EvidenceClass,
     InterventionClass,
@@ -39,5 +40,6 @@ __all__ = [
     "SamplingDesign",
     "StatisticalPlan",
     "StructuralDiff",
+    "normalize_github_pr_trace",
     "sample_parameter_space",
 ]
