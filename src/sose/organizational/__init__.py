@@ -18,6 +18,7 @@ from .model_spec import (
     ModelSpec,
     StructuralDiff,
 )
+from .sampling import sample_parameter_space
 
 __all__ = [
     "EvidenceClass",
@@ -34,4 +35,5 @@ __all__ = [
     "SamplingDesign",
     "StatisticalPlan",
     "StructuralDiff",
+    "sample_parameter_space",
 ]
