@@ -7,7 +7,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from .dataset import ObservedPRDataset
-from .observations import ObservedEventKind, ObservedPRTrace
+from .observations import ObservedEventKind, ObservedPREvent, ObservedPRTrace
 from .validation import DistributionSummary, summarize_distribution
 
 
@@ -69,12 +69,15 @@ def calibrate_observed_item_flow(dataset: ObservedPRDataset) -> ObservedItemFlow
     ci_durations = tuple(
         (completed - started).total_seconds()
         for intervals in ci_intervals_by_trace
-        for started, completed in intervals
+        for started, completed, _ in intervals
     )
     ci_gate_durations = tuple(
-        (max(completed for _, completed in intervals) - min(started for started, _ in intervals)).total_seconds()
+        (
+            max(completed for _, completed, _ in gate_intervals)
+            - min(started for started, _, _ in gate_intervals)
+        ).total_seconds()
         for intervals in ci_intervals_by_trace
-        if intervals
+        if (gate_intervals := tuple(interval for interval in intervals if interval[2]))
     )
 
     peak_wip = _peak_wip(dataset.traces)
@@ -128,18 +131,60 @@ def _lead_time(trace: ObservedPRTrace) -> float:
     return lead_time
 
 
-def _ci_intervals(trace: ObservedPRTrace) -> tuple[tuple[datetime, datetime], ...]:
-    pending: deque[datetime] = deque()
-    intervals: list[tuple[datetime, datetime]] = []
+def _identified_gate(event: ObservedPREvent) -> bool:
+    evidence = event.metadata.get("ci_gate_evidence")
+    return event.metadata.get("ci_gate") is True and isinstance(evidence, str) and bool(evidence.strip())
+
+
+def _ci_job_id(event: ObservedPREvent) -> str | None:
+    value = event.metadata.get("ci_job_id")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
+
+
+def _ci_intervals(
+    trace: ObservedPRTrace,
+) -> tuple[tuple[datetime, datetime, bool], ...]:
+    pending_by_job: dict[str, tuple[datetime, bool]] = {}
+    pending_legacy: deque[tuple[datetime, bool]] = deque()
+    intervals: list[tuple[datetime, datetime, bool]] = []
+
     for event in trace.events:
+        job_id = _ci_job_id(event)
         if event.kind is ObservedEventKind.CI_STARTED:
-            pending.append(event.occurred_at)
+            pending = (event.occurred_at, _identified_gate(event))
+            if job_id is None:
+                pending_legacy.append(pending)
+            else:
+                if job_id in pending_by_job:
+                    raise ValueError(f"duplicate CI_STARTED for workflow job {job_id}")
+                pending_by_job[job_id] = pending
             continue
+
         if event.kind is not ObservedEventKind.CI_COMPLETED:
             continue
-        if not pending:
-            raise ValueError("observed trace contains CI_COMPLETED without matching CI_STARTED")
-        intervals.append((pending.popleft(), event.occurred_at))
+
+        if job_id is None:
+            if not pending_legacy:
+                raise ValueError("observed trace contains CI_COMPLETED without matching CI_STARTED")
+            started_at, start_is_gate = pending_legacy.popleft()
+        else:
+            pending = pending_by_job.pop(job_id, None)
+            if pending is None:
+                raise ValueError(
+                    f"observed trace contains CI_COMPLETED without matching CI_STARTED for workflow job {job_id}"
+                )
+            started_at, start_is_gate = pending
+
+        intervals.append(
+            (started_at, event.occurred_at, start_is_gate and _identified_gate(event))
+        )
+
     return tuple(intervals)
 
 

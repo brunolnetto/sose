@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
+import pytest
+from pydantic import ValidationError
+
 from sose.organizational.calibration import calibrate_observed_item_flow
 from sose.organizational.empirical_pilot import (
     GitHubPRObservationSnapshot,
@@ -20,8 +23,10 @@ def _dt(year: int, month: int, day: int, hour: int, minute: int, second: int = 0
     return datetime(year, month, day, hour, minute, second, tzinfo=UTC)
 
 
-def test_evidence_gate_distinguishes_preterminal_ci_from_postmerge_workflow_activity() -> None:
-    # PR #258: actual coverage job from Actions run 37003141872 completed well before merge.
+def test_real_preterminal_ci_is_observed_but_not_promoted_to_gate_without_provenance() -> None:
+    # PR #258: the coverage job really completed before merge, so machine activity is
+    # directly observed. The historical repository evidence does not establish that
+    # this specific job was a required merge gate, so gate status remains unidentified.
     causal_ci = GitHubPRSourceRecord(
         repository=REPOSITORY,
         pr_number=258,
@@ -40,9 +45,7 @@ def test_evidence_gate_distinguishes_preterminal_ci_from_postmerge_workflow_acti
         ),
     )
 
-    # PR #265: actual coverage job from Actions run 37323662915 started before merge
-    # but completed after merge. It is observed workflow activity, not a completed CI gate
-    # available before the terminal item outcome.
+    # PR #265: the real coverage job started before merge but completed afterwards.
     postmerge_ci = GitHubPRSourceRecord(
         repository=REPOSITORY,
         pr_number=265,
@@ -71,22 +74,75 @@ def test_evidence_gate_distinguishes_preterminal_ci_from_postmerge_workflow_acti
     assert evidence.workflow_job_count == 2
     assert evidence.preterminal_completed_workflow_job_count == 1
     assert evidence.postterminal_completed_workflow_job_count == 1
-    assert evidence.ci_calibratable is True
+    assert evidence.identified_preterminal_gate_job_count == 0
+    assert evidence.ci_activity_observed is True
+    assert evidence.ci_gate_calibratable is False
 
     dataset = snapshot.to_dataset()
     calibration = calibrate_observed_item_flow(dataset)
     assert calibration.ci_duration_seconds is not None
     assert calibration.ci_duration_seconds.count == 1
     assert calibration.ci_duration_seconds.mean == 178.0
-    assert calibration.ci_gate_duration_seconds is not None
-    assert calibration.ci_gate_duration_seconds.mean == 178.0
+    assert calibration.ci_gate_duration_seconds is None
 
     trace_265 = next(trace for trace in dataset.traces if trace.pr_number == 265)
     assert any(event.kind is ObservedEventKind.CI_STARTED for event in trace_265.events)
     assert not any(event.kind is ObservedEventKind.CI_COMPLETED for event in trace_265.events)
 
 
-def test_evidence_gate_refuses_to_call_postmerge_only_ci_calibratable() -> None:
+def test_explicit_gate_requires_provenance_and_enables_gate_calibration() -> None:
+    gate_job = GitHubWorkflowJobSourceRecord(
+        job_id=7,
+        name="required-check",
+        started_at=_dt(2026, 10, 5, 10, 0),
+        completed_at=_dt(2026, 10, 5, 10, 2),
+        conclusion="success",
+        source_url="https://api.github.com/example/jobs/7",
+        is_gate=True,
+        gate_evidence_url="https://api.github.com/example/rulesets/1",
+    )
+    snapshot = GitHubPRObservationSnapshot(
+        snapshot_version="declared-gate",
+        records=(
+            GitHubPRSourceRecord(
+                repository=REPOSITORY,
+                pr_number=1,
+                opened_at=_dt(2026, 10, 5, 9, 0),
+                merged_at=_dt(2026, 10, 5, 11, 0),
+                source_url="https://api.github.com/example/pulls/1",
+                workflow_jobs=(gate_job,),
+            ),
+            GitHubPRSourceRecord(
+                repository=REPOSITORY,
+                pr_number=2,
+                opened_at=_dt(2026, 10, 5, 9, 30),
+                merged_at=_dt(2026, 10, 5, 11, 30),
+                source_url="https://api.github.com/example/pulls/2",
+            ),
+        ),
+    )
+
+    evidence = assess_snapshot_evidence(snapshot)
+    assert evidence.identified_preterminal_gate_job_count == 1
+    assert evidence.ci_gate_calibratable is True
+
+    calibration = calibrate_observed_item_flow(snapshot.to_dataset())
+    assert calibration.ci_gate_duration_seconds is not None
+    assert calibration.ci_gate_duration_seconds.mean == 120.0
+
+    with pytest.raises(ValidationError, match="gate_evidence_url"):
+        GitHubWorkflowJobSourceRecord(
+            job_id=8,
+            name="unsupported-gate-claim",
+            started_at=_dt(2026, 10, 5, 10, 0),
+            completed_at=_dt(2026, 10, 5, 10, 1),
+            conclusion="success",
+            source_url="https://api.github.com/example/jobs/8",
+            is_gate=True,
+        )
+
+
+def test_postmerge_only_ci_is_not_gate_calibratable() -> None:
     late_job = GitHubWorkflowJobSourceRecord(
         job_id=1,
         name="late-ci",
@@ -111,4 +167,5 @@ def test_evidence_gate_refuses_to_call_postmerge_only_ci_calibratable() -> None:
     evidence = assess_snapshot_evidence(snapshot)
     assert evidence.preterminal_completed_workflow_job_count == 0
     assert evidence.postterminal_completed_workflow_job_count == 2
-    assert evidence.ci_calibratable is False
+    assert evidence.ci_activity_observed is False
+    assert evidence.ci_gate_calibratable is False

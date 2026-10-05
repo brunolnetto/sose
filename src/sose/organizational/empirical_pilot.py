@@ -25,7 +25,11 @@ def _require_aware(value: datetime, *, field_name: str) -> None:
 
 
 class GitHubWorkflowJobSourceRecord(BaseModel):
-    """Direct machine-side workflow-job evidence with durable source identity."""
+    """Direct machine-side workflow-job evidence with durable source identity.
+
+    `is_gate` is stronger than observing a workflow job. It may only be asserted
+    when a separate source identifies that job as part of the merge gate.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -35,6 +39,8 @@ class GitHubWorkflowJobSourceRecord(BaseModel):
     completed_at: datetime
     conclusion: NonBlankString
     source_url: NonBlankString
+    is_gate: bool = False
+    gate_evidence_url: NonBlankString | None = None
 
     @model_validator(mode="after")
     def validate_interval(self) -> "GitHubWorkflowJobSourceRecord":
@@ -42,6 +48,10 @@ class GitHubWorkflowJobSourceRecord(BaseModel):
         _require_aware(self.completed_at, field_name="completed_at")
         if self.completed_at < self.started_at:
             raise ValueError("completed_at must be at or after started_at")
+        if self.is_gate and self.gate_evidence_url is None:
+            raise ValueError("gate_evidence_url is required when is_gate is true")
+        if not self.is_gate and self.gate_evidence_url is not None:
+            raise ValueError("gate_evidence_url requires is_gate=true")
         return self
 
     def canonical_payload(self) -> dict[str, object]:
@@ -52,6 +62,8 @@ class GitHubWorkflowJobSourceRecord(BaseModel):
             "completed_at": self.completed_at.isoformat(),
             "conclusion": self.conclusion,
             "source_url": self.source_url,
+            "is_gate": self.is_gate,
+            "gate_evidence_url": self.gate_evidence_url,
         }
 
     def adapter_payload(self) -> dict[str, object]:
@@ -61,6 +73,8 @@ class GitHubWorkflowJobSourceRecord(BaseModel):
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat(),
             "conclusion": self.conclusion,
+            "is_gate": self.is_gate,
+            "gate_evidence_url": self.gate_evidence_url,
         }
 
 
@@ -174,20 +188,25 @@ class EmpiricalSourceEvidence(BaseModel):
     workflow_job_count: int = Field(ge=0)
     preterminal_completed_workflow_job_count: int = Field(ge=0)
     postterminal_completed_workflow_job_count: int = Field(ge=0)
-    ci_calibratable: bool
+    identified_preterminal_gate_job_count: int = Field(ge=0)
+    ci_activity_observed: bool
+    ci_gate_calibratable: bool
 
 
 def assess_snapshot_evidence(snapshot: GitHubPRObservationSnapshot) -> EmpiricalSourceEvidence:
-    """Classify CI evidence without treating post-merge activity as causal gate data."""
+    """Separate observed machine activity from independently identified merge-gate evidence."""
 
     workflow_job_count = 0
     preterminal_completed = 0
     postterminal_completed = 0
+    identified_preterminal_gate = 0
     for record in snapshot.records:
         workflow_job_count += len(record.workflow_jobs)
         for job in record.workflow_jobs:
             if job.completed_at <= record.merged_at:
                 preterminal_completed += 1
+                if job.is_gate:
+                    identified_preterminal_gate += 1
             else:
                 postterminal_completed += 1
 
@@ -196,7 +215,9 @@ def assess_snapshot_evidence(snapshot: GitHubPRObservationSnapshot) -> Empirical
         workflow_job_count=workflow_job_count,
         preterminal_completed_workflow_job_count=preterminal_completed,
         postterminal_completed_workflow_job_count=postterminal_completed,
-        ci_calibratable=preterminal_completed > 0,
+        identified_preterminal_gate_job_count=identified_preterminal_gate,
+        ci_activity_observed=preterminal_completed > 0,
+        ci_gate_calibratable=identified_preterminal_gate > 0,
     )
 
 

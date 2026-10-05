@@ -18,12 +18,20 @@ def _event(
     hours: float,
     *,
     actor_key: str | None = None,
+    gate: bool = False,
+    job_id: int | None = None,
 ) -> ObservedPREvent:
+    metadata: dict[str, object] = {}
+    if gate:
+        metadata.update({"ci_gate": True, "ci_gate_evidence": "config://required-check"})
+    if job_id is not None:
+        metadata["ci_job_id"] = job_id
     return ObservedPREvent(
         source_event_id=source_event_id,
         kind=kind,
         occurred_at=BASE + timedelta(hours=hours),
         actor_key=actor_key,
+        metadata=metadata,
     )
 
 
@@ -51,9 +59,7 @@ def test_calibration_binds_profile_to_terminal_training_dataset_hash() -> None:
         _trace(2, opened_hour=2, terminal_hour=8),
         _trace(3, opened_hour=5, terminal_hour=9),
     )
-
     profile = calibrate_observed_item_flow(dataset)
-
     assert profile.observed_dataset_hash == dataset.dataset_hash
     assert profile.item_count == 3
     assert profile.observation_start == BASE
@@ -70,9 +76,7 @@ def test_calibration_derives_peak_and_time_weighted_mean_wip() -> None:
         _trace(2, opened_hour=2, terminal_hour=8),
         _trace(3, opened_hour=5, terminal_hour=9),
     )
-
     profile = calibrate_observed_item_flow(dataset)
-
     assert profile.peak_wip == 2
     assert profile.mean_wip == pytest.approx(14 / 9)
 
@@ -92,39 +96,53 @@ def test_calibration_uses_elapsed_review_response_and_ci_machine_duration_only()
         ),
         _trace(2, opened_hour=10, terminal_hour=12),
     )
-
     profile = calibrate_observed_item_flow(dataset)
-
     assert profile.review_response_latency_seconds is not None
     assert profile.review_response_latency_seconds.mean == pytest.approx(2 * 3600)
     assert profile.ci_duration_seconds is not None
     assert profile.ci_duration_seconds.mean == pytest.approx(0.5 * 3600)
-    assert profile.ci_gate_duration_seconds is not None
-    assert profile.ci_gate_duration_seconds.mean == pytest.approx(0.5 * 3600)
+    assert profile.ci_gate_duration_seconds is None
     assert "reviewer_service_time" in profile.unidentified_actor_parameters
     assert "reviewer_capacity" in profile.unidentified_actor_parameters
     assert "reviewer_calendar" in profile.unidentified_actor_parameters
     assert not hasattr(profile, "reviewer_service_time")
 
 
-def test_calibration_pairs_multiple_ci_intervals_fifo_without_inventing_effort() -> None:
+def test_explicit_gate_provenance_enables_ci_gate_calibration() -> None:
     dataset = _dataset(
         _trace(
             1,
             opened_hour=0,
             terminal_hour=8,
             extras=(
-                _event("1:ci-start-a", ObservedEventKind.CI_STARTED, 1),
-                _event("1:ci-end-a", ObservedEventKind.CI_COMPLETED, 2),
-                _event("1:ci-start-b", ObservedEventKind.CI_STARTED, 3),
-                _event("1:ci-end-b", ObservedEventKind.CI_COMPLETED, 5),
+                _event("1:ci-start", ObservedEventKind.CI_STARTED, 4, gate=True),
+                _event("1:ci-end", ObservedEventKind.CI_COMPLETED, 4.5, gate=True),
+            ),
+        )
+    )
+    profile = calibrate_observed_item_flow(dataset)
+    assert profile.ci_duration_seconds is not None
+    assert profile.ci_duration_seconds.mean == pytest.approx(0.5 * 3600)
+    assert profile.ci_gate_duration_seconds is not None
+    assert profile.ci_gate_duration_seconds.mean == pytest.approx(0.5 * 3600)
+
+
+def test_calibration_pairs_multiple_legacy_ci_intervals_fifo_without_inventing_effort() -> None:
+    dataset = _dataset(
+        _trace(
+            1,
+            opened_hour=0,
+            terminal_hour=8,
+            extras=(
+                _event("1:ci-start-a", ObservedEventKind.CI_STARTED, 1, gate=True),
+                _event("1:ci-end-a", ObservedEventKind.CI_COMPLETED, 2, gate=True),
+                _event("1:ci-start-b", ObservedEventKind.CI_STARTED, 3, gate=True),
+                _event("1:ci-end-b", ObservedEventKind.CI_COMPLETED, 5, gate=True),
             ),
         ),
         _trace(2, opened_hour=10, terminal_hour=12),
     )
-
     profile = calibrate_observed_item_flow(dataset)
-
     assert profile.ci_duration_seconds is not None
     assert profile.ci_duration_seconds.count == 2
     assert profile.ci_duration_seconds.mean == pytest.approx(1.5 * 3600)
@@ -133,23 +151,21 @@ def test_calibration_pairs_multiple_ci_intervals_fifo_without_inventing_effort()
     assert profile.ci_gate_duration_seconds.mean == pytest.approx(4 * 3600)
 
 
-def test_parallel_ci_jobs_produce_one_gate_latency_per_pr() -> None:
+def test_parallel_ci_jobs_produce_one_gate_latency_per_pr_when_gate_is_identified() -> None:
     dataset = _dataset(
         _trace(
             1,
             opened_hour=0,
             terminal_hour=2,
             extras=(
-                _event("1:ci-start-a", ObservedEventKind.CI_STARTED, 0.25),
-                _event("1:ci-start-b", ObservedEventKind.CI_STARTED, 0.25),
-                _event("1:ci-end-a", ObservedEventKind.CI_COMPLETED, 0.25 + 1 / 60),
-                _event("1:ci-end-b", ObservedEventKind.CI_COMPLETED, 0.75),
+                _event("1:ci-start-a", ObservedEventKind.CI_STARTED, 0.25, gate=True),
+                _event("1:ci-start-b", ObservedEventKind.CI_STARTED, 0.25, gate=True),
+                _event("1:ci-end-a", ObservedEventKind.CI_COMPLETED, 0.25 + 1 / 60, gate=True),
+                _event("1:ci-end-b", ObservedEventKind.CI_COMPLETED, 0.75, gate=True),
             ),
         )
     )
-
     profile = calibrate_observed_item_flow(dataset)
-
     assert profile.ci_duration_seconds is not None
     assert profile.ci_duration_seconds.count == 2
     assert profile.ci_duration_seconds.mean == pytest.approx(15.5 * 60)
@@ -158,11 +174,30 @@ def test_parallel_ci_jobs_produce_one_gate_latency_per_pr() -> None:
     assert profile.ci_gate_duration_seconds.mean == pytest.approx(30 * 60)
 
 
+def test_overlapping_gate_and_non_gate_jobs_match_completions_by_job_identity() -> None:
+    dataset = _dataset(
+        _trace(
+            1,
+            opened_hour=0,
+            terminal_hour=3,
+            extras=(
+                _event("1:ci-start-gate", ObservedEventKind.CI_STARTED, 1.0, gate=True, job_id=10),
+                _event("1:ci-start-other", ObservedEventKind.CI_STARTED, 1.1, job_id=20),
+                _event("1:ci-end-other", ObservedEventKind.CI_COMPLETED, 1.2, job_id=20),
+                _event("1:ci-end-gate", ObservedEventKind.CI_COMPLETED, 2.0, gate=True, job_id=10),
+            ),
+        )
+    )
+    profile = calibrate_observed_item_flow(dataset)
+    assert profile.ci_duration_seconds is not None
+    assert profile.ci_duration_seconds.count == 2
+    assert profile.ci_gate_duration_seconds is not None
+    assert profile.ci_gate_duration_seconds.mean == pytest.approx(3600.0)
+
+
 def test_calibration_leaves_optional_summaries_absent_when_evidence_is_absent() -> None:
     dataset = _dataset(_trace(1, opened_hour=0, terminal_hour=2))
-
     profile = calibrate_observed_item_flow(dataset)
-
     assert profile.interarrival_seconds is None
     assert profile.arrival_rate_per_second is None
     assert profile.review_response_latency_seconds is None
@@ -177,9 +212,7 @@ def test_calibration_treats_zero_duration_traces_as_empty_half_open_intervals() 
         _trace(1, opened_hour=0, terminal_hour=0),
         _trace(2, opened_hour=0, terminal_hour=0),
     )
-
     profile = calibrate_observed_item_flow(dataset)
-
     assert profile.interarrival_seconds is not None
     assert profile.interarrival_seconds.mean == 0.0
     assert profile.arrival_rate_per_second is None
@@ -192,7 +225,6 @@ def test_calibration_rejects_nonterminal_data_to_protect_lead_time_and_wip_seman
         _trace(1, opened_hour=0, terminal_hour=2),
         _trace(2, opened_hour=1, terminal_hour=None),
     )
-
     with pytest.raises(ValueError, match="terminal-only"):
         calibrate_observed_item_flow(dataset)
 
@@ -206,6 +238,5 @@ def test_calibration_rejects_ci_completion_without_a_matching_start() -> None:
             extras=(_event("1:ci-end", ObservedEventKind.CI_COMPLETED, 1),),
         )
     )
-
     with pytest.raises(ValueError, match="CI_COMPLETED without matching CI_STARTED"):
         calibrate_observed_item_flow(dataset)
