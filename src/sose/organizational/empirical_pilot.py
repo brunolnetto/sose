@@ -221,6 +221,72 @@ def assess_snapshot_evidence(snapshot: GitHubPRObservationSnapshot) -> Empirical
     )
 
 
+class EmpiricalEligibilityCriteria(BaseModel):
+    """Preregistered per-requirement thresholds; deliberately not a composite score."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    min_pr_count: int = Field(ge=2)
+    min_preterminal_ci_pr_fraction: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    min_identified_gate_pr_fraction: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+
+
+class EmpiricalEligibilityReport(BaseModel):
+    """Auditable pass/fail facts against one explicit preregistered criterion set."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    snapshot_hash: NonBlankString
+    criteria: EmpiricalEligibilityCriteria
+    pr_count: int = Field(ge=1)
+    preterminal_ci_pr_count: int = Field(ge=0)
+    preterminal_ci_pr_fraction: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    identified_gate_pr_count: int = Field(ge=0)
+    identified_gate_pr_fraction: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+    failed_requirements: tuple[NonBlankString, ...]
+    eligible: bool
+
+
+def evaluate_empirical_eligibility(
+    snapshot: GitHubPRObservationSnapshot,
+    *,
+    criteria: EmpiricalEligibilityCriteria,
+) -> EmpiricalEligibilityReport:
+    """Evaluate source coverage against preregistered thresholds without scalarizing it."""
+
+    pr_count = len(snapshot.records)
+    preterminal_ci_pr_count = sum(
+        any(job.completed_at <= record.merged_at for job in record.workflow_jobs)
+        for record in snapshot.records
+    )
+    identified_gate_pr_count = sum(
+        any(job.is_gate and job.completed_at <= record.merged_at for job in record.workflow_jobs)
+        for record in snapshot.records
+    )
+    preterminal_fraction = preterminal_ci_pr_count / pr_count
+    identified_gate_fraction = identified_gate_pr_count / pr_count
+
+    failed: list[str] = []
+    if pr_count < criteria.min_pr_count:
+        failed.append("min_pr_count")
+    if preterminal_fraction < criteria.min_preterminal_ci_pr_fraction:
+        failed.append("min_preterminal_ci_pr_fraction")
+    if identified_gate_fraction < criteria.min_identified_gate_pr_fraction:
+        failed.append("min_identified_gate_pr_fraction")
+
+    return EmpiricalEligibilityReport(
+        snapshot_hash=snapshot.snapshot_hash,
+        criteria=criteria,
+        pr_count=pr_count,
+        preterminal_ci_pr_count=preterminal_ci_pr_count,
+        preterminal_ci_pr_fraction=preterminal_fraction,
+        identified_gate_pr_count=identified_gate_pr_count,
+        identified_gate_pr_fraction=identified_gate_fraction,
+        failed_requirements=tuple(failed),
+        eligible=not failed,
+    )
+
+
 class PRReviewEmpiricalPilotResult(BaseModel):
     """Auditable empirical-pilot result bound to source, split and model hashes."""
 
