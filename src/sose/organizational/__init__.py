@@ -22,12 +22,21 @@ from .model_spec import (
 )
 from .observations import ObservedEventKind, ObservedPREvent, ObservedPRTrace
 from .sampling import sample_parameter_space
+from .validation import (
+    DistributionSummary,
+    LeadTimeValidation,
+    compare_lead_time_distributions,
+    empirical_cdf_max_distance,
+    summarize_distribution,
+)
 
 __all__ = [
+    "DistributionSummary",
     "EvidenceClass",
     "ExperimentProtocol",
     "FalsificationRule",
     "InterventionClass",
+    "LeadTimeValidation",
     "MetricDirection",
     "ModelIntervention",
     "ModelSpec",
@@ -43,6 +52,9 @@ __all__ = [
     "SamplingDesign",
     "StatisticalPlan",
     "StructuralDiff",
+    "compare_lead_time_distributions",
+    "empirical_cdf_max_distance",
     "normalize_github_pr_trace",
     "sample_parameter_space",
+    "summarize_distribution",
 ]
