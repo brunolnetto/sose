@@ -28,7 +28,7 @@ class ObservedItemFlowCalibration(BaseModel):
     lead_time_seconds: DistributionSummary
     review_response_latency_seconds: DistributionSummary | None = None
     ci_duration_seconds: DistributionSummary | None = None
-    peak_wip: int = Field(ge=1)
+    peak_wip: int = Field(ge=0)
     mean_wip: float = Field(ge=0.0, allow_inf_nan=False)
     unidentified_actor_parameters: tuple[NonBlankString, ...] = (
         "reviewer_service_time",
@@ -51,9 +51,8 @@ def calibrate_observed_item_flow(dataset: ObservedPRDataset) -> ObservedItemFlow
     lead_times = tuple(_lead_time(trace) for trace in dataset.traces)
     interarrivals = tuple(
         (later - earlier).total_seconds()
-        for earlier, later in zip(opened, opened[1:], strict=True)
+        for earlier, later in zip(opened, opened[1:])
     )
-    positive_interarrivals = tuple(value for value in interarrivals if value >= 0.0)
 
     arrival_span = (max(opened) - min(opened)).total_seconds()
     arrival_rate = None
@@ -74,7 +73,7 @@ def calibrate_observed_item_flow(dataset: ObservedPRDataset) -> ObservedItemFlow
     peak_wip = _peak_wip(dataset.traces)
     observation_seconds = (observation_end - observation_start).total_seconds()
     total_item_seconds = sum(lead_times)
-    mean_wip = total_item_seconds / observation_seconds if observation_seconds > 0.0 else float(peak_wip)
+    mean_wip = total_item_seconds / observation_seconds if observation_seconds > 0.0 else 0.0
 
     return ObservedItemFlowCalibration(
         observed_dataset_hash=dataset.dataset_hash,
@@ -82,8 +81,8 @@ def calibrate_observed_item_flow(dataset: ObservedPRDataset) -> ObservedItemFlow
         observation_start=observation_start,
         observation_end=observation_end,
         interarrival_seconds=(
-            summarize_distribution(positive_interarrivals, unit="seconds")
-            if positive_interarrivals
+            summarize_distribution(interarrivals, unit="seconds")
+            if interarrivals
             else None
         ),
         arrival_rate_per_second=arrival_rate,
@@ -136,8 +135,11 @@ def _ci_durations_seconds(trace: ObservedPRTrace) -> tuple[float, ...]:
 def _peak_wip(traces: tuple[ObservedPRTrace, ...]) -> int:
     boundaries: list[tuple[datetime, int]] = []
     for trace in traces:
+        terminal = _terminal(trace)
+        if terminal <= trace.opened_at:
+            continue
         boundaries.append((trace.opened_at, 1))
-        boundaries.append((_terminal(trace), -1))
+        boundaries.append((terminal, -1))
 
     # Half-open [opened, terminal): releases at t happen before arrivals at t.
     active = 0
