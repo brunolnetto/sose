@@ -19,11 +19,57 @@ from .heldout_prediction import (
 NonBlankString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
 
 
-class GitHubPRSourceRecord(BaseModel):
-    """Minimal source-preserving GitHub evidence for a merged PR lifecycle.
+def _require_aware(value: datetime, *, field_name: str) -> None:
+    if value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError(f"{field_name} must be timezone-aware")
 
-    This record deliberately contains only directly observed item-lifecycle evidence.
-    It does not infer reviewer effort, actor availability, meetings, or interruptions.
+
+class GitHubWorkflowJobSourceRecord(BaseModel):
+    """Direct machine-side workflow-job evidence with durable source identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    job_id: int = Field(ge=1)
+    name: NonBlankString
+    started_at: datetime
+    completed_at: datetime
+    conclusion: NonBlankString
+    source_url: NonBlankString
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> "GitHubWorkflowJobSourceRecord":
+        _require_aware(self.started_at, field_name="started_at")
+        _require_aware(self.completed_at, field_name="completed_at")
+        if self.completed_at < self.started_at:
+            raise ValueError("completed_at must be at or after started_at")
+        return self
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "job_id": self.job_id,
+            "name": self.name,
+            "started_at": self.started_at.isoformat(),
+            "completed_at": self.completed_at.isoformat(),
+            "conclusion": self.conclusion,
+            "source_url": self.source_url,
+        }
+
+    def adapter_payload(self) -> dict[str, object]:
+        return {
+            "id": self.job_id,
+            "name": self.name,
+            "started_at": self.started_at.isoformat(),
+            "completed_at": self.completed_at.isoformat(),
+            "conclusion": self.conclusion,
+        }
+
+
+class GitHubPRSourceRecord(BaseModel):
+    """Source-preserving GitHub evidence for one merged PR lifecycle.
+
+    Item timestamps and machine-side workflow intervals may be recorded directly.
+    Human effort, availability, meetings, interruptions and utilization are never
+    reconstructed from gaps between these events.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
@@ -33,14 +79,19 @@ class GitHubPRSourceRecord(BaseModel):
     opened_at: datetime
     merged_at: datetime
     source_url: NonBlankString
+    workflow_jobs: tuple[GitHubWorkflowJobSourceRecord, ...] = ()
 
     @model_validator(mode="after")
     def validate_lifecycle(self) -> "GitHubPRSourceRecord":
-        for field_name, value in (("opened_at", self.opened_at), ("merged_at", self.merged_at)):
-            if value.tzinfo is None or value.utcoffset() is None:
-                raise ValueError(f"{field_name} must be timezone-aware")
+        _require_aware(self.opened_at, field_name="opened_at")
+        _require_aware(self.merged_at, field_name="merged_at")
         if self.merged_at < self.opened_at:
             raise ValueError("merged_at must be at or after opened_at")
+        job_ids = tuple(job.job_id for job in self.workflow_jobs)
+        if len(job_ids) != len(set(job_ids)):
+            raise ValueError("duplicate GitHub workflow job identity")
+        ordered = tuple(sorted(self.workflow_jobs, key=lambda job: (job.started_at, job.job_id)))
+        object.__setattr__(self, "workflow_jobs", ordered)
         return self
 
     def canonical_payload(self) -> dict[str, object]:
@@ -50,6 +101,7 @@ class GitHubPRSourceRecord(BaseModel):
             "opened_at": self.opened_at.isoformat(),
             "merged_at": self.merged_at.isoformat(),
             "source_url": self.source_url,
+            "workflow_jobs": [job.canonical_payload() for job in self.workflow_jobs],
         }
 
     def to_trace(self):
@@ -61,6 +113,7 @@ class GitHubPRSourceRecord(BaseModel):
                 "merged_at": self.merged_at.isoformat(),
                 "closed_at": self.merged_at.isoformat(),
             },
+            workflow_jobs=tuple(job.adapter_payload() for job in self.workflow_jobs),
         )
 
 
@@ -110,6 +163,41 @@ class GitHubPRObservationSnapshot(BaseModel):
             dataset_version=self.snapshot_version,
             traces=tuple(record.to_trace() for record in self.records),
         )
+
+
+class EmpiricalSourceEvidence(BaseModel):
+    """Non-composite data-quality facts for one source snapshot."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    pr_count: int = Field(ge=1)
+    workflow_job_count: int = Field(ge=0)
+    preterminal_completed_workflow_job_count: int = Field(ge=0)
+    postterminal_completed_workflow_job_count: int = Field(ge=0)
+    ci_calibratable: bool
+
+
+def assess_snapshot_evidence(snapshot: GitHubPRObservationSnapshot) -> EmpiricalSourceEvidence:
+    """Classify CI evidence without treating post-merge activity as causal gate data."""
+
+    workflow_job_count = 0
+    preterminal_completed = 0
+    postterminal_completed = 0
+    for record in snapshot.records:
+        workflow_job_count += len(record.workflow_jobs)
+        for job in record.workflow_jobs:
+            if job.completed_at <= record.merged_at:
+                preterminal_completed += 1
+            else:
+                postterminal_completed += 1
+
+    return EmpiricalSourceEvidence(
+        pr_count=len(snapshot.records),
+        workflow_job_count=workflow_job_count,
+        preterminal_completed_workflow_job_count=preterminal_completed,
+        postterminal_completed_workflow_job_count=postterminal_completed,
+        ci_calibratable=preterminal_completed > 0,
+    )
 
 
 class PRReviewEmpiricalPilotResult(BaseModel):
