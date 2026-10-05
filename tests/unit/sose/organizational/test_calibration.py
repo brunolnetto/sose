@@ -141,6 +141,21 @@ def test_calibration_leaves_optional_summaries_absent_when_evidence_is_absent() 
     assert profile.mean_wip == pytest.approx(1.0)
 
 
+def test_calibration_treats_zero_duration_traces_as_empty_half_open_intervals() -> None:
+    dataset = _dataset(
+        _trace(1, opened_hour=0, terminal_hour=0),
+        _trace(2, opened_hour=0, terminal_hour=0),
+    )
+
+    profile = calibrate_observed_item_flow(dataset)
+
+    assert profile.interarrival_seconds is not None
+    assert profile.interarrival_seconds.mean == 0.0
+    assert profile.arrival_rate_per_second is None
+    assert profile.peak_wip == 0
+    assert profile.mean_wip == 0.0
+
+
 def test_calibration_rejects_nonterminal_data_to_protect_lead_time_and_wip_semantics() -> None:
     dataset = _dataset(
         _trace(1, opened_hour=0, terminal_hour=2),
