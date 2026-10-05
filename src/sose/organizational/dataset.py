@@ -117,6 +117,8 @@ class ObservedPRSplit(BaseModel):
             raise ValueError("purged pull requests must not appear in train or holdout")
         if len(purged_keys) != len(self.purged_keys):
             raise ValueError("purged pull request identities must be unique")
+        if any(trace.terminal_at is None for trace in self.holdout.traces):
+            raise ValueError("holdout traces must be terminal")
         if self.train.traces[-1].opened_at > self.holdout.traces[0].opened_at:
             raise ValueError("chronological holdout must not precede training data")
         if any(
