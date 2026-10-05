@@ -12,7 +12,7 @@ from sose.examples.organizational_pr_review import (
 )
 
 from .calibration import ObservedItemFlowCalibration, calibrate_observed_item_flow
-from .dataset import ObservedPRDataset, ObservedPRSplit
+from .dataset import ObservedPRSplit
 from .model_spec import EvidenceClass
 from .validation import LeadTimeValidation, compare_lead_time_distributions
 
@@ -55,9 +55,6 @@ def predict_pr_review_holdout(
     seed: int,
 ) -> PRReviewHeldoutPrediction:
     """Calibrate on train only, then predict held-out lead times without using held-out outcomes."""
-
-    _require_terminal(split.train, role="training")
-    _require_terminal(split.holdout, role="holdout")
 
     calibration = calibrate_observed_item_flow(split.train)
     ci_summary = calibration.ci_duration_seconds
@@ -113,8 +110,3 @@ def predict_pr_review_holdout(
         simulated_lead_times_seconds=simulated_lead_times,
         validation=validation,
     )
-
-
-def _require_terminal(dataset: ObservedPRDataset, *, role: str) -> None:
-    if any(trace.terminal_at is None for trace in dataset.traces):
-        raise ValueError(f"held-out prediction requires a terminal-only {role} dataset")
