@@ -3,8 +3,9 @@ from __future__ import annotations
 from datetime import datetime, timezone
 
 import pytest
+from pydantic import ValidationError
 
-from sose.organizational.dataset import ObservedPRDataset
+from sose.organizational.dataset import ObservedPRDataset, ObservedPRSplit
 from sose.organizational.observations import ObservedEventKind, ObservedPREvent, ObservedPRTrace
 
 
@@ -70,6 +71,25 @@ def test_holdout_requires_terminal_outcomes_before_splitting() -> None:
 
     with pytest.raises(ValueError, match="terminal-only"):
         dataset.chronological_holdout(holdout_fraction=1 / 3)
+
+
+def test_direct_split_rejects_nonterminal_holdout_traces() -> None:
+    open_trace = ObservedPRTrace(
+        repository="example/repo",
+        pr_number=2,
+        events=(
+            ObservedPREvent(
+                source_event_id="2:open",
+                kind=ObservedEventKind.OPENED,
+                occurred_at=_dt(2),
+            ),
+        ),
+    )
+    train = ObservedPRDataset(dataset_version="1", traces=(_trace(1, 1, 1),))
+    holdout = ObservedPRDataset(dataset_version="1", traces=(open_trace,))
+
+    with pytest.raises(ValidationError, match="holdout traces must be terminal"):
+        ObservedPRSplit(train=train, holdout=holdout)
 
 
 def test_holdout_rejects_split_when_purging_removes_all_training_data() -> None:
