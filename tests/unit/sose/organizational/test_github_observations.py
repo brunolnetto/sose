@@ -54,6 +54,58 @@ def test_adapter_normalizes_open_review_request_review_and_merge() -> None:
     assert trace.events[-1].actor_key == "maintainer"
 
 
+def test_removed_review_request_is_cancelled_before_later_request_pairing() -> None:
+    trace = normalize_github_pr_trace(
+        repository="example/repo",
+        pull_request=_pull_request(),
+        timeline_events=(
+            {
+                "id": 101,
+                "event": "review_requested",
+                "created_at": "2026-01-01T10:30:00Z",
+                "requested_reviewer": {"login": "reviewer"},
+            },
+            {
+                "id": 102,
+                "event": "review_request_removed",
+                "created_at": "2026-01-01T11:00:00Z",
+                "requested_reviewer": {"login": "reviewer"},
+            },
+            {
+                "id": 103,
+                "event": "review_requested",
+                "created_at": "2026-01-01T12:00:00Z",
+                "requested_reviewer": {"login": "reviewer"},
+            },
+        ),
+        reviews=(
+            {
+                "id": 201,
+                "submitted_at": "2026-01-01T13:00:00Z",
+                "state": "APPROVED",
+                "user": {"login": "reviewer"},
+            },
+        ),
+    )
+
+    assert [
+        event.kind
+        for event in trace.events
+        if event.kind
+        in {
+            ObservedEventKind.REVIEW_REQUESTED,
+            ObservedEventKind.REVIEW_REQUEST_REMOVED,
+            ObservedEventKind.REVIEW_SUBMITTED,
+        }
+    ] == [
+        ObservedEventKind.REVIEW_REQUESTED,
+        ObservedEventKind.REVIEW_REQUEST_REMOVED,
+        ObservedEventKind.REVIEW_REQUESTED,
+        ObservedEventKind.REVIEW_SUBMITTED,
+    ]
+    assert trace.review_response_latencies_seconds() == (3600.0,)
+
+
 def test_merged_pr_emits_one_terminal_event_not_closed_plus_merged() -> None:
     trace = normalize_github_pr_trace(
         repository="example/repo",
