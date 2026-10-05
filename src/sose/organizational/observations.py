@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from collections.abc import Mapping
 from datetime import datetime
 from enum import StrEnum
 import json
@@ -58,7 +59,7 @@ class ObservedPREvent(BaseModel):
             )
         except (TypeError, ValueError) as exc:
             raise ValueError("metadata must contain finite JSON-compatible data") from exc
-        object.__setattr__(self, "metadata", MappingProxyType(json.loads(encoded)))
+        object.__setattr__(self, "metadata", _freeze_json(json.loads(encoded)))
         return self
 
     def canonical_payload(self) -> dict[str, object]:
@@ -68,7 +69,7 @@ class ObservedPREvent(BaseModel):
             "occurred_at": self.occurred_at.isoformat(),
             "actor_key": self.actor_key,
             "state": self.state,
-            "metadata": dict(self.metadata),
+            "metadata": _thaw_json(self.metadata),
         }
 
 
@@ -87,9 +88,9 @@ class ObservedPRTrace(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate source_event_id in observed trace")
 
-        ordered = tuple(
-            sorted(self.events, key=lambda event: (event.occurred_at, event.source_event_id))
-        )
+        # Python's stable sort preserves source sequence among equal timestamps.
+        # That order is semantically relevant when source timestamps are coarse.
+        ordered = tuple(sorted(self.events, key=lambda event: event.occurred_at))
         opened = [event for event in ordered if event.kind is ObservedEventKind.OPENED]
         if len(opened) != 1:
             raise ValueError("observed trace requires exactly one opened event")
@@ -167,3 +168,19 @@ class ObservedPRTrace(BaseModel):
             ensure_ascii=False,
             allow_nan=False,
         )
+
+
+def _freeze_json(value: object) -> object:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
+
+
+def _thaw_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {str(key): _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
