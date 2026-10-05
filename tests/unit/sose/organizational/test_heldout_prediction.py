@@ -142,17 +142,16 @@ def test_holdout_arrival_schedule_is_preserved_without_using_terminal_outcomes_a
     assert all(value > 0.0 for value in result.simulated_lead_times_seconds)
 
 
-def test_prediction_requires_terminal_train_and_holdout_datasets() -> None:
+def test_split_boundary_rejects_nonterminal_holdout_before_prediction() -> None:
     open_trace = ObservedPRTrace(
         repository="example/repo",
         pr_number=99,
         events=(_event("99:open", ObservedEventKind.OPENED, 20),),
     )
     bad_holdout = ObservedPRDataset(dataset_version="bad", traces=(open_trace,))
-    split = ObservedPRSplit(train=_split().train, holdout=bad_holdout)
 
-    with pytest.raises(ValueError, match="terminal-only"):
-        predict_pr_review_holdout(split=split, assumptions=_assumptions(), seed=71)
+    with pytest.raises(ValueError, match="holdout traces must be terminal"):
+        ObservedPRSplit(train=_split().train, holdout=bad_holdout)
 
 
 def test_canonical_evidence_defaults_remain_backward_compatible() -> None:
