@@ -1,5 +1,6 @@
 """Organizational-dynamics modeling layer built on SOSE primitives."""
 
+from .dataset import ObservedPRDataset, ObservedPRSplit
 from .experiment import (
     ExperimentProtocol,
     FalsificationRule,
@@ -32,7 +33,9 @@ __all__ = [
     "ModelSpec",
     "MultipleComparisonMethod",
     "ObservedEventKind",
+    "ObservedPRDataset",
     "ObservedPREvent",
+    "ObservedPRSplit",
     "ObservedPRTrace",
     "OutcomeMetric",
     "ParameterRange",
