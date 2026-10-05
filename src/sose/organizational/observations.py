@@ -52,7 +52,7 @@ class ObservedPREvent(BaseModel):
     def freeze_metadata(self) -> "ObservedPREvent":
         try:
             encoded = json.dumps(
-                self.metadata,
+                _thaw_json(self.metadata),
                 sort_keys=True,
                 separators=(",", ":"),
                 allow_nan=False,
