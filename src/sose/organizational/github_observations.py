@@ -52,22 +52,23 @@ def normalize_github_pr_trace(
     )
 
     for timeline in timeline_events:
-        if timeline.get("event") != "review_requested":
+        timeline_kind = timeline.get("event")
+        if timeline_kind not in {"review_requested", "review_request_removed"}:
             continue
         occurred_at = _optional_datetime(timeline.get("created_at"))
         event_id = timeline.get("id")
         if occurred_at is None or event_id is None:
             continue
-        reviewer = _login(timeline.get("requested_reviewer"))
-        if reviewer is None:
-            team = timeline.get("requested_team")
-            if isinstance(team, Mapping):
-                slug = team.get("slug") or team.get("name")
-                reviewer = f"team:{slug}" if isinstance(slug, str) and slug.strip() else None
+        reviewer = _requested_actor(timeline)
+        kind = (
+            ObservedEventKind.REVIEW_REQUESTED
+            if timeline_kind == "review_requested"
+            else ObservedEventKind.REVIEW_REQUEST_REMOVED
+        )
         add(
             ObservedPREvent(
-                source_event_id=f"github:timeline:{event_id}:review_requested",
-                kind=ObservedEventKind.REVIEW_REQUESTED,
+                source_event_id=f"github:timeline:{event_id}:{timeline_kind}",
+                kind=kind,
                 occurred_at=occurred_at,
                 actor_key=reviewer,
             ),
@@ -154,6 +155,17 @@ def normalize_github_pr_trace(
         )
     )
     return ObservedPRTrace(repository=repository, pr_number=pr_number, events=ordered)
+
+
+def _requested_actor(timeline: JsonMapping) -> str | None:
+    reviewer = _login(timeline.get("requested_reviewer"))
+    if reviewer is not None:
+        return reviewer
+    team = timeline.get("requested_team")
+    if not isinstance(team, Mapping):
+        return None
+    slug = team.get("slug") or team.get("name")
+    return f"team:{slug}" if isinstance(slug, str) and slug.strip() else None
 
 
 def _required_int(payload: JsonMapping, field: str) -> int:
