@@ -78,7 +78,7 @@ class PullRequestFlowResult(BaseModel):
         ]
         current = 0
         peak = 0
-        for _, delta in sorted(boundaries, key=lambda entry: (entry[0], -entry[1])):
+        for _, delta in sorted(boundaries, key=lambda entry: (entry[0], entry[1])):
             current += delta
             peak = max(peak, current)
         return peak
