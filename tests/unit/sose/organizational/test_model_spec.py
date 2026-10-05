@@ -1,5 +1,10 @@
 from __future__ import annotations
 
+import math
+
+import pytest
+from pydantic import ValidationError
+
 from sose.organizational.model_spec import (
     EvidenceClass,
     InterventionClass,
@@ -43,15 +48,33 @@ def test_hash_changes_when_structure_changes() -> None:
 
 
 def test_every_declared_parameter_requires_an_evidence_class() -> None:
-    try:
+    with pytest.raises(ValueError, match="evidence class"):
         _spec(parameter_evidence={})
-    except ValueError as exc:
-        assert "evidence class" in str(exc)
-    else:
-        raise AssertionError("missing evidence metadata must be rejected")
 
 
-def test_structural_diff_reports_added_removed_and_changed_paths() -> None:
+def test_model_spec_is_deeply_immutable_after_validation() -> None:
+    spec = _spec()
+    original_hash = spec.model_spec_hash
+
+    with pytest.raises(TypeError):
+        spec.stations["review"] = {"capacity": 2}  # type: ignore[index]
+    with pytest.raises(TypeError):
+        spec.stations["review"]["capacity"] = 2  # type: ignore[index]
+    with pytest.raises((AttributeError, TypeError)):
+        spec.actors["alice"]["capabilities"].append("security")  # type: ignore[index,union-attr]
+
+    assert spec.model_spec_hash == original_hash
+
+
+def test_model_spec_rejects_non_json_values_and_non_finite_floats() -> None:
+    with pytest.raises(ValidationError):
+        _spec(stations={"review": {"value": object()}})
+
+    with pytest.raises(ValidationError):
+        _spec(stations={"review": {"capacity": math.inf}})
+
+
+def test_structural_diff_reports_json_pointer_paths() -> None:
     before = _spec(
         stations={"review": {"capacity": 1}, "legacy": {"capacity": 1}},
         routing={"submitted": "legacy"},
@@ -63,10 +86,24 @@ def test_structural_diff_reports_added_removed_and_changed_paths() -> None:
 
     diff = before.diff(after)
 
-    assert diff.added == {"stations.security": {"capacity": 1}}
-    assert diff.removed == {"stations.legacy": {"capacity": 1}}
-    assert diff.changed["stations.review.capacity"] == (1, 2)
-    assert diff.changed["routing.submitted"] == ("legacy", "review")
+    assert diff.added == {"/stations/security": {"capacity": 1}}
+    assert diff.removed == {"/stations/legacy": {"capacity": 1}}
+    assert diff.changed["/stations/review/capacity"] == (1, 2)
+    assert diff.changed["/routing/submitted"] == ("legacy", "review")
+
+
+def test_json_pointer_can_address_keys_containing_dots() -> None:
+    before = _spec()
+    intervention = ModelIntervention(
+        intervention_id="raise-capacity-v1",
+        intervention_class=InterventionClass.CAPACITY,
+        set_values={"/parameters/review.capacity": 2},
+    )
+
+    after, diff = intervention.apply(before)
+
+    assert after.parameters["review.capacity"] == 2
+    assert diff.changed["/parameters/review.capacity"] == (1, 2)
 
 
 def test_intervention_is_a_versioned_spec_transformation() -> None:
@@ -75,8 +112,8 @@ def test_intervention_is_a_versioned_spec_transformation() -> None:
         intervention_id="delegate-review-v1",
         intervention_class=InterventionClass.STRUCTURAL,
         set_values={
-            "authority.approve": ["alice", "bob"],
-            "actors.bob": {"capabilities": ["review"]},
+            "/authority/approve": ["alice", "bob"],
+            "/actors/bob": {"capabilities": ["review"]},
         },
         remove_paths=[],
         mechanisms_added=["delegated_approval"],
@@ -90,7 +127,7 @@ def test_intervention_is_a_versioned_spec_transformation() -> None:
     after, diff = intervention.apply(before)
 
     assert after.model_spec_hash != before.model_spec_hash
-    assert after.authority["approve"] == ["alice", "bob"]
-    assert after.actors["bob"] == {"capabilities": ["review"]}
-    assert diff.added["actors.bob"] == {"capabilities": ["review"]}
-    assert diff.changed["authority.approve"] == (["alice"], ["alice", "bob"])
+    assert after.authority["approve"] == ("alice", "bob")
+    assert after.actors["bob"] == {"capabilities": ("review",)}
+    assert diff.added["/actors/bob"] == {"capabilities": ["review"]}
+    assert diff.changed["/authority/approve"] == (["alice"], ["alice", "bob"])
