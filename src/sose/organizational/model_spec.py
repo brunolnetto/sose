@@ -4,6 +4,8 @@ from copy import deepcopy
 from enum import StrEnum
 from hashlib import sha256
 import json
+from math import isfinite
+from types import MappingProxyType
 from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -32,9 +34,9 @@ class StructuralDiff(BaseModel):
 
 
 class ModelSpec(BaseModel):
-    """Declarative, hash-addressed organizational experiment configuration."""
+    """Declarative, deeply immutable, hash-addressed experiment configuration."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+    model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
 
     version: str = "1"
     stations: dict[str, object] = Field(default_factory=dict)
@@ -52,7 +54,7 @@ class ModelSpec(BaseModel):
     parameter_evidence: dict[str, EvidenceClass] = Field(default_factory=dict)
 
     @model_validator(mode="after")
-    def validate_parameter_evidence(self) -> "ModelSpec":
+    def validate_and_freeze(self) -> "ModelSpec":
         missing = sorted(set(self.parameters) - set(self.parameter_evidence))
         if missing:
             raise ValueError(
@@ -65,10 +67,21 @@ class ModelSpec(BaseModel):
                 "parameter_evidence contains undeclared parameters: "
                 + ", ".join(unknown)
             )
+        for name in _JSON_MAPPING_FIELDS:
+            value = getattr(self, name)
+            _validate_json(value, path=f"/{name}")
+            object.__setattr__(self, name, _freeze(value))
+        object.__setattr__(self, "parameter_evidence", MappingProxyType(dict(self.parameter_evidence)))
         return self
 
     def canonical_payload(self) -> dict[str, object]:
-        return self.model_dump(mode="json")
+        payload: dict[str, object] = {"version": self.version}
+        for name in _JSON_MAPPING_FIELDS:
+            payload[name] = _thaw(getattr(self, name))
+        payload["parameter_evidence"] = {
+            key: value.value for key, value in self.parameter_evidence.items()
+        }
+        return payload
 
     def canonical_json(self) -> str:
         return json.dumps(
@@ -76,6 +89,7 @@ class ModelSpec(BaseModel):
             sort_keys=True,
             separators=(",", ":"),
             ensure_ascii=False,
+            allow_nan=False,
         )
 
     @property
@@ -95,6 +109,22 @@ class ModelSpec(BaseModel):
             changed=changed,
         )
         return StructuralDiff(added=added, removed=removed, changed=changed)
+
+
+_JSON_MAPPING_FIELDS = (
+    "stations",
+    "actors",
+    "capabilities",
+    "calendars",
+    "routing",
+    "authority",
+    "quality_gates",
+    "policies",
+    "demand",
+    "costs",
+    "agency",
+    "parameters",
+)
 
 
 class ModelIntervention(BaseModel):
@@ -123,6 +153,46 @@ class ModelIntervention(BaseModel):
         return transformed, spec.diff(transformed)
 
 
+def _validate_json(value: object, *, path: str) -> None:
+    if value is None or isinstance(value, (str, bool, int)):
+        return
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise ValueError(f"non-finite JSON number at {path}")
+        return
+    if isinstance(value, dict):
+        for key, child in value.items():
+            if not isinstance(key, str):
+                raise ValueError(f"JSON object key at {path} must be a string")
+            _validate_json(child, path=_join_pointer(path, key))
+        return
+    if isinstance(value, (list, tuple)):
+        for index, child in enumerate(value):
+            _validate_json(child, path=_join_pointer(path, str(index)))
+        return
+    raise ValueError(f"value at {path} is not JSON-compatible: {type(value).__name__}")
+
+
+def _freeze(value: object) -> object:
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze(child) for key, child in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze(child) for child in value)
+    return value
+
+
+def _thaw(value: object) -> object:
+    if isinstance(value, MappingProxyType):
+        return {key: _thaw(child) for key, child in value.items()}
+    if isinstance(value, dict):
+        return {key: _thaw(child) for key, child in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw(child) for child in value]
+    if isinstance(value, EvidenceClass):
+        return value.value
+    return value
+
+
 def _diff_values(
     before: object,
     after: object,
@@ -136,16 +206,16 @@ def _diff_values(
         before_keys = set(before)
         after_keys = set(after)
         for key in sorted(after_keys - before_keys):
-            child = _join(path, str(key))
+            child = _join_pointer(path, str(key))
             added[child] = after[key]
         for key in sorted(before_keys - after_keys):
-            child = _join(path, str(key))
+            child = _join_pointer(path, str(key))
             removed[child] = before[key]
         for key in sorted(before_keys & after_keys):
             _diff_values(
                 before[key],
                 after[key],
-                path=_join(path, str(key)),
+                path=_join_pointer(path, str(key)),
                 added=added,
                 removed=removed,
                 changed=changed,
@@ -155,12 +225,13 @@ def _diff_values(
         changed[path] = (before, after)
 
 
-def _join(parent: str, child: str) -> str:
-    return child if not parent else f"{parent}.{child}"
+def _join_pointer(parent: str, child: str) -> str:
+    escaped = child.replace("~", "~0").replace("/", "~1")
+    return f"{parent}/{escaped}" if parent else f"/{escaped}"
 
 
 def _set_path(payload: dict[str, Any], path: str, value: object) -> None:
-    parts = _parts(path)
+    parts = _pointer_parts(path)
     current: dict[str, Any] = payload
     for part in parts[:-1]:
         child = current.get(part)
@@ -174,7 +245,7 @@ def _set_path(payload: dict[str, Any], path: str, value: object) -> None:
 
 
 def _remove_path(payload: dict[str, Any], path: str) -> None:
-    parts = _parts(path)
+    parts = _pointer_parts(path)
     current: dict[str, Any] = payload
     for part in parts[:-1]:
         child = current.get(part)
@@ -186,8 +257,7 @@ def _remove_path(payload: dict[str, Any], path: str) -> None:
     del current[parts[-1]]
 
 
-def _parts(path: str) -> list[str]:
-    parts = [part for part in path.split(".") if part]
-    if not parts:
-        raise ValueError("model path cannot be empty")
-    return parts
+def _pointer_parts(path: str) -> list[str]:
+    if not path.startswith("/") or path == "/":
+        raise ValueError("model path must be a non-root JSON Pointer")
+    return [part.replace("~1", "/").replace("~0", "~") for part in path[1:].split("/")]
