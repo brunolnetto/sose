@@ -18,12 +18,14 @@ def _event(
     hours: float,
     *,
     actor_key: str | None = None,
+    gate: bool = False,
 ) -> ObservedPREvent:
     return ObservedPREvent(
         source_event_id=source_event_id,
         kind=kind,
         occurred_at=BASE + timedelta(hours=hours),
         actor_key=actor_key,
+        metadata={"ci_gate": True, "ci_gate_evidence": "config://required-check"} if gate else {},
     )
 
 
@@ -99,12 +101,33 @@ def test_calibration_uses_elapsed_review_response_and_ci_machine_duration_only()
     assert profile.review_response_latency_seconds.mean == pytest.approx(2 * 3600)
     assert profile.ci_duration_seconds is not None
     assert profile.ci_duration_seconds.mean == pytest.approx(0.5 * 3600)
-    assert profile.ci_gate_duration_seconds is not None
-    assert profile.ci_gate_duration_seconds.mean == pytest.approx(0.5 * 3600)
+    # Machine activity alone does not identify a CI gate.
+    assert profile.ci_gate_duration_seconds is None
     assert "reviewer_service_time" in profile.unidentified_actor_parameters
     assert "reviewer_capacity" in profile.unidentified_actor_parameters
     assert "reviewer_calendar" in profile.unidentified_actor_parameters
     assert not hasattr(profile, "reviewer_service_time")
+
+
+def test_explicit_gate_provenance_enables_ci_gate_calibration() -> None:
+    dataset = _dataset(
+        _trace(
+            1,
+            opened_hour=0,
+            terminal_hour=8,
+            extras=(
+                _event("1:ci-start", ObservedEventKind.CI_STARTED, 4, gate=True),
+                _event("1:ci-end", ObservedEventKind.CI_COMPLETED, 4.5, gate=True),
+            ),
+        )
+    )
+
+    profile = calibrate_observed_item_flow(dataset)
+
+    assert profile.ci_duration_seconds is not None
+    assert profile.ci_duration_seconds.mean == pytest.approx(0.5 * 3600)
+    assert profile.ci_gate_duration_seconds is not None
+    assert profile.ci_gate_duration_seconds.mean == pytest.approx(0.5 * 3600)
 
 
 def test_calibration_pairs_multiple_ci_intervals_fifo_without_inventing_effort() -> None:
@@ -114,10 +137,10 @@ def test_calibration_pairs_multiple_ci_intervals_fifo_without_inventing_effort()
             opened_hour=0,
             terminal_hour=8,
             extras=(
-                _event("1:ci-start-a", ObservedEventKind.CI_STARTED, 1),
-                _event("1:ci-end-a", ObservedEventKind.CI_COMPLETED, 2),
-                _event("1:ci-start-b", ObservedEventKind.CI_STARTED, 3),
-                _event("1:ci-end-b", ObservedEventKind.CI_COMPLETED, 5),
+                _event("1:ci-start-a", ObservedEventKind.CI_STARTED, 1, gate=True),
+                _event("1:ci-end-a", ObservedEventKind.CI_COMPLETED, 2, gate=True),
+                _event("1:ci-start-b", ObservedEventKind.CI_STARTED, 3, gate=True),
+                _event("1:ci-end-b", ObservedEventKind.CI_COMPLETED, 5, gate=True),
             ),
         ),
         _trace(2, opened_hour=10, terminal_hour=12),
@@ -133,17 +156,17 @@ def test_calibration_pairs_multiple_ci_intervals_fifo_without_inventing_effort()
     assert profile.ci_gate_duration_seconds.mean == pytest.approx(4 * 3600)
 
 
-def test_parallel_ci_jobs_produce_one_gate_latency_per_pr() -> None:
+def test_parallel_ci_jobs_produce_one_gate_latency_per_pr_when_gate_is_identified() -> None:
     dataset = _dataset(
         _trace(
             1,
             opened_hour=0,
             terminal_hour=2,
             extras=(
-                _event("1:ci-start-a", ObservedEventKind.CI_STARTED, 0.25),
-                _event("1:ci-start-b", ObservedEventKind.CI_STARTED, 0.25),
-                _event("1:ci-end-a", ObservedEventKind.CI_COMPLETED, 0.25 + 1 / 60),
-                _event("1:ci-end-b", ObservedEventKind.CI_COMPLETED, 0.75),
+                _event("1:ci-start-a", ObservedEventKind.CI_STARTED, 0.25, gate=True),
+                _event("1:ci-start-b", ObservedEventKind.CI_STARTED, 0.25, gate=True),
+                _event("1:ci-end-a", ObservedEventKind.CI_COMPLETED, 0.25 + 1 / 60, gate=True),
+                _event("1:ci-end-b", ObservedEventKind.CI_COMPLETED, 0.75, gate=True),
             ),
         )
     )
