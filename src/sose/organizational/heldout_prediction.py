@@ -12,8 +12,9 @@ from sose.examples.organizational_pr_review import (
 )
 
 from .calibration import ObservedItemFlowCalibration, calibrate_observed_item_flow
-from .dataset import ObservedPRSplit
+from .dataset import ObservedPRDataset, ObservedPRSplit
 from .model_spec import EvidenceClass
+from .observations import ObservedEventKind
 from .validation import LeadTimeValidation, compare_lead_time_distributions
 
 
@@ -56,8 +57,11 @@ def predict_pr_review_holdout(
 ) -> PRReviewHeldoutPrediction:
     """Calibrate on train only, then predict held-out lead times without using held-out outcomes."""
 
+    _require_merged_only(split.train, role="training")
+    _require_merged_only(split.holdout, role="holdout")
+
     calibration = calibrate_observed_item_flow(split.train)
-    ci_summary = calibration.ci_duration_seconds
+    ci_summary = calibration.ci_gate_duration_seconds
     use_observed_ci = ci_summary is not None and ci_summary.mean > 0.0
     ci_time = ci_summary.mean if use_observed_ci else assumptions.fallback_ci_time_seconds
 
@@ -110,3 +114,11 @@ def predict_pr_review_holdout(
         simulated_lead_times_seconds=simulated_lead_times,
         validation=validation,
     )
+
+
+def _require_merged_only(dataset: ObservedPRDataset, *, role: str) -> None:
+    for trace in dataset.traces:
+        if not any(event.kind is ObservedEventKind.MERGED for event in trace.events):
+            raise ValueError(
+                f"PR-review held-out prediction requires merged-only {role} outcomes"
+            )
