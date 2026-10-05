@@ -28,6 +28,7 @@ class ObservedItemFlowCalibration(BaseModel):
     lead_time_seconds: DistributionSummary
     review_response_latency_seconds: DistributionSummary | None = None
     ci_duration_seconds: DistributionSummary | None = None
+    ci_gate_duration_seconds: DistributionSummary | None = None
     peak_wip: int = Field(ge=0)
     mean_wip: float = Field(ge=0.0, allow_inf_nan=False)
     unidentified_actor_parameters: tuple[NonBlankString, ...] = (
@@ -64,10 +65,16 @@ def calibrate_observed_item_flow(dataset: ObservedPRDataset) -> ObservedItemFlow
         for trace in dataset.traces
         for latency in trace.review_response_latencies_seconds()
     )
+    ci_intervals_by_trace = tuple(_ci_intervals(trace) for trace in dataset.traces)
     ci_durations = tuple(
-        duration
-        for trace in dataset.traces
-        for duration in _ci_durations_seconds(trace)
+        (completed - started).total_seconds()
+        for intervals in ci_intervals_by_trace
+        for started, completed in intervals
+    )
+    ci_gate_durations = tuple(
+        (max(completed for _, completed in intervals) - min(started for started, _ in intervals)).total_seconds()
+        for intervals in ci_intervals_by_trace
+        if intervals
     )
 
     peak_wip = _peak_wip(dataset.traces)
@@ -97,6 +104,11 @@ def calibrate_observed_item_flow(dataset: ObservedPRDataset) -> ObservedItemFlow
             if ci_durations
             else None
         ),
+        ci_gate_duration_seconds=(
+            summarize_distribution(ci_gate_durations, unit="seconds")
+            if ci_gate_durations
+            else None
+        ),
         peak_wip=peak_wip,
         mean_wip=mean_wip,
     )
@@ -116,9 +128,9 @@ def _lead_time(trace: ObservedPRTrace) -> float:
     return lead_time
 
 
-def _ci_durations_seconds(trace: ObservedPRTrace) -> tuple[float, ...]:
+def _ci_intervals(trace: ObservedPRTrace) -> tuple[tuple[datetime, datetime], ...]:
     pending: deque[datetime] = deque()
-    durations: list[float] = []
+    intervals: list[tuple[datetime, datetime]] = []
     for event in trace.events:
         if event.kind is ObservedEventKind.CI_STARTED:
             pending.append(event.occurred_at)
@@ -127,9 +139,8 @@ def _ci_durations_seconds(trace: ObservedPRTrace) -> tuple[float, ...]:
             continue
         if not pending:
             raise ValueError("observed trace contains CI_COMPLETED without matching CI_STARTED")
-        started = pending.popleft()
-        durations.append((event.occurred_at - started).total_seconds())
-    return tuple(durations)
+        intervals.append((pending.popleft(), event.occurred_at))
+    return tuple(intervals)
 
 
 def _peak_wip(traces: tuple[ObservedPRTrace, ...]) -> int:
