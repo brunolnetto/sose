@@ -128,7 +128,7 @@ def test_chronological_holdout_is_deterministic_for_equal_open_times() -> None:
                 ObservedPREvent(
                     source_event_id=f"{number}:merged",
                     kind=ObservedEventKind.MERGED,
-                    occurred_at=datetime.fromtimestamp(opened.timestamp() + 3600, tz=timezone.utc),
+                    occurred_at=opened,
                 ),
             ),
         )
