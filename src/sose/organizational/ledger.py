@@ -226,6 +226,12 @@ class ActorLedger(BaseModel):
             return 0.0
         return self.allocated_actor_time / self.available_time
 
+    def duration_by_category(self) -> dict[ActorCategory, float]:
+        result: dict[ActorCategory, float] = defaultdict(float)
+        for interval in self.intervals:
+            result[interval.category] += interval.duration * interval.allocation
+        return dict(result)
+
     def assert_complete(self, *, start: float, end: float) -> None:
         _require_finite(start, "start")
         _require_finite(end, "end")
