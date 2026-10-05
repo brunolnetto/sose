@@ -118,10 +118,10 @@ class ExperimentProtocol(BaseModel):
     baseline_model_spec_hash: NonBlankString
     intervention_ids: tuple[NonBlankString, ...] = Field(min_length=2)
     agency_levels: tuple[AgencyLevel, ...] = Field(min_length=1)
-    parameter_ranges: dict[str, ParameterRange] = Field(min_length=1)
+    parameter_ranges: dict[str, ParameterRange] = Field(default_factory=dict)
     sampling_design: SamplingDesign
     sample_size: int = Field(ge=2)
-    outcomes: tuple[OutcomeMetric, ...] = Field(min_length=1)
+    outcomes: tuple[OutcomeMetric, ...] = ()
     statistical_plan: StatisticalPlan
     replication_plan: ReplicationPlan
     warmup: float = Field(ge=0.0, allow_inf_nan=False)
@@ -142,15 +142,15 @@ class ExperimentProtocol(BaseModel):
             raise ValueError("duplicate agency levels are not allowed")
         if AgencyLevel.A3 in self.agency_levels:
             raise ValueError("A3 is outside the organizational simulation model")
+        if not self.parameter_ranges:
+            raise ValueError("at least one parameter range is required")
+        if not self.outcomes:
+            raise ValueError("at least one outcome is required")
         outcome_names = [outcome.name for outcome in self.outcomes]
         if len(set(outcome_names)) != len(outcome_names):
             raise ValueError("duplicate outcome names are not allowed")
         if self.falsification.primary_metric not in outcome_names:
             raise ValueError("primary falsification metric must be a preregistered outcome")
-        if not self.parameter_ranges:
-            raise ValueError("at least one parameter range is required")
-        if not self.outcomes:
-            raise ValueError("at least one outcome is required")
         if self.warmup >= self.horizon:
             raise ValueError("warmup must be smaller than horizon")
         if not self.crn_enabled:
