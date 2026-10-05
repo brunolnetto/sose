@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Mapping
 from enum import StrEnum
 from math import isfinite
 from types import MappingProxyType
@@ -111,7 +112,7 @@ def _validate_json(value: object, *, path: str) -> None:
         if not isfinite(value):
             raise ValueError(f"non-finite JSON number at {path}")
         return
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         for key, child in value.items():
             if not isinstance(key, str):
                 raise ValueError(f"JSON object key at {path} must be a string")
@@ -125,7 +126,7 @@ def _validate_json(value: object, *, path: str) -> None:
 
 
 def _freeze(value: object) -> object:
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return MappingProxyType({key: _freeze(child) for key, child in value.items()})
     if isinstance(value, (list, tuple)):
         return tuple(_freeze(child) for child in value)
@@ -133,9 +134,7 @@ def _freeze(value: object) -> object:
 
 
 def _thaw(value: object) -> object:
-    if isinstance(value, MappingProxyType):
-        return {key: _thaw(child) for key, child in value.items()}
-    if isinstance(value, dict):
+    if isinstance(value, Mapping):
         return {key: _thaw(child) for key, child in value.items()}
     if isinstance(value, tuple):
         return [_thaw(child) for child in value]
