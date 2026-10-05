@@ -14,6 +14,11 @@ from .experiment import (
     StatisticalPlan,
 )
 from .github_observations import normalize_github_pr_trace
+from .heldout_prediction import (
+    PRReviewAssumptions,
+    PRReviewHeldoutPrediction,
+    predict_pr_review_holdout,
+)
 from .model_spec import (
     EvidenceClass,
     InterventionClass,
@@ -49,6 +54,8 @@ __all__ = [
     "ObservedPRSplit",
     "ObservedPRTrace",
     "OutcomeMetric",
+    "PRReviewAssumptions",
+    "PRReviewHeldoutPrediction",
     "ParameterRange",
     "ReplicationPlan",
     "SamplingDesign",
@@ -58,6 +65,7 @@ __all__ = [
     "compare_lead_time_distributions",
     "empirical_cdf_max_distance",
     "normalize_github_pr_trace",
+    "predict_pr_review_holdout",
     "sample_parameter_space",
     "summarize_distribution",
 ]
