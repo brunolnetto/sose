@@ -101,13 +101,21 @@ def normalize_github_pr_trace(
         job_name = name if isinstance(name, str) and name.strip() else None
         started_at = _optional_datetime(job.get("started_at"))
         completed_at = _optional_datetime(job.get("completed_at"))
+        gate_evidence = job.get("gate_evidence_url")
+        is_gate = job.get("is_gate") is True
+        gate_metadata: dict[str, object] = {}
+        if is_gate and isinstance(gate_evidence, str) and gate_evidence.strip():
+            gate_metadata = {
+                "ci_gate": True,
+                "ci_gate_evidence": gate_evidence.strip(),
+            }
         if started_at is not None:
             add(
                 ObservedPREvent(
                     source_event_id=f"github:job:{job_id}:started",
                     kind=ObservedEventKind.CI_STARTED,
                     occurred_at=started_at,
-                    metadata={"name": job_name},
+                    metadata={"name": job_name, **gate_metadata},
                 ),
                 priority=10,
             )
@@ -123,7 +131,11 @@ def normalize_github_pr_trace(
                         if isinstance(conclusion, str) and conclusion.strip()
                         else None
                     ),
-                    metadata={"name": job_name, "conclusion": conclusion},
+                    metadata={
+                        "name": job_name,
+                        "conclusion": conclusion,
+                        **gate_metadata,
+                    },
                 ),
                 priority=40,
             )
