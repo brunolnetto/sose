@@ -7,7 +7,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 
 from .dataset import ObservedPRDataset
-from .observations import ObservedEventKind, ObservedPRTrace
+from .observations import ObservedEventKind, ObservedPREvent, ObservedPRTrace
 from .validation import DistributionSummary, summarize_distribution
 
 
@@ -69,12 +69,12 @@ def calibrate_observed_item_flow(dataset: ObservedPRDataset) -> ObservedItemFlow
     ci_durations = tuple(
         (completed - started).total_seconds()
         for intervals in ci_intervals_by_trace
-        for started, completed in intervals
+        for started, completed, _ in intervals
     )
     ci_gate_durations = tuple(
-        (max(completed for _, completed in intervals) - min(started for started, _ in intervals)).total_seconds()
+        (max(completed for _, completed, _ in gate_intervals) - min(started for started, _, _ in gate_intervals)).total_seconds()
         for intervals in ci_intervals_by_trace
-        if intervals
+        if (gate_intervals := tuple(interval for interval in intervals if interval[2]))
     )
 
     peak_wip = _peak_wip(dataset.traces)
@@ -128,18 +128,28 @@ def _lead_time(trace: ObservedPRTrace) -> float:
     return lead_time
 
 
-def _ci_intervals(trace: ObservedPRTrace) -> tuple[tuple[datetime, datetime], ...]:
-    pending: deque[datetime] = deque()
-    intervals: list[tuple[datetime, datetime]] = []
+def _identified_gate(event: ObservedPREvent) -> bool:
+    evidence = event.metadata.get("ci_gate_evidence")
+    return event.metadata.get("ci_gate") is True and isinstance(evidence, str) and bool(evidence.strip())
+
+
+def _ci_intervals(
+    trace: ObservedPRTrace,
+) -> tuple[tuple[datetime, datetime, bool], ...]:
+    pending: deque[tuple[datetime, bool]] = deque()
+    intervals: list[tuple[datetime, datetime, bool]] = []
     for event in trace.events:
         if event.kind is ObservedEventKind.CI_STARTED:
-            pending.append(event.occurred_at)
+            pending.append((event.occurred_at, _identified_gate(event)))
             continue
         if event.kind is not ObservedEventKind.CI_COMPLETED:
             continue
         if not pending:
             raise ValueError("observed trace contains CI_COMPLETED without matching CI_STARTED")
-        intervals.append((pending.popleft(), event.occurred_at))
+        started_at, start_is_gate = pending.popleft()
+        intervals.append(
+            (started_at, event.occurred_at, start_is_gate and _identified_gate(event))
+        )
     return tuple(intervals)
 
 
