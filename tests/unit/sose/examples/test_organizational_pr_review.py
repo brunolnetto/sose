@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+from pydantic import ValidationError
 
 from sose.core.randomness import CounterRandomSource
 from sose.examples.organizational_pr_review import (
@@ -29,6 +30,48 @@ def _config(*, reviewer_count: int = 1, rework_probability: float = 0.0) -> Pull
         mean_revision_time=1.0,
         rework_probability=rework_probability,
     )
+
+
+def test_config_and_case_reject_invalid_flow_inputs() -> None:
+    with pytest.raises(ValidationError):
+        PullRequestFlowConfig(
+            reviewer_count=0,
+            ci_time=1.0,
+            mean_review_time=2.0,
+            mean_revision_time=1.0,
+            rework_probability=0.0,
+        )
+    with pytest.raises(ValidationError):
+        PullRequestFlowConfig(
+            reviewer_count=1,
+            ci_time=0.0,
+            mean_review_time=2.0,
+            mean_revision_time=1.0,
+            rework_probability=0.0,
+        )
+    with pytest.raises(ValidationError):
+        PullRequestFlowConfig(
+            reviewer_count=1,
+            ci_time=1.0,
+            mean_review_time=2.0,
+            mean_revision_time=1.0,
+            rework_probability=1.0,
+        )
+    with pytest.raises(ValidationError):
+        PullRequestCase(pr_id="", opened_at=0.0)
+    with pytest.raises(ValidationError):
+        PullRequestCase(pr_id="pr", opened_at=-1.0)
+
+
+def test_simulation_rejects_empty_and_duplicate_case_sets() -> None:
+    with pytest.raises(ValueError, match="at least one pull request"):
+        simulate_pull_request_flow(cases=(), config=_config(), seed=1)
+    duplicate = (
+        PullRequestCase(pr_id="pr-1", opened_at=0.0),
+        PullRequestCase(pr_id="pr-1", opened_at=1.0),
+    )
+    with pytest.raises(ValueError, match="duplicate pull request"):
+        simulate_pull_request_flow(cases=duplicate, config=_config(), seed=1)
 
 
 def test_model_spec_separates_observed_flow_inputs_from_assumed_human_effort() -> None:
