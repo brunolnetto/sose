@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from math import isfinite, nextafter
 
 from sose.core.randomness import CounterRandomSource
 
@@ -21,7 +22,8 @@ _SOBOL_PARAMETERS: tuple[tuple[int, int, tuple[int, ...]], ...] = (
     (5, 7, (1, 1, 7, 11, 19)),
 )
 _SOBOL_BITS = 32
-_SOBOL_SCALE = float(1 << _SOBOL_BITS)
+_SOBOL_CAPACITY = 1 << _SOBOL_BITS
+_SOBOL_SCALE = float(_SOBOL_CAPACITY)
 
 
 def sample_parameter_space(
@@ -48,12 +50,24 @@ def sample_parameter_space(
 
     return tuple(
         {
-            name: parameter_range.low
-            + unit_value * (parameter_range.high - parameter_range.low)
+            name: _scale_unit_interval(unit_value, parameter_range)
             for name, parameter_range, unit_value in zip(names, ranges, unit_point, strict=True)
         }
         for unit_point in unit_points
     )
+
+
+def _scale_unit_interval(unit_value: float, parameter_range: ParameterRange) -> float:
+    span = parameter_range.high - parameter_range.low
+    if isfinite(span):
+        value = parameter_range.low + unit_value * span
+    else:
+        value = (1.0 - unit_value) * parameter_range.low + unit_value * parameter_range.high
+    if value >= parameter_range.high:
+        return nextafter(parameter_range.high, parameter_range.low)
+    if value < parameter_range.low:
+        return parameter_range.low
+    return value
 
 
 def _latin_hypercube(
@@ -101,6 +115,8 @@ def _latin_hypercube(
 def _sobol(*, dimensions: int, sample_size: int, seed: int) -> tuple[tuple[float, ...], ...]:
     if dimensions > 10:
         raise ValueError("Sobol sampler supports at most 10 dimensions")
+    if sample_size > _SOBOL_CAPACITY:
+        raise ValueError("Sobol sample_size exceeds supported 32-bit sequence")
 
     directions = tuple(_sobol_direction_numbers(dimension) for dimension in range(dimensions))
     rng = CounterRandomSource(seed)
@@ -111,7 +127,7 @@ def _sobol(*, dimensions: int, sample_size: int, seed: int) -> tuple[tuple[float
                 entity_id=dimension,
                 mechanism="sobol_digital_shift",
             )
-            * (1 << _SOBOL_BITS)
+            * _SOBOL_CAPACITY
         )
         for dimension in range(dimensions)
     )
@@ -121,8 +137,6 @@ def _sobol(*, dimensions: int, sample_size: int, seed: int) -> tuple[tuple[float
     for index in range(sample_size):
         if index:
             direction_index = _trailing_zero_count(index) + 1
-            if direction_index > _SOBOL_BITS:
-                raise ValueError("Sobol sample_size exceeds supported 32-bit sequence")
             for dimension in range(dimensions):
                 state[dimension] ^= directions[dimension][direction_index - 1]
         points.append(
