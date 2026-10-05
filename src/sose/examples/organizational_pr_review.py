@@ -28,6 +28,18 @@ class PullRequestFlowConfig(BaseModel):
     rework_probability: float = Field(default=0.2, ge=0.0, lt=1.0, allow_inf_nan=False)
 
 
+class PullRequestFlowEvidence(BaseModel):
+    """Evidence provenance for canonical configuration parameters."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reviewer_count: EvidenceClass = EvidenceClass.OBSERVED
+    ci_time: EvidenceClass = EvidenceClass.OBSERVED
+    mean_review_time: EvidenceClass = EvidenceClass.ASSUMED
+    mean_revision_time: EvidenceClass = EvidenceClass.ASSUMED
+    rework_probability: EvidenceClass = EvidenceClass.INFERABLE
+
+
 class PullRequestCase(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -84,7 +96,12 @@ class PullRequestFlowResult(BaseModel):
         return peak
 
 
-def build_model_spec(config: PullRequestFlowConfig) -> ModelSpec:
+def build_model_spec(
+    config: PullRequestFlowConfig,
+    *,
+    evidence: PullRequestFlowEvidence | None = None,
+) -> ModelSpec:
+    evidence = evidence or PullRequestFlowEvidence()
     reviewers = {
         f"reviewer-{index}": {"capabilities": ["review"]}
         for index in range(config.reviewer_count)
@@ -118,11 +135,11 @@ def build_model_spec(config: PullRequestFlowConfig) -> ModelSpec:
         policies={"review_dispatch": "fcfs"},
         parameters=parameters,
         parameter_evidence={
-            "reviewer_count": EvidenceClass.OBSERVED,
-            "ci_time": EvidenceClass.OBSERVED,
-            "mean_review_time": EvidenceClass.ASSUMED,
-            "mean_revision_time": EvidenceClass.ASSUMED,
-            "rework_probability": EvidenceClass.INFERABLE,
+            "reviewer_count": evidence.reviewer_count,
+            "ci_time": evidence.ci_time,
+            "mean_review_time": evidence.mean_review_time,
+            "mean_revision_time": evidence.mean_revision_time,
+            "rework_probability": evidence.rework_probability,
         },
     )
 
@@ -132,6 +149,7 @@ def simulate_pull_request_flow(
     cases: tuple[PullRequestCase, ...],
     config: PullRequestFlowConfig,
     seed: int,
+    evidence: PullRequestFlowEvidence | None = None,
 ) -> PullRequestFlowResult:
     if not cases:
         raise ValueError("at least one pull request is required")
@@ -139,7 +157,7 @@ def simulate_pull_request_flow(
     if len(set(ids)) != len(ids):
         raise ValueError("duplicate pull request ids are not allowed")
 
-    spec = build_model_spec(config)
+    spec = build_model_spec(config, evidence=evidence)
     spec_hash = spec.model_spec_hash
     rng = CounterRandomSource(seed)
     events: list[AccountingEvent] = []

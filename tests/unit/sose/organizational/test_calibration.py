@@ -99,6 +99,8 @@ def test_calibration_uses_elapsed_review_response_and_ci_machine_duration_only()
     assert profile.review_response_latency_seconds.mean == pytest.approx(2 * 3600)
     assert profile.ci_duration_seconds is not None
     assert profile.ci_duration_seconds.mean == pytest.approx(0.5 * 3600)
+    assert profile.ci_gate_duration_seconds is not None
+    assert profile.ci_gate_duration_seconds.mean == pytest.approx(0.5 * 3600)
     assert "reviewer_service_time" in profile.unidentified_actor_parameters
     assert "reviewer_capacity" in profile.unidentified_actor_parameters
     assert "reviewer_calendar" in profile.unidentified_actor_parameters
@@ -126,6 +128,34 @@ def test_calibration_pairs_multiple_ci_intervals_fifo_without_inventing_effort()
     assert profile.ci_duration_seconds is not None
     assert profile.ci_duration_seconds.count == 2
     assert profile.ci_duration_seconds.mean == pytest.approx(1.5 * 3600)
+    assert profile.ci_gate_duration_seconds is not None
+    assert profile.ci_gate_duration_seconds.count == 1
+    assert profile.ci_gate_duration_seconds.mean == pytest.approx(4 * 3600)
+
+
+def test_parallel_ci_jobs_produce_one_gate_latency_per_pr() -> None:
+    dataset = _dataset(
+        _trace(
+            1,
+            opened_hour=0,
+            terminal_hour=2,
+            extras=(
+                _event("1:ci-start-a", ObservedEventKind.CI_STARTED, 0.25),
+                _event("1:ci-start-b", ObservedEventKind.CI_STARTED, 0.25),
+                _event("1:ci-end-a", ObservedEventKind.CI_COMPLETED, 0.25 + 1 / 60),
+                _event("1:ci-end-b", ObservedEventKind.CI_COMPLETED, 0.75),
+            ),
+        )
+    )
+
+    profile = calibrate_observed_item_flow(dataset)
+
+    assert profile.ci_duration_seconds is not None
+    assert profile.ci_duration_seconds.count == 2
+    assert profile.ci_duration_seconds.mean == pytest.approx(15.5 * 60)
+    assert profile.ci_gate_duration_seconds is not None
+    assert profile.ci_gate_duration_seconds.count == 1
+    assert profile.ci_gate_duration_seconds.mean == pytest.approx(30 * 60)
 
 
 def test_calibration_leaves_optional_summaries_absent_when_evidence_is_absent() -> None:
@@ -137,6 +167,7 @@ def test_calibration_leaves_optional_summaries_absent_when_evidence_is_absent() 
     assert profile.arrival_rate_per_second is None
     assert profile.review_response_latency_seconds is None
     assert profile.ci_duration_seconds is None
+    assert profile.ci_gate_duration_seconds is None
     assert profile.peak_wip == 1
     assert profile.mean_wip == pytest.approx(1.0)
 
