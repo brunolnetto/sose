@@ -22,7 +22,7 @@ New sectors should therefore remain exceptional while the current catalog is aud
 4. **Add composed execution through explicit boundaries.** Cross-domain composition uses named ingress/egress contracts, causal identifiers, and durable events; one domain must not mutate another domain's private entities directly.
 5. **One durable owner per business concept.** Integration references ownership rather than duplicating durable truth.
 6. **Extract shared abstractions only after repetition.** Do not introduce `GenericOrder`, `GenericShipment`, `GenericEnterprise`, or equivalent abstractions merely because two domains use similar nouns.
-7. **Use Warehouse Management as the first audited PC5 reference.** Warehouse Fulfillment is a target reference but must be audited before its maturity is claimed.
+7. **Use Warehouse Management as the first fully audited process reference, not as a presumed PC5.** Its current audit is allowed to expose lower-level gaps; Warehouse Fulfillment is the companion target reference and must also be audited before its maturity is claimed.
 8. **Build the first integrated enterprise backbone before deepening every sector.** P2P, Warehouse, O2C, Logistics, Cards/Payments, and R2R form the first composition target.
 9. **Organizational Dynamics and Digital Twin projections consume mature process canonicals.** They do not block process promotion.
 10. **Promotion is evidence-backed.** TDD, durable recovery, replay safety, documentation, and executable evidence determine maturity; implementation reputation or file count does not.
@@ -36,7 +36,7 @@ SOSE process maturity is represented by `PC0` through `PC6`.
 | PC0 | Registered | Domain is catalogued and has validated runtime/configuration construction. |
 | PC1 | Behavioral | Entities, statecharts, command/event behavior, and an executable happy path exist. |
 | PC2 | Process | A trigger reaches a durable terminal business outcome end-to-end. |
-| PC3 | Operational | Sad paths, finite resources, queueing/contention, and explicit time semantics are demonstrated. |
+| PC3 | Operational | Sad paths, finite resources, capacity contention/queueing, and explicit time semantics are demonstrated. |
 | PC4 | Durable | State is durable; restart equivalence, replay idempotence, recurring reconciliation, and fault recovery are demonstrated. |
 | PC5 | Observable | KPIs, ERD, documented statecharts, E2E process diagram, projection boundary, and configuration contract exist. |
 | PC6 | Composable | Stable ingress/egress contracts exist and at least one cross-domain execution path is tested. |
@@ -59,6 +59,8 @@ If a domain has not yet been audited, it remains a conservative PC0 lower bound 
 
 The audit process promotes evidence only after the relevant code, tests, and specification have been inspected.
 
+Evidence above the current maturity gate may already exist. Because maturity is cumulative, a missing lower-gate requirement still blocks promotion. For example, documentation and KPIs do not compensate for a missing restart-equivalence test.
+
 ## PC5 completion contract
 
 A process may be promoted to PC5 only when the following evidence is explicit and executable where applicable:
@@ -67,7 +69,7 @@ A process may be promoted to PC5 only when the following evidence is explicit an
 - happy path;
 - multiple meaningful sad paths;
 - finite operational capacity;
-- queueing or contention semantics;
+- capacity contention or queueing semantics;
 - explicit timing behavior;
 - durable business state;
 - restart/rebuild equivalence;
@@ -143,9 +145,9 @@ Exit gate:
 
 Use Warehouse Management and Warehouse Fulfillment to establish the reference implementation style.
 
-Warehouse Management begins as the first audited PC5 candidate.
+Warehouse Management is the first fully audited process reference. Its initial audit currently identifies `RESTART_EQUIVALENCE` as an unproven PC4 requirement, so its maturity remains PC3 until a continuous-vs-rebuild test is added.
 
-Warehouse Fulfillment must be promoted using the same standard, including a normative `specification.md`, KPI/projection contract, and any missing durability/operational evidence found by W1.
+Warehouse Fulfillment must be audited and then promoted using the same standard, including a normative `specification.md`, KPI/projection contract, and any missing durability/operational evidence found by W1.
 
 Exit gate: both warehouse processes are PC5.
 
