@@ -40,6 +40,7 @@ def process_manifest() -> ProcessManifest:
         "tests/integration/sose/examples/p2p/"
         "test_p2p_receipt_exception_restart.py"
     )
+    replay = "tests/integration/sose/examples/p2p/test_p2p_replay_idempotence.py"
     shortage = "tests/integration/sose/examples/p2p/test_p2p_shortage_backorder.py"
     restart = "tests/e2e/sose/examples/p2p/test_p2p_restart_equivalence.py"
     recurring = "tests/e2e/sose/jobs/test_recurring_reference_complete.py"
@@ -56,7 +57,7 @@ def process_manifest() -> ProcessManifest:
         ProcessEvidence.TIME_SEMANTICS: (simulation, happy_path, specification),
         ProcessEvidence.DURABLE_STATE: (simulation, restart, exception_restart),
         ProcessEvidence.RESTART_EQUIVALENCE: (restart, exception_restart),
-        ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, happy_path, restart),
+        ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, replay),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
         ProcessEvidence.FAULT_RECOVERY: (happy_path, exception_restart, restart),
         ProcessEvidence.ERD: (specification,),
