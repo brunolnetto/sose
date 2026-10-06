@@ -62,7 +62,14 @@ def acquire_github_pr_v2(
     client: GitHubJsonClient,
     captured_at: datetime,
 ) -> GitHubPRAcquisitionArtifactV2:
-    """Acquire every GitHub source required for one prospective v2 PR record."""
+    """Acquire every GitHub source required for one prospective v2 PR record.
+
+    Workflow runs are discovered over the PR's open-to-merge date window and are
+    then correlated by the native ``pull_requests`` identity. This preserves CI
+    from every synchronized revision instead of observing only the final head SHA.
+    Jobs use ``filter=all`` so rerun attempts remain evidence rather than being
+    overwritten by the latest attempt.
+    """
 
     repository = repository.strip()
     if not repository or "/" not in repository:
@@ -74,14 +81,17 @@ def acquire_github_pr_v2(
     pr_url = f"{api}/pulls/{pr_number}"
     pr_page = client.get_json(pr_url)
     pull_request = _require_mapping(pr_page.payload, name="pull request")
-    if pull_request.get("merged_at") is None:
+    merged_at = pull_request.get("merged_at")
+    if merged_at is None:
         raise ValueError("prospective acquisition requires a merged pull request")
-    head_sha = _head_sha(pull_request)
+    opened_date = _iso_date(pull_request.get("created_at"), name="created_at")
+    merged_date = _iso_date(merged_at, name="merged_at")
 
     timeline_url = f"{api}/issues/{pr_number}/timeline?per_page=100&page=1"
     reviews_url = f"{api}/pulls/{pr_number}/reviews?per_page=100&page=1"
     runs_url = (
-        f"{api}/actions/runs?event=pull_request&head_sha={head_sha}&per_page=100&page=1"
+        f"{api}/actions/runs?event=pull_request&created={opened_date}..{merged_date}"
+        "&per_page=100&page=1"
     )
 
     timeline_events, timeline_urls = _collect_list_pages(
@@ -94,17 +104,20 @@ def acquire_github_pr_v2(
         first_url=reviews_url,
         collection_name="reviews",
     )
-    workflow_runs, run_urls = _collect_wrapped_pages(
+    candidate_runs, run_urls = _collect_wrapped_pages(
         client=client,
         first_url=runs_url,
         field="workflow_runs",
     )
+    workflow_runs = [
+        run for run in candidate_runs if _workflow_run_belongs_to_pr(run, pr_number=pr_number)
+    ]
 
     workflow_jobs: list[Mapping[str, Any]] = []
     job_urls: list[str] = []
     for run in workflow_runs:
         run_id = _positive_int(run.get("id"), name="workflow run id")
-        jobs_url = f"{api}/actions/runs/{run_id}/jobs?filter=latest&per_page=100&page=1"
+        jobs_url = f"{api}/actions/runs/{run_id}/jobs?filter=all&per_page=100&page=1"
         jobs, urls = _collect_wrapped_pages(
             client=client,
             first_url=jobs_url,
@@ -126,6 +139,8 @@ def acquire_github_pr_v2(
         ),
         timeline=_capture("timeline", timeline_events, timeline_urls),
         reviews=_capture("reviews", reviews, review_urls),
+        # ``record_count`` here is the deterministic PR-correlated subset of the
+        # exhaustively fetched candidate pages identified by ``source_urls``.
         workflow_runs=_capture("workflow_runs", workflow_runs, run_urls),
         workflow_jobs=(
             _capture("workflow_jobs", workflow_jobs, job_urls)
@@ -224,14 +239,27 @@ def _collect_wrapped_pages(
     return records, source_urls
 
 
-def _head_sha(pull_request: Mapping[str, Any]) -> str:
-    head = pull_request.get("head")
-    if not isinstance(head, Mapping):
-        raise ValueError("GitHub pull request requires head sha")
-    sha = head.get("sha")
-    if not isinstance(sha, str) or not sha.strip():
-        raise ValueError("GitHub pull request requires head sha")
-    return sha.strip()
+def _workflow_run_belongs_to_pr(run: Mapping[str, Any], *, pr_number: int) -> bool:
+    pull_requests = run.get("pull_requests")
+    if not isinstance(pull_requests, list):
+        return False
+    return any(
+        isinstance(pull_request, Mapping) and pull_request.get("number") == pr_number
+        for pull_request in pull_requests
+    )
+
+
+def _iso_date(value: object, *, name: str) -> str:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(f"GitHub pull request requires {name}")
+    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError as exc:
+        raise ValueError(f"GitHub pull request requires ISO-8601 {name}") from exc
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        raise ValueError(f"GitHub pull request requires timezone-aware {name}")
+    return parsed.date().isoformat()
 
 
 def _require_mapping(value: object, *, name: str) -> Mapping[str, Any]:
