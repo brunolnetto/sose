@@ -155,6 +155,9 @@ def seed_reference(
             "completed_at": None,
             "assigned_dock_id": None,
             "assigned_forklift_id": None,
+            "stock_reserved": False,
+            "stock_moved": False,
+            "resources_released": False,
         },
     )
     truck.attributes["shipment_id"] = shipment.id
@@ -216,20 +219,33 @@ def start_transfer(
     shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
     truck = _entity(persistence, "warehouse_management_truck", entities.truck_id)
     stock = _entity(persistence, "warehouse_management_stock", entities.origin_stock_id)
-    if shipment.state != "planned" or truck.state != "scheduled":
+
+    if shipment.state not in {"planned", "in_transit"}:
         return shipment.state != "planned"
+    if truck.state not in {"scheduled", "in_transit"}:
+        return truck.state != "scheduled"
 
     quantity = float(shipment.attributes["quantity"])
-    available = float(stock.attributes["on_hand"]) - float(stock.attributes.get("reserved", 0.0))
-    if available < quantity:
-        return False
+    stock_reserved = bool(shipment.attributes.get("stock_reserved", False))
+    if not stock_reserved:
+        if shipment.state != "planned":
+            raise RuntimeError("in-transit shipment is missing durable stock reservation")
+        available = float(stock.attributes["on_hand"]) - float(stock.attributes.get("reserved", 0.0))
+        if available < quantity:
+            return False
+        stock.attributes["reserved"] = float(stock.attributes.get("reserved", 0.0)) + quantity
+        shipment.attributes["stock_reserved"] = True
+        if shipment.attributes.get("departed_at") is None:
+            shipment.attributes["departed_at"] = engine.context.clock.now.isoformat()
+        _save(persistence, stock, shipment)
+        shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
 
-    stock.attributes["reserved"] = float(stock.attributes.get("reserved", 0.0)) + quantity
-    shipment.attributes["departed_at"] = engine.context.clock.now.isoformat()
-    _save(persistence, stock, shipment)
-    _dispatch(engine, shipment, "start_transit", key=("shipment", shipment.id, "start"))
+    if shipment.state == "planned":
+        _dispatch(engine, shipment, "start_transit", key=("shipment", shipment.id, "start"))
+
     truck = _entity(persistence, "warehouse_management_truck", entities.truck_id)
-    _dispatch(engine, truck, "depart_origin", key=("truck", truck.id, "depart"))
+    if truck.state == "scheduled":
+        _dispatch(engine, truck, "depart_origin", key=("truck", truck.id, "depart"))
     return True
 
 
@@ -252,8 +268,9 @@ def arrive_truck(
     if shipment.state == "completed":
         return True
     if shipment.state == "in_transit":
-        shipment.attributes["arrived_at"] = engine.context.clock.now.isoformat()
-        _save(persistence, shipment)
+        if shipment.attributes.get("arrived_at") is None:
+            shipment.attributes["arrived_at"] = engine.context.clock.now.isoformat()
+            _save(persistence, shipment)
         _dispatch(engine, shipment, "arrive", key=("shipment", shipment.id, "arrive"))
         shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
 
@@ -317,6 +334,50 @@ def assign_forklift(
     return True
 
 
+def _release_completed_resources(
+    persistence: Persistence,
+    engine: Engine,
+    *,
+    entities: WarehouseManagementEntities,
+) -> bool:
+    shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
+    if shipment.state != "completed":
+        return False
+    if bool(shipment.attributes.get("resources_released", False)):
+        return True
+
+    forklift_id = shipment.attributes.get("assigned_forklift_id")
+    dock_id = shipment.attributes.get("assigned_dock_id")
+    if not forklift_id or not dock_id:
+        raise RuntimeError("completed shipment is missing durable handling ownership")
+
+    forklift = _entity(persistence, "warehouse_management_forklift", str(forklift_id))
+    if forklift.state == "assigned":
+        _dispatch(engine, forklift, "release", key=("forklift", forklift.id, shipment.id, "release"))
+
+    dock = _entity(persistence, "warehouse_management_dock", str(dock_id))
+    if dock.state in {"occupied", "reserved"}:
+        _dispatch(engine, dock, "release", key=("dock", dock.id, shipment.id, "release"))
+
+    truck = _entity(persistence, "warehouse_management_truck", entities.truck_id)
+    if truck.state == "docked":
+        _dispatch(engine, truck, "release", key=("truck", truck.id, "release"))
+
+    forklift = _entity(persistence, "warehouse_management_forklift", str(forklift_id))
+    dock = _entity(persistence, "warehouse_management_dock", str(dock_id))
+    truck = _entity(persistence, "warehouse_management_truck", entities.truck_id)
+    released = (
+        forklift.state == "available"
+        and dock.state == "available"
+        and truck.state == "released"
+    )
+    if released:
+        shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
+        shipment.attributes["resources_released"] = True
+        _save(persistence, shipment)
+    return released
+
+
 def complete_unload(
     persistence: Persistence,
     engine: Engine,
@@ -325,7 +386,7 @@ def complete_unload(
 ) -> bool:
     shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
     if shipment.state == "completed":
-        return True
+        return _release_completed_resources(persistence, engine, entities=entities)
     if shipment.state != "handling":
         return False
 
@@ -334,29 +395,28 @@ def complete_unload(
     if not dock_id or not forklift_id:
         raise RuntimeError("handling shipment is missing dock or forklift ownership")
 
-    origin_stock = _entity(persistence, "warehouse_management_stock", entities.origin_stock_id)
-    destination_stock = _entity(persistence, "warehouse_management_stock", entities.destination_stock_id)
-    quantity = float(shipment.attributes["quantity"])
-    reserved = float(origin_stock.attributes.get("reserved", 0.0))
-    on_hand = float(origin_stock.attributes["on_hand"])
-    if reserved < quantity or on_hand < quantity:
-        raise RuntimeError("reserved transfer stock is inconsistent with shipment quantity")
+    if not bool(shipment.attributes.get("stock_moved", False)):
+        origin_stock = _entity(persistence, "warehouse_management_stock", entities.origin_stock_id)
+        destination_stock = _entity(persistence, "warehouse_management_stock", entities.destination_stock_id)
+        quantity = float(shipment.attributes["quantity"])
+        reserved = float(origin_stock.attributes.get("reserved", 0.0))
+        on_hand = float(origin_stock.attributes["on_hand"])
+        if reserved < quantity or on_hand < quantity:
+            raise RuntimeError("reserved transfer stock is inconsistent with shipment quantity")
 
-    origin_stock.attributes["reserved"] = reserved - quantity
-    origin_stock.attributes["on_hand"] = on_hand - quantity
-    destination_stock.attributes["on_hand"] = float(destination_stock.attributes["on_hand"]) + quantity
-    shipment.attributes["completed_at"] = engine.context.clock.now.isoformat()
-    _save(persistence, origin_stock, destination_stock, shipment)
+        origin_stock.attributes["reserved"] = reserved - quantity
+        origin_stock.attributes["on_hand"] = on_hand - quantity
+        destination_stock.attributes["on_hand"] = float(destination_stock.attributes["on_hand"]) + quantity
+        shipment.attributes["stock_moved"] = True
+        if shipment.attributes.get("completed_at") is None:
+            shipment.attributes["completed_at"] = engine.context.clock.now.isoformat()
+        _save(persistence, origin_stock, destination_stock, shipment)
+        shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
 
-    shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
-    _dispatch(engine, shipment, "complete", key=("shipment", shipment.id, "complete"))
-    forklift = _entity(persistence, "warehouse_management_forklift", str(forklift_id))
-    _dispatch(engine, forklift, "release", key=("forklift", forklift.id, shipment.id, "release"))
-    dock = _entity(persistence, "warehouse_management_dock", str(dock_id))
-    _dispatch(engine, dock, "release", key=("dock", dock.id, shipment.id, "release"))
-    truck = _entity(persistence, "warehouse_management_truck", entities.truck_id)
-    _dispatch(engine, truck, "release", key=("truck", truck.id, "release"))
-    return True
+    if shipment.state == "handling":
+        _dispatch(engine, shipment, "complete", key=("shipment", shipment.id, "complete"))
+
+    return _release_completed_resources(persistence, engine, entities=entities)
 
 
 def shipment_kpis(
