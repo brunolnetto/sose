@@ -27,6 +27,8 @@ def test_diagnostic_describes_tail_mismatch_without_changing_acceptance() -> Non
 
     diagnostic = diagnose_pr_review_validation(snapshot=snapshot, execution=execution)
 
+    assert diagnostic.source_snapshot_hash == snapshot.snapshot_hash
+    assert diagnostic.execution_hash == execution.execution_hash
     assert diagnostic.acceptance_unchanged is True
     assert diagnostic.original_gate_passed is False
     assert diagnostic.failing_metrics == ("abs_mean_difference_seconds",)
