@@ -22,12 +22,18 @@ def build_github_pr_evidence_v2(
     timeline_events: Sequence[JsonMapping] = (),
     reviews: Sequence[JsonMapping] = (),
     workflow_jobs: Sequence[JsonMapping] = (),
+    workflow_runs: Sequence[JsonMapping] = (),
 ) -> GitHubPREvidenceRecordV2:
     """Build one prospective v2 source record from already-fetched GitHub payloads.
 
-    This function performs no network access and no inference of actor effort.  It
-    only preserves source identities required by the prospective protocol and
-    rejects incomplete evidence before it can enter a hash-addressed snapshot.
+    This function performs no network access and no inference of actor effort. It
+    preserves source identities required by the prospective protocol and rejects
+    incomplete evidence before it can enter a hash-addressed snapshot.
+
+    GitHub's native workflow-job payload contains ``run_id``/``run_attempt`` but
+    not ``workflow_id``. Callers may therefore pass the associated workflow-run
+    payloads explicitly. Pre-enriched job payloads remain accepted for offline
+    fixtures and previously materialized evidence.
     """
 
     if not isinstance(repository, str) or not repository.strip():
@@ -45,8 +51,13 @@ def build_github_pr_evidence_v2(
         for event in timeline_events
         if event.get("event") in {"review_requested", "review_request_removed"}
     )
-    submitted_reviews = tuple(_review_record(review) for review in reviews)
-    jobs = tuple(_workflow_job_record(job) for job in workflow_jobs)
+    submitted_reviews = tuple(
+        _review_record(review)
+        for review in reviews
+        if review.get("submitted_at") is not None
+    )
+    run_index = _workflow_run_index(workflow_runs)
+    jobs = tuple(_workflow_job_record(job, run_index=run_index) for job in workflow_jobs)
 
     return GitHubPREvidenceRecordV2(
         repository=repository.strip(),
@@ -76,23 +87,68 @@ def _timeline_record(payload: JsonMapping) -> GitHubReviewTimelineSourceRecord:
 
 
 def _review_record(payload: JsonMapping) -> GitHubReviewSourceRecord:
-    state = _required_string(payload, "state")
     return GitHubReviewSourceRecord(
         review_id=_required_int(payload, "id"),
         submitted_at=_required_datetime(payload, "submitted_at"),
-        state=state,
+        state=_required_string(payload, "state"),
         actor_key=_login(payload.get("user")),
         source_url=_source_url(payload),
     )
 
 
-def _workflow_job_record(payload: JsonMapping) -> GitHubWorkflowJobSourceRecordV2:
+def _workflow_run_index(workflow_runs: Sequence[JsonMapping]) -> dict[int, tuple[int, int]]:
+    result: dict[int, tuple[int, int]] = {}
+    for run in workflow_runs:
+        run_id = _required_int(run, "id")
+        provenance = (
+            _required_int(run, "workflow_id"),
+            _required_int(run, "run_attempt"),
+        )
+        existing = result.get(run_id)
+        if existing is not None and existing != provenance:
+            raise ValueError("conflicting GitHub workflow run provenance")
+        result[run_id] = provenance
+    return result
+
+
+def _workflow_job_record(
+    payload: JsonMapping,
+    *,
+    run_index: Mapping[int, tuple[int, int]],
+) -> GitHubWorkflowJobSourceRecordV2:
+    run_id = _required_int(payload, "run_id")
+    workflow_id_value = payload.get("workflow_id")
+    run_attempt_value = payload.get("run_attempt")
+    run_provenance = run_index.get(run_id)
+
+    if workflow_id_value is None:
+        if run_provenance is None:
+            raise ValueError(
+                "GitHub workflow job requires workflow_id or associated workflow run provenance"
+            )
+        workflow_id = run_provenance[0]
+    else:
+        workflow_id = _positive_int_value(workflow_id_value, field="workflow_id")
+        if run_provenance is not None and workflow_id != run_provenance[0]:
+            raise ValueError("workflow_id conflicts with associated workflow run")
+
+    if run_attempt_value is None:
+        if run_provenance is None:
+            raise ValueError(
+                "GitHub workflow job requires run_attempt or associated workflow run provenance"
+            )
+        run_attempt = run_provenance[1]
+    else:
+        run_attempt = _positive_int_value(run_attempt_value, field="run_attempt")
+        if run_provenance is not None and run_attempt != run_provenance[1]:
+            raise ValueError("run_attempt conflicts with associated workflow run")
+
     gate_evidence = payload.get("gate_evidence_url")
     return GitHubWorkflowJobSourceRecordV2(
         job_id=_required_int(payload, "id"),
-        workflow_id=_required_int(payload, "workflow_id"),
-        run_id=_required_int(payload, "run_id"),
-        run_attempt=_required_int(payload, "run_attempt"),
+        workflow_id=workflow_id,
+        run_id=run_id,
+        run_attempt=run_attempt,
         name=_required_string(payload, "name"),
         started_at=_required_datetime(payload, "started_at"),
         completed_at=_required_datetime(payload, "completed_at"),
@@ -152,11 +208,14 @@ def _required_string(payload: JsonMapping, field: str) -> str:
     return value.strip()
 
 
-def _required_int(payload: JsonMapping, field: str) -> int:
-    value = payload.get(field)
+def _positive_int_value(value: object, *, field: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"GitHub source payload requires positive integer {field}")
     return value
+
+
+def _required_int(payload: JsonMapping, field: str) -> int:
+    return _positive_int_value(payload.get(field), field=field)
 
 
 def _required_datetime(payload: JsonMapping, field: str) -> datetime:
