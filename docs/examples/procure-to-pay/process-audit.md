@@ -32,16 +32,18 @@ The current implementation proves the cumulative gates through PC4:
 
 ## PC5 evidence already present
 
-Three observable-documentation requirements are already supported:
+Two observable-documentation requirements are already supported:
 
 - `ERD` — business and durable operational ERDs are present in `specification.md`;
-- `STATECHART_DOCUMENTATION` — the executable transitions are represented in
-  Mermaid state diagrams and transition tables;
 - `PROCESS_DIAGRAM` — the happy path and representative sad paths are represented
   as Mermaid process flows.
 
-These do not permit promotion to PC5 because maturity is cumulative within the
-PC5 gate itself.
+The specification also contains useful state diagrams, but they are not yet
+credited as `STATECHART_DOCUMENTATION`: the executable `PurchaseOrder` and
+`MaterialDemand` charts contain `cancelled` states and cancellation transitions
+that are only described in prose and are omitted from the Mermaid topology.
+Under the process-canonical standard, documentation must be complete enough to
+reconstruct the executable lifecycle rather than merely summarize it.
 
 ## Exact PC5 gaps
 
@@ -53,17 +55,22 @@ The current codebase snapshot does **not** provide audited evidence for:
      supplier-delay exposure, backorder duration, or first-pass receipt rate,
      but the audit does not invent metrics.
 
-2. `PROJECTION_CONTRACT`
+2. `STATECHART_DOCUMENTATION`
+   - executable StateCharts exist and are tested;
+   - the specification must still include the omitted cancellation states and
+     transitions in its documented topology.
+
+3. `PROJECTION_CONTRACT`
    - durable process truth exists, but there is no named stable projection
      boundary for analytics, process mining, control-room, or digital-twin
      consumers.
 
-3. `CONFIGURATION_DOCUMENTATION`
+4. `CONFIGURATION_DOCUMENTATION`
    - `P2PConfig` is validated code and the runtime consumes its parameters, but
      the process specification does not yet document the configuration surface,
      semantics, units, mutability, and operational consequences as a contract.
 
-Therefore the next maturity gate is exactly PC5 with those three missing claims.
+Therefore the next maturity gate is exactly PC5 with those four missing claims.
 
 ## Audit discipline
 
@@ -74,6 +81,7 @@ The audit deliberately distinguishes nearby but non-equivalent evidence:
   baseline and compares complete durable snapshots;
 - idempotent-looking code is not enough; terminal stocking and consumption are
   explicitly replayed and required to leave the durable snapshot unchanged;
+- executable StateCharts are not the same as complete StateChart documentation;
 - having a Pydantic configuration model is not configuration documentation;
 - having rich persistence state is not a projection contract;
 - plausible operational measures are not KPIs until they are defined and
