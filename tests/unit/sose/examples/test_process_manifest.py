@@ -199,3 +199,23 @@ def test_provenance_paths_must_be_nonempty_repository_relative_paths() -> None:
         else:  # pragma: no cover - contract guard
             raise AssertionError(f"manifest accepted invalid provenance path: {invalid!r}")
         assert "repository-relative" in message
+
+
+def test_provenance_requires_an_explicit_path_sequence_not_a_scalar_string() -> None:
+    evidence = _evidence_through(ProcessMaturity.PC1_BEHAVIORAL)
+    sources = _sources_for(evidence)
+    sources[ProcessEvidence.HAPPY_PATH] = "tests/test_happy_path.py"  # type: ignore[assignment]
+
+    try:
+        ProcessManifest(
+            domain="example",
+            evidence=evidence,
+            trigger="request_created",
+            evidence_sources=sources,
+        )
+    except ValueError as exc:
+        message = str(exc)
+    else:  # pragma: no cover - contract guard
+        raise AssertionError("manifest accepted a scalar provenance path")
+
+    assert "path sequence" in message
