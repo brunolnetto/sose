@@ -7,7 +7,7 @@ from pathlib import Path
 import tempfile
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from .dataset import ObservedPRKey
 from .prospective_cohort_v2 import ProspectiveCohortStatus
@@ -21,7 +21,7 @@ Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 class ProspectiveStage1ReadinessCheckpointV2(BaseModel):
     """Hash-addressed readiness view over one immutable prospective evidence state.
 
-    The checkpoint intentionally carries no holdout identities.  It is a Stage-1
+    The checkpoint intentionally carries no holdout identities. It is a Stage-1
     audit artifact: it says how much preregistered training evidence is enrolled
     and whether model freeze is permitted by the frozen cohort contract.
     """
@@ -40,6 +40,22 @@ class ProspectiveStage1ReadinessCheckpointV2(BaseModel):
     interstitial_count: int = Field(ge=0)
     freeze_allowed: bool
     holdout_exposed: Literal[False] = False
+
+    @model_validator(mode="after")
+    def validate_readiness_derivations(self) -> "ProspectiveStage1ReadinessCheckpointV2":
+        if len(self.training_keys) != len(set(self.training_keys)):
+            raise ValueError("training_keys must be unique")
+        if self.training_observed != len(self.training_keys):
+            raise ValueError("training_observed must match training_keys")
+        if self.training_observed > self.training_target:
+            raise ValueError("training_observed cannot exceed training_target")
+        expected_remaining = self.training_target - self.training_observed
+        if self.training_remaining != expected_remaining:
+            raise ValueError("training_remaining must equal training_target - training_observed")
+        expected_freeze_allowed = expected_remaining == 0
+        if self.freeze_allowed is not expected_freeze_allowed:
+            raise ValueError("freeze_allowed must exactly reflect Stage-1 training completion")
+        return self
 
     def canonical_payload(self) -> dict[str, object]:
         return {
