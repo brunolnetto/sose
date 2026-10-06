@@ -119,6 +119,16 @@ flowchart LR
 - **Inconsistent reserved stock** — completion rejects a quantity larger than durable reserved/on-hand stock.
 - **Replay** — terminal completion and already-advanced lifecycle calls are side-effect safe where supported by the public operations.
 
+### Durable phase markers
+
+The transfer intentionally persists phase ownership separately from lifecycle state so a process crash between durable writes can be reconciled without duplicating business effects:
+
+- `stock_reserved` records that origin stock has already been reserved. If a crash occurs before the shipment or truck transition commits, retry finishes the missing lifecycle transition without reserving the quantity again.
+- `stock_moved` records that the inter-site quantity has already moved. If a crash occurs before the shipment reaches `completed`, retry performs only the missing terminal transition and does not decrement/increment stock twice.
+- `resources_released` records that forklift, dock, and truck cleanup has completed. A `completed` shipment remains reconcilable until all physical capacity is durably released.
+
+The recurring reconciler therefore treats partial combinations such as `shipment=in_transit` with `truck=scheduled` as recovery states rather than ordinary forward-progress states.
+
 ## KPIs and projection boundary
 
 The canonical KPI projection currently exposes:
