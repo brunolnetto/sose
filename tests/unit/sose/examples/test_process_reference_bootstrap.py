@@ -1,11 +1,8 @@
 from __future__ import annotations
 
 from sose.examples.process_manifest import (
-    PROCESS_MATURITY_REQUIREMENTS,
     ProcessEvidence,
-    ProcessManifest,
-    ProcessMaturity,
-    bootstrap_reference_contract,
+    reference_contract_process_evidence,
     builtin_process_manifests,
 )
 from sose.testing.conformance import ReferenceCapability, ReferenceContract
@@ -37,24 +34,11 @@ def _contract_with_every_capability() -> ReferenceContract:
     )
 
 
-def _registered_manifest(domain: str = "example") -> ProcessManifest:
-    return ProcessManifest(
-        domain=domain,
-        evidence=PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC0_REGISTERED],
-    )
-
-
 def test_bootstrap_maps_only_directly_equivalent_reference_capabilities() -> None:
-    bootstrapped = bootstrap_reference_contract(
-        _registered_manifest(),
-        _contract_with_every_capability(),
-    )
+    bootstrap = reference_contract_process_evidence(_contract_with_every_capability())
 
-    expected = (
-        PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC0_REGISTERED]
-        | frozenset(DIRECT_CAPABILITY_MAPPING.values())
-    )
-    assert bootstrapped.evidence == expected
+    assert bootstrap.domain == "example"
+    assert bootstrap.evidence == frozenset(DIRECT_CAPABILITY_MAPPING.values())
 
     # These require direct process-canonical review; the older reference catalog
     # must not be stretched into stronger claims merely because nearby evidence exists.
@@ -71,46 +55,31 @@ def test_bootstrap_maps_only_directly_equivalent_reference_capabilities() -> Non
         ProcessEvidence.PROCESS_DIAGRAM,
         ProcessEvidence.PROJECTION_CONTRACT,
     }:
-        assert unproven not in bootstrapped.evidence
-
-    assert not bootstrapped.assessment_complete
-    assert bootstrapped.is_maturity_lower_bound
+        assert unproven not in bootstrap.evidence
 
 
 def test_bootstrap_preserves_exact_provenance_for_mapped_capabilities() -> None:
     contract = _contract_with_every_capability()
-    bootstrapped = bootstrap_reference_contract(_registered_manifest(), contract)
+    bootstrap = reference_contract_process_evidence(contract)
 
     for capability, process_evidence in DIRECT_CAPABILITY_MAPPING.items():
-        assert bootstrapped.evidence_sources[process_evidence] == contract.evidence[capability]
+        assert bootstrap.evidence_sources[process_evidence] == contract.evidence[capability]
 
-    assert set(bootstrapped.evidence_sources) == set(DIRECT_CAPABILITY_MAPPING.values())
-
-
-def test_bootstrap_preserves_existing_process_evidence_and_provenance() -> None:
-    manifest = ProcessManifest(
-        domain="example",
-        evidence=(
-            PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC0_REGISTERED]
-            | {ProcessEvidence.ENTITIES}
-        ),
-        evidence_sources={
-            ProcessEvidence.ENTITIES: ("src/sose/examples/example/entities.py",),
-        },
-    )
-
-    bootstrapped = bootstrap_reference_contract(manifest, _contract_with_every_capability())
-
-    assert ProcessEvidence.ENTITIES in bootstrapped.evidence
-    assert bootstrapped.evidence_sources[ProcessEvidence.ENTITIES] == (
-        "src/sose/examples/example/entities.py",
-    )
+    assert set(bootstrap.evidence_sources) == set(DIRECT_CAPABILITY_MAPPING.values())
 
 
-def test_bootstrap_rejects_reference_contract_for_a_different_domain_package() -> None:
+def test_unmapped_reference_capabilities_remain_visible_as_unconsumed_evidence() -> None:
+    contract = _contract_with_every_capability()
+    bootstrap = reference_contract_process_evidence(contract)
+
+    expected_unmapped = frozenset(ReferenceCapability) - set(DIRECT_CAPABILITY_MAPPING)
+    assert bootstrap.unmapped_capabilities == expected_unmapped
+
+
+def test_bootstrap_rejects_packages_outside_builtin_example_namespace() -> None:
     contract = ReferenceContract(
         domain="Other",
-        package="sose.examples.other",
+        package="external.examples.other",
         docs_dir="docs/examples/other",
         capabilities=frozenset({ReferenceCapability.HAPPY_PATH}),
         evidence={
@@ -119,26 +88,25 @@ def test_bootstrap_rejects_reference_contract_for_a_different_domain_package() -
     )
 
     try:
-        bootstrap_reference_contract(_registered_manifest("example"), contract)
+        reference_contract_process_evidence(contract)
     except ValueError as exc:
         message = str(exc)
     else:  # pragma: no cover - contract guard
-        raise AssertionError("bootstrap accepted evidence from a different domain")
+        raise AssertionError("bootstrap accepted a non-SOSE example package")
 
-    assert "other" in message
-    assert "example" in message
+    assert "sose.examples" in message
 
 
-def test_existing_reference_catalog_can_bootstrap_all_matching_business_domains() -> None:
+def test_existing_reference_catalog_bootstraps_all_matching_business_domains() -> None:
     manifests = builtin_process_manifests()
     bootstrapped_domains: set[str] = set()
 
     for contract in REFERENCE_CATALOG:
-        domain = contract.package.removeprefix("sose.examples.")
-        assert domain in manifests
-        bootstrapped = bootstrap_reference_contract(manifests[domain], contract)
-        bootstrapped_domains.add(domain)
-        assert bootstrapped.evidence_sources
-        assert not bootstrapped.assessment_complete
+        bootstrap = reference_contract_process_evidence(contract)
+        assert bootstrap.domain in manifests
+        bootstrapped_domains.add(bootstrap.domain)
+        assert bootstrap.evidence_sources
+        # Bootstrap is candidate evidence only. It must not mark the process audit complete.
+        assert not manifests[bootstrap.domain].assessment_complete
 
     assert len(bootstrapped_domains) == len(REFERENCE_CATALOG) == 17
