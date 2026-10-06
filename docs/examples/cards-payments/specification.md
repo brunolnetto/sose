@@ -258,3 +258,37 @@ Current status: **Reference implementation**.
 Promotion is based on executable evidence for processor-gated authorization/settlement/refund,
 durable settlement and retry schedules, explicit pre-capture reversal, independent dispute
 and chargeback execution, finite processor-outage recovery, and restart equivalence.
+
+## 14. Process-canonical audit
+
+Current audited maturity: **PC4 — Durable**.
+
+The PC0–PC4 chain is backed by executable evidence rather than the prose promotion
+statement above. The settlement-retry restart test compares the relevant continuous and
+rebuilt durable snapshots, the simulation-edge suite proves idempotent authorization,
+reversal, refund, and dispute creation behavior, and the finite processor-outage test
+proves that an unavailable processor gates progress and later recovers without direct
+state mutation.
+
+For PC2, `settled` remains the nominal happy-path milestone but is not treated as a
+terminal StateChart state: refund remains legal afterward. The audited terminal Payment
+outcomes are `declined`, `reversed`, and `refunded`, all represented explicitly in the
+executable lifecycle.
+
+The current specification satisfies two PC5 documentary claims:
+
+- `ERD` — sections 4.1–4.3 document business, operational, and ownership relationships;
+- `STATECHART_DOCUMENTATION` — section 5 documents both Payment and Dispute lifecycles.
+
+The remaining PC5 gaps are exactly:
+
+- `KPIS`;
+- `PROCESS_DIAGRAM`;
+- `PROJECTION_CONTRACT`;
+- `CONFIGURATION_DOCUMENTATION`.
+
+The textual flows in sections 6 and 12 are not credited as `PROCESS_DIAGRAM`; the PC5
+contract requires a normative Mermaid end-to-end process diagram. Likewise, the current
+runtime/configuration implementation is not automatically treated as documented
+configuration, and durable persistence is not automatically treated as a projection
+contract.
