@@ -52,8 +52,12 @@ class GitHubReviewTimelineSourceRecord(BaseModel):
             "event": self.event,
             "created_at": self.occurred_at.isoformat(),
         }
-        if self.requested_actor_key is not None:
-            payload["requested_reviewer"] = {"login": self.requested_actor_key}
+        actor = self.requested_actor_key
+        if actor is not None:
+            if actor.startswith("team:"):
+                payload["requested_team"] = {"slug": actor.removeprefix("team:")}
+            else:
+                payload["requested_reviewer"] = {"login": actor}
         return payload
 
 
