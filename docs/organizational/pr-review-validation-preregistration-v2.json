@@ -1,0 +1,118 @@
+{
+  "protocol_version": "pr-review-validation/v2",
+  "study_type": "prospective_two_stage",
+  "repository": "brunolnetto/sose",
+  "registration_pr_number": 301,
+  "activation_rule": "pull requests created strictly after registration PR merge",
+  "motivation": {
+    "prior_result": "pr-review-validation/v1 failed the frozen absolute mean lead-time gate",
+    "prior_result_is_immutable": true,
+    "v1_failure_may_not_be_reinterpreted_by_v2": true,
+    "v2_question": "Can richer observable item-flow evidence support a frozen model that predicts the tail as well as the center on a genuinely future holdout?"
+  },
+  "cohort": {
+    "training_count": 18,
+    "holdout_count": 12,
+    "selection": "first eligible merged pull requests in creation-time order",
+    "v1_source_prs_excluded": [
+      265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
+      279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290
+    ],
+    "registration_pr_excluded": 301,
+    "terminal_outcome": "merged only",
+    "bot_authored_items": "retain and tag if present",
+    "outliers": "retain"
+  },
+  "source_contract": {
+    "item_opened_at": "GitHub pull request created_at",
+    "item_terminal_at": "GitHub pull request merged_at",
+    "workflow_jobs_included": true,
+    "review_timeline_included": true,
+    "submitted_reviews_included": true,
+    "raw_source_identity_preserved": true,
+    "infer_actor_effort_from_timestamp_gaps": false,
+    "workflow_job_fields": [
+      "job id", "name", "started_at", "completed_at", "conclusion", "workflow/run identity"
+    ],
+    "review_fields": [
+      "review request/removal timestamp", "requested actor key", "submitted_at", "review state"
+    ]
+  },
+  "candidate_tail_mechanisms": [
+    {
+      "mechanism": "ci_wait_or_execution",
+      "evidence": "workflow jobs",
+      "evidence_class": "observed when job interval exists"
+    },
+    {
+      "mechanism": "review_response_wait",
+      "evidence": "review request/submission timestamps",
+      "evidence_class": "observed item delay; not human service time"
+    },
+    {
+      "mechanism": "calendar_or_off_hours_wait",
+      "evidence": "timestamp/calendar pattern only unless independent calendar evidence is supplied",
+      "evidence_class": "inferable"
+    },
+    {
+      "mechanism": "external_or_unobserved_blocking",
+      "evidence": "residual elapsed delay after explicitly observed intervals",
+      "evidence_class": "inferable; causal subtype unidentified"
+    },
+    {
+      "mechanism": "work_size_heterogeneity",
+      "evidence": "future source enrichment may include declared PR size proxies if frozen before Stage 2",
+      "evidence_class": "observed only if source rule is frozen before holdout"
+    },
+    {
+      "mechanism": "human_service_effort",
+      "evidence": "not identified by public GitHub timestamp gaps",
+      "evidence_class": "assumed"
+    }
+  ],
+  "stage_rules": {
+    "stage_1": "collect exactly 18 eligible merged PRs and use them only for evidence scouting, calibration and model design",
+    "model_freeze_checkpoint": "after Stage 1 is complete and before the first Stage 2 PR is eligible",
+    "stage_2": "collect the next 12 eligible merged PRs as untouched holdout",
+    "holdout_enrollment_before_model_freeze": false,
+    "v2_model_may_use_training_only": true,
+    "holdout_outcomes_may_change_model": false,
+    "failed_holdout_must_be_reported": true
+  },
+  "model_freeze_requirements": {
+    "required_before_stage_2": [
+      "v2 ModelSpec and hash",
+      "parameter evidence classes",
+      "simulation seed policy",
+      "acceptance criteria",
+      "tail metrics",
+      "source normalization rules",
+      "missing-data policy",
+      "model/parameter fitting rule"
+    ],
+    "mechanism_without_source_evidence": "remain assumed/swept or stay out of v2",
+    "no_holdout_peeking": true
+  },
+  "minimum_tail_reporting": {
+    "required": [
+      "mean", "median", "p90", "maximum", "ECDF distance", "max-to-median ratio"
+    ],
+    "reason": "v1 matched the center substantially better than the observed upper-tail elapsed time"
+  },
+  "analysis_rules": {
+    "retain_outliers": true,
+    "exclude_holdout_items_posthoc": false,
+    "retune_after_holdout": false,
+    "report_failed_gate": true,
+    "report_null_regions": true,
+    "composite_fit_score": false,
+    "diagnostics_after_failure_must_not_change_original_acceptance": true
+  },
+  "limits": [
+    "Public GitHub events do not reconstruct conserved actor-time.",
+    "Review response latency is not reviewer service effort.",
+    "Residual elapsed time does not identify its causal mechanism.",
+    "Calendar effects remain inferable unless independent availability evidence exists.",
+    "The v2 result will apply to this repository/cohort/model class, not organizations generally."
+  ]
+}
