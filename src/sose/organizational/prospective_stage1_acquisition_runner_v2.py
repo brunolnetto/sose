@@ -15,6 +15,7 @@ from .prospective_state_v2 import ProspectiveEvidenceStateV2
 BindProtocol = Callable[..., object]
 AcquireBatch = Callable[..., object]
 AdvanceFiles = Callable[..., object]
+ValidatePrevious = Callable[[Path, Path], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +42,7 @@ def run_stage1_acquisition_v2(
     bind_protocol: BindProtocol = publish_prospective_protocol_binding_v2,
     acquire_batch: AcquireBatch = acquire_and_publish_github_pr_batch_v2,
     advance_files: AdvanceFiles = run_stage1_tranche_files_v2,
+    validate_previous: ValidatePrevious = None,
 ) -> ProspectiveStage1AcquisitionRunV2:
     """Bind protocol, acquire, and advance one explicit prospective Stage-1 tranche.
 
@@ -80,7 +82,8 @@ def run_stage1_acquisition_v2(
         if previous is not None and not previous.is_file():
             raise FileNotFoundError(f"previous Stage-1 artifact not found: {previous}")
     if previous_acquisition is not None and previous_state is not None:
-        _validate_previous_pair(previous_acquisition, previous_state)
+        validator = _validate_previous_pair if validate_previous is None else validate_previous
+        validator(previous_acquisition, previous_state)
 
     destination.mkdir(parents=True, exist_ok=True)
     bind_protocol(
