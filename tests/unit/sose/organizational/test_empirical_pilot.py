@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from sose.organizational.empirical_pilot import (
     GitHubPRObservationSnapshot,
     GitHubPRSourceRecord,
+    PRReviewEmpiricalPilotResult,
     run_pr_review_empirical_pilot,
 )
 from sose.organizational.heldout_prediction import PRReviewAssumptions
@@ -181,6 +182,36 @@ def test_empirical_artifact_identity_binds_execution_inputs() -> None:
     assert first.canonical_payload()["seed"] == 20261005
     assert first.canonical_payload()["holdout_fraction"] == 0.30
     assert first.canonical_payload()["assumptions"] == _assumptions().model_dump(mode="json")
+
+
+def test_empirical_artifact_rejects_assessment_bound_to_different_criteria() -> None:
+    result = run_pr_review_empirical_pilot(
+        snapshot=_snapshot(),
+        holdout_fraction=0.30,
+        assumptions=_assumptions(),
+        validation_criteria=_criteria(),
+        seed=20261005,
+    )
+    payload = result.model_dump()
+    payload["validation_criteria"] = _criteria(limit_seconds=1.0).model_dump()
+
+    with pytest.raises(ValidationError, match="criteria hash"):
+        PRReviewEmpiricalPilotResult.model_validate(payload)
+
+
+def test_empirical_artifact_rejects_assessment_bound_to_different_holdout() -> None:
+    result = run_pr_review_empirical_pilot(
+        snapshot=_snapshot(),
+        holdout_fraction=0.30,
+        assumptions=_assumptions(),
+        validation_criteria=_criteria(),
+        seed=20261005,
+    )
+    payload = result.model_dump()
+    payload["holdout_dataset_hash"] = "different-holdout-dataset"
+
+    with pytest.raises(ValidationError, match="observed dataset hash"):
+        PRReviewEmpiricalPilotResult.model_validate(payload)
 
 
 def test_snapshot_rejects_duplicate_prs_and_non_terminal_or_naive_records() -> None:
