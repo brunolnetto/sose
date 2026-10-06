@@ -4,10 +4,12 @@ from datetime import UTC, datetime, timedelta
 import json
 
 import pytest
+from pydantic import ValidationError
 
 from sose.organizational.prospective_protocol_v2 import ProspectiveStudyProtocolV2
 from sose.organizational.prospective_stage1_v2 import (
     STAGE1_CHECKPOINT_VERSION,
+    ProspectiveStage1ReadinessCheckpointV2,
     build_stage1_readiness_checkpoint_v2,
     publish_stage1_readiness_checkpoint_v2,
 )
@@ -82,6 +84,28 @@ def test_checkpoint_canonical_json_and_hash_are_deterministic() -> None:
     payload = json.loads(first.canonical_json())
     assert payload["state_hash"] == state.state_hash
     assert payload["training_remaining"] == 10
+
+
+def test_checkpoint_rejects_forged_derived_readiness_fields() -> None:
+    checkpoint = build_stage1_readiness_checkpoint_v2(_state(8))
+    payload = checkpoint.canonical_payload()
+    payload.update(
+        training_observed=18,
+        training_remaining=0,
+        freeze_allowed=True,
+    )
+
+    with pytest.raises(ValidationError, match="training_observed must match training_keys"):
+        ProspectiveStage1ReadinessCheckpointV2.model_validate(payload)
+
+
+def test_checkpoint_rejects_duplicate_training_keys() -> None:
+    checkpoint = build_stage1_readiness_checkpoint_v2(_state(8))
+    payload = checkpoint.canonical_payload()
+    payload["training_keys"] = [payload["training_keys"][0]] * 8
+
+    with pytest.raises(ValidationError, match="training_keys must be unique"):
+        ProspectiveStage1ReadinessCheckpointV2.model_validate(payload)
 
 
 def test_publish_is_idempotent_and_refuses_replacement(tmp_path) -> None:
