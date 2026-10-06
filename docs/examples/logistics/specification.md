@@ -309,3 +309,36 @@ Current status: **Reference implementation**.
 Promotion is based on executable evidence for durable pickup scheduling, hub queues,
 capacity-gated movement, immutable failed-attempt history with durable retry, finite
 scenario disruption/recovery, happy-path execution, contention, and restart equivalence.
+
+## 14. Process-canonical audit
+
+Current audited maturity: **PC4 — Durable**.
+
+The completed audit credits the full PC0–PC4 chain. In particular, the failed-attempt
+retry test executes both a continuous path and a rebuilt path and compares the complete
+relevant durable snapshot: entities, events, schedules, simulation position, resources,
+resource demands/releases, and Store state. Deterministic DeliveryAttempt creation is
+also tested as idempotent, and the recurring SimulationJob hook advances the eligible
+shipment flow from durable state.
+
+The current specification also satisfies two PC5 documentary claims:
+
+- `ERD` — sections 4.1–4.3 define business, operational, and ownership relationships;
+- `STATECHART_DOCUMENTATION` — section 5 documents both executable entity lifecycles and exception topology.
+
+The remaining PC5 gaps are exactly:
+
+- `KPIS`;
+- `PROCESS_DIAGRAM`;
+- `PROJECTION_CONTRACT`;
+- `CONFIGURATION_DOCUMENTATION`.
+
+The textual flows in sections 6 and 12 are intentionally **not** credited as
+`PROCESS_DIAGRAM`. The PC5 contract requires a normative end-to-end Mermaid process
+diagram. Likewise, the existence of durable state and a configurable Pydantic model does
+not by itself define a consumer projection contract or documented configuration
+contract.
+
+The next Logistics promotion work is therefore observability/documentation rather than
+kernel or durability work: define process KPIs, add the Mermaid E2E process diagram,
+formalize projection outputs, and document the supported configuration surface.
