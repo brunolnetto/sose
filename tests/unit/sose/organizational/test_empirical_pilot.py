@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from sose.organizational.empirical_pilot import (
     GitHubPRObservationSnapshot,
     GitHubPRSourceRecord,
+    PRReviewEmpiricalPilotResult,
     run_pr_review_empirical_pilot,
 )
 from sose.organizational.heldout_prediction import PRReviewAssumptions
@@ -98,15 +99,20 @@ def test_snapshot_builds_terminal_observed_dataset_without_actor_inference() -> 
 def test_real_pr_pilot_uses_purged_temporal_holdout_and_binds_provenance() -> None:
     snapshot = _snapshot()
     criteria = _criteria()
+    assumptions = _assumptions()
     result = run_pr_review_empirical_pilot(
         snapshot=snapshot,
         holdout_fraction=0.30,
-        assumptions=_assumptions(),
+        assumptions=assumptions,
         validation_criteria=criteria,
         seed=20261005,
     )
 
+    assert result.artifact_version == "pr-review-empirical-pilot/v1"
     assert result.snapshot_hash == snapshot.snapshot_hash
+    assert result.holdout_fraction == 0.30
+    assert result.assumptions == assumptions
+    assert result.seed == 20261005
     assert result.train_keys == tuple((REPOSITORY, number) for number in range(265, 271))
     assert result.purged_keys == ((REPOSITORY, 271),)
     assert result.holdout_keys == (
@@ -124,6 +130,7 @@ def test_real_pr_pilot_uses_purged_temporal_holdout_and_binds_provenance() -> No
     assert result.validation_assessment.criteria_hash == criteria.criteria_hash
     assert result.validation_assessment.observed_dataset_hash == result.holdout_dataset_hash
     assert result.validation_assessment.passed
+    assert len(result.artifact_hash) == 64
 
 
 def test_strict_preregistered_criteria_can_refute_pilot_without_hiding_prediction() -> None:
@@ -155,6 +162,56 @@ def test_empirical_pilot_is_deterministic_for_same_source_assumptions_criteria_a
     second = run_pr_review_empirical_pilot(**kwargs)
 
     assert first == second
+    assert first.canonical_json() == second.canonical_json()
+    assert first.artifact_hash == second.artifact_hash
+
+
+def test_empirical_artifact_identity_binds_execution_inputs() -> None:
+    common = {
+        "snapshot": _snapshot(),
+        "holdout_fraction": 0.30,
+        "assumptions": _assumptions(),
+        "validation_criteria": _criteria(),
+    }
+    first = run_pr_review_empirical_pilot(**common, seed=20261005)
+    second = run_pr_review_empirical_pilot(**common, seed=20261006)
+
+    assert first.seed != second.seed
+    assert first.artifact_hash != second.artifact_hash
+    assert first.canonical_payload()["artifact_version"] == "pr-review-empirical-pilot/v1"
+    assert first.canonical_payload()["seed"] == 20261005
+    assert first.canonical_payload()["holdout_fraction"] == 0.30
+    assert first.canonical_payload()["assumptions"] == _assumptions().model_dump(mode="json")
+
+
+def test_empirical_artifact_rejects_assessment_bound_to_different_criteria() -> None:
+    result = run_pr_review_empirical_pilot(
+        snapshot=_snapshot(),
+        holdout_fraction=0.30,
+        assumptions=_assumptions(),
+        validation_criteria=_criteria(),
+        seed=20261005,
+    )
+    payload = result.model_dump()
+    payload["validation_criteria"] = _criteria(limit_seconds=1.0).model_dump()
+
+    with pytest.raises(ValidationError, match="criteria hash"):
+        PRReviewEmpiricalPilotResult.model_validate(payload)
+
+
+def test_empirical_artifact_rejects_assessment_bound_to_different_holdout() -> None:
+    result = run_pr_review_empirical_pilot(
+        snapshot=_snapshot(),
+        holdout_fraction=0.30,
+        assumptions=_assumptions(),
+        validation_criteria=_criteria(),
+        seed=20261005,
+    )
+    payload = result.model_dump()
+    payload["holdout_dataset_hash"] = "different-holdout-dataset"
+
+    with pytest.raises(ValidationError, match="observed dataset hash"):
+        PRReviewEmpiricalPilotResult.model_validate(payload)
 
 
 def test_snapshot_rejects_duplicate_prs_and_non_terminal_or_naive_records() -> None:

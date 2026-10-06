@@ -22,6 +22,7 @@ from .validation import (
 
 
 NonBlankString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+EMPIRICAL_PILOT_ARTIFACT_VERSION = "pr-review-empirical-pilot/v1"
 
 
 def _require_aware(value: datetime, *, field_name: str) -> None:
@@ -293,11 +294,15 @@ def evaluate_empirical_eligibility(
 
 
 class PRReviewEmpiricalPilotResult(BaseModel):
-    """Auditable empirical-pilot result bound to source, split, model and validation contract."""
+    """Versioned, hash-addressed pilot result bound to source, execution and validation inputs."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    artifact_version: NonBlankString = EMPIRICAL_PILOT_ARTIFACT_VERSION
     snapshot_hash: NonBlankString
+    holdout_fraction: float = Field(gt=0.0, lt=1.0, allow_inf_nan=False)
+    assumptions: PRReviewAssumptions
+    seed: int
     train_dataset_hash: NonBlankString
     holdout_dataset_hash: NonBlankString
     train_keys: tuple[ObservedPRKey, ...]
@@ -306,6 +311,36 @@ class PRReviewEmpiricalPilotResult(BaseModel):
     validation_criteria: LeadTimeValidationCriteria
     validation_assessment: LeadTimeValidationAssessment
     prediction: PRReviewHeldoutPrediction
+
+    @model_validator(mode="after")
+    def validate_provenance_bindings(self) -> "PRReviewEmpiricalPilotResult":
+        if self.validation_assessment.criteria_hash != self.validation_criteria.criteria_hash:
+            raise ValueError("validation assessment criteria hash does not match validation criteria")
+        if self.validation_assessment.observed_dataset_hash != self.holdout_dataset_hash:
+            raise ValueError("validation assessment observed dataset hash does not match holdout dataset")
+        if self.prediction.train_dataset_hash != self.train_dataset_hash:
+            raise ValueError("prediction train dataset hash does not match pilot train dataset")
+        if self.prediction.holdout_dataset_hash != self.holdout_dataset_hash:
+            raise ValueError("prediction holdout dataset hash does not match pilot holdout dataset")
+        if self.prediction.validation.observed_dataset_hash != self.holdout_dataset_hash:
+            raise ValueError("prediction validation dataset hash does not match pilot holdout dataset")
+        return self
+
+    def canonical_payload(self) -> dict[str, object]:
+        return self.model_dump(mode="json")
+
+    def canonical_json(self) -> str:
+        return json.dumps(
+            self.canonical_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+
+    @property
+    def artifact_hash(self) -> str:
+        return sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
 
 def run_pr_review_empirical_pilot(
@@ -331,6 +366,9 @@ def run_pr_review_empirical_pilot(
     )
     return PRReviewEmpiricalPilotResult(
         snapshot_hash=snapshot.snapshot_hash,
+        holdout_fraction=holdout_fraction,
+        assumptions=assumptions,
+        seed=seed,
         train_dataset_hash=split.train.dataset_hash,
         holdout_dataset_hash=split.holdout.dataset_hash,
         train_keys=split.train.keys,
