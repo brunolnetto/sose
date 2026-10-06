@@ -29,7 +29,7 @@ class ProcessEvidence(StrEnum):
 
     SAD_PATHS = "sad_paths"
     FINITE_RESOURCES = "finite_resources"
-    QUEUEING = "queueing"
+    CAPACITY_CONTENTION = "capacity_contention"
     TIME_SEMANTICS = "time_semantics"
 
     DURABLE_STATE = "durable_state"
@@ -72,7 +72,7 @@ PROCESS_MATURITY_REQUIREMENTS: dict[ProcessMaturity, frozenset[ProcessEvidence]]
         {
             ProcessEvidence.SAD_PATHS,
             ProcessEvidence.FINITE_RESOURCES,
-            ProcessEvidence.QUEUEING,
+            ProcessEvidence.CAPACITY_CONTENTION,
             ProcessEvidence.TIME_SEMANTICS,
         }
     ),
@@ -224,13 +224,23 @@ def _registered_only_manifest(domain: str) -> ProcessManifest:
 
 
 def _warehouse_management_manifest() -> ProcessManifest:
-    evidence = _requirements_through(ProcessMaturity.PC5_OBSERVABLE)
+    # Audit evidence is intentionally explicit rather than using
+    # _requirements_through(PC5). The domain demonstrates phase-marker recovery
+    # and replay-safe effects, but it does not yet contain a continuous-vs-rebuild
+    # restart-equivalence test. That missing PC4 requirement must keep maturity at
+    # PC3 even though PC5 documentation/KPIs already exist.
+    evidence = set(_requirements_through(ProcessMaturity.PC3_OPERATIONAL))
+    evidence.update(
+        PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC4_DURABLE]
+        - {ProcessEvidence.RESTART_EQUIVALENCE}
+    )
+    evidence.update(PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC5_OBSERVABLE])
     return ProcessManifest(
         domain="warehouse_management",
-        evidence=evidence,
+        evidence=frozenset(evidence),
         trigger="inter_site_transfer_planned",
         terminal_outcomes=frozenset({"completed"}),
-        resources=frozenset({"dock", "forklift", "truck", "stock"}),
+        resources=frozenset({"dock", "forklift", "truck"}),
         sad_paths=frozenset(
             {
                 "insufficient_stock",
