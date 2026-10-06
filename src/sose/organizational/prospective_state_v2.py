@@ -76,7 +76,6 @@ class ProspectiveEvidenceStateV2(BaseModel):
         return {
             "state_version": self.state_version,
             "protocol": self.protocol.canonical_payload(),
-            "protocol_hash": self.protocol_hash,
             "snapshot": self.snapshot.canonical_payload(),
             "cohort": self.cohort.model_dump(mode="json"),
             "previous_state_hash": self.previous_state_hash,
