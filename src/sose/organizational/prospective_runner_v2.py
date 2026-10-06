@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import tempfile
 
+from .acquisition_v2 import GitHubPRAcquisitionSnapshotV2
 from .prospective_protocol_v2 import (
     ProspectiveStudyProtocolV2,
     bind_pr_review_validation_protocol_v2,
@@ -15,7 +16,6 @@ from .prospective_state_v2 import (
     ProspectiveEvidenceStateV2,
     advance_prospective_evidence_state_v2,
 )
-from .source_evidence_v2 import GitHubPREvidenceSnapshotV2
 
 
 def publish_prospective_protocol_binding_v2(
@@ -48,25 +48,27 @@ def publish_prospective_protocol_binding_v2(
 def run_prospective_evidence_files_v2(
     *,
     protocol_path: str | Path,
-    snapshot_path: str | Path,
+    acquisition_path: str | Path,
     output_path: str | Path,
     previous_state_path: str | Path | None = None,
     model_frozen_at: datetime | None = None,
 ) -> ProspectiveEvidenceStateV2:
-    """Advance the prospective v2 evidence chain from local immutable artifacts.
+    """Advance prospective v2 state only from complete local acquisition artifacts.
 
     This function performs no GitHub access. The caller supplies a bound protocol,
-    a complete canonical source snapshot, and optionally the immediately preceding
-    state artifact. Publication is atomic and refuses to overwrite a different
-    result.
+    a canonical acquisition snapshot proving all required source endpoints were
+    fetched completely, and optionally the immediately preceding state artifact.
+    The frozen source-evidence snapshot is derived only after acquisition proof has
+    been validated. Publication is atomic and refuses to overwrite different data.
     """
 
     protocol = ProspectiveStudyProtocolV2.model_validate_json(
         Path(protocol_path).read_text(encoding="utf-8")
     )
-    snapshot = GitHubPREvidenceSnapshotV2.model_validate_json(
-        Path(snapshot_path).read_text(encoding="utf-8")
+    acquisition = GitHubPRAcquisitionSnapshotV2.model_validate_json(
+        Path(acquisition_path).read_text(encoding="utf-8")
     )
+    snapshot = acquisition.to_evidence_snapshot()
     previous_state = (
         ProspectiveEvidenceStateV2.model_validate_json(
             Path(previous_state_path).read_text(encoding="utf-8")
