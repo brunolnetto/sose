@@ -50,6 +50,8 @@ jobs:
           SOSE_REPOSITORY: ${{ github.repository }}
           SOSE_PRS: ${{ inputs.prs }}
           SOSE_HAS_PREVIOUS: ${{ inputs.previous_run_id != '' }}
+          # Immutable activation timestamp of preregistration PR #301.
+          SOSE_REGISTRATION_MERGED_AT: "2026-10-06T14:44:13+00:00"
         run: |
           python - <<'PY'
           from datetime import datetime, timezone
@@ -70,7 +72,8 @@ jobs:
               repository=os.environ["SOSE_REPOSITORY"],
               pr_numbers=pr_numbers,
               captured_at=datetime.now(timezone.utc),
-              protocol_path=Path("docs/organizational/pr-review-validation-preregistration-v2.json"),
+              protocol_document_path=Path("docs/organizational/pr-review-validation-preregistration-v2.json"),
+              registration_merged_at=datetime.fromisoformat(os.environ["SOSE_REGISTRATION_MERGED_AT"]),
               output_dir=Path("stage1-output"),
               client=UrllibGitHubJsonClient(token=os.environ["SOSE_GITHUB_TOKEN"].strip()),
               previous_acquisition_path=previous_acquisition,
