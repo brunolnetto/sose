@@ -4,13 +4,15 @@
 
 W1 reuses the repository's existing reference-conformance evidence without treating the older `ReferenceContract` model as if it already satisfied the newer PC0-PC6 process-canonical contract.
 
-`tests/support/reference_catalog.py` currently contains 17 established reference domains with repository evidence attached to `ReferenceCapability` values. That evidence is valuable provenance, but the capability vocabulary is not equivalent to process maturity.
+`tests/support/reference_catalog.py` currently covers every business-process domain in the built-in catalog except the newer Warehouse Management example. The test suite derives this relationship from the current catalogs instead of freezing a historical cardinality. That evidence is valuable provenance, but the capability vocabulary is not equivalent to process maturity.
 
 ## Rule
 
 Reference evidence enters W1 through `reference_contract_process_evidence()` as a `ReferenceProcessEvidenceBootstrap`.
 
 A bootstrap is **candidate evidence**, not a `ProcessManifest` and not a maturity promotion.
+
+The bridge lives in `sose.testing.process_bootstrap`, not in `sose.examples`, so production example semantics do not depend on the testing/conformance layer.
 
 The following capability translations are accepted because they are direct semantic equivalents:
 
@@ -79,8 +81,8 @@ ReferenceContract
 
 ## W1 audit implication
 
-The 17 existing reference contracts provide a head start, not an automatic maturity score.
+The current reference contracts provide a provenance head start for all catalogued business-process domains except Warehouse Management, which is already directly audited under the newer PC evidence model.
 
-The remaining newer process domains require direct evidence discovery. Warehouse Management is already directly audited under the PC contract; Warehouse Fulfillment, Subscription SaaS, Field Service, and Hospitality still require direct process review.
+This does **not** mean the other domains are already process-audited. Their reference evidence still lacks some or all of the stronger PC semantics and named process metadata required for a completed assessment.
 
 The W1 exit gate remains unchanged: every business-process domain must have a completed, provenance-bound audit and explicit gaps before W2/W4 promotion work is selected.
