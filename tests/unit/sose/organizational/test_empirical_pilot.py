@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from sose.organizational.empirical_pilot import (
     GitHubPRObservationSnapshot,
     GitHubPRSourceRecord,
+    PRReviewEmpiricalPilotResult,
     run_pr_review_empirical_pilot,
 )
 from sose.organizational.heldout_prediction import PRReviewAssumptions
@@ -34,9 +35,6 @@ def _record(number: int, opened: datetime, merged: datetime) -> GitHubPRSourceRe
 
 
 def _snapshot() -> GitHubPRObservationSnapshot:
-    # Real merged PR lifecycle timestamps from the SOSE repository. These records
-    # intentionally contain item-level evidence only; they do not manufacture
-    # reviewer effort, calendars, meetings, or context-switch time.
     return GitHubPRObservationSnapshot(
         snapshot_version="sose-prs-265-274@2026-10-05",
         records=(
@@ -70,6 +68,16 @@ def _criteria(*, limit_seconds: float = 100_000.0, max_ecdf: float = 1.0) -> Lea
         max_abs_median_difference_seconds=limit_seconds,
         max_abs_p90_difference_seconds=limit_seconds,
         max_ecdf_distance=max_ecdf,
+    )
+
+
+def _run(*, criteria: LeadTimeValidationCriteria | None = None) -> PRReviewEmpiricalPilotResult:
+    return run_pr_review_empirical_pilot(
+        snapshot=_snapshot(),
+        holdout_fraction=0.30,
+        assumptions=_assumptions(),
+        validation_criteria=criteria or _criteria(),
+        seed=20261005,
     )
 
 
@@ -128,33 +136,32 @@ def test_real_pr_pilot_uses_purged_temporal_holdout_and_binds_provenance() -> No
 
 def test_strict_preregistered_criteria_can_refute_pilot_without_hiding_prediction() -> None:
     criteria = _criteria(limit_seconds=0.0, max_ecdf=0.0)
-    result = run_pr_review_empirical_pilot(
-        snapshot=_snapshot(),
-        holdout_fraction=0.30,
-        assumptions=_assumptions(),
-        validation_criteria=criteria,
-        seed=20261005,
-    )
+    result = _run(criteria=criteria)
 
     assert not result.validation_assessment.passed
-    assert result.validation_assessment.criteria_hash == criteria.criteria_hash
     assert len(result.prediction.simulated_lead_times_seconds) == 3
-    assert any(not check.passed for check in result.validation_assessment.checks)
 
 
 def test_empirical_pilot_is_deterministic_for_same_source_assumptions_criteria_and_seed() -> None:
-    kwargs = {
-        "snapshot": _snapshot(),
-        "holdout_fraction": 0.30,
-        "assumptions": _assumptions(),
-        "validation_criteria": _criteria(),
-        "seed": 20261005,
-    }
+    assert _run() == _run()
 
-    first = run_pr_review_empirical_pilot(**kwargs)
-    second = run_pr_review_empirical_pilot(**kwargs)
 
-    assert first == second
+def test_persisted_pilot_rejects_assessment_bound_to_different_criteria() -> None:
+    result = _run()
+    payload = result.model_dump()
+    payload["validation_criteria"] = _criteria(limit_seconds=1.0).model_dump()
+
+    with pytest.raises(ValidationError, match="criteria hash"):
+        PRReviewEmpiricalPilotResult.model_validate(payload)
+
+
+def test_persisted_pilot_rejects_assessment_bound_to_different_holdout() -> None:
+    result = _run()
+    payload = result.model_dump()
+    payload["holdout_dataset_hash"] = "different-holdout-dataset"
+
+    with pytest.raises(ValidationError, match="observed dataset hash"):
+        PRReviewEmpiricalPilotResult.model_validate(payload)
 
 
 def test_snapshot_rejects_duplicate_prs_and_non_terminal_or_naive_records() -> None:
