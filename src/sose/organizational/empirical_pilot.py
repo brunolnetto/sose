@@ -22,6 +22,7 @@ from .validation import (
 
 
 NonBlankString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+EMPIRICAL_PILOT_ARTIFACT_VERSION = "pr-review-empirical-pilot/v1"
 
 
 def _require_aware(value: datetime, *, field_name: str) -> None:
@@ -293,10 +294,11 @@ def evaluate_empirical_eligibility(
 
 
 class PRReviewEmpiricalPilotResult(BaseModel):
-    """Hash-addressed empirical pilot result bound to source, execution and validation inputs."""
+    """Versioned, hash-addressed pilot result bound to source, execution and validation inputs."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
+    artifact_version: NonBlankString = EMPIRICAL_PILOT_ARTIFACT_VERSION
     snapshot_hash: NonBlankString
     holdout_fraction: float = Field(gt=0.0, lt=1.0, allow_inf_nan=False)
     assumptions: PRReviewAssumptions
