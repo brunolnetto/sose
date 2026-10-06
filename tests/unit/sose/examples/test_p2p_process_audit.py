@@ -8,6 +8,16 @@ from sose.examples.process_manifest import (
 )
 
 
+PC5_GAPS = frozenset(
+    {
+        ProcessEvidence.KPIS,
+        ProcessEvidence.STATECHART_DOCUMENTATION,
+        ProcessEvidence.PROJECTION_CONTRACT,
+        ProcessEvidence.CONFIGURATION_DOCUMENTATION,
+    }
+)
+
+
 def test_p2p_audit_reaches_pc4_without_overclaiming_observability() -> None:
     manifest = builtin_process_manifests()["p2p"]
 
@@ -28,13 +38,7 @@ def test_p2p_audit_reaches_pc4_without_overclaiming_observability() -> None:
     )
     assert manifest.kpis == frozenset()
 
-    assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset(
-        {
-            ProcessEvidence.KPIS,
-            ProcessEvidence.PROJECTION_CONTRACT,
-            ProcessEvidence.CONFIGURATION_DOCUMENTATION,
-        }
-    )
+    assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == PC5_GAPS
 
 
 def test_p2p_pc4_claims_are_explicitly_present() -> None:
@@ -50,13 +54,15 @@ def test_p2p_pc4_claims_are_explicitly_present() -> None:
         assert claim in evidence
 
 
-def test_p2p_existing_documentation_supports_only_three_pc5_claims() -> None:
+def test_p2p_existing_documentation_supports_only_erd_and_process_diagram() -> None:
     evidence = builtin_process_manifests()["p2p"].evidence
 
     assert ProcessEvidence.ERD in evidence
-    assert ProcessEvidence.STATECHART_DOCUMENTATION in evidence
     assert ProcessEvidence.PROCESS_DIAGRAM in evidence
 
+    # The prose mentions cancellation, but the Mermaid charts omit the actual
+    # cancelled states/transitions for PurchaseOrder and MaterialDemand.
+    assert ProcessEvidence.STATECHART_DOCUMENTATION not in evidence
     assert ProcessEvidence.KPIS not in evidence
     assert ProcessEvidence.PROJECTION_CONTRACT not in evidence
     assert ProcessEvidence.CONFIGURATION_DOCUMENTATION not in evidence
@@ -67,10 +73,4 @@ def test_p2p_audit_reports_observability_as_next_gate() -> None:
 
     assert row.next_maturity is ProcessMaturity.PC5_OBSERVABLE
     assert not row.assessment_is_lower_bound
-    assert row.missing_for_next_gate == frozenset(
-        {
-            ProcessEvidence.KPIS,
-            ProcessEvidence.PROJECTION_CONTRACT,
-            ProcessEvidence.CONFIGURATION_DOCUMENTATION,
-        }
-    )
+    assert row.missing_for_next_gate == PC5_GAPS
