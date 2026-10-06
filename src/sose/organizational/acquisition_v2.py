@@ -38,11 +38,14 @@ class GitHubEndpointCaptureV2(BaseModel):
     def validate_pagination(self) -> "GitHubEndpointCaptureV2":
         if not self.source_urls:
             raise ValueError("source_urls must identify fetched pages")
+        canonical_urls = tuple(sorted(set(self.source_urls)))
+        if len(canonical_urls) != self.pages_fetched:
+            raise ValueError("pages_fetched must match distinct source_urls")
         if self.complete and self.next_page_url is not None:
             raise ValueError("complete acquisition cannot retain next_page_url")
         if not self.complete and self.next_page_url is None:
             raise ValueError("incomplete acquisition requires next_page_url")
-        object.__setattr__(self, "source_urls", tuple(sorted(set(self.source_urls))))
+        object.__setattr__(self, "source_urls", canonical_urls)
         return self
 
     def canonical_payload(self) -> dict[str, object]:
@@ -162,6 +165,61 @@ class GitHubPRAcquisitionArtifactV2(BaseModel):
         return sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
 
+class GitHubPRAcquisitionSnapshotV2(BaseModel):
+    """Canonical acquisition snapshot that preserves completeness provenance."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    artifacts: tuple[GitHubPRAcquisitionArtifactV2, ...] = Field(min_length=2)
+
+    @model_validator(mode="after")
+    def canonicalize_and_validate(self) -> "GitHubPRAcquisitionSnapshotV2":
+        keys = tuple(
+            (artifact.evidence.repository, artifact.evidence.pr_number)
+            for artifact in self.artifacts
+        )
+        if len(keys) != len(set(keys)):
+            raise ValueError("duplicate GitHub pull request acquisition identity")
+        if any(not artifact.manifest.is_complete for artifact in self.artifacts):
+            raise ValueError("all acquisition artifacts must be complete")
+        object.__setattr__(
+            self,
+            "artifacts",
+            tuple(
+                sorted(
+                    self.artifacts,
+                    key=lambda artifact: (
+                        artifact.evidence.opened_at,
+                        artifact.evidence.repository,
+                        artifact.evidence.pr_number,
+                    ),
+                )
+            ),
+        )
+        return self
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {"artifacts": [artifact.canonical_payload() for artifact in self.artifacts]}
+
+    def canonical_json(self) -> str:
+        return json.dumps(
+            self.canonical_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+
+    @property
+    def acquisition_hash(self) -> str:
+        return sha256(self.canonical_json().encode("utf-8")).hexdigest()
+
+    def to_evidence_snapshot(self) -> GitHubPREvidenceSnapshotV2:
+        return GitHubPREvidenceSnapshotV2(
+            records=tuple(artifact.evidence for artifact in self.artifacts)
+        )
+
+
 def build_complete_github_pr_evidence_v2(
     *,
     manifest: GitHubPRAcquisitionManifestV2,
@@ -186,6 +244,7 @@ def build_complete_github_pr_evidence_v2(
     source_repository = _pull_request_repository(pull_request)
     if source_repository is not None and source_repository != manifest.repository:
         raise ValueError("manifest repository does not match pull request provenance")
+    _require_workflow_job_membership(workflow_runs=workflow_runs, workflow_jobs=workflow_jobs)
 
     evidence = build_github_pr_evidence_v2(
         repository=manifest.repository,
@@ -203,9 +262,7 @@ def build_evidence_snapshot_from_acquisitions_v2(
 ) -> GitHubPREvidenceSnapshotV2:
     """Project complete acquisition artifacts into the frozen v2 evidence schema."""
 
-    if any(not artifact.manifest.is_complete for artifact in artifacts):
-        raise ValueError("all acquisition artifacts must be complete")
-    return GitHubPREvidenceSnapshotV2(records=tuple(artifact.evidence for artifact in artifacts))
+    return GitHubPRAcquisitionSnapshotV2(artifacts=tuple(artifacts)).to_evidence_snapshot()
 
 
 def _pull_request_repository(pull_request: Mapping[str, Any]) -> str | None:
@@ -219,6 +276,22 @@ def _pull_request_repository(pull_request: Mapping[str, Any]) -> str | None:
     if not isinstance(full_name, str) or not full_name.strip():
         return None
     return full_name.strip()
+
+
+def _require_workflow_job_membership(
+    *,
+    workflow_runs: Sequence[Mapping[str, Any]],
+    workflow_jobs: Sequence[Mapping[str, Any]],
+) -> None:
+    run_ids = {
+        run_id
+        for run in workflow_runs
+        if isinstance((run_id := run.get("id")), int) and not isinstance(run_id, bool)
+    }
+    for job in workflow_jobs:
+        run_id = job.get("run_id")
+        if run_id not in run_ids:
+            raise ValueError(f"workflow job run_id={run_id} was not acquired")
 
 
 def _require_count(endpoint: str, expected: int, actual: int) -> None:
