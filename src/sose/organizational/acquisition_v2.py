@@ -23,12 +23,17 @@ EndpointName = Literal[
 
 
 class GitHubEndpointCaptureV2(BaseModel):
-    """Evidence that one GitHub source endpoint was fetched to exhaustion."""
+    """Evidence that one GitHub source endpoint was fetched to exhaustion.
+
+    ``workflow_jobs`` is the one deliberate zero-page exception: if the complete
+    workflow-run acquisition proves that no runs exist, no per-run jobs endpoint
+    exists to request. The parent manifest validates that derivation.
+    """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     endpoint: EndpointName
-    pages_fetched: int = Field(ge=1)
+    pages_fetched: int = Field(ge=0)
     record_count: int = Field(ge=0)
     complete: bool
     source_urls: tuple[NonBlankString, ...] = ()
@@ -36,9 +41,21 @@ class GitHubEndpointCaptureV2(BaseModel):
 
     @model_validator(mode="after")
     def validate_pagination(self) -> "GitHubEndpointCaptureV2":
-        if not self.source_urls:
-            raise ValueError("source_urls must identify fetched pages")
         canonical_urls = tuple(sorted(set(self.source_urls)))
+        if self.pages_fetched == 0:
+            if (
+                self.endpoint != "workflow_jobs"
+                or self.record_count != 0
+                or canonical_urls
+                or not self.complete
+                or self.next_page_url is not None
+            ):
+                raise ValueError(
+                    "zero-page capture is permitted only for complete empty workflow_jobs"
+                )
+            return self
+        if not canonical_urls:
+            raise ValueError("source_urls must identify fetched pages")
         if len(canonical_urls) != self.pages_fetched:
             raise ValueError("pages_fetched must match distinct source_urls")
         if self.complete and self.next_page_url is not None:
@@ -87,6 +104,11 @@ class GitHubPRAcquisitionManifestV2(BaseModel):
         for name, capture in expected.items():
             if capture.endpoint != name:
                 raise ValueError(f"{name} capture must declare endpoint={name}")
+        if self.workflow_jobs.pages_fetched == 0:
+            if not self.workflow_runs.complete or self.workflow_runs.record_count != 0:
+                raise ValueError(
+                    "zero-page workflow_jobs requires complete zero-record workflow_runs"
+                )
         return self
 
     @property
