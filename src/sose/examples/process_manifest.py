@@ -140,6 +140,10 @@ class ProcessManifest:
         if not self.domain.strip():
             raise ValueError("domain must be non-empty")
 
+        pc0 = PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC0_REGISTERED]
+        if not pc0.issubset(self.evidence):
+            raise ValueError("process manifest must satisfy the PC0 registered runtime baseline")
+
         missing_details: list[str] = []
         if ProcessEvidence.HAPPY_PATH in self.evidence and not self.trigger:
             missing_details.append("trigger")
@@ -178,13 +182,13 @@ class ProcessManifest:
 
     @property
     def maturity(self) -> ProcessMaturity:
-        achieved: ProcessMaturity | None = None
+        achieved = ProcessMaturity.PC0_REGISTERED
         for level in ProcessMaturity:
             if PROCESS_MATURITY_REQUIREMENTS[level].issubset(self.evidence):
                 achieved = level
                 continue
             break
-        return achieved if achieved is not None else ProcessMaturity.PC0_REGISTERED
+        return achieved
 
     def missing_for(self, level: ProcessMaturity) -> frozenset[ProcessEvidence]:
         return PROCESS_MATURITY_REQUIREMENTS[level] - self.evidence
