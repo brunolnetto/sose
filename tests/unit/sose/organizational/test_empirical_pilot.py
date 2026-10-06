@@ -107,6 +107,7 @@ def test_real_pr_pilot_uses_purged_temporal_holdout_and_binds_provenance() -> No
         seed=20261005,
     )
 
+    assert result.artifact_version == "pr-review-empirical-pilot/v1"
     assert result.snapshot_hash == snapshot.snapshot_hash
     assert result.holdout_fraction == 0.30
     assert result.assumptions == assumptions
@@ -176,6 +177,7 @@ def test_empirical_artifact_identity_binds_execution_inputs() -> None:
 
     assert first.seed != second.seed
     assert first.artifact_hash != second.artifact_hash
+    assert first.canonical_payload()["artifact_version"] == "pr-review-empirical-pilot/v1"
     assert first.canonical_payload()["seed"] == 20261005
     assert first.canonical_payload()["holdout_fraction"] == 0.30
     assert first.canonical_payload()["assumptions"] == _assumptions().model_dump(mode="json")
