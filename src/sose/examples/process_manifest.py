@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
 from pathlib import PurePosixPath
-from types import MappingProxyType
 
 
 class ProcessMaturity(IntEnum):
@@ -131,6 +130,26 @@ def _is_repository_relative(path: str) -> bool:
 
 
 @dataclass(frozen=True, slots=True)
+class EvidenceSources(Mapping[ProcessEvidence, tuple[str, ...]]):
+    """Hashable immutable mapping from a process claim to repository provenance."""
+
+    entries: tuple[tuple[ProcessEvidence, tuple[str, ...]], ...] = ()
+
+    def __getitem__(self, key: ProcessEvidence) -> tuple[str, ...]:
+        item = ProcessEvidence(key)
+        for evidence, paths in self.entries:
+            if evidence is item:
+                return paths
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[ProcessEvidence]:
+        return (evidence for evidence, _ in self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
+@dataclass(frozen=True, slots=True)
 class ProcessManifest:
     """Auditable evidence for one process canonical.
 
@@ -155,7 +174,7 @@ class ProcessManifest:
     ingress_contracts: frozenset[str] = frozenset()
     egress_contracts: frozenset[str] = frozenset()
     evidence_sources: Mapping[ProcessEvidence, tuple[str, ...]] = field(
-        default_factory=dict
+        default_factory=EvidenceSources
     )
     assessment_complete: bool = False
 
@@ -190,7 +209,14 @@ class ProcessManifest:
         object.__setattr__(
             self,
             "evidence_sources",
-            MappingProxyType(normalized_sources),
+            EvidenceSources(
+                tuple(
+                    sorted(
+                        normalized_sources.items(),
+                        key=lambda pair: pair[0].value,
+                    )
+                )
+            ),
         )
 
         if self.assessment_complete:
