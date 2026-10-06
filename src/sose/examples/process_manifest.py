@@ -451,6 +451,10 @@ def builtin_process_manifests() -> dict[str, ProcessManifest]:
         for name in builtin_catalog().names(kind="domain")
         if name not in PROCESS_AUDIT_EXCLUDED_DOMAINS
     }
+    if "p2p" in manifests:
+        from .p2p.process_audit import process_manifest as p2p_process_manifest
+
+        manifests["p2p"] = p2p_process_manifest()
     if "warehouse_fulfillment" in manifests:
         manifests["warehouse_fulfillment"] = _warehouse_fulfillment_manifest()
     if "warehouse_management" in manifests:
