@@ -23,37 +23,14 @@ from sose.organizational.experiment import (
 BASELINE_HASH = "a" * 64
 
 
-def _protocol(**overrides: object) -> ExperimentProtocol:
-    payload: dict[str, object] = {
-        "protocol_version": "2",
+def _base_payload() -> dict[str, object]:
+    return {
         "research_question": "Which intervention class wins under preregistered operating regimes?",
         "baseline_model_spec_hash": BASELINE_HASH,
         "intervention_ids": ("capacity-reviewer", "delegate-low-risk"),
         "agency_levels": (AgencyLevel.A0, AgencyLevel.A1, AgencyLevel.A2),
-        "parameter_ranges": {
-            "arrival_cv": ParameterRange(low=0.5, high=2.0),
-            "service_cv": ParameterRange(low=0.5, high=2.5),
-            "transition_cost": ParameterRange(low=0.0, high=100.0),
-        },
         "sampling_design": SamplingDesign.LATIN_HYPERCUBE,
         "sample_size": 128,
-        "outcomes": (
-            OutcomeMetric(
-                name="lead_time",
-                direction=MetricDirection.MINIMIZE,
-                equivalence_margin=0.1,
-            ),
-            OutcomeMetric(
-                name="defect_escape",
-                direction=MetricDirection.MINIMIZE,
-                equivalence_margin=0.01,
-            ),
-            OutcomeMetric(
-                name="operating_cost",
-                direction=MetricDirection.MINIMIZE,
-                equivalence_margin=1.0,
-            ),
-        ),
         "statistical_plan": StatisticalPlan(
             confidence_level=0.95,
             multiple_comparison=MultipleComparisonMethod.HOLM,
@@ -62,16 +39,6 @@ def _protocol(**overrides: object) -> ExperimentProtocol:
             min_replications=20,
             max_replications=100,
             target_ci_half_width=0.05,
-        ),
-        "cost_analysis": CostAnalysisPlan(
-            operating_cost_metric="operating_cost",
-            transition_cost_parameter="transition_cost",
-            break_even_analysis=True,
-        ),
-        "surrogate_analysis": SurrogateAnalysisPlan(
-            model=SurrogateModel.GENERALIZED_ADDITIVE,
-            global_sensitivity=True,
-            ablations=True,
         ),
         "warmup": 100.0,
         "horizon": 1000.0,
@@ -82,6 +49,47 @@ def _protocol(**overrides: object) -> ExperimentProtocol:
         "crn_enabled": True,
         "report_null_regions": True,
     }
+
+
+def _protocol(**overrides: object) -> ExperimentProtocol:
+    payload = _base_payload()
+    payload.update(
+        {
+            "protocol_version": "2",
+            "parameter_ranges": {
+                "arrival_cv": ParameterRange(low=0.5, high=2.0),
+                "service_cv": ParameterRange(low=0.5, high=2.5),
+                "transition_cost": ParameterRange(low=0.0, high=100.0),
+            },
+            "outcomes": (
+                OutcomeMetric(
+                    name="lead_time",
+                    direction=MetricDirection.MINIMIZE,
+                    equivalence_margin=0.1,
+                ),
+                OutcomeMetric(
+                    name="defect_escape",
+                    direction=MetricDirection.MINIMIZE,
+                    equivalence_margin=0.01,
+                ),
+                OutcomeMetric(
+                    name="operating_cost",
+                    direction=MetricDirection.MINIMIZE,
+                    equivalence_margin=1.0,
+                ),
+            ),
+            "cost_analysis": CostAnalysisPlan(
+                operating_cost_metric="operating_cost",
+                transition_cost_parameter="transition_cost",
+                break_even_analysis=True,
+            ),
+            "surrogate_analysis": SurrogateAnalysisPlan(
+                model=SurrogateModel.GENERALIZED_ADDITIVE,
+                global_sensitivity=True,
+                ablations=True,
+            ),
+        }
+    )
     payload.update(overrides)
     return ExperimentProtocol.model_validate(payload)
 
@@ -227,6 +235,38 @@ def test_phase6_requires_break_even_and_interpretable_surrogate_analysis() -> No
                 ablations=False,
             )
         )
+
+
+def test_version_1_protocol_remains_hash_compatible_without_new_phase6_fields() -> None:
+    payload = _base_payload()
+    payload.update(
+        {
+            "protocol_version": "1",
+            "parameter_ranges": {
+                "arrival_cv": ParameterRange(low=0.5, high=2.0),
+                "service_cv": ParameterRange(low=0.5, high=2.5),
+            },
+            "outcomes": (
+                OutcomeMetric(
+                    name="lead_time",
+                    direction=MetricDirection.MINIMIZE,
+                    equivalence_margin=0.1,
+                ),
+            ),
+        }
+    )
+    protocol = ExperimentProtocol.model_validate(payload)
+    canonical = protocol.canonical_payload()
+
+    assert "cost_analysis" not in canonical
+    assert "surrogate_analysis" not in canonical
+
+
+def test_version_2_requires_cost_and_surrogate_analysis() -> None:
+    with pytest.raises(ValidationError, match="cost analysis"):
+        _protocol(cost_analysis=None)
+    with pytest.raises(ValidationError, match="surrogate analysis"):
+        _protocol(surrogate_analysis=None)
 
 
 def test_canonical_payload_records_all_preregistration_decisions() -> None:
