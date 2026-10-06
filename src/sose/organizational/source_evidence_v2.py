@@ -5,10 +5,16 @@ from hashlib import sha256
 import json
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from .dataset import ObservedPRDataset
-from .empirical_pilot import GitHubWorkflowJobSourceRecord
 from .github_observations import normalize_github_pr_trace
 
 
@@ -31,6 +37,13 @@ class GitHubReviewTimelineSourceRecord(BaseModel):
     occurred_at: datetime
     source_url: NonBlankString
     requested_actor_key: NonBlankString | None = None
+
+    @field_validator("event", mode="before")
+    @classmethod
+    def validate_event(cls, value: object) -> object:
+        if value not in {"review_requested", "review_request_removed"}:
+            raise ValueError("event must be review_requested or review_request_removed")
+        return value
 
     @model_validator(mode="after")
     def validate_timestamp(self) -> "GitHubReviewTimelineSourceRecord":
@@ -97,6 +110,71 @@ class GitHubReviewSourceRecord(BaseModel):
         return payload
 
 
+class GitHubWorkflowJobSourceRecordV2(BaseModel):
+    """Review-study workflow evidence preserving workflow/run provenance.
+
+    The v1 workflow-job schema is intentionally left frozen because it is part of
+    an already hash-addressed source contract.  The prospective v2 study needs
+    workflow and run identities so reruns/retries can be grouped independently of
+    individual job identities.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    job_id: int = Field(ge=1)
+    workflow_id: int = Field(ge=1)
+    run_id: int = Field(ge=1)
+    run_attempt: int = Field(ge=1)
+    name: NonBlankString
+    started_at: datetime
+    completed_at: datetime
+    conclusion: NonBlankString
+    source_url: NonBlankString
+    is_gate: bool = False
+    gate_evidence_url: NonBlankString | None = None
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> "GitHubWorkflowJobSourceRecordV2":
+        _require_aware(self.started_at, field_name="started_at")
+        _require_aware(self.completed_at, field_name="completed_at")
+        if self.completed_at < self.started_at:
+            raise ValueError("completed_at must be at or after started_at")
+        if self.is_gate and self.gate_evidence_url is None:
+            raise ValueError("gate_evidence_url is required when is_gate is true")
+        if not self.is_gate and self.gate_evidence_url is not None:
+            raise ValueError("gate_evidence_url requires is_gate=true")
+        return self
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "job_id": self.job_id,
+            "workflow_id": self.workflow_id,
+            "run_id": self.run_id,
+            "run_attempt": self.run_attempt,
+            "name": self.name,
+            "started_at": self.started_at.isoformat(),
+            "completed_at": self.completed_at.isoformat(),
+            "conclusion": self.conclusion,
+            "source_url": self.source_url,
+            "is_gate": self.is_gate,
+            "gate_evidence_url": self.gate_evidence_url,
+        }
+
+    def adapter_payload(self) -> dict[str, object]:
+        return {
+            "id": self.job_id,
+            "workflow_id": self.workflow_id,
+            "run_id": self.run_id,
+            "run_attempt": self.run_attempt,
+            "name": self.name,
+            "started_at": self.started_at.isoformat(),
+            "completed_at": self.completed_at.isoformat(),
+            "conclusion": self.conclusion,
+            "is_gate": self.is_gate,
+            "gate_evidence_url": self.gate_evidence_url,
+        }
+
+
 class GitHubPREvidenceRecordV2(BaseModel):
     """Review-aware source record for the prospective v2 PR study.
 
@@ -111,7 +189,9 @@ class GitHubPREvidenceRecordV2(BaseModel):
     opened_at: datetime
     merged_at: datetime
     source_url: NonBlankString
-    workflow_jobs: tuple[GitHubWorkflowJobSourceRecord, ...] = ()
+    author_actor_key: NonBlankString | None = None
+    author_is_bot: bool = False
+    workflow_jobs: tuple[GitHubWorkflowJobSourceRecordV2, ...] = ()
     review_timeline: tuple[GitHubReviewTimelineSourceRecord, ...] = ()
     submitted_reviews: tuple[GitHubReviewSourceRecord, ...] = ()
 
@@ -121,6 +201,8 @@ class GitHubPREvidenceRecordV2(BaseModel):
         _require_aware(self.merged_at, field_name="merged_at")
         if self.merged_at < self.opened_at:
             raise ValueError("merged_at must be at or after opened_at")
+        if self.author_is_bot and self.author_actor_key is None:
+            raise ValueError("author_actor_key is required when author_is_bot is true")
 
         job_ids = tuple(job.job_id for job in self.workflow_jobs)
         if len(job_ids) != len(set(job_ids)):
@@ -135,7 +217,18 @@ class GitHubPREvidenceRecordV2(BaseModel):
         object.__setattr__(
             self,
             "workflow_jobs",
-            tuple(sorted(self.workflow_jobs, key=lambda job: (job.started_at, job.job_id))),
+            tuple(
+                sorted(
+                    self.workflow_jobs,
+                    key=lambda job: (
+                        job.started_at,
+                        job.workflow_id,
+                        job.run_id,
+                        job.run_attempt,
+                        job.job_id,
+                    ),
+                )
+            ),
         )
         object.__setattr__(
             self,
@@ -156,20 +249,26 @@ class GitHubPREvidenceRecordV2(BaseModel):
             "opened_at": self.opened_at.isoformat(),
             "merged_at": self.merged_at.isoformat(),
             "source_url": self.source_url,
+            "author_actor_key": self.author_actor_key,
+            "author_is_bot": self.author_is_bot,
             "workflow_jobs": [job.canonical_payload() for job in self.workflow_jobs],
             "review_timeline": [event.canonical_payload() for event in self.review_timeline],
             "submitted_reviews": [review.canonical_payload() for review in self.submitted_reviews],
         }
 
     def to_trace(self):
+        pull_request: dict[str, object] = {
+            "number": self.pr_number,
+            "created_at": self.opened_at.isoformat(),
+            "merged_at": self.merged_at.isoformat(),
+            "closed_at": self.merged_at.isoformat(),
+            "author_is_bot": self.author_is_bot,
+        }
+        if self.author_actor_key is not None:
+            pull_request["user"] = {"login": self.author_actor_key}
         return normalize_github_pr_trace(
             repository=self.repository,
-            pull_request={
-                "number": self.pr_number,
-                "created_at": self.opened_at.isoformat(),
-                "merged_at": self.merged_at.isoformat(),
-                "closed_at": self.merged_at.isoformat(),
-            },
+            pull_request=pull_request,
             timeline_events=tuple(event.adapter_payload() for event in self.review_timeline),
             reviews=tuple(review.adapter_payload() for review in self.submitted_reviews),
             workflow_jobs=tuple(job.adapter_payload() for job in self.workflow_jobs),
