@@ -3,10 +3,13 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pydantic import ValidationError
 
 from sose.organizational.dataset import ObservedPRDataset
 from sose.organizational.observations import ObservedEventKind, ObservedPREvent, ObservedPRTrace
 from sose.organizational.validation import (
+    LeadTimeValidationCriteria,
+    assess_lead_time_validation,
     compare_lead_time_distributions,
     empirical_cdf_max_distance,
     summarize_distribution,
@@ -127,3 +130,108 @@ def test_distribution_metrics_reject_empty_nonfinite_and_negative_samples() -> N
         empirical_cdf_max_distance((), (1.0,))
     with pytest.raises(ValueError):
         empirical_cdf_max_distance((1.0,), ())
+
+
+def test_validation_criteria_are_hash_addressed_and_change_with_preregistered_limits() -> None:
+    criteria = LeadTimeValidationCriteria(
+        max_abs_mean_difference_seconds=3600.0,
+        max_abs_median_difference_seconds=1800.0,
+        max_abs_p90_difference_seconds=7200.0,
+        max_ecdf_distance=0.25,
+    )
+    same = LeadTimeValidationCriteria(
+        max_abs_mean_difference_seconds=3600.0,
+        max_abs_median_difference_seconds=1800.0,
+        max_abs_p90_difference_seconds=7200.0,
+        max_ecdf_distance=0.25,
+    )
+    changed = criteria.model_copy(update={"max_ecdf_distance": 0.20})
+
+    assert criteria.criteria_hash == same.criteria_hash
+    assert criteria.criteria_hash != changed.criteria_hash
+
+
+def test_validation_gate_passes_only_when_every_declared_requirement_is_within_limit() -> None:
+    observed = _dataset((1.0, 2.0, 3.0))
+    validation = compare_lead_time_distributions(
+        observed=observed,
+        simulated_seconds=(3900.0, 7500.0, 11100.0),
+    )
+    criteria = LeadTimeValidationCriteria(
+        max_abs_mean_difference_seconds=600.0,
+        max_abs_median_difference_seconds=600.0,
+        max_abs_p90_difference_seconds=600.0,
+        max_ecdf_distance=0.5,
+    )
+
+    assessment = assess_lead_time_validation(validation=validation, criteria=criteria)
+
+    assert assessment.passed
+    assert assessment.observed_dataset_hash == observed.dataset_hash
+    assert assessment.criteria_hash == criteria.criteria_hash
+    assert tuple(check.metric for check in assessment.checks) == (
+        "abs_mean_difference_seconds",
+        "abs_median_difference_seconds",
+        "abs_p90_difference_seconds",
+        "ecdf_max_distance",
+    )
+    assert all(check.passed for check in assessment.checks)
+    assert not hasattr(assessment, "score")
+    assert not hasattr(assessment, "fit_score")
+
+
+def test_validation_gate_reports_each_failure_without_composite_scoring() -> None:
+    observed = _dataset((1.0, 2.0, 3.0))
+    validation = compare_lead_time_distributions(
+        observed=observed,
+        simulated_seconds=(7200.0, 10800.0, 14400.0),
+    )
+    criteria = LeadTimeValidationCriteria(
+        max_abs_mean_difference_seconds=1800.0,
+        max_abs_median_difference_seconds=4000.0,
+        max_abs_p90_difference_seconds=4000.0,
+        max_ecdf_distance=1.0,
+    )
+
+    assessment = assess_lead_time_validation(validation=validation, criteria=criteria)
+    checks = {check.metric: check for check in assessment.checks}
+
+    assert not assessment.passed
+    assert checks["abs_mean_difference_seconds"].value == pytest.approx(3600.0)
+    assert checks["abs_mean_difference_seconds"].limit == pytest.approx(1800.0)
+    assert not checks["abs_mean_difference_seconds"].passed
+    assert checks["abs_median_difference_seconds"].passed
+    assert checks["abs_p90_difference_seconds"].passed
+    assert checks["ecdf_max_distance"].passed
+
+
+def test_validation_gate_uses_absolute_error_and_inclusive_boundaries() -> None:
+    observed = _dataset((2.0, 3.0, 4.0))
+    validation = compare_lead_time_distributions(
+        observed=observed,
+        simulated_seconds=(3600.0, 7200.0, 10800.0),
+    )
+    criteria = LeadTimeValidationCriteria(
+        max_abs_mean_difference_seconds=3600.0,
+        max_abs_median_difference_seconds=3600.0,
+        max_abs_p90_difference_seconds=3600.0,
+        max_ecdf_distance=1.0,
+    )
+
+    assessment = assess_lead_time_validation(validation=validation, criteria=criteria)
+
+    assert assessment.passed
+    assert tuple(check.value for check in assessment.checks[:3]) == pytest.approx(
+        (3600.0, 3600.0, 3600.0)
+    )
+
+
+def test_validation_criteria_reject_invalid_preregistered_limits() -> None:
+    with pytest.raises(ValidationError):
+        LeadTimeValidationCriteria(max_abs_mean_difference_seconds=-1.0)
+    with pytest.raises(ValidationError):
+        LeadTimeValidationCriteria(max_abs_median_difference_seconds=float("inf"))
+    with pytest.raises(ValidationError):
+        LeadTimeValidationCriteria(max_abs_p90_difference_seconds=-1.0)
+    with pytest.raises(ValidationError):
+        LeadTimeValidationCriteria(max_ecdf_distance=1.01)
