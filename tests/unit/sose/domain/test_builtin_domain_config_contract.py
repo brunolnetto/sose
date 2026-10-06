@@ -8,7 +8,7 @@ BASE_FIELDS = set(DomainConfig.model_fields)
 def test_every_builtin_domain_exposes_custom_parameters():
     catalog = builtin_catalog()
 
-    assert len(catalog.names(kind="domain")) == 22
+    assert len(catalog.names(kind="domain")) == 23
     assert len(catalog.names(kind="canonical")) == 5
 
     for definition in catalog.definitions():
