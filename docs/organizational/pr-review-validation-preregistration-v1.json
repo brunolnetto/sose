@@ -37,8 +37,9 @@
     "item_opened_at": "GitHub pull request created_at",
     "item_terminal_at": "GitHub pull request merged_at",
     "terminal_outcome": "merged only",
-    "workflow_jobs_required": false,
-    "review_events_required": false
+    "workflow_jobs_included": false,
+    "review_events_included": false,
+    "ci_time_evidence": "assumed_fallback_only"
   },
   "analysis_rules": {
     "exclude_holdout_items_posthoc": false,
