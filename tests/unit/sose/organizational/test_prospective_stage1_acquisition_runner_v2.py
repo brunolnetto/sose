@@ -106,6 +106,7 @@ def test_orchestration_passes_previous_stage1_artifacts_as_a_pair(tmp_path: Path
         bind_protocol=bind,
         acquire_batch=acquire,
         advance_files=advance,
+        validate_previous=lambda *_: None,
     )
 
     assert observed["previous_acquisition_path"] == previous_acquisition
