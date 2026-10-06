@@ -23,7 +23,6 @@ def process_manifest() -> ProcessManifest:
     evidence.update(
         {
             ProcessEvidence.ERD,
-            ProcessEvidence.STATECHART_DOCUMENTATION,
             ProcessEvidence.PROCESS_DIAGRAM,
         }
     )
@@ -61,7 +60,6 @@ def process_manifest() -> ProcessManifest:
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
         ProcessEvidence.FAULT_RECOVERY: (happy_path, exception_restart, restart),
         ProcessEvidence.ERD: (specification,),
-        ProcessEvidence.STATECHART_DOCUMENTATION: (statecharts, specification),
         ProcessEvidence.PROCESS_DIAGRAM: (specification,),
     }
 
