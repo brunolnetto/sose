@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 import json
 from typing import Annotated, Any, Literal
@@ -36,6 +36,8 @@ class GitHubEndpointCaptureV2(BaseModel):
 
     @model_validator(mode="after")
     def validate_pagination(self) -> "GitHubEndpointCaptureV2":
+        if not self.source_urls:
+            raise ValueError("source_urls must identify fetched pages")
         if self.complete and self.next_page_url is not None:
             raise ValueError("complete acquisition cannot retain next_page_url")
         if not self.complete and self.next_page_url is None:
@@ -112,7 +114,7 @@ class GitHubPRAcquisitionManifestV2(BaseModel):
         return {
             "repository": self.repository,
             "pr_number": self.pr_number,
-            "captured_at": self.captured_at.isoformat(),
+            "captured_at": self.captured_at.astimezone(UTC).isoformat(),
             "pull_request": self.pull_request.canonical_payload(),
             "timeline": self.timeline.canonical_payload(),
             "reviews": self.reviews.canonical_payload(),
@@ -179,8 +181,11 @@ def build_complete_github_pr_evidence_v2(
     _require_count("workflow_jobs", manifest.workflow_jobs.record_count, len(workflow_jobs))
 
     raw_number = pull_request.get("number")
-    if manifest.repository.strip() == "" or raw_number != manifest.pr_number:
+    if raw_number != manifest.pr_number:
         raise ValueError("manifest pull request identity does not match source payload")
+    source_repository = _pull_request_repository(pull_request)
+    if source_repository is not None and source_repository != manifest.repository:
+        raise ValueError("manifest repository does not match pull request provenance")
 
     evidence = build_github_pr_evidence_v2(
         repository=manifest.repository,
@@ -201,6 +206,19 @@ def build_evidence_snapshot_from_acquisitions_v2(
     if any(not artifact.manifest.is_complete for artifact in artifacts):
         raise ValueError("all acquisition artifacts must be complete")
     return GitHubPREvidenceSnapshotV2(records=tuple(artifact.evidence for artifact in artifacts))
+
+
+def _pull_request_repository(pull_request: Mapping[str, Any]) -> str | None:
+    base = pull_request.get("base")
+    if not isinstance(base, Mapping):
+        return None
+    repository = base.get("repo")
+    if not isinstance(repository, Mapping):
+        return None
+    full_name = repository.get("full_name")
+    if not isinstance(full_name, str) or not full_name.strip():
+        return None
+    return full_name.strip()
 
 
 def _require_count(endpoint: str, expected: int, actual: int) -> None:
