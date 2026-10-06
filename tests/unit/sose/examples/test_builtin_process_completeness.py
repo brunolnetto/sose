@@ -39,7 +39,7 @@ def test_unreviewed_domains_are_explicit_lower_bounds_not_false_gap_claims() -> 
     assert fulfillment.maturity is ProcessMaturity.PC0_REGISTERED
     assert not fulfillment.assessment_complete
     assert fulfillment.is_maturity_lower_bound
-    assert fulfillment.evidence_sources == {}
+    assert not fulfillment.evidence_sources
 
 
 def test_warehouse_management_audit_exposes_restart_equivalence_as_pc4_gap() -> None:
