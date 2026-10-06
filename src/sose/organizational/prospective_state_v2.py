@@ -7,41 +7,48 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from .prospective_cohort_v2 import ProspectivePRCohortV2, select_prospective_pr_cohort_v2
+from .prospective_protocol_v2 import ProspectiveStudyProtocolV2
 from .source_evidence_v2 import GitHubPREvidenceRecordV2, GitHubPREvidenceSnapshotV2
 
 
 PROSPECTIVE_STATE_VERSION = "pr-review-prospective-state/v2"
-PROSPECTIVE_PROTOCOL_ID = "pr-review-validation/v2"
 Sha256Hex = Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{64}$")]
 
 
 class ProspectiveEvidenceStateV2(BaseModel):
     """Hash-addressed, append-only evidence/enrollment state for prospective v2.
 
-    The source snapshot contains observable evidence.  The cohort contains the
-    persisted enrollment decision.  Chaining each update to the previous state
-    makes both source growth and enrollment history auditable without allowing a
-    later source refresh to silently rewrite already-used evidence.
+    The bound protocol identifies both the frozen preregistration document and the
+    GitHub merge timestamp that activated enrollment. Source evidence and cohort
+    membership can therefore be audited against one immutable study identity.
     """
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     state_version: Literal[PROSPECTIVE_STATE_VERSION] = PROSPECTIVE_STATE_VERSION
-    protocol_id: Literal[PROSPECTIVE_PROTOCOL_ID] = PROSPECTIVE_PROTOCOL_ID
+    protocol: ProspectiveStudyProtocolV2
     snapshot: GitHubPREvidenceSnapshotV2
     cohort: ProspectivePRCohortV2
     previous_state_hash: Sha256Hex | None = None
 
     @model_validator(mode="after")
     def validate_binding(self) -> "ProspectiveEvidenceStateV2":
+        if (
+            self.cohort.repository != self.protocol.repository
+            or self.cohort.registration_merged_at != self.protocol.registration_merged_at
+            or self.cohort.training_count != self.protocol.training_count
+            or self.cohort.holdout_count != self.protocol.holdout_count
+        ):
+            raise ValueError("cohort configuration must match bound protocol")
+
         record_keys = {
             (record.repository, record.pr_number)
             for record in self.snapshot.records
         }
-        if any(record.repository != self.cohort.repository for record in self.snapshot.records):
+        if any(record.repository != self.protocol.repository for record in self.snapshot.records):
             raise ValueError("all source records must belong to the registered repository")
         if any(
-            record.opened_at <= self.cohort.registration_merged_at
+            record.opened_at <= self.protocol.registration_merged_at
             for record in self.snapshot.records
         ):
             raise ValueError("source records must open strictly after registration merge")
@@ -58,13 +65,18 @@ class ProspectiveEvidenceStateV2(BaseModel):
         return self
 
     @property
+    def protocol_hash(self) -> str:
+        return self.protocol.protocol_hash
+
+    @property
     def snapshot_hash(self) -> str:
         return self.snapshot.snapshot_hash
 
     def canonical_payload(self) -> dict[str, object]:
         return {
             "state_version": self.state_version,
-            "protocol_id": self.protocol_id,
+            "protocol": self.protocol.canonical_payload(),
+            "protocol_hash": self.protocol_hash,
             "snapshot": self.snapshot.canonical_payload(),
             "cohort": self.cohort.model_dump(mode="json"),
             "previous_state_hash": self.previous_state_hash,
@@ -87,42 +99,37 @@ class ProspectiveEvidenceStateV2(BaseModel):
 def advance_prospective_evidence_state_v2(
     *,
     records: tuple[GitHubPREvidenceRecordV2, ...] | list[GitHubPREvidenceRecordV2],
-    repository: str,
-    registration_merged_at,
-    training_count: int,
-    holdout_count: int,
+    protocol: ProspectiveStudyProtocolV2,
     model_frozen_at=None,
     previous_state: ProspectiveEvidenceStateV2 | None = None,
 ) -> ProspectiveEvidenceStateV2:
-    """Create or advance an append-only prospective evidence state.
-
-    Previously collected source records are immutable.  Correcting frozen source
-    evidence therefore requires an explicit new protocol/artifact rather than an
-    in-place refresh that could change fitted results after they were observed.
-    """
+    """Create or advance evidence under exactly one frozen prospective protocol."""
 
     normalized_records = tuple(records)
-    if any(record.repository != repository for record in normalized_records):
+    if any(record.repository != protocol.repository for record in normalized_records):
         raise ValueError("all source records must belong to the registered repository")
 
     if previous_state is not None:
+        if previous_state.protocol_hash != protocol.protocol_hash:
+            raise ValueError("protocol identity does not match previous state")
         _validate_previous_source_evidence(
             previous_state=previous_state,
             records=normalized_records,
-            repository=repository,
+            repository=protocol.repository,
         )
 
     snapshot = GitHubPREvidenceSnapshotV2(records=normalized_records)
     cohort = select_prospective_pr_cohort_v2(
         records=snapshot.records,
-        repository=repository,
-        registration_merged_at=registration_merged_at,
-        training_count=training_count,
-        holdout_count=holdout_count,
+        repository=protocol.repository,
+        registration_merged_at=protocol.registration_merged_at,
+        training_count=protocol.training_count,
+        holdout_count=protocol.holdout_count,
         model_frozen_at=model_frozen_at,
         previous_cohort=(previous_state.cohort if previous_state is not None else None),
     )
     return ProspectiveEvidenceStateV2(
+        protocol=protocol,
         snapshot=snapshot,
         cohort=cohort,
         previous_state_hash=(previous_state.state_hash if previous_state is not None else None),
