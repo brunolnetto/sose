@@ -451,6 +451,10 @@ def builtin_process_manifests() -> dict[str, ProcessManifest]:
         for name in builtin_catalog().names(kind="domain")
         if name not in PROCESS_AUDIT_EXCLUDED_DOMAINS
     }
+    if "order_to_cash" in manifests:
+        from .order_to_cash.process_audit import process_manifest as o2c_process_manifest
+
+        manifests["order_to_cash"] = o2c_process_manifest()
     if "p2p" in manifests:
         from .p2p.process_audit import process_manifest as p2p_process_manifest
 
