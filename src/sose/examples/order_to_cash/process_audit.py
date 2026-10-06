@@ -59,7 +59,7 @@ def process_manifest() -> ProcessManifest:
         ProcessEvidence.TIME_SEMANTICS: (simulation, runtime, restart),
         ProcessEvidence.DURABLE_STATE: (simulation, restart, process_equivalence),
         ProcessEvidence.RESTART_EQUIVALENCE: (restart, process_equivalence),
-        ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, runtime),
+        ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, runtime, process_equivalence),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
         ProcessEvidence.FAULT_RECOVERY: (runtime, restart),
     }
