@@ -421,7 +421,7 @@ jobs:
 
       - name: Discover PostgreSQL service container
         run: |
-          cid="$(docker ps --filter ancestor=postgres:17 --format '{{.ID}}' | head -n1)"
+          cid="$(docker ps --filter ancestor=postgres:18 --format '{{.ID}}' | head -n1)"
           test -n "$cid"
           echo "SOSE_POSTGRES_CONTAINER_ID=$cid" >> "$GITHUB_ENV"
 
