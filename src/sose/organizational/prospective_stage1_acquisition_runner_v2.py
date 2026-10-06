@@ -42,7 +42,7 @@ def run_stage1_acquisition_v2(
     bind_protocol: BindProtocol = publish_prospective_protocol_binding_v2,
     acquire_batch: AcquireBatch = acquire_and_publish_github_pr_batch_v2,
     advance_files: AdvanceFiles = run_stage1_tranche_files_v2,
-    validate_previous: ValidatePrevious = None,
+    validate_previous: ValidatePrevious | None = None,
 ) -> ProspectiveStage1AcquisitionRunV2:
     """Bind protocol, acquire, and advance one explicit prospective Stage-1 tranche.
 
