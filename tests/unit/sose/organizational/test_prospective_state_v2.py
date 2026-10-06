@@ -5,7 +5,10 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from sose.organizational.prospective_cohort_v2 import ProspectiveCohortStatus
-from sose.organizational.prospective_state_v2 import advance_prospective_evidence_state_v2
+from sose.organizational.prospective_state_v2 import (
+    ProspectiveEvidenceStateV2,
+    advance_prospective_evidence_state_v2,
+)
 from sose.organizational.source_evidence_v2 import (
     GitHubPREvidenceRecordV2,
     GitHubReviewSourceRecord,
@@ -161,6 +164,38 @@ def test_registered_study_state_rejects_foreign_repository_records() -> None:
             training_count=18,
             holdout_count=12,
         )
+
+
+def test_persisted_state_rejects_snapshot_record_omitted_from_all_partitions() -> None:
+    state = advance_prospective_evidence_state_v2(
+        records=(_record(302, minute=5), _record(303, minute=10)),
+        repository=REPOSITORY,
+        registration_merged_at=REGISTERED_AT,
+        training_count=18,
+        holdout_count=12,
+    )
+    corrupted = state.cohort.model_copy(
+        update={"training_keys": ((REPOSITORY, 302),)}
+    )
+
+    with pytest.raises(ValueError, match="partition every source snapshot record exactly once"):
+        ProspectiveEvidenceStateV2(snapshot=state.snapshot, cohort=corrupted)
+
+
+def test_persisted_state_rejects_key_present_in_multiple_partitions() -> None:
+    state = advance_prospective_evidence_state_v2(
+        records=(_record(302, minute=5), _record(303, minute=10)),
+        repository=REPOSITORY,
+        registration_merged_at=REGISTERED_AT,
+        training_count=18,
+        holdout_count=12,
+    )
+    duplicated = state.cohort.model_copy(
+        update={"interstitial_keys": ((REPOSITORY, 302),)}
+    )
+
+    with pytest.raises(ValueError, match="partition every source snapshot record exactly once"):
+        ProspectiveEvidenceStateV2(snapshot=state.snapshot, cohort=duplicated)
 
 
 def _record(number: int, *, minute: int) -> GitHubPREvidenceRecordV2:
