@@ -7,6 +7,7 @@ from pathlib import Path
 
 from .acquisition_v2 import GitHubPRAcquisitionSnapshotV2
 from .github_acquisition_batch_v2 import acquire_and_publish_github_pr_batch_v2
+from .prospective_protocol_v2 import ProspectiveStudyProtocolV2
 from .prospective_runner_v2 import publish_prospective_protocol_binding_v2
 from .prospective_stage1_runner_v2 import run_stage1_tranche_files_v2
 from .prospective_state_v2 import ProspectiveEvidenceStateV2
@@ -15,7 +16,7 @@ from .prospective_state_v2 import ProspectiveEvidenceStateV2
 BindProtocol = Callable[..., object]
 AcquireBatch = Callable[..., object]
 AdvanceFiles = Callable[..., object]
-ValidatePrevious = Callable[[Path, Path], None]
+ValidatePrevious = Callable[[Path, Path], ProspectiveEvidenceStateV2 | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -81,9 +82,11 @@ def run_stage1_acquisition_v2(
     for previous in (previous_acquisition, previous_state):
         if previous is not None and not previous.is_file():
             raise FileNotFoundError(f"previous Stage-1 artifact not found: {previous}")
+
+    validated_previous_state: ProspectiveEvidenceStateV2 | None = None
     if previous_acquisition is not None and previous_state is not None:
         validator = _validate_previous_pair if validate_previous is None else validate_previous
-        validator(previous_acquisition, previous_state)
+        validated_previous_state = validator(previous_acquisition, previous_state)
 
     destination.mkdir(parents=True, exist_ok=True)
     bind_protocol(
@@ -91,6 +94,13 @@ def run_stage1_acquisition_v2(
         registration_merged_at=registration_merged_at,
         output_path=bound_protocol_path,
     )
+    if validated_previous_state is not None:
+        bound_protocol = ProspectiveStudyProtocolV2.model_validate_json(
+            bound_protocol_path.read_text(encoding="utf-8")
+        )
+        if validated_previous_state.protocol_hash != bound_protocol.protocol_hash:
+            raise ValueError("bound protocol identity does not match previous Stage-1 state")
+
     acquire_batch(
         repository=repository,
         pr_numbers=pr_numbers,
@@ -117,7 +127,10 @@ def run_stage1_acquisition_v2(
     )
 
 
-def _validate_previous_pair(acquisition_path: Path, state_path: Path) -> None:
+def _validate_previous_pair(
+    acquisition_path: Path,
+    state_path: Path,
+) -> ProspectiveEvidenceStateV2:
     acquisition = GitHubPRAcquisitionSnapshotV2.model_validate_json(
         acquisition_path.read_text(encoding="utf-8")
     )
@@ -126,6 +139,7 @@ def _validate_previous_pair(acquisition_path: Path, state_path: Path) -> None:
     )
     if acquisition.to_evidence_snapshot().snapshot_hash != state.snapshot_hash:
         raise ValueError("previous acquisition and state must represent the same evidence snapshot")
+    return state
 
 
 def _preflight_outputs(paths: tuple[Path, ...]) -> None:
