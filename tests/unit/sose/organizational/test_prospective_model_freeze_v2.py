@@ -64,6 +64,27 @@ def test_freeze_requires_checkpoint_to_match_exact_training_state() -> None:
         _freeze(state, checkpoint, frozen_at)
 
 
+
+def test_freeze_rejects_forged_readiness_details_even_when_state_hashes_match() -> None:
+    state = _state(18)
+    checkpoint = build_stage1_readiness_checkpoint_v2(state)
+    forged = checkpoint.model_copy(update={"interstitial_count": 1})
+    frozen_at = max(record.merged_at for record in state.snapshot.records) + timedelta(minutes=1)
+
+    with pytest.raises(ValueError, match="exact readiness checkpoint"):
+        _freeze(state, forged, frozen_at)
+
+
+def test_freeze_rejects_backdating_before_any_collected_evidence_was_available() -> None:
+    state = _state(19)
+    checkpoint = build_stage1_readiness_checkpoint_v2(state)
+    training_completed_at = max(record.merged_at for record in state.snapshot.records[:18])
+    frozen_at = training_completed_at + timedelta(seconds=30)
+
+    assert state.snapshot.records[18].merged_at > frozen_at
+    with pytest.raises(ValueError, match="collected evidence"):
+        _freeze(state, checkpoint, frozen_at)
+
 def test_freeze_rejects_missing_required_tail_metric() -> None:
     state = _state(18)
     checkpoint = build_stage1_readiness_checkpoint_v2(state)
