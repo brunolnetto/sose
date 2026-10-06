@@ -467,6 +467,10 @@ def builtin_process_manifests() -> dict[str, ProcessManifest]:
         from .p2p.process_audit import process_manifest as p2p_process_manifest
 
         manifests["p2p"] = p2p_process_manifest()
+    if "record_to_report" in manifests:
+        from .record_to_report.process_audit import process_manifest as r2r_process_manifest
+
+        manifests["record_to_report"] = r2r_process_manifest()
     if "warehouse_fulfillment" in manifests:
         manifests["warehouse_fulfillment"] = _warehouse_fulfillment_manifest()
     if "warehouse_management" in manifests:
