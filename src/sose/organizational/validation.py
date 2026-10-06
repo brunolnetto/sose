@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from bisect import bisect_right
+from hashlib import sha256
+import json
 from math import ceil, isfinite
 from statistics import fmean, median
 from typing import Annotated, Iterable
@@ -34,6 +36,53 @@ class LeadTimeValidation(BaseModel):
     ecdf_max_distance: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
     mean_difference_seconds: float = Field(allow_inf_nan=False)
     median_difference_seconds: float = Field(allow_inf_nan=False)
+
+
+class LeadTimeValidationCriteria(BaseModel):
+    """Preregistered, unit-bearing acceptance limits for held-out lead-time validation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    max_abs_mean_difference_seconds: float = Field(ge=0.0, allow_inf_nan=False)
+    max_abs_median_difference_seconds: float = Field(ge=0.0, allow_inf_nan=False)
+    max_abs_p90_difference_seconds: float = Field(ge=0.0, allow_inf_nan=False)
+    max_ecdf_distance: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+
+    @property
+    def criteria_hash(self) -> str:
+        payload = json.dumps(
+            self.model_dump(mode="json"),
+            sort_keys=True,
+            separators=(",", ":"),
+            allow_nan=False,
+        ).encode("utf-8")
+        return sha256(payload).hexdigest()
+
+
+class ValidationCheck(BaseModel):
+    """One interpretable pass/fail fact; not a component of a composite score."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    metric: NonBlankString
+    value: float = Field(ge=0.0, allow_inf_nan=False)
+    limit: float = Field(ge=0.0, allow_inf_nan=False)
+    unit: NonBlankString
+    passed: bool
+
+
+class LeadTimeValidationAssessment(BaseModel):
+    """Held-out acceptance result retaining every preregistered requirement separately."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    observed_dataset_hash: str
+    criteria_hash: str
+    checks: tuple[ValidationCheck, ...] = Field(min_length=1)
+
+    @property
+    def passed(self) -> bool:
+        return all(check.passed for check in self.checks)
 
 
 def summarize_distribution(values: Iterable[float], *, unit: str) -> DistributionSummary:
@@ -84,6 +133,54 @@ def compare_lead_time_distributions(
         ecdf_max_distance=empirical_cdf_max_distance(observed_seconds, simulated),
         mean_difference_seconds=simulated_summary.mean - observed_summary.mean,
         median_difference_seconds=simulated_summary.median - observed_summary.median,
+    )
+
+
+def assess_lead_time_validation(
+    *,
+    validation: LeadTimeValidation,
+    criteria: LeadTimeValidationCriteria,
+) -> LeadTimeValidationAssessment:
+    values_and_limits = (
+        (
+            "abs_mean_difference_seconds",
+            abs(validation.mean_difference_seconds),
+            criteria.max_abs_mean_difference_seconds,
+            "seconds",
+        ),
+        (
+            "abs_median_difference_seconds",
+            abs(validation.median_difference_seconds),
+            criteria.max_abs_median_difference_seconds,
+            "seconds",
+        ),
+        (
+            "abs_p90_difference_seconds",
+            abs(validation.simulated.p90 - validation.observed.p90),
+            criteria.max_abs_p90_difference_seconds,
+            "seconds",
+        ),
+        (
+            "ecdf_max_distance",
+            validation.ecdf_max_distance,
+            criteria.max_ecdf_distance,
+            "fraction",
+        ),
+    )
+    checks = tuple(
+        ValidationCheck(
+            metric=metric,
+            value=value,
+            limit=limit,
+            unit=unit,
+            passed=value <= limit,
+        )
+        for metric, value, limit, unit in values_and_limits
+    )
+    return LeadTimeValidationAssessment(
+        observed_dataset_hash=validation.observed_dataset_hash,
+        criteria_hash=criteria.criteria_hash,
+        checks=checks,
     )
 
 
