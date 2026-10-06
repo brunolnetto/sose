@@ -32,8 +32,8 @@ def build_github_pr_evidence_v2(
 
     GitHub's native workflow-job payload contains ``run_id``/``run_attempt`` but
     not ``workflow_id``. Callers may therefore pass the associated workflow-run
-    payloads explicitly. Pre-enriched job payloads remain accepted for offline
-    fixtures and previously materialized evidence.
+    payloads explicitly. A run payload records the latest known attempt, while a
+    ``filter=all`` jobs payload may legitimately contain earlier attempts.
     """
 
     if not isinstance(repository, str) or not repository.strip():
@@ -140,8 +140,8 @@ def _workflow_job_record(
         run_attempt = run_provenance[1]
     else:
         run_attempt = _positive_int_value(run_attempt_value, field="run_attempt")
-        if run_provenance is not None and run_attempt != run_provenance[1]:
-            raise ValueError("run_attempt conflicts with associated workflow run")
+        if run_provenance is not None and run_attempt > run_provenance[1]:
+            raise ValueError("run_attempt exceeds associated workflow run attempt")
 
     gate_evidence = payload.get("gate_evidence_url")
     return GitHubWorkflowJobSourceRecordV2(
