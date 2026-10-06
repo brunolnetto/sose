@@ -33,7 +33,7 @@ jobs:
           git show "1cec74738a35ec719d64497164b06c2b39f5e02b:docs/organizational/pr-review-validation-preregistration-v2.json" > registered-protocol-document.json
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v7
         with:
           python-version: "3.14"
 
