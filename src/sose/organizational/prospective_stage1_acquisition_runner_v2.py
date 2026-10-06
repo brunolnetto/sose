@@ -5,9 +5,11 @@ from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 
+from .acquisition_v2 import GitHubPRAcquisitionSnapshotV2
 from .github_acquisition_batch_v2 import acquire_and_publish_github_pr_batch_v2
 from .prospective_runner_v2 import publish_prospective_protocol_binding_v2
 from .prospective_stage1_runner_v2 import run_stage1_tranche_files_v2
+from .prospective_state_v2 import ProspectiveEvidenceStateV2
 
 
 BindProtocol = Callable[..., object]
@@ -77,6 +79,8 @@ def run_stage1_acquisition_v2(
     for previous in (previous_acquisition, previous_state):
         if previous is not None and not previous.is_file():
             raise FileNotFoundError(f"previous Stage-1 artifact not found: {previous}")
+    if previous_acquisition is not None and previous_state is not None:
+        _validate_previous_pair(previous_acquisition, previous_state)
 
     destination.mkdir(parents=True, exist_ok=True)
     bind_protocol(
@@ -108,6 +112,17 @@ def run_stage1_acquisition_v2(
         checkpoint_path=checkpoint_path,
         advancement=advancement,
     )
+
+
+def _validate_previous_pair(acquisition_path: Path, state_path: Path) -> None:
+    acquisition = GitHubPRAcquisitionSnapshotV2.model_validate_json(
+        acquisition_path.read_text(encoding="utf-8")
+    )
+    state = ProspectiveEvidenceStateV2.model_validate_json(
+        state_path.read_text(encoding="utf-8")
+    )
+    if acquisition.to_evidence_snapshot().snapshot_hash != state.snapshot_hash:
+        raise ValueError("previous acquisition and state must represent the same evidence snapshot")
 
 
 def _preflight_outputs(paths: tuple[Path, ...]) -> None:
