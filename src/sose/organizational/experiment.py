@@ -5,7 +5,7 @@ from hashlib import sha256
 import json
 from math import isfinite
 from types import MappingProxyType
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -163,7 +163,7 @@ class ExperimentProtocol(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
 
-    protocol_version: NonBlankString = "1"
+    protocol_version: Literal["1", "2"] = "1"
     research_question: NonBlankString
     baseline_model_spec_hash: NonBlankString
     intervention_ids: tuple[NonBlankString, ...] = Field(min_length=2)
@@ -203,7 +203,10 @@ class ExperimentProtocol(BaseModel):
             raise ValueError("duplicate outcome names are not allowed")
         if self.falsification.primary_metric not in outcome_names:
             raise ValueError("primary falsification metric must be a preregistered outcome")
-        if self.protocol_version != "1":
+        if self.protocol_version == "1":
+            if self.cost_analysis is not None or self.surrogate_analysis is not None:
+                raise ValueError("protocol version 1 does not accept version 2 analysis plans")
+        else:
             if self.cost_analysis is None:
                 raise ValueError("protocol version 2 requires cost analysis")
             if self.surrogate_analysis is None:
