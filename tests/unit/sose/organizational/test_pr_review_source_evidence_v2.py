@@ -1,23 +1,28 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
-from sose.organizational.empirical_pilot import (
-    GitHubPRObservationSnapshot,
-    GitHubPRSourceRecord,
+from sose.organizational.empirical_pilot import GitHubPRObservationSnapshot
+from sose.organizational.observations import ObservedEventKind
+from sose.organizational.source_evidence_v2 import (
+    GitHubPREvidenceRecordV2,
+    GitHubPREvidenceSnapshotV2,
     GitHubReviewSourceRecord,
     GitHubReviewTimelineSourceRecord,
 )
-from sose.organizational.observations import ObservedEventKind
 
 
 T0 = datetime(2026, 10, 6, 15, 0, tzinfo=UTC)
+ROOT = Path(__file__).resolve().parents[4]
+V1_SOURCE = ROOT / "docs" / "organizational" / "pr-review-validation-source-v1.json"
+V1_SNAPSHOT_HASH = "339c5df588e5afac6788712ba21bbb516f8569dcd139e49cfbde4a325ae140b5"
 
 
 def test_source_record_preserves_review_request_and_submission_evidence() -> None:
-    record = GitHubPRSourceRecord(
+    record = GitHubPREvidenceRecordV2(
         repository="brunolnetto/sose",
         pr_number=302,
         opened_at=T0,
@@ -86,13 +91,13 @@ def test_review_source_identity_is_canonical_and_order_independent() -> None:
         source_url="https://example.test/pulls/302",
         submitted_reviews=(review,),
     )
-    left = GitHubPRSourceRecord(review_timeline=(request, earlier), **kwargs)
-    right = GitHubPRSourceRecord(review_timeline=(earlier, request), **kwargs)
+    left = GitHubPREvidenceRecordV2(review_timeline=(request, earlier), **kwargs)
+    right = GitHubPREvidenceRecordV2(review_timeline=(earlier, request), **kwargs)
 
     assert left == right
     assert left.canonical_payload() == right.canonical_payload()
-    left_snapshot = GitHubPRObservationSnapshot(snapshot_version="v2", records=(left, _other_record()))
-    right_snapshot = GitHubPRObservationSnapshot(snapshot_version="v2", records=(right, _other_record()))
+    left_snapshot = GitHubPREvidenceSnapshotV2(records=(left, _other_record()))
+    right_snapshot = GitHubPREvidenceSnapshotV2(records=(right, _other_record()))
     assert left_snapshot.snapshot_hash == right_snapshot.snapshot_hash
 
 
@@ -120,9 +125,9 @@ def test_duplicate_review_and_timeline_source_identities_are_rejected() -> None:
     )
 
     with pytest.raises(ValueError, match="duplicate GitHub review identity"):
-        GitHubPRSourceRecord(submitted_reviews=(review, review), **base)
+        GitHubPREvidenceRecordV2(submitted_reviews=(review, review), **base)
     with pytest.raises(ValueError, match="duplicate GitHub review timeline identity"):
-        GitHubPRSourceRecord(review_timeline=(timeline, timeline), **base)
+        GitHubPREvidenceRecordV2(review_timeline=(timeline, timeline), **base)
 
 
 def test_review_evidence_must_be_timezone_aware_and_supported() -> None:
@@ -145,8 +150,13 @@ def test_review_evidence_must_be_timezone_aware_and_supported() -> None:
         )
 
 
-def _other_record() -> GitHubPRSourceRecord:
-    return GitHubPRSourceRecord(
+def test_v2_source_contract_does_not_change_frozen_v1_snapshot_hash() -> None:
+    snapshot = GitHubPRObservationSnapshot.model_validate_json(V1_SOURCE.read_text(encoding="utf-8"))
+    assert snapshot.snapshot_hash == V1_SNAPSHOT_HASH
+
+
+def _other_record() -> GitHubPREvidenceRecordV2:
+    return GitHubPREvidenceRecordV2(
         repository="brunolnetto/sose",
         pr_number=303,
         opened_at=T0 + timedelta(hours=1),
