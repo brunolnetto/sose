@@ -17,6 +17,16 @@ def _evidence_through(level: ProcessMaturity) -> frozenset[ProcessEvidence]:
     return frozenset(evidence)
 
 
+def _sources_for(
+    evidence: frozenset[ProcessEvidence],
+) -> dict[ProcessEvidence, tuple[str, ...]]:
+    pc0 = PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC0_REGISTERED]
+    return {
+        item: (f"tests/evidence/{item.value}.py",)
+        for item in evidence - pc0
+    }
+
+
 def _manifest(level: ProcessMaturity) -> ProcessManifest:
     return ProcessManifest(
         domain="example",
@@ -105,3 +115,87 @@ def test_pc6_requires_named_ingress_and_egress_contracts() -> None:
 
     assert "ingress_contracts" in message
     assert "egress_contracts" in message
+
+
+def test_complete_assessment_requires_provenance_for_every_nonbaseline_claim() -> None:
+    evidence = _evidence_through(ProcessMaturity.PC1_BEHAVIORAL)
+    sources = _sources_for(evidence)
+    sources.pop(ProcessEvidence.HAPPY_PATH)
+
+    try:
+        ProcessManifest(
+            domain="example",
+            evidence=evidence,
+            trigger="request_created",
+            evidence_sources=sources,
+            assessment_complete=True,
+        )
+    except ValueError as exc:
+        message = str(exc)
+    else:  # pragma: no cover - contract guard
+        raise AssertionError("audited evidence was accepted without provenance")
+
+    assert "happy_path" in message
+    assert "provenance" in message
+
+
+def test_complete_assessment_accepts_multiple_sources_for_one_claim() -> None:
+    evidence = _evidence_through(ProcessMaturity.PC1_BEHAVIORAL)
+    sources = _sources_for(evidence)
+    sources[ProcessEvidence.HAPPY_PATH] = (
+        "tests/integration/test_happy_path.py",
+        "docs/examples/example/specification.md",
+    )
+
+    manifest = ProcessManifest(
+        domain="example",
+        evidence=evidence,
+        trigger="request_created",
+        evidence_sources=sources,
+        assessment_complete=True,
+    )
+
+    assert manifest.evidence_sources[ProcessEvidence.HAPPY_PATH] == (
+        "tests/integration/test_happy_path.py",
+        "docs/examples/example/specification.md",
+    )
+
+
+def test_provenance_cannot_claim_undeclared_evidence() -> None:
+    evidence = _evidence_through(ProcessMaturity.PC0_REGISTERED)
+
+    try:
+        ProcessManifest(
+            domain="example",
+            evidence=evidence,
+            evidence_sources={
+                ProcessEvidence.HAPPY_PATH: ("tests/test_happy_path.py",),
+            },
+        )
+    except ValueError as exc:
+        message = str(exc)
+    else:  # pragma: no cover - contract guard
+        raise AssertionError("manifest accepted provenance for undeclared evidence")
+
+    assert "undeclared" in message
+    assert "happy_path" in message
+
+
+def test_provenance_paths_must_be_nonempty_repository_relative_paths() -> None:
+    evidence = _evidence_through(ProcessMaturity.PC1_BEHAVIORAL)
+
+    for invalid in ("", "/tmp/evidence.py", "../outside.py"):
+        sources = _sources_for(evidence)
+        sources[ProcessEvidence.HAPPY_PATH] = (invalid,)
+        try:
+            ProcessManifest(
+                domain="example",
+                evidence=evidence,
+                trigger="request_created",
+                evidence_sources=sources,
+            )
+        except ValueError as exc:
+            message = str(exc)
+        else:  # pragma: no cover - contract guard
+            raise AssertionError(f"manifest accepted invalid provenance path: {invalid!r}")
+        assert "repository-relative" in message
