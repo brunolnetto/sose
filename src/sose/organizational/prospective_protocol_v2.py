@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import UTC, datetime
 from hashlib import sha256
 import json
 from typing import Annotated, Any, Literal
@@ -50,7 +50,7 @@ class ProspectiveStudyProtocolV2(BaseModel):
             "protocol_document_hash": self.protocol_document_hash,
             "repository": self.repository,
             "registration_pr_number": self.registration_pr_number,
-            "registration_merged_at": self.registration_merged_at.isoformat(),
+            "registration_merged_at": self.registration_merged_at.astimezone(UTC).isoformat(),
             "training_count": self.training_count,
             "holdout_count": self.holdout_count,
         }
