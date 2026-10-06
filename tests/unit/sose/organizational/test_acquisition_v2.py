@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -31,11 +31,12 @@ def _manifest(
     runs: int = 0,
     jobs: int = 0,
     timeline_complete: bool = True,
+    captured_at: datetime | None = None,
 ) -> GitHubPRAcquisitionManifestV2:
     return GitHubPRAcquisitionManifestV2(
         repository="brunolnetto/sose",
         pr_number=pr_number,
-        captured_at=datetime(2026, 10, 6, 16, 30, tzinfo=UTC),
+        captured_at=captured_at or datetime(2026, 10, 6, 16, 30, tzinfo=UTC),
         pull_request=_capture("pull_request", count=1),
         timeline=_capture("timeline", count=timeline, complete=timeline_complete),
         reviews=_capture("reviews", count=reviews),
@@ -50,6 +51,7 @@ def _pull_request(number: int = 302) -> dict[str, object]:
         "created_at": "2026-10-06T14:48:17Z",
         "merged_at": "2026-10-06T15:09:10Z",
         "url": f"https://api.github.com/repos/brunolnetto/sose/pulls/{number}",
+        "base": {"repo": {"full_name": "brunolnetto/sose"}},
         "user": {"login": "brunolnetto", "type": "User"},
     }
 
@@ -97,6 +99,17 @@ def test_manifest_identity_must_match_source_record() -> None:
         )
 
 
+def test_manifest_repository_must_match_native_pull_request_provenance() -> None:
+    pull_request = _pull_request()
+    pull_request["base"] = {"repo": {"full_name": "other/project"}}
+
+    with pytest.raises(ValueError, match="manifest repository does not match"):
+        build_complete_github_pr_evidence_v2(
+            manifest=_manifest(),
+            pull_request=pull_request,
+        )
+
+
 def test_complete_capture_rejects_a_next_page_and_incomplete_requires_one() -> None:
     with pytest.raises(ValueError, match="complete acquisition cannot retain next_page_url"):
         GitHubEndpointCaptureV2(
@@ -104,6 +117,7 @@ def test_complete_capture_rejects_a_next_page_and_incomplete_requires_one() -> N
             pages_fetched=1,
             record_count=0,
             complete=True,
+            source_urls=("https://api.github.com/example/reviews",),
             next_page_url="https://api.github.com/example/reviews?page=2",
         )
 
@@ -113,6 +127,17 @@ def test_complete_capture_rejects_a_next_page_and_incomplete_requires_one() -> N
             pages_fetched=1,
             record_count=0,
             complete=False,
+            source_urls=("https://api.github.com/example/reviews",),
+        )
+
+
+def test_capture_requires_source_identity_even_when_the_collection_is_empty() -> None:
+    with pytest.raises(ValueError, match="source_urls must identify fetched pages"):
+        GitHubEndpointCaptureV2(
+            endpoint="reviews",
+            pages_fetched=1,
+            record_count=0,
+            complete=True,
         )
 
 
@@ -132,6 +157,22 @@ def test_capture_source_url_order_does_not_change_manifest_identity() -> None:
         source_urls=("https://example.test/a", "https://example.test/b"),
     )
     assert left.canonical_payload() == right.canonical_payload()
+
+
+def test_manifest_canonicalizes_capture_instant_to_utc() -> None:
+    utc = _manifest(captured_at=datetime(2026, 10, 6, 16, 30, tzinfo=UTC))
+    local = _manifest(
+        captured_at=datetime(
+            2026,
+            10,
+            6,
+            13,
+            30,
+            tzinfo=timezone(timedelta(hours=-3)),
+        )
+    )
+
+    assert utc.canonical_payload() == local.canonical_payload()
 
 
 def test_snapshot_is_derived_only_from_complete_acquisition_artifacts() -> None:
