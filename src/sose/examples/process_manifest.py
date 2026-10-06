@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
 from pathlib import PurePosixPath
@@ -170,12 +170,19 @@ class ProcessManifest:
         normalized_sources: dict[ProcessEvidence, tuple[str, ...]] = {}
         for evidence, paths in self.evidence_sources.items():
             item = ProcessEvidence(evidence)
+            if isinstance(paths, (str, bytes)) or not isinstance(paths, Sequence):
+                raise ValueError(
+                    f"provenance for {item.value} must be an explicit path sequence"
+                )
             normalized = tuple(paths)
             if item not in self.evidence:
                 raise ValueError(
                     f"provenance declared for undeclared evidence: {item.value}"
                 )
-            if not normalized or any(not _is_repository_relative(path) for path in normalized):
+            if not normalized or any(
+                not isinstance(path, str) or not _is_repository_relative(path)
+                for path in normalized
+            ):
                 raise ValueError(
                     f"provenance for {item.value} must use non-empty repository-relative paths"
                 )
