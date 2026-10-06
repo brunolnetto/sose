@@ -1,0 +1,96 @@
+name: Prospective Stage-1 Acquisition v2
+
+on:
+  workflow_dispatch:
+    inputs:
+      prs:
+        description: "Comma-separated merged PR numbers for this explicit Stage-1 tranche"
+        required: true
+        type: string
+      previous_run_id:
+        description: "Prior successful Stage-1 acquisition workflow run ID (leave blank for first tranche)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  acquire-and-advance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Materialize registered preregistration document
+        run: |
+          git show "1cec74738a35ec719d64497164b06c2b39f5e02b:docs/organizational/pr-review-validation-preregistration-v2.json" > registered-protocol-document.json
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install package
+        run: python -m pip install -e .
+
+      - name: Download previous Stage-1 artifacts
+        if: ${{ inputs.previous_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: prospective-stage1-v2-${{ inputs.previous_run_id }}
+          path: previous
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.previous_run_id }}
+
+      - name: Acquire and advance explicit Stage-1 tranche
+        env:
+          SOSE_GITHUB_TOKEN: ${{ github.token }}
+          SOSE_REPOSITORY: ${{ github.repository }}
+          SOSE_PRS: ${{ inputs.prs }}
+          SOSE_HAS_PREVIOUS: ${{ inputs.previous_run_id != '' }}
+          # Immutable activation timestamp of preregistration PR #301.
+          SOSE_REGISTRATION_MERGED_AT: "2026-10-06T14:44:13+00:00"
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          import os
+          from pathlib import Path
+
+          from sose.organizational.github_acquisition_v2 import UrllibGitHubJsonClient
+          from sose.organizational.prospective_stage1_acquisition_runner_v2 import (
+              run_stage1_acquisition_v2,
+          )
+
+          pr_numbers = tuple(int(part.strip()) for part in os.environ["SOSE_PRS"].split(",") if part.strip())
+          has_previous = os.environ["SOSE_HAS_PREVIOUS"].lower() == "true"
+          previous_acquisition = Path("previous/cumulative-acquisition.json") if has_previous else None
+          previous_state = Path("previous/prospective-state.json") if has_previous else None
+
+          run_stage1_acquisition_v2(
+              repository=os.environ["SOSE_REPOSITORY"],
+              pr_numbers=pr_numbers,
+              captured_at=datetime.now(timezone.utc),
+              protocol_document_path=Path("registered-protocol-document.json"),
+              registration_merged_at=datetime.fromisoformat(os.environ["SOSE_REGISTRATION_MERGED_AT"]),
+              output_dir=Path("stage1-output"),
+              client=UrllibGitHubJsonClient(token=os.environ["SOSE_GITHUB_TOKEN"].strip()),
+              previous_acquisition_path=previous_acquisition,
+              previous_state_path=previous_state,
+          )
+          PY
+
+      - name: Upload immutable Stage-1 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: prospective-stage1-v2-${{ github.run_id }}
+          path: stage1-output/
+          if-no-files-found: error
+          retention-days: 90
