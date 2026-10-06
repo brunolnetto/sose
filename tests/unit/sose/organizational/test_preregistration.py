@@ -103,6 +103,13 @@ def test_execute_plan_rejects_source_snapshot_mismatch() -> None:
         execute_pr_review_empirical_plan(snapshot=snapshot, plan=plan)
 
 
+def test_execute_plan_rejects_forged_unknown_split_policy() -> None:
+    snapshot = _snapshot()
+    forged = _plan(snapshot).model_copy(update={"split_policy": "random/v1"})
+    with pytest.raises(ValueError, match="unsupported split policy"):
+        execute_pr_review_empirical_plan(snapshot=snapshot, plan=forged)
+
+
 def test_persisted_execution_rejects_result_not_matching_plan() -> None:
     snapshot = _snapshot()
     plan = _plan(snapshot)
