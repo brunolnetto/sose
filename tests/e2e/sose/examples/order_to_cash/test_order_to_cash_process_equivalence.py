@@ -75,7 +75,7 @@ def _run_continuous():
         _prepare_promised_collection(store)
     )
     _finish_collection(store, entities, engine, backend, followup_at)
-    return store, entities, receivable_id, case_id
+    return store, entities, receivable_id, case_id, engine, backend
 
 
 def _run_restarted():
@@ -96,15 +96,15 @@ def _run_restarted():
         rebuilt.backend,
         followup_at,
     )
-    return store, entities, receivable_id, case_id
+    return store, entities, receivable_id, case_id, rebuilt.engine, rebuilt.backend
 
 
 def test_order_to_cash_collection_path_is_fully_restart_equivalent() -> None:
     continuous = _run_continuous()
     restarted = _run_restarted()
 
-    c_store, c_entities, c_receivable_id, c_case_id = continuous
-    r_store, r_entities, r_receivable_id, r_case_id = restarted
+    c_store, c_entities, c_receivable_id, c_case_id, _, _ = continuous
+    r_store, r_entities, r_receivable_id, r_case_id, _, _ = restarted
 
     assert _snapshot(r_store, r_entities, r_receivable_id, r_case_id) == _snapshot(
         c_store,
@@ -120,3 +120,17 @@ def test_order_to_cash_collection_path_is_fully_restart_equivalent() -> None:
     assert r_store.resource_demands() == ()
     assert r_store.resource_reservations() == ()
     assert r_store.resource_release_intents() == ()
+
+
+def test_terminal_order_to_cash_business_replay_is_idempotent() -> None:
+    store, entities, receivable_id, case_id, engine, backend = _run_continuous()
+    before = _snapshot(store, entities, receivable_id, case_id)
+
+    receivable = ship_invoice_and_ensure_receivable(store, engine, entities=entities)
+    case = ensure_collection_case(store, engine, entities=entities)
+    assert receivable.id == receivable_id
+    assert case.id == case_id
+    assert schedule_due(store, engine, backend, entities=entities) == backend.now
+    assert collect_receivable(store, engine, entities=entities)
+
+    assert _snapshot(store, entities, receivable_id, case_id) == before
