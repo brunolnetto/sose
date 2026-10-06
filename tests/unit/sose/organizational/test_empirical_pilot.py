@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from sose.organizational.empirical_pilot import (
     GitHubPRObservationSnapshot,
     GitHubPRSourceRecord,
+    PRReviewEmpiricalPilotResult,
     run_pr_review_empirical_pilot,
 )
 from sose.organizational.heldout_prediction import PRReviewAssumptions
@@ -73,6 +74,16 @@ def _criteria(*, limit_seconds: float = 100_000.0, max_ecdf: float = 1.0) -> Lea
     )
 
 
+def _run(*, criteria: LeadTimeValidationCriteria | None = None) -> PRReviewEmpiricalPilotResult:
+    return run_pr_review_empirical_pilot(
+        snapshot=_snapshot(),
+        holdout_fraction=0.30,
+        assumptions=_assumptions(),
+        validation_criteria=criteria or _criteria(),
+        seed=20261005,
+    )
+
+
 def test_snapshot_is_hash_addressed_and_canonical() -> None:
     snapshot = _snapshot()
     reversed_snapshot = GitHubPRObservationSnapshot(
@@ -128,13 +139,7 @@ def test_real_pr_pilot_uses_purged_temporal_holdout_and_binds_provenance() -> No
 
 def test_strict_preregistered_criteria_can_refute_pilot_without_hiding_prediction() -> None:
     criteria = _criteria(limit_seconds=0.0, max_ecdf=0.0)
-    result = run_pr_review_empirical_pilot(
-        snapshot=_snapshot(),
-        holdout_fraction=0.30,
-        assumptions=_assumptions(),
-        validation_criteria=criteria,
-        seed=20261005,
-    )
+    result = _run(criteria=criteria)
 
     assert not result.validation_assessment.passed
     assert result.validation_assessment.criteria_hash == criteria.criteria_hash
@@ -143,18 +148,25 @@ def test_strict_preregistered_criteria_can_refute_pilot_without_hiding_predictio
 
 
 def test_empirical_pilot_is_deterministic_for_same_source_assumptions_criteria_and_seed() -> None:
-    kwargs = {
-        "snapshot": _snapshot(),
-        "holdout_fraction": 0.30,
-        "assumptions": _assumptions(),
-        "validation_criteria": _criteria(),
-        "seed": 20261005,
-    }
+    assert _run() == _run()
 
-    first = run_pr_review_empirical_pilot(**kwargs)
-    second = run_pr_review_empirical_pilot(**kwargs)
 
-    assert first == second
+def test_persisted_pilot_rejects_assessment_bound_to_different_criteria() -> None:
+    result = _run()
+    payload = result.model_dump()
+    payload["validation_criteria"] = _criteria(limit_seconds=1.0).model_dump()
+
+    with pytest.raises(ValidationError, match="criteria hash"):
+        PRReviewEmpiricalPilotResult.model_validate(payload)
+
+
+def test_persisted_pilot_rejects_assessment_bound_to_different_holdout() -> None:
+    result = _run()
+    payload = result.model_dump()
+    payload["holdout_dataset_hash"] = "different-holdout-dataset"
+
+    with pytest.raises(ValidationError, match="observed dataset hash"):
+        PRReviewEmpiricalPilotResult.model_validate(payload)
 
 
 def test_snapshot_rejects_duplicate_prs_and_non_terminal_or_naive_records() -> None:
