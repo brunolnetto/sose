@@ -1,11 +1,8 @@
 from __future__ import annotations
 
-from sose.examples.process_manifest import (
-    ProcessEvidence,
-    reference_contract_process_evidence,
-    builtin_process_manifests,
-)
+from sose.examples.process_manifest import ProcessEvidence, builtin_process_manifests
 from sose.testing.conformance import ReferenceCapability, ReferenceContract
+from sose.testing.process_bootstrap import reference_contract_process_evidence
 from tests.support.reference_catalog import REFERENCE_CATALOG
 
 
