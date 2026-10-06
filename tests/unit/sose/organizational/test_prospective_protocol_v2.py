@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 
 import pytest
 
@@ -46,6 +46,21 @@ def test_activation_timestamp_is_part_of_protocol_identity() -> None:
 
     assert baseline.protocol_document_hash == later.protocol_document_hash
     assert baseline.protocol_hash != later.protocol_hash
+
+
+def test_same_activation_instant_has_same_hash_across_timezone_offsets() -> None:
+    utc = bind_pr_review_validation_protocol_v2(
+        document=_document(),
+        registration_merged_at=REGISTERED_AT,
+    )
+    same_instant = REGISTERED_AT.astimezone(timezone(timedelta(hours=-4)))
+    offset = bind_pr_review_validation_protocol_v2(
+        document=_document(),
+        registration_merged_at=same_instant,
+    )
+
+    assert utc.registration_merged_at == offset.registration_merged_at
+    assert utc.protocol_hash == offset.protocol_hash
 
 
 def test_protocol_binding_rejects_wrong_frozen_contract_shape() -> None:
