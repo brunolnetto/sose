@@ -114,6 +114,35 @@ def test_orchestration_rejects_unpaired_previous_artifacts_before_acquisition(tm
     assert called is False
 
 
+def test_orchestration_rejects_missing_previous_artifacts_before_acquisition(tmp_path: Path) -> None:
+    protocol = tmp_path / "protocol.json"
+    protocol.write_text("{}", encoding="utf-8")
+    previous_acquisition = tmp_path / "missing-acquisition.json"
+    previous_state = tmp_path / "missing-state.json"
+    called = False
+
+    def acquire(**_: object) -> object:
+        nonlocal called
+        called = True
+        return object()
+
+    with pytest.raises(FileNotFoundError, match="previous Stage-1 artifact"):
+        run_stage1_acquisition_v2(
+            repository="brunolnetto/sose",
+            pr_numbers=(318, 320),
+            captured_at=datetime(2026, 10, 6, 19, 0, tzinfo=timezone.utc),
+            protocol_path=protocol,
+            output_dir=tmp_path / "out",
+            client=_FakeClient(),
+            previous_acquisition_path=previous_acquisition,
+            previous_state_path=previous_state,
+            acquire_batch=acquire,
+            advance_files=lambda **_: object(),
+        )
+
+    assert called is False
+
+
 def test_orchestration_rejects_naive_capture_time_before_network_access(tmp_path: Path) -> None:
     called = False
 
