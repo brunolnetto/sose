@@ -40,28 +40,27 @@ def _reviews_url(number: int = 302, page: int = 1) -> str:
     return f"https://api.github.com/repos/{REPOSITORY}/pulls/{number}/reviews?per_page=100&page={page}"
 
 
-def _runs_url(sha: str = "head-302", page: int = 1) -> str:
+def _runs_url(page: int = 1) -> str:
     return (
         f"https://api.github.com/repos/{REPOSITORY}/actions/runs"
-        f"?event=pull_request&head_sha={sha}&per_page=100&page={page}"
+        f"?event=pull_request&created=2026-10-06..2026-10-06&per_page=100&page={page}"
     )
 
 
 def _jobs_url(run_id: int, page: int = 1) -> str:
     return (
         f"https://api.github.com/repos/{REPOSITORY}/actions/runs/{run_id}/jobs"
-        f"?filter=latest&per_page=100&page={page}"
+        f"?filter=all&per_page=100&page={page}"
     )
 
 
-def _pr(number: int = 302, sha: str = "head-302") -> dict[str, object]:
+def _pr(number: int = 302) -> dict[str, object]:
     return {
         "number": number,
         "created_at": "2026-10-06T14:48:17Z",
         "merged_at": "2026-10-06T15:09:10Z",
         "url": _pr_url(number),
         "base": {"repo": {"full_name": REPOSITORY}},
-        "head": {"sha": sha},
         "user": {"login": "brunolnetto", "type": "User"},
     }
 
@@ -76,14 +75,20 @@ def _review() -> dict[str, object]:
     }
 
 
-def _run(run_id: int = 10) -> dict[str, object]:
-    return {"id": run_id, "workflow_id": 20, "run_attempt": 1}
+def _run(run_id: int = 10, *, pr_number: int = 302, attempt: int = 1) -> dict[str, object]:
+    return {
+        "id": run_id,
+        "workflow_id": 20,
+        "run_attempt": attempt,
+        "pull_requests": [{"number": pr_number}],
+    }
 
 
-def _job(run_id: int = 10, job_id: int = 30) -> dict[str, object]:
+def _job(run_id: int = 10, job_id: int = 30, *, attempt: int = 1) -> dict[str, object]:
     return {
         "id": job_id,
         "run_id": run_id,
+        "run_attempt": attempt,
         "name": "pytest (Python 3.14)",
         "started_at": "2026-10-06T14:50:00Z",
         "completed_at": "2026-10-06T14:51:00Z",
@@ -190,6 +195,28 @@ def test_acquisition_collects_job_pages_for_each_workflow_run() -> None:
     assert tuple(job.run_id for job in artifact.evidence.workflow_jobs) == (10, 11)
 
 
+def test_unrelated_candidate_runs_are_not_admitted_or_queried_for_jobs() -> None:
+    pages = _base_pages()
+    pages[_runs_url()] = GitHubJsonPage(
+        source_url=_runs_url(),
+        payload={
+            "total_count": 2,
+            "workflow_runs": [_run(10), _run(99, pr_number=999)],
+        },
+    )
+    client = FakeClient(pages)
+
+    artifact = acquire_github_pr_v2(
+        repository=REPOSITORY,
+        pr_number=302,
+        client=client,
+        captured_at=CAPTURED_AT,
+    )
+
+    assert artifact.manifest.workflow_runs.record_count == 1
+    assert not any("runs/99/jobs" in request for request in client.requests)
+
+
 def test_zero_workflow_runs_prove_zero_jobs_without_inventing_a_jobs_request() -> None:
     pages = _base_pages()
     pages[_runs_url()] = GitHubJsonPage(
@@ -232,25 +259,13 @@ def test_zero_page_capture_is_valid_only_for_jobs_derived_from_zero_runs() -> No
         )
 
 
-def test_pr_must_be_merged_and_have_a_head_sha() -> None:
+def test_pr_must_be_merged() -> None:
     pages = _base_pages()
     pages[_pr_url()] = GitHubJsonPage(
         source_url=_pr_url(),
         payload={**_pr(), "merged_at": None},
     )
     with pytest.raises(ValueError, match="merged pull request"):
-        acquire_github_pr_v2(
-            repository=REPOSITORY,
-            pr_number=302,
-            client=FakeClient(pages),
-            captured_at=CAPTURED_AT,
-        )
-
-    pages = _base_pages()
-    missing_head = _pr()
-    missing_head["head"] = {}
-    pages[_pr_url()] = GitHubJsonPage(source_url=_pr_url(), payload=missing_head)
-    with pytest.raises(ValueError, match="head sha"):
         acquire_github_pr_v2(
             repository=REPOSITORY,
             pr_number=302,
