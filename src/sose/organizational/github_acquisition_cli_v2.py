@@ -44,7 +44,7 @@ def run(
     if token is None or not token.strip():
         raise ValueError(f"missing GitHub token in environment variable {token_env}")
 
-    client = client_factory(token=token)
+    client = client_factory(token=token.strip())
     acquire_batch(
         repository=repository,
         pr_numbers=pr_numbers,
