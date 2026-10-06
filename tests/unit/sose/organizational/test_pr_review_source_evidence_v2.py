@@ -60,6 +60,29 @@ def test_source_record_preserves_review_request_and_submission_evidence() -> Non
     assert trace.events[2].state == "approved"
 
 
+def test_team_review_request_identity_is_not_coerced_to_user_login() -> None:
+    record = GitHubPREvidenceRecordV2(
+        repository="brunolnetto/sose",
+        pr_number=302,
+        opened_at=T0,
+        merged_at=T0 + timedelta(minutes=10),
+        source_url="https://example.test/pulls/302",
+        review_timeline=(
+            GitHubReviewTimelineSourceRecord(
+                event_id=13,
+                event="review_requested",
+                occurred_at=T0 + timedelta(minutes=2),
+                source_url="https://example.test/timeline/13",
+                requested_actor_key="team:core-maintainers",
+            ),
+        ),
+    )
+
+    trace = record.to_trace()
+    assert trace.events[1].kind is ObservedEventKind.REVIEW_REQUESTED
+    assert trace.events[1].actor_key == "team:core-maintainers"
+
+
 def test_review_source_identity_is_canonical_and_order_independent() -> None:
     request = GitHubReviewTimelineSourceRecord(
         event_id=2,
