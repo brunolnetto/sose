@@ -85,6 +85,8 @@ def execute_pr_review_empirical_plan(*, snapshot: GitHubPRObservationSnapshot, p
 
     if snapshot.snapshot_hash != plan.snapshot_hash:
         raise ValueError("snapshot hash does not match preregistered plan")
+    if plan.split_policy != "chronological-purged/v1":
+        raise ValueError(f"unsupported split policy: {plan.split_policy}")
     result = run_pr_review_empirical_pilot(
         snapshot=snapshot,
         holdout_fraction=plan.holdout_fraction,
