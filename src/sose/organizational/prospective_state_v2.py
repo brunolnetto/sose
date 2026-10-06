@@ -4,7 +4,7 @@ from hashlib import sha256
 import json
 from typing import Annotated, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 from .prospective_cohort_v2 import ProspectivePRCohortV2, select_prospective_pr_cohort_v2
 from .source_evidence_v2 import GitHubPREvidenceRecordV2, GitHubPREvidenceSnapshotV2
@@ -46,12 +46,15 @@ class ProspectiveEvidenceStateV2(BaseModel):
         ):
             raise ValueError("source records must open strictly after registration merge")
 
-        enrolled = set(
-            (*self.cohort.training_keys, *self.cohort.interstitial_keys,
-             *self.cohort.holdout_keys, *self.cohort.post_holdout_keys)
+        enrolled = (
+            *self.cohort.training_keys,
+            *self.cohort.interstitial_keys,
+            *self.cohort.holdout_keys,
+            *self.cohort.post_holdout_keys,
         )
-        if not enrolled.issubset(record_keys):
-            raise ValueError("cohort enrollment must be backed by source snapshot records")
+        enrolled_keys = set(enrolled)
+        if len(enrolled) != len(enrolled_keys) or enrolled_keys != record_keys:
+            raise ValueError("cohort partitions must partition every source snapshot record exactly once")
         return self
 
     @property
