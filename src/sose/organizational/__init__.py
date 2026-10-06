@@ -3,6 +3,7 @@
 from .calibration import ObservedItemFlowCalibration, calibrate_observed_item_flow
 from .dataset import ObservedPRDataset, ObservedPRSplit
 from .experiment import (
+    CostAnalysisPlan,
     ExperimentProtocol,
     FalsificationRule,
     MetricDirection,
@@ -12,6 +13,8 @@ from .experiment import (
     ReplicationPlan,
     SamplingDesign,
     StatisticalPlan,
+    SurrogateAnalysisPlan,
+    SurrogateModel,
 )
 from .github_observations import normalize_github_pr_trace
 from .model_spec import (
@@ -36,6 +39,7 @@ from .validation import (
 )
 
 __all__ = [
+    "CostAnalysisPlan",
     "DistributionSummary",
     "EvidenceClass",
     "ExperimentProtocol",
@@ -60,6 +64,8 @@ __all__ = [
     "SamplingDesign",
     "StatisticalPlan",
     "StructuralDiff",
+    "SurrogateAnalysisPlan",
+    "SurrogateModel",
     "ValidationCheck",
     "assess_lead_time_validation",
     "calibrate_observed_item_flow",

@@ -5,7 +5,7 @@ from hashlib import sha256
 import json
 from math import isfinite
 from types import MappingProxyType
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
@@ -28,6 +28,12 @@ class MetricDirection(StrEnum):
 class MultipleComparisonMethod(StrEnum):
     HOLM = "holm"
     FDR_BH = "fdr_bh"
+
+
+class SurrogateModel(StrEnum):
+    LINEAR = "linear"
+    GENERALIZED_ADDITIVE = "generalized_additive"
+    SHALLOW_TREE = "shallow_tree"
 
 
 class ParameterRange(BaseModel):
@@ -95,6 +101,50 @@ class ReplicationPlan(BaseModel):
         }
 
 
+class CostAnalysisPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    operating_cost_metric: NonBlankString
+    transition_cost_parameter: NonBlankString
+    break_even_analysis: bool = True
+
+    @model_validator(mode="after")
+    def require_break_even_analysis(self) -> "CostAnalysisPlan":
+        if not self.break_even_analysis:
+            raise ValueError("Phase 6 requires explicit break-even analysis")
+        return self
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "operating_cost_metric": self.operating_cost_metric,
+            "transition_cost_parameter": self.transition_cost_parameter,
+            "break_even_analysis": self.break_even_analysis,
+        }
+
+
+class SurrogateAnalysisPlan(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    model: SurrogateModel
+    global_sensitivity: bool = True
+    ablations: bool = True
+
+    @model_validator(mode="after")
+    def require_interpretable_analysis(self) -> "SurrogateAnalysisPlan":
+        if not self.global_sensitivity:
+            raise ValueError("Phase 6 surrogate analysis requires global sensitivity reporting")
+        if not self.ablations:
+            raise ValueError("Phase 6 surrogate analysis requires preregistered ablations")
+        return self
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "model": self.model.value,
+            "global_sensitivity": self.global_sensitivity,
+            "ablations": self.ablations,
+        }
+
+
 class FalsificationRule(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -113,7 +163,7 @@ class ExperimentProtocol(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
 
-    protocol_version: NonBlankString = "1"
+    protocol_version: Literal["1", "2"] = "1"
     research_question: NonBlankString
     baseline_model_spec_hash: NonBlankString
     intervention_ids: tuple[NonBlankString, ...] = Field(min_length=2)
@@ -124,6 +174,8 @@ class ExperimentProtocol(BaseModel):
     outcomes: tuple[OutcomeMetric, ...] = ()
     statistical_plan: StatisticalPlan
     replication_plan: ReplicationPlan
+    cost_analysis: CostAnalysisPlan | None = None
+    surrogate_analysis: SurrogateAnalysisPlan | None = None
     warmup: float = Field(ge=0.0, allow_inf_nan=False)
     horizon: float = Field(gt=0.0, allow_inf_nan=False)
     falsification: FalsificationRule
@@ -151,6 +203,18 @@ class ExperimentProtocol(BaseModel):
             raise ValueError("duplicate outcome names are not allowed")
         if self.falsification.primary_metric not in outcome_names:
             raise ValueError("primary falsification metric must be a preregistered outcome")
+        if self.protocol_version == "1":
+            if self.cost_analysis is not None or self.surrogate_analysis is not None:
+                raise ValueError("protocol version 1 does not accept version 2 analysis plans")
+        else:
+            if self.cost_analysis is None:
+                raise ValueError("protocol version 2 requires cost analysis")
+            if self.surrogate_analysis is None:
+                raise ValueError("protocol version 2 requires surrogate analysis")
+            if self.cost_analysis.operating_cost_metric not in outcome_names:
+                raise ValueError("operating cost metric must be a preregistered outcome")
+            if self.cost_analysis.transition_cost_parameter not in self.parameter_ranges:
+                raise ValueError("transition cost parameter must be a preregistered parameter range")
         if self.warmup >= self.horizon:
             raise ValueError("warmup must be smaller than horizon")
         if not self.crn_enabled:
@@ -165,7 +229,7 @@ class ExperimentProtocol(BaseModel):
         return self
 
     def canonical_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "protocol_version": self.protocol_version,
             "research_question": self.research_question,
             "baseline_model_spec_hash": self.baseline_model_spec_hash,
@@ -186,6 +250,11 @@ class ExperimentProtocol(BaseModel):
             "crn_enabled": self.crn_enabled,
             "report_null_regions": self.report_null_regions,
         }
+        if self.cost_analysis is not None:
+            payload["cost_analysis"] = self.cost_analysis.canonical_payload()
+        if self.surrogate_analysis is not None:
+            payload["surrogate_analysis"] = self.surrogate_analysis.canonical_payload()
+        return payload
 
     def canonical_json(self) -> str:
         return json.dumps(
