@@ -32,14 +32,50 @@ def test_process_audit_exclusions_are_explicit_catalog_domains() -> None:
     assert PROCESS_AUDIT_EXCLUDED_DOMAINS <= catalog_domains
 
 
-def test_unreviewed_domains_are_explicit_lower_bounds_not_false_gap_claims() -> None:
-    manifests = builtin_process_manifests()
-    fulfillment = manifests["warehouse_fulfillment"]
+def test_warehouse_fulfillment_audit_stops_at_pc2_and_preserves_audited_higher_evidence() -> None:
+    manifest = builtin_process_manifests()["warehouse_fulfillment"]
 
-    assert fulfillment.maturity is ProcessMaturity.PC0_REGISTERED
-    assert not fulfillment.assessment_complete
-    assert fulfillment.is_maturity_lower_bound
-    assert not fulfillment.evidence_sources
+    assert manifest.assessment_complete
+    assert manifest.maturity is ProcessMaturity.PC2_PROCESS
+    assert not manifest.is_maturity_lower_bound
+    assert manifest.trigger == "fulfillment_order_requested"
+    assert manifest.terminal_outcomes == frozenset({"shipped"})
+    assert manifest.resources == frozenset()
+    assert manifest.kpis == frozenset()
+    assert manifest.sad_paths == frozenset(
+        {
+            "insufficient_inventory",
+            "pack_before_all_allocations_picked",
+            "conflicting_correction_replay",
+            "correction_below_allocated_quantity",
+        }
+    )
+
+    assert manifest.missing_for(ProcessMaturity.PC3_OPERATIONAL) == frozenset(
+        {
+            ProcessEvidence.FINITE_RESOURCES,
+            ProcessEvidence.CAPACITY_CONTENTION,
+            ProcessEvidence.TIME_SEMANTICS,
+        }
+    )
+
+    assert ProcessEvidence.DURABLE_STATE in manifest.evidence
+    assert ProcessEvidence.REPLAY_IDEMPOTENCE in manifest.evidence
+    assert ProcessEvidence.RECURRING_RECONCILIATION in manifest.evidence
+
+    # Recovery after rebuild is useful evidence, but the current test does not
+    # compare a continuous baseline with a rebuilt execution. Do not overclaim it.
+    assert ProcessEvidence.RESTART_EQUIVALENCE not in manifest.evidence
+    # The prose lifecycle summary omits real cancellation transitions, so it is
+    # not yet complete statechart documentation under the PC5 contract.
+    assert ProcessEvidence.STATECHART_DOCUMENTATION not in manifest.evidence
+
+    assert ProcessEvidence.FAULT_RECOVERY not in manifest.evidence
+    assert ProcessEvidence.KPIS not in manifest.evidence
+    assert ProcessEvidence.ERD not in manifest.evidence
+    assert ProcessEvidence.PROCESS_DIAGRAM not in manifest.evidence
+    assert ProcessEvidence.PROJECTION_CONTRACT not in manifest.evidence
+    assert ProcessEvidence.CONFIGURATION_DOCUMENTATION not in manifest.evidence
 
 
 def test_warehouse_management_audit_exposes_restart_equivalence_as_pc4_gap() -> None:
@@ -57,25 +93,43 @@ def test_warehouse_management_audit_exposes_restart_equivalence_as_pc4_gap() -> 
     assert ProcessEvidence.KPIS in manifest.evidence
 
 
-def test_every_audited_warehouse_claim_has_provenance_and_existing_sources() -> None:
-    manifest = builtin_process_manifests()["warehouse_management"]
+def test_every_audited_process_claim_has_provenance_and_existing_sources() -> None:
     pc0 = PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC0_REGISTERED]
 
-    assert set(manifest.evidence_sources) == set(manifest.evidence - pc0)
-    for evidence, paths in manifest.evidence_sources.items():
-        assert evidence in manifest.evidence
-        assert paths
-        for relative in paths:
-            assert (REPO_ROOT / relative).is_file(), (evidence, relative)
+    for manifest in builtin_process_manifests().values():
+        if not manifest.assessment_complete:
+            continue
+        assert set(manifest.evidence_sources) == set(manifest.evidence - pc0)
+        for evidence, paths in manifest.evidence_sources.items():
+            assert evidence in manifest.evidence
+            assert paths
+            for relative in paths:
+                assert (REPO_ROOT / relative).is_file(), (
+                    manifest.domain,
+                    evidence,
+                    relative,
+                )
 
 
 def test_audit_orders_domains_by_maturity_then_name_and_reports_next_gate() -> None:
     audit = audit_builtin_processes()
 
     assert audit[0].maturity >= audit[-1].maturity
-    warehouse = next(row for row in audit if row.domain == "warehouse_management")
-    assert warehouse.next_maturity is ProcessMaturity.PC4_DURABLE
-    assert not warehouse.assessment_is_lower_bound
-    assert warehouse.missing_for_next_gate == frozenset(
+
+    management = next(row for row in audit if row.domain == "warehouse_management")
+    assert management.next_maturity is ProcessMaturity.PC4_DURABLE
+    assert not management.assessment_is_lower_bound
+    assert management.missing_for_next_gate == frozenset(
         {ProcessEvidence.RESTART_EQUIVALENCE}
+    )
+
+    fulfillment = next(row for row in audit if row.domain == "warehouse_fulfillment")
+    assert fulfillment.next_maturity is ProcessMaturity.PC3_OPERATIONAL
+    assert not fulfillment.assessment_is_lower_bound
+    assert fulfillment.missing_for_next_gate == frozenset(
+        {
+            ProcessEvidence.FINITE_RESOURCES,
+            ProcessEvidence.CAPACITY_CONTENTION,
+            ProcessEvidence.TIME_SEMANTICS,
+        }
     )

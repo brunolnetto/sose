@@ -306,6 +306,72 @@ def _registered_only_manifest(domain: str) -> ProcessManifest:
     )
 
 
+def _warehouse_fulfillment_manifest() -> ProcessManifest:
+    """Audit the current Warehouse Fulfillment reference without inferring PC3."""
+
+    evidence = set(_requirements_through(ProcessMaturity.PC2_PROCESS))
+    evidence.update(
+        {
+            ProcessEvidence.SAD_PATHS,
+            ProcessEvidence.DURABLE_STATE,
+            ProcessEvidence.REPLAY_IDEMPOTENCE,
+            ProcessEvidence.RECURRING_RECONCILIATION,
+        }
+    )
+
+    simulation = "src/sose/examples/warehouse_fulfillment/simulation.py"
+    entities = "src/sose/examples/warehouse_fulfillment/entities.py"
+    statecharts = "src/sose/examples/warehouse_fulfillment/statecharts.py"
+    definition = "src/sose/examples/warehouse_fulfillment/definition.py"
+    happy_path = (
+        "tests/integration/sose/examples/warehouse_fulfillment/"
+        "test_warehouse_fulfillment_happy_path.py"
+    )
+    statechart_test = (
+        "tests/integration/sose/examples/warehouse_fulfillment/"
+        "test_warehouse_fulfillment_statecharts.py"
+    )
+    sad_paths = (
+        "tests/integration/sose/examples/warehouse_fulfillment/"
+        "test_warehouse_fulfillment_sad_paths.py"
+    )
+    restart = (
+        "tests/e2e/sose/examples/warehouse_fulfillment/"
+        "test_warehouse_fulfillment_restart_equivalence.py"
+    )
+    recurring = "tests/unit/sose/jobs/test_recurring_domain_reconciliation.py"
+    specification = "docs/examples/warehouse-fulfillment/specification.md"
+
+    evidence_sources: dict[ProcessEvidence, tuple[str, ...]] = {
+        ProcessEvidence.ENTITIES: (entities, statechart_test),
+        ProcessEvidence.STATECHARTS: (statecharts, statechart_test),
+        ProcessEvidence.COMMAND_EVENT_PATH: (simulation, happy_path),
+        ProcessEvidence.HAPPY_PATH: (happy_path,),
+        ProcessEvidence.E2E_TERMINAL_OUTCOME: (happy_path,),
+        ProcessEvidence.SAD_PATHS: (sad_paths,),
+        ProcessEvidence.DURABLE_STATE: (simulation, restart),
+        ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, sad_paths, restart),
+        ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
+    }
+    return ProcessManifest(
+        domain="warehouse_fulfillment",
+        evidence=frozenset(evidence),
+        trigger="fulfillment_order_requested",
+        terminal_outcomes=frozenset({"shipped"}),
+        sad_paths=frozenset(
+            {
+                "insufficient_inventory",
+                "pack_before_all_allocations_picked",
+                "conflicting_correction_replay",
+                "correction_below_allocated_quantity",
+            }
+        ),
+        specification_path=specification,
+        evidence_sources=evidence_sources,
+        assessment_complete=True,
+    )
+
+
 def _warehouse_management_manifest() -> ProcessManifest:
     # Audit evidence is intentionally explicit rather than using
     # _requirements_through(PC5). The domain demonstrates phase-marker recovery
@@ -385,6 +451,8 @@ def builtin_process_manifests() -> dict[str, ProcessManifest]:
         for name in builtin_catalog().names(kind="domain")
         if name not in PROCESS_AUDIT_EXCLUDED_DOMAINS
     }
+    if "warehouse_fulfillment" in manifests:
+        manifests["warehouse_fulfillment"] = _warehouse_fulfillment_manifest()
     if "warehouse_management" in manifests:
         manifests["warehouse_management"] = _warehouse_management_manifest()
     return manifests
