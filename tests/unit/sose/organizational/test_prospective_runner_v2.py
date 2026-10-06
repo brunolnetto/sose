@@ -5,7 +5,14 @@ import json
 from pathlib import Path
 
 import pytest
+from pydantic import ValidationError
 
+from sose.organizational.acquisition_v2 import (
+    GitHubEndpointCaptureV2,
+    GitHubPRAcquisitionArtifactV2,
+    GitHubPRAcquisitionManifestV2,
+    GitHubPRAcquisitionSnapshotV2,
+)
 from sose.organizational.prospective_protocol_v2 import ProspectiveStudyProtocolV2
 from sose.organizational.prospective_runner_v2 import (
     publish_prospective_protocol_binding_v2,
@@ -66,14 +73,14 @@ def test_protocol_binding_refuses_to_replace_different_artifact(tmp_path: Path) 
         )
 
 
-def test_run_initial_prospective_state_from_local_artifacts(tmp_path: Path) -> None:
+def test_run_initial_prospective_state_from_complete_acquisition_artifacts(tmp_path: Path) -> None:
     protocol_path = _publish_protocol(tmp_path)
-    snapshot_path = _write_snapshot(tmp_path / "snapshot-1.json", (302, 303))
+    acquisition_path = _write_acquisition_snapshot(tmp_path / "acquisition-1.json", (302, 303))
     output_path = tmp_path / "state-1.json"
 
     state = run_prospective_evidence_files_v2(
         protocol_path=protocol_path,
-        snapshot_path=snapshot_path,
+        acquisition_path=acquisition_path,
         output_path=output_path,
     )
 
@@ -87,22 +94,38 @@ def test_run_initial_prospective_state_from_local_artifacts(tmp_path: Path) -> N
     assert output_path.read_text(encoding="utf-8") == state.canonical_json() + "\n"
 
 
+def test_runner_rejects_legacy_evidence_snapshot_without_acquisition_proof(tmp_path: Path) -> None:
+    protocol_path = _publish_protocol(tmp_path)
+    legacy_path = tmp_path / "legacy-snapshot.json"
+    legacy = GitHubPREvidenceSnapshotV2(records=(_record(302, minute=5), _record(303, minute=15)))
+    legacy_path.write_text(legacy.canonical_json() + "\n", encoding="utf-8")
+
+    with pytest.raises(ValidationError):
+        run_prospective_evidence_files_v2(
+            protocol_path=protocol_path,
+            acquisition_path=legacy_path,
+            output_path=tmp_path / "state.json",
+        )
+
+
 def test_run_advance_chains_previous_state_without_rewriting_it(tmp_path: Path) -> None:
     protocol_path = _publish_protocol(tmp_path)
-    first_snapshot = _write_snapshot(tmp_path / "snapshot-1.json", (302, 303))
+    first_acquisition = _write_acquisition_snapshot(tmp_path / "acquisition-1.json", (302, 303))
     first_path = tmp_path / "state-1.json"
     first = run_prospective_evidence_files_v2(
         protocol_path=protocol_path,
-        snapshot_path=first_snapshot,
+        acquisition_path=first_acquisition,
         output_path=first_path,
     )
     original_bytes = first_path.read_bytes()
 
-    second_snapshot = _write_snapshot(tmp_path / "snapshot-2.json", (302, 303, 304))
+    second_acquisition = _write_acquisition_snapshot(
+        tmp_path / "acquisition-2.json", (302, 303, 304)
+    )
     second_path = tmp_path / "state-2.json"
     second = run_prospective_evidence_files_v2(
         protocol_path=protocol_path,
-        snapshot_path=second_snapshot,
+        acquisition_path=second_acquisition,
         previous_state_path=first_path,
         output_path=second_path,
     )
@@ -114,11 +137,11 @@ def test_run_advance_chains_previous_state_without_rewriting_it(tmp_path: Path) 
 
 def test_run_rejects_previous_state_from_different_protocol(tmp_path: Path) -> None:
     protocol_path = _publish_protocol(tmp_path)
-    first_snapshot = _write_snapshot(tmp_path / "snapshot-1.json", (302, 303))
+    first_acquisition = _write_acquisition_snapshot(tmp_path / "acquisition-1.json", (302, 303))
     first_path = tmp_path / "state-1.json"
     run_prospective_evidence_files_v2(
         protocol_path=protocol_path,
-        snapshot_path=first_snapshot,
+        acquisition_path=first_acquisition,
         output_path=first_path,
     )
 
@@ -136,7 +159,9 @@ def test_run_rejects_previous_state_from_different_protocol(tmp_path: Path) -> N
     with pytest.raises(ValueError, match="protocol identity does not match"):
         run_prospective_evidence_files_v2(
             protocol_path=changed_binding_path,
-            snapshot_path=_write_snapshot(tmp_path / "snapshot-2.json", (302, 303, 304)),
+            acquisition_path=_write_acquisition_snapshot(
+                tmp_path / "acquisition-2.json", (302, 303, 304)
+            ),
             previous_state_path=first_path,
             output_path=tmp_path / "state-2.json",
         )
@@ -147,14 +172,18 @@ def test_state_publication_refuses_to_overwrite_different_result(tmp_path: Path)
     output_path = tmp_path / "state.json"
     run_prospective_evidence_files_v2(
         protocol_path=protocol_path,
-        snapshot_path=_write_snapshot(tmp_path / "snapshot-1.json", (302, 303)),
+        acquisition_path=_write_acquisition_snapshot(
+            tmp_path / "acquisition-1.json", (302, 303)
+        ),
         output_path=output_path,
     )
 
     with pytest.raises(FileExistsError, match="different artifact"):
         run_prospective_evidence_files_v2(
             protocol_path=protocol_path,
-            snapshot_path=_write_snapshot(tmp_path / "snapshot-2.json", (302, 303, 304)),
+            acquisition_path=_write_acquisition_snapshot(
+                tmp_path / "acquisition-2.json", (302, 303, 304)
+            ),
             output_path=output_path,
         )
 
@@ -171,12 +200,40 @@ def _publish_protocol(tmp_path: Path) -> Path:
     return binding_path
 
 
-def _write_snapshot(path: Path, numbers: tuple[int, ...]) -> Path:
-    snapshot = GitHubPREvidenceSnapshotV2(
-        records=tuple(_record(number, minute=index * 10 + 5) for index, number in enumerate(numbers))
+def _write_acquisition_snapshot(path: Path, numbers: tuple[int, ...]) -> Path:
+    acquisition = GitHubPRAcquisitionSnapshotV2(
+        artifacts=tuple(
+            _artifact(number, minute=index * 10 + 5) for index, number in enumerate(numbers)
+        )
     )
-    path.write_text(snapshot.canonical_json() + "\n", encoding="utf-8")
+    path.write_text(acquisition.canonical_json() + "\n", encoding="utf-8")
     return path
+
+
+def _artifact(number: int, *, minute: int) -> GitHubPRAcquisitionArtifactV2:
+    record = _record(number, minute=minute)
+    source = f"https://api.github.com/repos/{REPOSITORY}/pulls/{number}"
+
+    def capture(endpoint: str) -> GitHubEndpointCaptureV2:
+        return GitHubEndpointCaptureV2(
+            endpoint=endpoint,
+            pages_fetched=1,
+            record_count=1 if endpoint == "pull_request" else 0,
+            complete=True,
+            source_urls=(f"{source}/{endpoint}",),
+        )
+
+    manifest = GitHubPRAcquisitionManifestV2(
+        repository=REPOSITORY,
+        pr_number=number,
+        captured_at=record.merged_at + timedelta(seconds=1),
+        pull_request=capture("pull_request"),
+        timeline=capture("timeline"),
+        reviews=capture("reviews"),
+        workflow_runs=capture("workflow_runs"),
+        workflow_jobs=capture("workflow_jobs"),
+    )
+    return GitHubPRAcquisitionArtifactV2(manifest=manifest, evidence=record)
 
 
 def _record(number: int, *, minute: int) -> GitHubPREvidenceRecordV2:
