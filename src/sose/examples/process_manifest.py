@@ -5,8 +5,6 @@ from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
 from pathlib import PurePosixPath
 
-from sose.testing.conformance import ReferenceCapability, ReferenceContract
-
 
 class ProcessMaturity(IntEnum):
     """Evidence-backed maturity of an executable business-process reference."""
@@ -108,22 +106,6 @@ PROCESS_MATURITY_REQUIREMENTS: dict[ProcessMaturity, frozenset[ProcessEvidence]]
     ),
 }
 
-# Existing reference-conformance capabilities predate the process-canonical
-# maturity model. Only direct semantic equivalents are bridged automatically.
-# Nearby capabilities deliberately remain unmapped until a process audit reviews
-# their stronger meaning (for example, resources do not imply contention).
-REFERENCE_CAPABILITY_PROCESS_EVIDENCE: Mapping[
-    ReferenceCapability, ProcessEvidence
-] = {
-    ReferenceCapability.STATECHARTS: ProcessEvidence.STATECHARTS,
-    ReferenceCapability.HAPPY_PATH: ProcessEvidence.HAPPY_PATH,
-    ReferenceCapability.SAD_PATHS: ProcessEvidence.SAD_PATHS,
-    ReferenceCapability.RESTART_EQUIVALENCE: ProcessEvidence.RESTART_EQUIVALENCE,
-    ReferenceCapability.RESOURCES: ProcessEvidence.FINITE_RESOURCES,
-    ReferenceCapability.SCHEDULED_WORK: ProcessEvidence.TIME_SEMANTICS,
-    ReferenceCapability.CRASH_RECOVERY: ProcessEvidence.FAULT_RECOVERY,
-}
-
 # `tutorial_job` deliberately remains a normal `DomainDefinition(kind="domain")`
 # because it demonstrates durable recurring-job mechanics through the same public
 # APIs as real domains. It is not, however, a business-process canonical candidate
@@ -165,64 +147,6 @@ class EvidenceSources(Mapping[ProcessEvidence, tuple[str, ...]]):
 
     def __len__(self) -> int:
         return len(self.entries)
-
-
-@dataclass(frozen=True, slots=True)
-class ReferenceProcessEvidenceBootstrap:
-    """Candidate process evidence imported from the older reference catalog.
-
-    This object is deliberately not a `ProcessManifest`: reference capabilities
-    can prove that a behavior exists while lacking process metadata such as the
-    trigger name, resource identities, sad-path names, or terminal outcomes.
-    A later W1 audit must review those details before maturity is promoted.
-    """
-
-    domain: str
-    evidence: frozenset[ProcessEvidence]
-    evidence_sources: EvidenceSources
-    unmapped_capabilities: frozenset[ReferenceCapability]
-
-
-def reference_contract_process_evidence(
-    contract: ReferenceContract,
-) -> ReferenceProcessEvidenceBootstrap:
-    """Translate only directly equivalent reference capabilities into candidates."""
-
-    prefix = "sose.examples."
-    if not contract.package.startswith(prefix):
-        raise ValueError(
-            "reference process bootstrap requires a package under sose.examples"
-        )
-    domain = contract.package.removeprefix(prefix)
-    if not domain or "." in domain:
-        raise ValueError(
-            "reference process bootstrap requires a direct sose.examples.<domain> package"
-        )
-
-    evidence: set[ProcessEvidence] = set()
-    sources: dict[ProcessEvidence, tuple[str, ...]] = {}
-    mapped_capabilities: set[ReferenceCapability] = set()
-    for capability in sorted(contract.capabilities, key=lambda item: item.value):
-        process_evidence = REFERENCE_CAPABILITY_PROCESS_EVIDENCE.get(capability)
-        if process_evidence is None:
-            continue
-        paths = tuple(contract.evidence.get(capability, ()))
-        if not paths or any(not _is_repository_relative(path) for path in paths):
-            raise ValueError(
-                f"reference capability {capability.value} requires repository-relative provenance"
-            )
-        evidence.add(process_evidence)
-        sources[process_evidence] = paths
-        mapped_capabilities.add(capability)
-
-    return ReferenceProcessEvidenceBootstrap(
-        domain=domain,
-        evidence=frozenset(evidence),
-        evidence_sources=EvidenceSources(
-            tuple(sorted(sources.items(), key=lambda pair: pair[0].value))
-        ),
-        unmapped_capabilities=frozenset(contract.capabilities - mapped_capabilities),
-    )
 
 
 @dataclass(frozen=True, slots=True)
