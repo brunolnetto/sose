@@ -195,6 +195,7 @@ def _collect_wrapped_pages(
 ) -> tuple[list[Mapping[str, Any]], list[str]]:
     records: list[Mapping[str, Any]] = []
     source_urls: list[str] = []
+    expected_total: int | None = None
     url: str | None = first_url
     seen: set[str] = set()
     while url is not None:
@@ -206,9 +207,20 @@ def _collect_wrapped_pages(
         collection = payload.get(field)
         if not isinstance(collection, list):
             raise ValueError(f"GitHub payload requires {field} list")
+        page_total = _non_negative_int(payload.get("total_count"), name=f"{field} total_count")
+        if expected_total is None:
+            expected_total = page_total
+        elif page_total != expected_total:
+            raise ValueError(f"GitHub {field} total_count changed during pagination")
         records.extend(_require_mapping(record, name=field) for record in collection)
         source_urls.append(page.source_url)
         url = page.next_url
+    if expected_total is None:
+        raise ValueError(f"GitHub {field} acquisition fetched no pages")
+    if len(records) != expected_total:
+        raise ValueError(
+            f"GitHub {field} total_count={expected_total} but acquired {len(records)} {field}"
+        )
     return records, source_urls
 
 
@@ -231,6 +243,12 @@ def _require_mapping(value: object, *, name: str) -> Mapping[str, Any]:
 def _positive_int(value: object, *, name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < 1:
         raise ValueError(f"GitHub {name} must be a positive integer")
+    return value
+
+
+def _non_negative_int(value: object, *, name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+        raise ValueError(f"GitHub {name} must be a non-negative integer")
     return value
 
 
