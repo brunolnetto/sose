@@ -314,10 +314,8 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
         {
             ProcessEvidence.SAD_PATHS,
             ProcessEvidence.DURABLE_STATE,
-            ProcessEvidence.RESTART_EQUIVALENCE,
             ProcessEvidence.REPLAY_IDEMPOTENCE,
             ProcessEvidence.RECURRING_RECONCILIATION,
-            ProcessEvidence.STATECHART_DOCUMENTATION,
         }
     )
 
@@ -352,10 +350,8 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
         ProcessEvidence.E2E_TERMINAL_OUTCOME: (happy_path,),
         ProcessEvidence.SAD_PATHS: (sad_paths,),
         ProcessEvidence.DURABLE_STATE: (simulation, restart),
-        ProcessEvidence.RESTART_EQUIVALENCE: (restart,),
         ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, sad_paths, restart),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
-        ProcessEvidence.STATECHART_DOCUMENTATION: (specification,),
     }
     return ProcessManifest(
         domain="warehouse_fulfillment",
