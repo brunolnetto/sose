@@ -32,6 +32,17 @@ def _manifest(level: ProcessMaturity) -> ProcessManifest:
     )
 
 
+def test_manifest_requires_registered_runtime_baseline() -> None:
+    try:
+        ProcessManifest(domain="example", evidence=frozenset())
+    except ValueError as exc:
+        message = str(exc)
+    else:  # pragma: no cover - contract guard
+        raise AssertionError("manifest accepted evidence below PC0")
+
+    assert "PC0" in message
+
+
 def test_maturity_is_derived_from_cumulative_evidence() -> None:
     for level in ProcessMaturity:
         assert _manifest(level).maturity is level
