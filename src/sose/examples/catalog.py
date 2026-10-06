@@ -10,6 +10,7 @@ from sose.examples.subscription_saas.definition import definition as subscriptio
 from sose.examples.telecom.definition import definition as telecom
 from sose.examples.transit.definition import definition as transit
 from sose.examples.warehouse_fulfillment.definition import definition as warehouse_fulfillment
+from sose.examples.warehouse_management.definition import definition as warehouse_management
 from sose.examples.aviation.definition import definition as aviation
 from sose.examples.cards_payments.definition import definition as cards_payments
 from sose.examples.energy_utilities.definition import definition as energy_utilities
@@ -42,6 +43,7 @@ def builtin_catalog() -> DomainCatalog:
     catalog.register(telecom)
     catalog.register(transit)
     catalog.register(warehouse_fulfillment)
+    catalog.register(warehouse_management)
     catalog.register(aviation)
     catalog.register(cards_payments)
     catalog.register(energy_utilities)

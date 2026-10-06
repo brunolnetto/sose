@@ -9,7 +9,6 @@ from tests.support.behavioral_conformance import assert_restart_equivalent
 CANONICALS = builtin_catalog().names(kind="canonical")
 
 
-
 @pytest.mark.parametrize("name", CANONICALS)
 def test_continuous_and_restarted_execution_are_equivalent(tmp_path, name):
     assert_restart_equivalent(
@@ -26,11 +25,12 @@ def test_catalog_classifies_canonicals_without_changing_default_listing():
         "producer_consumer", "sleeping_barber", "dining_philosophers",
         "readers_writers", "job_shop",
     }
-    assert len(catalog.names(kind="domain")) == 22
-    assert len(catalog.names()) == 27
+    assert len(catalog.names(kind="domain")) == 23
+    assert len(catalog.names()) == 28
     assert set(catalog.names(kind="canonical")).isdisjoint(
         catalog.names(kind="domain")
     )
+
 
 @pytest.mark.parametrize("restart_at", [(1,), (3,), (1, 3)])
 @pytest.mark.parametrize("name", CANONICALS)

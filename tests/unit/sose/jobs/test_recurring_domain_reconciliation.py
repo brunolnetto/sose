@@ -28,6 +28,7 @@ def _job(domain: str, job_id: str) -> SimulationJob:
         "logistics",
         "telecom",
         "warehouse_fulfillment",
+        "warehouse_management",
         "subscription_saas",
     ],
 )
@@ -104,6 +105,26 @@ def test_warehouse_recurring_job_reconciles_available_inventory_to_shipment():
 
     assert result.logical_tick == 1
     assert order.state == "shipped"
+
+
+def test_warehouse_management_recurring_job_progresses_physical_transfer():
+    job = _job("warehouse_management", "warehouse-management-recurring")
+    state = job.initialize()
+
+    for index in range(4):
+        job.run_tick(trigger_id=f"warehouse-management-{index + 1}")
+
+    shipment = job.persistence.entity(
+        "warehouse_management_shipment",
+        state.bootstrap_state.shipment_id,
+    )
+    destination_stock = job.persistence.entity(
+        "warehouse_management_stock",
+        state.bootstrap_state.destination_stock_id,
+    )
+
+    assert shipment.state == "completed"
+    assert destination_stock.attributes["on_hand"] == pytest.approx(8.0)
 
 
 def test_subscription_recurring_job_applies_future_plan_change_on_tick_boundary():
