@@ -8,12 +8,24 @@ import pytest
 from sose.organizational.prospective_stage1_acquisition_runner_v2 import run_stage1_acquisition_v2
 
 
+REGISTERED_AT = datetime(2026, 10, 6, 14, 44, 13, tzinfo=timezone.utc)
+
+
 class _FakeClient:
     pass
 
 
-def test_orchestration_acquires_then_advances_initial_tranche(tmp_path: Path) -> None:
-    protocol = tmp_path / "protocol.json"
+def _bind(observed: list[tuple[str, dict[str, object]]]):
+    def bind(**kwargs: object) -> object:
+        observed.append(("bind", kwargs))
+        Path(kwargs["output_path"]).write_text("{\"bound\":true}\n", encoding="utf-8")
+        return object()
+
+    return bind
+
+
+def test_orchestration_binds_then_acquires_then_advances_initial_tranche(tmp_path: Path) -> None:
+    protocol = tmp_path / "protocol-document.json"
     protocol.write_text("{}", encoding="utf-8")
     observed: list[tuple[str, dict[str, object]]] = []
 
@@ -36,34 +48,42 @@ def test_orchestration_acquires_then_advances_initial_tranche(tmp_path: Path) ->
         repository="brunolnetto/sose",
         pr_numbers=(302, 303, 304),
         captured_at=datetime(2026, 10, 6, 18, 45, tzinfo=timezone.utc),
-        protocol_path=protocol,
+        protocol_document_path=protocol,
+        registration_merged_at=REGISTERED_AT,
         output_dir=tmp_path / "out",
         client=_FakeClient(),
+        bind_protocol=_bind(observed),
         acquire_batch=acquire,
         advance_files=advance,
     )
 
+    assert result.protocol_path.name == "bound-protocol.json"
     assert result.tranche_path.name == "tranche-acquisition.json"
     assert result.cumulative_acquisition_path.name == "cumulative-acquisition.json"
     assert result.state_path.name == "prospective-state.json"
     assert result.checkpoint_path.name == "stage1-readiness.json"
-    assert [name for name, _ in observed] == ["acquire", "advance"]
-    assert observed[0][1]["repository"] == "brunolnetto/sose"
-    assert observed[0][1]["pr_numbers"] == (302, 303, 304)
-    assert observed[0][1]["output_path"] == result.tranche_path
-    assert observed[1][1]["tranche_acquisition_path"] == result.tranche_path
-    assert observed[1][1]["previous_acquisition_path"] is None
-    assert observed[1][1]["previous_state_path"] is None
+    assert [name for name, _ in observed] == ["bind", "acquire", "advance"]
+    assert observed[0][1]["protocol_document_path"] == protocol
+    assert observed[0][1]["registration_merged_at"] == REGISTERED_AT
+    assert observed[0][1]["output_path"] == result.protocol_path
+    assert observed[1][1]["repository"] == "brunolnetto/sose"
+    assert observed[1][1]["pr_numbers"] == (302, 303, 304)
+    assert observed[2][1]["protocol_path"] == result.protocol_path
+    assert observed[2][1]["tranche_acquisition_path"] == result.tranche_path
 
 
 def test_orchestration_passes_previous_stage1_artifacts_as_a_pair(tmp_path: Path) -> None:
-    protocol = tmp_path / "protocol.json"
+    protocol = tmp_path / "protocol-document.json"
     protocol.write_text("{}", encoding="utf-8")
     previous_acquisition = tmp_path / "previous-acquisition.json"
     previous_state = tmp_path / "previous-state.json"
     previous_acquisition.write_text("previous acquisition", encoding="utf-8")
     previous_state.write_text("previous state", encoding="utf-8")
     observed: dict[str, object] = {}
+
+    def bind(**kwargs: object) -> object:
+        Path(kwargs["output_path"]).write_text("bound", encoding="utf-8")
+        return object()
 
     def acquire(**kwargs: object) -> object:
         Path(kwargs["output_path"]).write_text("tranche", encoding="utf-8")
@@ -77,17 +97,49 @@ def test_orchestration_passes_previous_stage1_artifacts_as_a_pair(tmp_path: Path
         repository="brunolnetto/sose",
         pr_numbers=(318, 320),
         captured_at=datetime(2026, 10, 6, 19, 0, tzinfo=timezone.utc),
-        protocol_path=protocol,
+        protocol_document_path=protocol,
+        registration_merged_at=REGISTERED_AT,
         output_dir=tmp_path / "out",
         client=_FakeClient(),
         previous_acquisition_path=previous_acquisition,
         previous_state_path=previous_state,
+        bind_protocol=bind,
         acquire_batch=acquire,
         advance_files=advance,
     )
 
     assert observed["previous_acquisition_path"] == previous_acquisition
     assert observed["previous_state_path"] == previous_state
+
+
+def test_binding_failure_happens_before_acquisition(tmp_path: Path) -> None:
+    protocol = tmp_path / "protocol-document.json"
+    protocol.write_text("{}", encoding="utf-8")
+    acquired = False
+
+    def acquire(**_: object) -> object:
+        nonlocal acquired
+        acquired = True
+        return object()
+
+    def bind(**_: object) -> object:
+        raise ValueError("invalid protocol binding")
+
+    with pytest.raises(ValueError, match="invalid protocol binding"):
+        run_stage1_acquisition_v2(
+            repository="brunolnetto/sose",
+            pr_numbers=(302, 303),
+            captured_at=datetime(2026, 10, 6, 19, 0, tzinfo=timezone.utc),
+            protocol_document_path=protocol,
+            registration_merged_at=REGISTERED_AT,
+            output_dir=tmp_path / "out",
+            client=_FakeClient(),
+            bind_protocol=bind,
+            acquire_batch=acquire,
+            advance_files=lambda **_: object(),
+        )
+
+    assert acquired is False
 
 
 def test_orchestration_rejects_unpaired_previous_artifacts_before_acquisition(tmp_path: Path) -> None:
@@ -103,7 +155,8 @@ def test_orchestration_rejects_unpaired_previous_artifacts_before_acquisition(tm
             repository="brunolnetto/sose",
             pr_numbers=(302, 303),
             captured_at=datetime(2026, 10, 6, 19, 0, tzinfo=timezone.utc),
-            protocol_path=tmp_path / "protocol.json",
+            protocol_document_path=tmp_path / "protocol.json",
+            registration_merged_at=REGISTERED_AT,
             output_dir=tmp_path / "out",
             client=_FakeClient(),
             previous_acquisition_path=tmp_path / "previous.json",
@@ -117,8 +170,6 @@ def test_orchestration_rejects_unpaired_previous_artifacts_before_acquisition(tm
 def test_orchestration_rejects_missing_previous_artifacts_before_acquisition(tmp_path: Path) -> None:
     protocol = tmp_path / "protocol.json"
     protocol.write_text("{}", encoding="utf-8")
-    previous_acquisition = tmp_path / "missing-acquisition.json"
-    previous_state = tmp_path / "missing-state.json"
     called = False
 
     def acquire(**_: object) -> object:
@@ -131,11 +182,12 @@ def test_orchestration_rejects_missing_previous_artifacts_before_acquisition(tmp
             repository="brunolnetto/sose",
             pr_numbers=(318, 320),
             captured_at=datetime(2026, 10, 6, 19, 0, tzinfo=timezone.utc),
-            protocol_path=protocol,
+            protocol_document_path=protocol,
+            registration_merged_at=REGISTERED_AT,
             output_dir=tmp_path / "out",
             client=_FakeClient(),
-            previous_acquisition_path=previous_acquisition,
-            previous_state_path=previous_state,
+            previous_acquisition_path=tmp_path / "missing-acquisition.json",
+            previous_state_path=tmp_path / "missing-state.json",
             acquire_batch=acquire,
             advance_files=lambda **_: object(),
         )
@@ -143,7 +195,7 @@ def test_orchestration_rejects_missing_previous_artifacts_before_acquisition(tmp
     assert called is False
 
 
-def test_orchestration_rejects_naive_capture_time_before_network_access(tmp_path: Path) -> None:
+def test_orchestration_rejects_naive_timestamps_before_network_access(tmp_path: Path) -> None:
     called = False
 
     def acquire(**_: object) -> object:
@@ -151,25 +203,32 @@ def test_orchestration_rejects_naive_capture_time_before_network_access(tmp_path
         called = True
         return object()
 
-    with pytest.raises(ValueError, match="timezone-aware"):
-        run_stage1_acquisition_v2(
-            repository="brunolnetto/sose",
-            pr_numbers=(302, 303),
-            captured_at=datetime(2026, 10, 6, 19, 0),
-            protocol_path=tmp_path / "protocol.json",
-            output_dir=tmp_path / "out",
-            client=_FakeClient(),
-            acquire_batch=acquire,
-            advance_files=lambda **_: object(),
-        )
+    for captured_at, registered_at in (
+        (datetime(2026, 10, 6, 19, 0), REGISTERED_AT),
+        (datetime(2026, 10, 6, 19, 0, tzinfo=timezone.utc), datetime(2026, 10, 6, 14, 44, 13)),
+    ):
+        with pytest.raises(ValueError, match="timezone-aware"):
+            run_stage1_acquisition_v2(
+                repository="brunolnetto/sose",
+                pr_numbers=(302, 303),
+                captured_at=captured_at,
+                protocol_document_path=tmp_path / "protocol.json",
+                registration_merged_at=registered_at,
+                output_dir=tmp_path / "out",
+                client=_FakeClient(),
+                acquire_batch=acquire,
+                advance_files=lambda **_: object(),
+            )
 
     assert called is False
 
 
-def test_orchestration_refuses_existing_output_directory_files_before_acquisition(tmp_path: Path) -> None:
+def test_orchestration_refuses_existing_output_files_before_acquisition(tmp_path: Path) -> None:
+    protocol = tmp_path / "protocol.json"
+    protocol.write_text("{}", encoding="utf-8")
     out = tmp_path / "out"
     out.mkdir()
-    (out / "tranche-acquisition.json").write_text("old", encoding="utf-8")
+    (out / "bound-protocol.json").write_text("old", encoding="utf-8")
     called = False
 
     def acquire(**_: object) -> object:
@@ -177,12 +236,13 @@ def test_orchestration_refuses_existing_output_directory_files_before_acquisitio
         called = True
         return object()
 
-    with pytest.raises(FileExistsError, match="tranche-acquisition.json"):
+    with pytest.raises(FileExistsError, match="bound-protocol.json"):
         run_stage1_acquisition_v2(
             repository="brunolnetto/sose",
             pr_numbers=(302, 303),
             captured_at=datetime(2026, 10, 6, 19, 0, tzinfo=timezone.utc),
-            protocol_path=tmp_path / "protocol.json",
+            protocol_document_path=protocol,
+            registration_merged_at=REGISTERED_AT,
             output_dir=out,
             client=_FakeClient(),
             acquire_batch=acquire,
