@@ -139,6 +139,8 @@ Executable recovery boundaries:
 3. ReconciliationItem(unmatched) before Adjustment creation;
 4. controlled reopen with fresh close task.
 
+The canonical close-schedule restart test compares the complete durable continuation snapshot after the continuous and rebuilt executions converge. This includes entities, events, simulation position, ScheduledWork and commands, scenario state, Resource state, Store/Container state, preemptive-resource state, job state, and sink/domain delivery checkpoints when present. Backend-native object identity is excluded.
+
 ## 10. Scenario specification
 
 `posting_outage_scenario` temporarily disables posting availability.
@@ -161,7 +163,7 @@ Neither scenario mutates business state directly.
 | resource capacity | posting/reconciliation/close Resources | implemented |
 | legal/illegal prerequisites | invariant tests | implemented |
 | posting/close scenarios | scenario tests | implemented |
-| restart: close schedule | restart-equivalence test | implemented |
+| restart: close schedule | full operational-snapshot equivalence test | implemented |
 | restart: close capacity | ResourceDemand rebuild test | implemented |
 | restart: missing adjustment | causal recovery test | implemented |
 | reopen / reclose | reopen test | implemented |
@@ -171,3 +173,25 @@ Neither scenario mutates business state directly.
 Current status: **Reference implementation**.
 
 Promotion is based on executable evidence for journal posting, reconciliation and adjustment causality, durable close scheduling, posting/reconciliation/close capacity, controlled reopening, finite scenario recovery, illegal prerequisite rejection, post-commit cleanup recovery, and restart equivalence across ScheduledWork, ResourceDemand, and missing-adjustment boundaries.
+
+## 12. Process-canonical audit
+
+Current audited maturity: **PC4 — Durable**.
+
+The PC0–PC4 chain is backed by executable provenance. The restart-equivalence gate no longer compares only the final period/task state: continuous execution and rebuilt execution must produce equal `operational_snapshot()` output, using the same complete durable-continuation vocabulary as the repository recovery and chaos gates. Replay safety is independently exercised by idempotent terminal journal/reconciliation handling, deterministic adjustment creation, and re-applying an already-posted adjustment without duplicating events. Finite posting outages and close-team shortages demonstrate deferred progress and recovery without leaking resource ownership or mutating lifecycle state directly.
+
+For process completion, the audited terminal outcome is `close_task_completed`. `AccountingPeriod(closed)` is intentionally not treated as a final lifecycle state because the executable StateChart permits controlled reopen/reclose; the completed CloseTask is the durable terminal occurrence of one close cycle.
+
+Above PC4, the current specification supports one PC5 claim:
+
+- `STATECHART_DOCUMENTATION` — section 3 documents JournalEntry, ReconciliationItem, Adjustment, CloseTask, and AccountingPeriod lifecycles.
+
+The remaining PC5 gaps are exactly:
+
+- `KPIS`;
+- `ERD`;
+- `PROCESS_DIAGRAM`;
+- `PROJECTION_CONTRACT`;
+- `CONFIGURATION_DOCUMENTATION`.
+
+Section 4 describes durable ownership, but it is not an explicit entity-relationship diagram and is therefore not credited as `ERD`. The indented state/process flows are also not credited as `PROCESS_DIAGRAM`: the PC5 contract requires a normative end-to-end Mermaid diagram. The current durable model likewise does not by itself define a consumer projection contract, and the presence of configurable runtime fields is not equivalent to documented configuration semantics.
