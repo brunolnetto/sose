@@ -48,7 +48,7 @@ def _runs_url(page: int = 1) -> str:
 
 
 def _commit_pulls_url(sha: str) -> str:
-    return f"https://api.github.com/repos/{REPOSITORY}/commits/{sha}/pulls"
+    return f"https://api.github.com/repos/{REPOSITORY}/commits/{sha}/pulls?per_page=100&page=1"
 
 
 def _jobs_url(run_id: int, page: int = 1) -> str:
