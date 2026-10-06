@@ -9,8 +9,7 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from .model_spec import ModelSpec
-from .prospective_stage1_v2 import ProspectiveStage1ReadinessCheckpointV2
-from .prospective_state_v2 import (
+from .prospective_stage1_v2 import (\n    ProspectiveStage1ReadinessCheckpointV2,\n    build_stage1_readiness_checkpoint_v2,\n)\nfrom .prospective_state_v2 import (
     ProspectiveEvidenceStateV2,
     advance_prospective_evidence_state_v2,
 )
@@ -131,16 +130,16 @@ def freeze_prospective_model_v2(
 
     if not readiness.freeze_allowed:
         raise ValueError("Stage-1 readiness does not permit model freeze")
-    if (
-        readiness.state_hash != state.state_hash
-        or readiness.protocol_hash != state.protocol_hash
-        or readiness.snapshot_hash != state.snapshot_hash
-    ):
-        raise ValueError("readiness checkpoint does not match the exact training state")
+    expected_readiness = build_stage1_readiness_checkpoint_v2(state)
+    if readiness.checkpoint_hash != expected_readiness.checkpoint_hash:
+        raise ValueError("supplied checkpoint is not the exact readiness checkpoint derived from state")
     if state.cohort.model_frozen_at is not None:
         raise ValueError("prospective model is already frozen")
     if state.cohort.holdout_keys or state.cohort.post_holdout_keys:
         raise ValueError("model freeze cannot consume holdout evidence")
+    latest_collected_at = max(record.merged_at for record in state.snapshot.records)
+    if frozen_at < latest_collected_at:
+        raise ValueError("frozen_at cannot predate already-collected evidence")
 
     artifact = ProspectiveModelFreezeArtifactV2(
         readiness_checkpoint_hash=readiness.checkpoint_hash,
@@ -148,7 +147,7 @@ def freeze_prospective_model_v2(
         protocol_hash=state.protocol_hash,
         snapshot_hash=state.snapshot_hash,
         frozen_at=frozen_at,
-        model_spec=model_spec,
+        model_spec=model_spec.canonical_payload(),
         model_spec_hash=model_spec.model_spec_hash,
         simulation_seed=simulation_seed,
         acceptance_criteria=acceptance_criteria,
