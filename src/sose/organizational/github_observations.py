@@ -41,12 +41,16 @@ def normalize_github_pr_trace(
         staged.append((event.occurred_at, priority, source_order, event))
         source_order += 1
 
+    opened_metadata: dict[str, object] = {}
+    if isinstance(pull_request.get("author_is_bot"), bool):
+        opened_metadata["author_is_bot"] = pull_request["author_is_bot"]
     add(
         ObservedPREvent(
             source_event_id=f"github:pr:{pr_number}:opened",
             kind=ObservedEventKind.OPENED,
             occurred_at=opened_at,
             actor_key=_login(pull_request.get("user")),
+            metadata=opened_metadata,
         ),
         priority=0,
     )
@@ -104,6 +108,14 @@ def normalize_github_pr_trace(
         gate_evidence = job.get("gate_evidence_url")
         is_gate = job.get("is_gate") is True
         common_metadata: dict[str, object] = {"name": job_name, "ci_job_id": job_id}
+        for source_key, metadata_key in (
+            ("workflow_id", "workflow_id"),
+            ("run_id", "run_id"),
+            ("run_attempt", "run_attempt"),
+        ):
+            value = job.get(source_key)
+            if isinstance(value, int) and not isinstance(value, bool):
+                common_metadata[metadata_key] = value
         if is_gate and isinstance(gate_evidence, str) and gate_evidence.strip():
             common_metadata.update(
                 {
