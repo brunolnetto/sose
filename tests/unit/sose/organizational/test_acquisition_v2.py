@@ -7,6 +7,7 @@ import pytest
 from sose.organizational.acquisition_v2 import (
     GitHubEndpointCaptureV2,
     GitHubPRAcquisitionManifestV2,
+    GitHubPRAcquisitionSnapshotV2,
     build_complete_github_pr_evidence_v2,
     build_evidence_snapshot_from_acquisitions_v2,
 )
@@ -173,6 +174,53 @@ def test_manifest_canonicalizes_capture_instant_to_utc() -> None:
     )
 
     assert utc.canonical_payload() == local.canonical_payload()
+
+
+def test_workflow_jobs_must_belong_to_acquired_runs() -> None:
+    workflow_runs = ({"id": 10, "workflow_id": 20, "run_attempt": 1},)
+    workflow_jobs = (
+        {
+            "id": 30,
+            "workflow_id": 20,
+            "run_id": 999,
+            "run_attempt": 1,
+            "name": "pytest",
+            "started_at": "2026-10-06T14:50:00Z",
+            "completed_at": "2026-10-06T14:51:00Z",
+            "conclusion": "success",
+            "url": "https://api.github.com/example/jobs/30",
+        },
+    )
+
+    with pytest.raises(ValueError, match="workflow job run_id=999 was not acquired"):
+        build_complete_github_pr_evidence_v2(
+            manifest=_manifest(runs=1, jobs=1),
+            pull_request=_pull_request(),
+            workflow_runs=workflow_runs,
+            workflow_jobs=workflow_jobs,
+        )
+
+
+def test_acquisition_snapshot_preserves_completeness_provenance() -> None:
+    first = build_complete_github_pr_evidence_v2(
+        manifest=_manifest(pr_number=302),
+        pull_request=_pull_request(302),
+    )
+    second_pr = _pull_request(303)
+    second_pr["created_at"] = "2026-10-06T14:54:57Z"
+    second_pr["merged_at"] = "2026-10-06T15:16:26Z"
+    second = build_complete_github_pr_evidence_v2(
+        manifest=_manifest(pr_number=303),
+        pull_request=second_pr,
+    )
+
+    acquisition = GitHubPRAcquisitionSnapshotV2(artifacts=(second, first))
+
+    assert tuple(artifact.evidence.pr_number for artifact in acquisition.artifacts) == (302, 303)
+    assert acquisition.to_evidence_snapshot().snapshot_hash == build_evidence_snapshot_from_acquisitions_v2(
+        (first, second)
+    ).snapshot_hash
+    assert len(acquisition.acquisition_hash) == 64
 
 
 def test_snapshot_is_derived_only_from_complete_acquisition_artifacts() -> None:
