@@ -127,6 +127,7 @@ def _preflight_publications(publications: tuple[tuple[Path, str], ...]) -> None:
 def _publish_exclusive(output_file: Path, serialized: str) -> None:
     output_file.parent.mkdir(parents=True, exist_ok=True)
     if output_file.exists():
+        _accept_identical_or_raise(output_file, serialized)
         return
 
     descriptor, temporary_name = tempfile.mkstemp(
@@ -143,9 +144,12 @@ def _publish_exclusive(output_file: Path, serialized: str) -> None:
         try:
             os.link(temporary, output_file)
         except FileExistsError:
-            if output_file.read_text(encoding="utf-8") != serialized:
-                raise FileExistsError(
-                    f"output already contains a different artifact: {output_file}"
-                )
+            _accept_identical_or_raise(output_file, serialized)
     finally:
         temporary.unlink(missing_ok=True)
+
+
+def _accept_identical_or_raise(output_file: Path, serialized: str) -> None:
+    if output_file.read_text(encoding="utf-8") == serialized:
+        return
+    raise FileExistsError(f"output already contains a different artifact: {output_file}")
