@@ -17,6 +17,9 @@ PROTOCOL = DOCS / "pr-review-validation-preregistration-v1.json"
 SNAPSHOT = DOCS / "pr-review-validation-source-v1.json"
 PLAN = DOCS / "pr-review-validation-plan-v1.json"
 RESULT = DOCS / "pr-review-validation-result-v1.json"
+EXPECTED_SNAPSHOT_HASH = "339c5df588e5afac6788712ba21bbb516f8569dcd139e49cfbde4a325ae140b5"
+EXPECTED_PLAN_HASH = "dc886cf185f51e675542fbba1111c19bb421cdb0c755eecf4a74056c4ba77142"
+EXPECTED_EXECUTION_HASH = "406143ff97a17cf89b78ac92e2d081d7866d361e388055c106a5df8c62345d2d"
 
 
 def test_frozen_validation_artifacts_execute_protocol_without_retuning(tmp_path: Path) -> None:
@@ -29,6 +32,9 @@ def test_frozen_validation_artifacts_execute_protocol_without_retuning(tmp_path:
         RESULT.read_text(encoding="utf-8")
     )
 
+    assert snapshot.snapshot_hash == EXPECTED_SNAPSHOT_HASH
+    assert plan.plan_hash == EXPECTED_PLAN_HASH
+    assert persisted.execution_hash == EXPECTED_EXECUTION_HASH
     assert [record.pr_number for record in snapshot.records] == protocol["source_pr_numbers"]
     assert plan.holdout_fraction == protocol["holdout_fraction"]
     assert plan.seed == protocol["seed"]
@@ -51,6 +57,7 @@ def test_frozen_validation_artifacts_execute_protocol_without_retuning(tmp_path:
     )
 
     assert rerun == persisted
+    assert rerun.execution_hash == EXPECTED_EXECUTION_HASH
     assert output.read_bytes() == RESULT.read_bytes()
 
 
