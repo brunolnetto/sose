@@ -47,10 +47,6 @@ def run_stage1_acquisition_v2(
     if captured_at.tzinfo is None or captured_at.utcoffset() is None:
         raise ValueError("captured_at must be timezone-aware")
 
-    protocol = Path(protocol_path)
-    if not protocol.is_file():
-        raise FileNotFoundError(f"protocol artifact not found: {protocol}")
-
     destination = Path(output_dir)
     tranche_path = destination / "tranche-acquisition.json"
     cumulative_path = destination / "cumulative-acquisition.json"
@@ -58,6 +54,11 @@ def run_stage1_acquisition_v2(
     checkpoint_path = destination / "stage1-readiness.json"
     _preflight_outputs((tranche_path, cumulative_path, state_path, checkpoint_path))
 
+    protocol = Path(protocol_path)
+    if not protocol.is_file():
+        raise FileNotFoundError(f"protocol artifact not found: {protocol}")
+
+    destination.mkdir(parents=True, exist_ok=True)
     acquire_batch(
         repository=repository,
         pr_numbers=pr_numbers,
