@@ -293,11 +293,14 @@ def evaluate_empirical_eligibility(
 
 
 class PRReviewEmpiricalPilotResult(BaseModel):
-    """Auditable empirical-pilot result bound to source, split, model and validation contract."""
+    """Hash-addressed empirical pilot result bound to source, execution and validation inputs."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     snapshot_hash: NonBlankString
+    holdout_fraction: float = Field(gt=0.0, lt=1.0, allow_inf_nan=False)
+    assumptions: PRReviewAssumptions
+    seed: int
     train_dataset_hash: NonBlankString
     holdout_dataset_hash: NonBlankString
     train_keys: tuple[ObservedPRKey, ...]
@@ -306,6 +309,22 @@ class PRReviewEmpiricalPilotResult(BaseModel):
     validation_criteria: LeadTimeValidationCriteria
     validation_assessment: LeadTimeValidationAssessment
     prediction: PRReviewHeldoutPrediction
+
+    def canonical_payload(self) -> dict[str, object]:
+        return self.model_dump(mode="json")
+
+    def canonical_json(self) -> str:
+        return json.dumps(
+            self.canonical_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        )
+
+    @property
+    def artifact_hash(self) -> str:
+        return sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
 
 def run_pr_review_empirical_pilot(
@@ -331,6 +350,9 @@ def run_pr_review_empirical_pilot(
     )
     return PRReviewEmpiricalPilotResult(
         snapshot_hash=snapshot.snapshot_hash,
+        holdout_fraction=holdout_fraction,
+        assumptions=assumptions,
+        seed=seed,
         train_dataset_hash=split.train.dataset_hash,
         holdout_dataset_hash=split.holdout.dataset_hash,
         train_keys=split.train.keys,
