@@ -32,7 +32,7 @@ def test_process_audit_exclusions_are_explicit_catalog_domains() -> None:
     assert PROCESS_AUDIT_EXCLUDED_DOMAINS <= catalog_domains
 
 
-def test_warehouse_fulfillment_audit_stops_at_pc2_and_preserves_higher_evidence() -> None:
+def test_warehouse_fulfillment_audit_stops_at_pc2_and_preserves_audited_higher_evidence() -> None:
     manifest = builtin_process_manifests()["warehouse_fulfillment"]
 
     assert manifest.assessment_complete
@@ -60,10 +60,15 @@ def test_warehouse_fulfillment_audit_stops_at_pc2_and_preserves_higher_evidence(
     )
 
     assert ProcessEvidence.DURABLE_STATE in manifest.evidence
-    assert ProcessEvidence.RESTART_EQUIVALENCE in manifest.evidence
     assert ProcessEvidence.REPLAY_IDEMPOTENCE in manifest.evidence
     assert ProcessEvidence.RECURRING_RECONCILIATION in manifest.evidence
-    assert ProcessEvidence.STATECHART_DOCUMENTATION in manifest.evidence
+
+    # Recovery after rebuild is useful evidence, but the current test does not
+    # compare a continuous baseline with a rebuilt execution. Do not overclaim it.
+    assert ProcessEvidence.RESTART_EQUIVALENCE not in manifest.evidence
+    # The prose lifecycle summary omits real cancellation transitions, so it is
+    # not yet complete statechart documentation under the PC5 contract.
+    assert ProcessEvidence.STATECHART_DOCUMENTATION not in manifest.evidence
 
     assert ProcessEvidence.FAULT_RECOVERY not in manifest.evidence
     assert ProcessEvidence.KPIS not in manifest.evidence
