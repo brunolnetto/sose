@@ -29,6 +29,7 @@ EXPECTED = {
     "telecom",
     "transit",
     "warehouse_fulfillment",
+    "warehouse_management",
     "tutorial_job",
 }
 
@@ -36,7 +37,7 @@ EXPECTED = {
 def test_builtin_catalog_covers_every_promoted_reference_plus_tutorial():
     catalog = builtin_catalog()
     assert set(catalog.names()) == EXPECTED
-    assert len(catalog.names()) == 27
+    assert len(catalog.names()) == 28
 
 
 def test_every_builtin_domain_has_serializable_default_config_and_builds_runtime():
@@ -67,6 +68,7 @@ def test_final_reference_batch_is_parameterized():
         "telecom",
         "transit",
         "warehouse_fulfillment",
+        "warehouse_management",
     ):
         definition = catalog.get(name)
         config = definition.parse_config(
