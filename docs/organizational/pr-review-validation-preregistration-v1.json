@@ -1,0 +1,51 @@
+{
+  "protocol_version": "pr-review-validation/v1",
+  "study_type": "retrospective_preanalysis",
+  "repository": "brunolnetto/sose",
+  "source_pr_numbers": [
+    265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278,
+    279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290
+  ],
+  "holdout_fraction": 0.46153846153846156,
+  "expected_train_pr_numbers": [
+    265, 266, 267, 268, 269, 270, 271, 272, 273, 274, 275, 276, 277, 278
+  ],
+  "expected_holdout_pr_numbers": [
+    279, 280, 281, 282, 283, 284, 285, 286, 287, 288, 289, 290
+  ],
+  "expected_purged_pr_numbers": [],
+  "seed": 20261005,
+  "assumptions": {
+    "reviewer_count": 1,
+    "mean_review_time_seconds": 300.0,
+    "mean_revision_time_seconds": 180.0,
+    "rework_probability": 0.15,
+    "fallback_ci_time_seconds": 120.0
+  },
+  "validation_criteria": {
+    "max_abs_mean_difference_seconds": 1798.5,
+    "max_abs_median_difference_seconds": 899.25,
+    "max_abs_p90_difference_seconds": 3597.0,
+    "max_ecdf_distance": 0.35
+  },
+  "eligibility_criteria": {
+    "min_pr_count": 26,
+    "min_preterminal_ci_pr_fraction": 0.0,
+    "min_identified_gate_pr_fraction": 0.0
+  },
+  "source_contract": {
+    "item_opened_at": "GitHub pull request created_at",
+    "item_terminal_at": "GitHub pull request merged_at",
+    "terminal_outcome": "merged only",
+    "workflow_jobs_required": false,
+    "review_events_required": false
+  },
+  "analysis_rules": {
+    "exclude_holdout_items_posthoc": false,
+    "retune_assumptions_after_holdout": false,
+    "retune_validation_criteria_after_holdout": false,
+    "retain_outliers": true,
+    "report_failed_gate": true,
+    "composite_fit_score": false
+  }
+}
