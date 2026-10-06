@@ -38,21 +38,25 @@ No holdout item may be removed after seeing prediction error. In particular, lon
 
 ## Data contract
 
-For this study only the following item-level evidence is required:
+For this study the analytical snapshot contains **only** the following item-level evidence:
 
 - `created_at` → item opening;
 - `merged_at` → terminal outcome;
 - merged PRs only.
 
-Workflow jobs and review-event payloads are not required for eligibility in this study. Therefore:
+Workflow-job and review-event payloads MUST NOT be included in the v1 analytical snapshot, even if they are available from GitHub. This freezes the evidence path before execution and prevents optional gate evidence from changing the configured CI duration.
+
+Therefore:
 
 - reviewer service effort remains **Assumed**;
 - reviewer capacity remains **Assumed**;
 - rework probability remains **Assumed**;
-- CI gate duration remains **Assumed** unless independently identified gate provenance happens to exist;
+- CI duration is always the frozen **Assumed** fallback of `120 s` for this study;
 - no actor-time result may be presented as empirically calibrated.
 
-The eligibility gate therefore requires all 26 preregistered PRs but deliberately sets CI-coverage thresholds to zero. This is a lead-time validation decision, not evidence that CI or human mechanisms are observable.
+The eligibility gate requires all 26 preregistered PRs and deliberately sets CI-coverage thresholds to zero. Those zero thresholds do not authorize optional CI evidence: workflow jobs are prohibited by the source contract for this protocol version. This is a lead-time validation decision, not evidence that CI or human mechanisms are observable.
+
+A later protocol version may explicitly require independently identified gate provenance, but that would be a different study and MUST NOT be substituted into this v1 result.
 
 ## Frozen model assumptions
 
