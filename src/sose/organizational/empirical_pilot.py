@@ -14,6 +14,11 @@ from .heldout_prediction import (
     PRReviewHeldoutPrediction,
     predict_pr_review_holdout,
 )
+from .validation import (
+    LeadTimeValidationAssessment,
+    LeadTimeValidationCriteria,
+    assess_lead_time_validation,
+)
 
 
 NonBlankString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -288,7 +293,7 @@ def evaluate_empirical_eligibility(
 
 
 class PRReviewEmpiricalPilotResult(BaseModel):
-    """Auditable empirical-pilot result bound to source, split and model hashes."""
+    """Auditable empirical-pilot result bound to source, split, model and validation contract."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -298,6 +303,8 @@ class PRReviewEmpiricalPilotResult(BaseModel):
     train_keys: tuple[ObservedPRKey, ...]
     holdout_keys: tuple[ObservedPRKey, ...]
     purged_keys: tuple[ObservedPRKey, ...]
+    validation_criteria: LeadTimeValidationCriteria
+    validation_assessment: LeadTimeValidationAssessment
     prediction: PRReviewHeldoutPrediction
 
 
@@ -306,9 +313,10 @@ def run_pr_review_empirical_pilot(
     snapshot: GitHubPRObservationSnapshot,
     holdout_fraction: float,
     assumptions: PRReviewAssumptions,
+    validation_criteria: LeadTimeValidationCriteria,
     seed: int,
 ) -> PRReviewEmpiricalPilotResult:
-    """Run the first source-bound, leakage-free PR-review empirical pilot."""
+    """Run a source-bound pilot against validation criteria supplied before evaluation."""
 
     dataset = snapshot.to_dataset()
     split = dataset.chronological_holdout(holdout_fraction=holdout_fraction)
@@ -317,6 +325,10 @@ def run_pr_review_empirical_pilot(
         assumptions=assumptions,
         seed=seed,
     )
+    validation_assessment = assess_lead_time_validation(
+        validation=prediction.validation,
+        criteria=validation_criteria,
+    )
     return PRReviewEmpiricalPilotResult(
         snapshot_hash=snapshot.snapshot_hash,
         train_dataset_hash=split.train.dataset_hash,
@@ -324,5 +336,7 @@ def run_pr_review_empirical_pilot(
         train_keys=split.train.keys,
         holdout_keys=split.holdout.keys,
         purged_keys=split.purged_keys,
+        validation_criteria=validation_criteria,
+        validation_assessment=validation_assessment,
         prediction=prediction,
     )

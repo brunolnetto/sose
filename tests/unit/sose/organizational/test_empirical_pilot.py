@@ -12,6 +12,7 @@ from sose.organizational.empirical_pilot import (
 )
 from sose.organizational.heldout_prediction import PRReviewAssumptions
 from sose.organizational.model_spec import EvidenceClass
+from sose.organizational.validation import LeadTimeValidationCriteria
 
 
 UTC = timezone.utc
@@ -33,7 +34,7 @@ def _record(number: int, opened: datetime, merged: datetime) -> GitHubPRSourceRe
 
 
 def _snapshot() -> GitHubPRObservationSnapshot:
-    # Real merged PR lifecycle timestamps from the SOSE repository.  These records
+    # Real merged PR lifecycle timestamps from the SOSE repository. These records
     # intentionally contain item-level evidence only; they do not manufacture
     # reviewer effort, calendars, meetings, or context-switch time.
     return GitHubPRObservationSnapshot(
@@ -63,6 +64,15 @@ def _assumptions() -> PRReviewAssumptions:
     )
 
 
+def _criteria(*, limit_seconds: float = 100_000.0, max_ecdf: float = 1.0) -> LeadTimeValidationCriteria:
+    return LeadTimeValidationCriteria(
+        max_abs_mean_difference_seconds=limit_seconds,
+        max_abs_median_difference_seconds=limit_seconds,
+        max_abs_p90_difference_seconds=limit_seconds,
+        max_ecdf_distance=max_ecdf,
+    )
+
+
 def test_snapshot_is_hash_addressed_and_canonical() -> None:
     snapshot = _snapshot()
     reversed_snapshot = GitHubPRObservationSnapshot(
@@ -87,10 +97,12 @@ def test_snapshot_builds_terminal_observed_dataset_without_actor_inference() -> 
 
 def test_real_pr_pilot_uses_purged_temporal_holdout_and_binds_provenance() -> None:
     snapshot = _snapshot()
+    criteria = _criteria()
     result = run_pr_review_empirical_pilot(
         snapshot=snapshot,
         holdout_fraction=0.30,
         assumptions=_assumptions(),
+        validation_criteria=criteria,
         seed=20261005,
     )
 
@@ -108,6 +120,41 @@ def test_real_pr_pilot_uses_purged_temporal_holdout_and_binds_provenance() -> No
     assert result.prediction.evidence.ci_time is EvidenceClass.ASSUMED
     assert result.prediction.evidence.mean_review_time is EvidenceClass.ASSUMED
     assert result.prediction.evidence.rework_probability is EvidenceClass.ASSUMED
+    assert result.validation_criteria == criteria
+    assert result.validation_assessment.criteria_hash == criteria.criteria_hash
+    assert result.validation_assessment.observed_dataset_hash == result.holdout_dataset_hash
+    assert result.validation_assessment.passed
+
+
+def test_strict_preregistered_criteria_can_refute_pilot_without_hiding_prediction() -> None:
+    criteria = _criteria(limit_seconds=0.0, max_ecdf=0.0)
+    result = run_pr_review_empirical_pilot(
+        snapshot=_snapshot(),
+        holdout_fraction=0.30,
+        assumptions=_assumptions(),
+        validation_criteria=criteria,
+        seed=20261005,
+    )
+
+    assert not result.validation_assessment.passed
+    assert result.validation_assessment.criteria_hash == criteria.criteria_hash
+    assert len(result.prediction.simulated_lead_times_seconds) == 3
+    assert any(not check.passed for check in result.validation_assessment.checks)
+
+
+def test_empirical_pilot_is_deterministic_for_same_source_assumptions_criteria_and_seed() -> None:
+    kwargs = {
+        "snapshot": _snapshot(),
+        "holdout_fraction": 0.30,
+        "assumptions": _assumptions(),
+        "validation_criteria": _criteria(),
+        "seed": 20261005,
+    }
+
+    first = run_pr_review_empirical_pilot(**kwargs)
+    second = run_pr_review_empirical_pilot(**kwargs)
+
+    assert first == second
 
 
 def test_snapshot_rejects_duplicate_prs_and_non_terminal_or_naive_records() -> None:
