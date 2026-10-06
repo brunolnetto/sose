@@ -451,6 +451,10 @@ def builtin_process_manifests() -> dict[str, ProcessManifest]:
         for name in builtin_catalog().names(kind="domain")
         if name not in PROCESS_AUDIT_EXCLUDED_DOMAINS
     }
+    if "cards_payments" in manifests:
+        from .cards_payments.process_audit import process_manifest as cards_process_manifest
+
+        manifests["cards_payments"] = cards_process_manifest()
     if "logistics" in manifests:
         from .logistics.process_audit import process_manifest as logistics_process_manifest
 
