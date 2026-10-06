@@ -291,7 +291,15 @@ def _correlate_workflow_runs_to_pr(
                 first_url=first_url,
                 collection_name="commit pull associations",
             )
-            belongs = any(pull.get("number") == pr_number for pull in associated_pulls)
+            associated_numbers = {
+                _positive_int(pull.get("number"), name="associated pull request number")
+                for pull in associated_pulls
+            }
+            if len(associated_numbers) > 1:
+                raise ValueError(
+                    "ambiguous commit-to-PR association for workflow run head SHA"
+                )
+            belongs = associated_numbers == {pr_number}
             cached = (belongs, tuple(urls))
             association_cache[head_sha] = cached
 
