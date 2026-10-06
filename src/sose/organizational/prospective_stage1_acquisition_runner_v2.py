@@ -58,6 +58,14 @@ def run_stage1_acquisition_v2(
     if not protocol.is_file():
         raise FileNotFoundError(f"protocol artifact not found: {protocol}")
 
+    previous_acquisition = (
+        Path(previous_acquisition_path) if previous_acquisition_path is not None else None
+    )
+    previous_state = Path(previous_state_path) if previous_state_path is not None else None
+    for previous in (previous_acquisition, previous_state):
+        if previous is not None and not previous.is_file():
+            raise FileNotFoundError(f"previous Stage-1 artifact not found: {previous}")
+
     destination.mkdir(parents=True, exist_ok=True)
     acquire_batch(
         repository=repository,
@@ -72,10 +80,8 @@ def run_stage1_acquisition_v2(
         cumulative_acquisition_output_path=cumulative_path,
         state_output_path=state_path,
         checkpoint_output_path=checkpoint_path,
-        previous_acquisition_path=(
-            Path(previous_acquisition_path) if previous_acquisition_path is not None else None
-        ),
-        previous_state_path=Path(previous_state_path) if previous_state_path is not None else None,
+        previous_acquisition_path=previous_acquisition,
+        previous_state_path=previous_state,
     )
     return ProspectiveStage1AcquisitionRunV2(
         tranche_path=tranche_path,
