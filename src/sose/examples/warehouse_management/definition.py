@@ -50,11 +50,21 @@ def _reconcile_tick(persistence, engine, backend, config, entities):
     if shipment is None:
         raise RuntimeError("configured warehouse shipment was not persisted")
     if shipment.state == "completed":
+        complete_unload(persistence, engine, entities=entities)
         return
-    if shipment.state == "planned":
-        start_transfer(persistence, engine, entities=entities)
+    if shipment.state in {"planned", "in_transit"}:
+        # start_transfer is intentionally recovery-aware: an in-transit shipment may
+        # still need the truck transition after a crash between durable phases.
+        if shipment.state == "planned":
+            start_transfer(persistence, engine, entities=entities)
+            return
+        truck = persistence.entity("warehouse_management_truck", entities.truck_id)
+        if truck is not None and truck.state == "scheduled":
+            start_transfer(persistence, engine, entities=entities)
+            return
+        arrive_truck(persistence, engine, entities=entities)
         return
-    if shipment.state in {"in_transit", "arrived", "delayed"}:
+    if shipment.state in {"arrived", "delayed"}:
         arrive_truck(persistence, engine, entities=entities)
         return
     if shipment.state == "docked":
