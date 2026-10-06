@@ -104,6 +104,12 @@ PROCESS_MATURITY_REQUIREMENTS: dict[ProcessMaturity, frozenset[ProcessEvidence]]
     ),
 }
 
+# `tutorial_job` deliberately remains a normal `DomainDefinition(kind="domain")`
+# because it demonstrates durable recurring-job mechanics through the same public
+# APIs as real domains. It is not, however, a business-process canonical candidate
+# and therefore does not belong in the PC0-PC6 promotion audit.
+PROCESS_AUDIT_EXCLUDED_DOMAINS = frozenset({"tutorial_job"})
+
 
 def _requirements_through(level: ProcessMaturity) -> frozenset[ProcessEvidence]:
     requirements: set[ProcessEvidence] = set()
@@ -270,6 +276,7 @@ def builtin_process_manifests() -> dict[str, ProcessManifest]:
     manifests = {
         name: _registered_only_manifest(name)
         for name in builtin_catalog().names(kind="domain")
+        if name not in PROCESS_AUDIT_EXCLUDED_DOMAINS
     }
     if "warehouse_management" in manifests:
         manifests["warehouse_management"] = _warehouse_management_manifest()
