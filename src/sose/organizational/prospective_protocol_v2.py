@@ -6,7 +6,7 @@ from hashlib import sha256
 import json
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, StringConstraints, model_validator
 
 
 PROSPECTIVE_PROTOCOL_ID = "pr-review-validation/v2"
