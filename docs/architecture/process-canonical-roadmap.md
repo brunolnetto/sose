@@ -59,6 +59,10 @@ If a domain has not yet been audited, it remains a conservative PC0 lower bound 
 
 The audit process promotes evidence only after the relevant code, tests, and specification have been inspected.
 
+Every non-PC0 evidence claim in a manifest with `assessment_complete=True` must be bound to one or more repository-relative provenance paths in `evidence_sources`. The model validates the provenance shape without filesystem access; repository tests verify that those paths continue to exist. A test, implementation file, or specification may support more than one claim when it actually contains the relevant evidence.
+
+This provenance rule exists to prevent maturity from becoming a manually maintained score. Reviewers must be able to move from a maturity claim to the executable or documentary source that supports it.
+
 Evidence above the current maturity gate may already exist. Because maturity is cumulative, a missing lower-gate requirement still blocks promotion. For example, documentation and KPIs do not compensate for a missing restart-equivalence test.
 
 ## PC5 completion contract
@@ -135,9 +139,12 @@ Exit gate: the CI can report evidence-backed process maturity without guessing u
 
 Inspect every built-in business domain and populate only evidence that is already supported by code/tests/docs.
 
+W1 is split into evidence-provenance batches rather than one monolithic manual audit. Existing `ReferenceContract` provenance should be reused where it already supports a process claim; newer domains without reference-catalog coverage require direct inspection.
+
 Exit gate:
 
 - every domain has `assessment_complete=True` for the current codebase snapshot;
+- every non-PC0 evidence claim has repository provenance;
 - every PC gap is explicit;
 - no domain is promoted based solely on intuition.
 

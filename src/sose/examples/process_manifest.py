@@ -1,7 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Iterator, Mapping, Sequence
+from dataclasses import dataclass, field
 from enum import IntEnum, StrEnum
+from pathlib import PurePosixPath
 
 
 class ProcessMaturity(IntEnum):
@@ -120,6 +122,33 @@ def _requirements_through(level: ProcessMaturity) -> frozenset[ProcessEvidence]:
     return frozenset(requirements)
 
 
+def _is_repository_relative(path: str) -> bool:
+    if not path or "\\" in path:
+        return False
+    parsed = PurePosixPath(path)
+    return not parsed.is_absolute() and ".." not in parsed.parts and str(parsed) == path
+
+
+@dataclass(frozen=True, slots=True)
+class EvidenceSources(Mapping[ProcessEvidence, tuple[str, ...]]):
+    """Hashable immutable mapping from a process claim to repository provenance."""
+
+    entries: tuple[tuple[ProcessEvidence, tuple[str, ...]], ...] = ()
+
+    def __getitem__(self, key: ProcessEvidence) -> tuple[str, ...]:
+        item = ProcessEvidence(key)
+        for evidence, paths in self.entries:
+            if evidence is item:
+                return paths
+        raise KeyError(key)
+
+    def __iter__(self) -> Iterator[ProcessEvidence]:
+        return (evidence for evidence, _ in self.entries)
+
+    def __len__(self) -> int:
+        return len(self.entries)
+
+
 @dataclass(frozen=True, slots=True)
 class ProcessManifest:
     """Auditable evidence for one process canonical.
@@ -128,6 +157,10 @@ class ProcessManifest:
     lower bound. Missing evidence in that case must not be interpreted as proof
     that the implementation lacks the behavior; it only means the behavior has
     not yet been audited into this manifest.
+
+    `evidence_sources` binds audited claims to repository-relative provenance.
+    Runtime construction does not touch the filesystem; repository tests are
+    responsible for asserting that declared source paths still exist.
     """
 
     domain: str
@@ -140,6 +173,9 @@ class ProcessManifest:
     specification_path: str | None = None
     ingress_contracts: frozenset[str] = frozenset()
     egress_contracts: frozenset[str] = frozenset()
+    evidence_sources: Mapping[ProcessEvidence, tuple[str, ...]] = field(
+        default_factory=EvidenceSources
+    )
     assessment_complete: bool = False
 
     def __post_init__(self) -> None:
@@ -149,6 +185,47 @@ class ProcessManifest:
         pc0 = PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC0_REGISTERED]
         if not pc0.issubset(self.evidence):
             raise ValueError("process manifest must satisfy the PC0 registered runtime baseline")
+
+        normalized_sources: dict[ProcessEvidence, tuple[str, ...]] = {}
+        for evidence, paths in self.evidence_sources.items():
+            item = ProcessEvidence(evidence)
+            if isinstance(paths, (str, bytes)) or not isinstance(paths, Sequence):
+                raise ValueError(
+                    f"provenance for {item.value} must be an explicit path sequence"
+                )
+            normalized = tuple(paths)
+            if item not in self.evidence:
+                raise ValueError(
+                    f"provenance declared for undeclared evidence: {item.value}"
+                )
+            if not normalized or any(
+                not isinstance(path, str) or not _is_repository_relative(path)
+                for path in normalized
+            ):
+                raise ValueError(
+                    f"provenance for {item.value} must use non-empty repository-relative paths"
+                )
+            normalized_sources[item] = normalized
+        object.__setattr__(
+            self,
+            "evidence_sources",
+            EvidenceSources(
+                tuple(
+                    sorted(
+                        normalized_sources.items(),
+                        key=lambda pair: pair[0].value,
+                    )
+                )
+            ),
+        )
+
+        if self.assessment_complete:
+            missing_provenance = (self.evidence - pc0) - set(normalized_sources)
+            if missing_provenance:
+                raise ValueError(
+                    "audited process evidence requires provenance for: "
+                    + ", ".join(sorted(item.value for item in missing_provenance))
+                )
 
         missing_details: list[str] = []
         if ProcessEvidence.HAPPY_PATH in self.evidence and not self.trigger:
@@ -241,6 +318,35 @@ def _warehouse_management_manifest() -> ProcessManifest:
         - {ProcessEvidence.RESTART_EQUIVALENCE}
     )
     evidence.update(PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC5_OBSERVABLE])
+
+    behavior_test = "tests/unit/sose/examples/test_warehouse_management_domain.py"
+    definition = "src/sose/examples/warehouse_management/definition.py"
+    simulation = "src/sose/examples/warehouse_management/simulation.py"
+    entities = "src/sose/examples/warehouse_management/entities.py"
+    statecharts = "src/sose/examples/warehouse_management/statecharts.py"
+    config = "src/sose/examples/warehouse_management/config.py"
+    specification = "src/sose/examples/warehouse_management/specification.md"
+    evidence_sources: dict[ProcessEvidence, tuple[str, ...]] = {
+        ProcessEvidence.ENTITIES: (entities, behavior_test),
+        ProcessEvidence.STATECHARTS: (statecharts, behavior_test),
+        ProcessEvidence.COMMAND_EVENT_PATH: (simulation, behavior_test),
+        ProcessEvidence.HAPPY_PATH: (behavior_test,),
+        ProcessEvidence.E2E_TERMINAL_OUTCOME: (behavior_test,),
+        ProcessEvidence.SAD_PATHS: (behavior_test,),
+        ProcessEvidence.FINITE_RESOURCES: (simulation, behavior_test),
+        ProcessEvidence.CAPACITY_CONTENTION: (behavior_test,),
+        ProcessEvidence.TIME_SEMANTICS: (simulation, specification),
+        ProcessEvidence.DURABLE_STATE: (simulation, behavior_test),
+        ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, behavior_test),
+        ProcessEvidence.RECURRING_RECONCILIATION: (definition, behavior_test),
+        ProcessEvidence.FAULT_RECOVERY: (behavior_test,),
+        ProcessEvidence.KPIS: (simulation, behavior_test, specification),
+        ProcessEvidence.ERD: (specification,),
+        ProcessEvidence.STATECHART_DOCUMENTATION: (specification,),
+        ProcessEvidence.PROCESS_DIAGRAM: (specification,),
+        ProcessEvidence.PROJECTION_CONTRACT: (specification,),
+        ProcessEvidence.CONFIGURATION_DOCUMENTATION: (config, specification),
+    }
     return ProcessManifest(
         domain="warehouse_management",
         evidence=frozenset(evidence),
@@ -258,7 +364,8 @@ def _warehouse_management_manifest() -> ProcessManifest:
             }
         ),
         kpis=frozenset({"lead_time", "lateness", "on_time"}),
-        specification_path="src/sose/examples/warehouse_management/specification.md",
+        specification_path=specification,
+        evidence_sources=evidence_sources,
         assessment_complete=True,
     )
 

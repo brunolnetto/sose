@@ -1,13 +1,19 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from sose.examples.catalog import builtin_catalog
 from sose.examples.process_manifest import (
     PROCESS_AUDIT_EXCLUDED_DOMAINS,
+    PROCESS_MATURITY_REQUIREMENTS,
     ProcessEvidence,
     ProcessMaturity,
     audit_builtin_processes,
     builtin_process_manifests,
 )
+
+
+REPO_ROOT = Path(__file__).resolve().parents[4]
 
 
 def test_every_builtin_business_domain_has_an_auditable_manifest_entry() -> None:
@@ -33,6 +39,7 @@ def test_unreviewed_domains_are_explicit_lower_bounds_not_false_gap_claims() -> 
     assert fulfillment.maturity is ProcessMaturity.PC0_REGISTERED
     assert not fulfillment.assessment_complete
     assert fulfillment.is_maturity_lower_bound
+    assert not fulfillment.evidence_sources
 
 
 def test_warehouse_management_audit_exposes_restart_equivalence_as_pc4_gap() -> None:
@@ -48,6 +55,18 @@ def test_warehouse_management_audit_exposes_restart_equivalence_as_pc4_gap() -> 
     assert ProcessEvidence.RESTART_EQUIVALENCE not in manifest.evidence
     assert ProcessEvidence.FAULT_RECOVERY in manifest.evidence
     assert ProcessEvidence.KPIS in manifest.evidence
+
+
+def test_every_audited_warehouse_claim_has_provenance_and_existing_sources() -> None:
+    manifest = builtin_process_manifests()["warehouse_management"]
+    pc0 = PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC0_REGISTERED]
+
+    assert set(manifest.evidence_sources) == set(manifest.evidence - pc0)
+    for evidence, paths in manifest.evidence_sources.items():
+        assert evidence in manifest.evidence
+        assert paths
+        for relative in paths:
+            assert (REPO_ROOT / relative).is_file(), (evidence, relative)
 
 
 def test_audit_orders_domains_by_maturity_then_name_and_reports_next_gate() -> None:
