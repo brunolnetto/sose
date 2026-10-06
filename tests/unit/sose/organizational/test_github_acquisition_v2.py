@@ -276,6 +276,55 @@ def test_merged_pr_recovers_workflow_identity_from_commit_pull_association() -> 
     assert _commit_pulls_url(head_sha) in artifact.manifest.workflow_runs.source_urls
 
 
+
+def test_commit_pull_association_rejects_ambiguous_multiple_prs() -> None:
+    pages = _base_pages()
+    head_sha = "d" * 40
+    branch = "automation/prospective-example"
+    pages[_pr_url()] = GitHubJsonPage(
+        source_url=_pr_url(),
+        payload={
+            **_pr(),
+            "head": {
+                "ref": branch,
+                "sha": head_sha,
+                "repo": {"id": 1386530789, "full_name": REPOSITORY},
+            },
+        },
+    )
+    pages[_runs_url()] = GitHubJsonPage(
+        source_url=_runs_url(),
+        payload={
+            "total_count": 1,
+            "workflow_runs": [
+                {
+                    "id": 10,
+                    "workflow_id": 20,
+                    "run_attempt": 1,
+                    "event": "pull_request",
+                    "head_sha": head_sha,
+                    "head_branch": branch,
+                    "head_repository": {"id": 1386530789, "full_name": REPOSITORY},
+                    "created_at": "2026-10-06T14:50:00Z",
+                    "pull_requests": [],
+                    "url": f"https://api.github.com/repos/{REPOSITORY}/actions/runs/10",
+                }
+            ],
+        },
+    )
+    pages[_commit_pulls_url(head_sha)] = GitHubJsonPage(
+        source_url=_commit_pulls_url(head_sha),
+        payload=[{"number": 302}, {"number": 999}],
+    )
+
+    with pytest.raises(ValueError, match="ambiguous commit-to-PR association"):
+        acquire_github_pr_v2(
+            repository=REPOSITORY,
+            pr_number=302,
+            client=FakeClient(pages),
+            captured_at=CAPTURED_AT,
+        )
+
 def test_commit_pull_association_rejects_same_branch_run_from_other_pr() -> None:
     pages = _base_pages()
     head_sha = "e" * 40
