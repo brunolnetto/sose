@@ -80,6 +80,33 @@ def test_cli_reads_token_from_named_environment_variable(tmp_path: Path) -> None
     assert observed["token"] == "alternate-secret"
 
 
+def test_cli_strips_whitespace_from_token_before_constructing_client(tmp_path: Path) -> None:
+    observed: dict[str, object] = {}
+
+    def client_factory(*, token: str | None = None) -> _FakeClient:
+        observed["token"] = token
+        return _FakeClient(token=token)
+
+    result = run(
+        [
+            "--repository",
+            "brunolnetto/sose",
+            "--prs",
+            "302,303",
+            "--captured-at",
+            "2026-10-06T18:30:00Z",
+            "--output",
+            str(tmp_path / "tranche.json"),
+        ],
+        environ={"GITHUB_TOKEN": "  mounted-secret\n"},
+        client_factory=client_factory,
+        acquire_batch=lambda **_: object(),
+    )
+
+    assert result == 0
+    assert observed["token"] == "mounted-secret"
+
+
 def test_cli_rejects_missing_token_before_acquisition(tmp_path: Path) -> None:
     called = False
 
