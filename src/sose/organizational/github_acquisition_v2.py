@@ -84,8 +84,10 @@ def acquire_github_pr_v2(
     merged_at = pull_request.get("merged_at")
     if merged_at is None:
         raise ValueError("prospective acquisition requires a merged pull request")
-    opened_date = _iso_date(pull_request.get("created_at"), name="created_at")
-    merged_date = _iso_date(merged_at, name="merged_at")
+    opened_at = _iso_datetime(pull_request.get("created_at"), name="created_at")
+    merged_at_datetime = _iso_datetime(merged_at, name="merged_at")
+    opened_date = opened_at.date().isoformat()
+    merged_date = merged_at_datetime.date().isoformat()
 
     timeline_url = f"{api}/issues/{pr_number}/timeline?per_page=100&page=1"
     reviews_url = f"{api}/pulls/{pr_number}/reviews?per_page=100&page=1"
@@ -109,9 +111,16 @@ def acquire_github_pr_v2(
         first_url=runs_url,
         field="workflow_runs",
     )
-    workflow_runs = [
-        run for run in candidate_runs if _workflow_run_belongs_to_pr(run, pr_number=pr_number)
-    ]
+    workflow_runs, correlation_urls = _correlate_workflow_runs_to_pr(
+        client=client,
+        api=api,
+        pull_request=pull_request,
+        candidate_runs=candidate_runs,
+        pr_number=pr_number,
+        opened_at=opened_at,
+        merged_at=merged_at_datetime,
+    )
+    run_urls.extend(correlation_urls)
 
     workflow_jobs: list[Mapping[str, Any]] = []
     job_urls: list[str] = []
@@ -239,6 +248,112 @@ def _collect_wrapped_pages(
     return records, source_urls
 
 
+
+def _correlate_workflow_runs_to_pr(
+    *,
+    client: GitHubJsonClient,
+    api: str,
+    pull_request: Mapping[str, Any],
+    candidate_runs: Sequence[Mapping[str, Any]],
+    pr_number: int,
+    opened_at: datetime,
+    merged_at: datetime,
+) -> tuple[list[Mapping[str, Any]], list[str]]:
+    correlated: list[Mapping[str, Any]] = []
+    source_urls: list[str] = []
+    association_cache: dict[str, tuple[bool, tuple[str, ...]]] = {}
+
+    for run in candidate_runs:
+        pull_requests = run.get("pull_requests")
+        if isinstance(pull_requests, list) and pull_requests:
+            if _workflow_run_belongs_to_pr(run, pr_number=pr_number):
+                correlated.append(run)
+            continue
+
+        if not _workflow_run_matches_pr_candidate(
+            run,
+            pull_request=pull_request,
+            opened_at=opened_at,
+            merged_at=merged_at,
+        ):
+            continue
+
+        head_sha = run.get("head_sha")
+        if not isinstance(head_sha, str) or not head_sha.strip():
+            raise ValueError("GitHub workflow run requires head_sha for durable PR correlation")
+        head_sha = head_sha.strip()
+
+        cached = association_cache.get(head_sha)
+        if cached is None:
+            first_url = f"{api}/commits/{head_sha}/pulls?per_page=100&page=1"
+            associated_pulls, urls = _collect_list_pages(
+                client=client,
+                first_url=first_url,
+                collection_name="commit pull associations",
+            )
+            associated_numbers = {
+                _positive_int(pull.get("number"), name="associated pull request number")
+                for pull in associated_pulls
+            }
+            if len(associated_numbers) > 1:
+                raise ValueError(
+                    "ambiguous commit-to-PR association for workflow run head SHA"
+                )
+            belongs = associated_numbers == {pr_number}
+            cached = (belongs, tuple(urls))
+            association_cache[head_sha] = cached
+
+        belongs, urls = cached
+        source_urls.extend(url for url in urls if url not in source_urls)
+        if belongs:
+            correlated.append(run)
+
+    return correlated, source_urls
+
+
+def _workflow_run_matches_pr_candidate(
+    run: Mapping[str, Any],
+    *,
+    pull_request: Mapping[str, Any],
+    opened_at: datetime,
+    merged_at: datetime,
+) -> bool:
+    head = pull_request.get("head")
+    if not isinstance(head, Mapping):
+        return False
+    head_ref = head.get("ref")
+    if not isinstance(head_ref, str) or not head_ref.strip():
+        return False
+    if run.get("head_branch") != head_ref:
+        return False
+
+    pr_repo = head.get("repo")
+    run_repo = run.get("head_repository")
+    if isinstance(pr_repo, Mapping) and isinstance(run_repo, Mapping):
+        pr_repo_id = pr_repo.get("id")
+        run_repo_id = run_repo.get("id")
+        if (
+            isinstance(pr_repo_id, int)
+            and not isinstance(pr_repo_id, bool)
+            and isinstance(run_repo_id, int)
+            and not isinstance(run_repo_id, bool)
+            and pr_repo_id != run_repo_id
+        ):
+            return False
+        pr_full_name = pr_repo.get("full_name")
+        run_full_name = run_repo.get("full_name")
+        if (
+            isinstance(pr_full_name, str)
+            and pr_full_name.strip()
+            and isinstance(run_full_name, str)
+            and run_full_name.strip()
+            and pr_full_name.strip() != run_full_name.strip()
+        ):
+            return False
+
+    created_at = _iso_datetime(run.get("created_at"), name="workflow run created_at")
+    return opened_at <= created_at <= merged_at
+
 def _workflow_run_belongs_to_pr(run: Mapping[str, Any], *, pr_number: int) -> bool:
     pull_requests = run.get("pull_requests")
     if not isinstance(pull_requests, list):
@@ -249,17 +364,17 @@ def _workflow_run_belongs_to_pr(run: Mapping[str, Any], *, pr_number: int) -> bo
     )
 
 
-def _iso_date(value: object, *, name: str) -> str:
+def _iso_datetime(value: object, *, name: str) -> datetime:
     if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"GitHub pull request requires {name}")
+        raise ValueError(f"GitHub source requires {name}")
     normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
     try:
         parsed = datetime.fromisoformat(normalized)
     except ValueError as exc:
-        raise ValueError(f"GitHub pull request requires ISO-8601 {name}") from exc
+        raise ValueError(f"GitHub source requires ISO-8601 {name}") from exc
     if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ValueError(f"GitHub pull request requires timezone-aware {name}")
-    return parsed.date().isoformat()
+        raise ValueError(f"GitHub source requires timezone-aware {name}")
+    return parsed
 
 
 def _require_mapping(value: object, *, name: str) -> Mapping[str, Any]:
