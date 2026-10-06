@@ -83,10 +83,15 @@ pack, ship, and verify final lot projections plus immutable occurrence indexes.
 - conflicting replay of a correction identity;
 - correction below already allocated quantity.
 
-## 9. Restart equivalence
+## 9. Restart recovery
 
 Commit the first pick, rebuild the backend/runtime, finish the second pick,
-pack and ship. The first lot must not be decremented twice.
+pack and ship. This proves that the interrupted path can resume without losing
+its durable lifecycle state.
+
+This is not yet the stronger process-canonical `RESTART_EQUIVALENCE` claim. The
+current test does not execute a continuous baseline and compare the complete
+final durable state against the rebuilt execution.
 
 ## 10. Executable evidence
 
@@ -95,8 +100,8 @@ pack and ship. The first lot must not be decremented twice.
 | statecharts | test_warehouse_fulfillment_statecharts.py |
 | happy path / substitution | test_warehouse_fulfillment_happy_path.py |
 | sad paths / corrections | test_warehouse_fulfillment_sad_paths.py |
-| restart equivalence | test_warehouse_fulfillment_restart_equivalence.py |
-| immutable occurrences | happy/sad/restart suites |
+| restart recovery | test_warehouse_fulfillment_restart_equivalence.py |
+| immutable occurrences / replay safety | happy/sad/restart suites |
 
 ## 11. Promotion decision
 
@@ -111,9 +116,8 @@ Current audited maturity: **PC2 — Process**.
 
 The example proves the complete PC1 behavioral gate and reaches a durable
 terminal business outcome (`shipped`) from a requested fulfillment order. It
-also already contains evidence above PC2: durable entity state, restart
-equivalence, replay-safe immutable occurrences, recurring job reconciliation,
-and statechart documentation.
+also already contains evidence above PC2 for durable entity state, replay-safe
+immutable occurrences, and recurring job reconciliation.
 
 Those higher-level capabilities do not permit skipping PC3. The current PC3
 gaps are:
@@ -128,6 +132,14 @@ and material constraints. The current process does not model a contested
 service-capacity primitive such as a picker, packing station, or shipping dock,
 nor does it make processing duration or queue wait part of the fulfillment
 semantics.
+
+Additional audited gaps above PC3 include:
+
+- `RESTART_EQUIVALENCE`: the existing rebuild test proves recovery, not a
+  continuous-vs-rebuild state comparison;
+- `STATECHART_DOCUMENTATION`: the current prose lifecycle summary is incomplete
+  because the executable FulfillmentOrder chart also contains cancellation
+  transitions and a `cancelled` state.
 
 The next promotion step is therefore operational rather than persistence-first:
 introduce explicit service capacity, contention/queueing, and time semantics,
