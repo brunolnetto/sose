@@ -9,7 +9,11 @@ from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
 
 from .model_spec import ModelSpec
-from .prospective_stage1_v2 import (\n    ProspectiveStage1ReadinessCheckpointV2,\n    build_stage1_readiness_checkpoint_v2,\n)\nfrom .prospective_state_v2 import (
+from .prospective_stage1_v2 import (
+    ProspectiveStage1ReadinessCheckpointV2,
+    build_stage1_readiness_checkpoint_v2,
+)
+from .prospective_state_v2 import (
     ProspectiveEvidenceStateV2,
     advance_prospective_evidence_state_v2,
 )
