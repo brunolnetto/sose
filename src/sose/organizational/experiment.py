@@ -163,7 +163,7 @@ class ExperimentProtocol(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
 
-    protocol_version: NonBlankString = "2"
+    protocol_version: NonBlankString = "1"
     research_question: NonBlankString
     baseline_model_spec_hash: NonBlankString
     intervention_ids: tuple[NonBlankString, ...] = Field(min_length=2)
@@ -174,8 +174,8 @@ class ExperimentProtocol(BaseModel):
     outcomes: tuple[OutcomeMetric, ...] = ()
     statistical_plan: StatisticalPlan
     replication_plan: ReplicationPlan
-    cost_analysis: CostAnalysisPlan
-    surrogate_analysis: SurrogateAnalysisPlan
+    cost_analysis: CostAnalysisPlan | None = None
+    surrogate_analysis: SurrogateAnalysisPlan | None = None
     warmup: float = Field(ge=0.0, allow_inf_nan=False)
     horizon: float = Field(gt=0.0, allow_inf_nan=False)
     falsification: FalsificationRule
@@ -203,10 +203,15 @@ class ExperimentProtocol(BaseModel):
             raise ValueError("duplicate outcome names are not allowed")
         if self.falsification.primary_metric not in outcome_names:
             raise ValueError("primary falsification metric must be a preregistered outcome")
-        if self.cost_analysis.operating_cost_metric not in outcome_names:
-            raise ValueError("operating cost metric must be a preregistered outcome")
-        if self.cost_analysis.transition_cost_parameter not in self.parameter_ranges:
-            raise ValueError("transition cost parameter must be a preregistered parameter range")
+        if self.protocol_version != "1":
+            if self.cost_analysis is None:
+                raise ValueError("protocol version 2 requires cost analysis")
+            if self.surrogate_analysis is None:
+                raise ValueError("protocol version 2 requires surrogate analysis")
+            if self.cost_analysis.operating_cost_metric not in outcome_names:
+                raise ValueError("operating cost metric must be a preregistered outcome")
+            if self.cost_analysis.transition_cost_parameter not in self.parameter_ranges:
+                raise ValueError("transition cost parameter must be a preregistered parameter range")
         if self.warmup >= self.horizon:
             raise ValueError("warmup must be smaller than horizon")
         if not self.crn_enabled:
@@ -221,7 +226,7 @@ class ExperimentProtocol(BaseModel):
         return self
 
     def canonical_payload(self) -> dict[str, object]:
-        return {
+        payload: dict[str, object] = {
             "protocol_version": self.protocol_version,
             "research_question": self.research_question,
             "baseline_model_spec_hash": self.baseline_model_spec_hash,
@@ -236,14 +241,17 @@ class ExperimentProtocol(BaseModel):
             "outcomes": [outcome.canonical_payload() for outcome in self.outcomes],
             "statistical_plan": self.statistical_plan.canonical_payload(),
             "replication_plan": self.replication_plan.canonical_payload(),
-            "cost_analysis": self.cost_analysis.canonical_payload(),
-            "surrogate_analysis": self.surrogate_analysis.canonical_payload(),
             "warmup": self.warmup,
             "horizon": self.horizon,
             "falsification": self.falsification.canonical_payload(),
             "crn_enabled": self.crn_enabled,
             "report_null_regions": self.report_null_regions,
         }
+        if self.cost_analysis is not None:
+            payload["cost_analysis"] = self.cost_analysis.canonical_payload()
+        if self.surrogate_analysis is not None:
+            payload["surrogate_analysis"] = self.surrogate_analysis.canonical_payload()
+        return payload
 
     def canonical_json(self) -> str:
         return json.dumps(
