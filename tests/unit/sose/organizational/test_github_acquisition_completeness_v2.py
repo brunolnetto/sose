@@ -24,7 +24,8 @@ def test_wrapped_collection_total_count_must_match_materialized_records() -> Non
     timeline_url = f"{api}/issues/302/timeline?per_page=100&page=1"
     reviews_url = f"{api}/pulls/302/reviews?per_page=100&page=1"
     runs_url = (
-        f"{api}/actions/runs?event=pull_request&head_sha=head-302&per_page=100&page=1"
+        f"{api}/actions/runs?event=pull_request&created=2026-10-06..2026-10-06"
+        "&per_page=100&page=1"
     )
     pages = {
         pr_url: GitHubJsonPage(
@@ -35,7 +36,6 @@ def test_wrapped_collection_total_count_must_match_materialized_records() -> Non
                 "merged_at": "2026-10-06T15:09:10Z",
                 "url": pr_url,
                 "base": {"repo": {"full_name": REPOSITORY}},
-                "head": {"sha": "head-302"},
                 "user": {"login": "brunolnetto", "type": "User"},
             },
         ),
@@ -43,7 +43,17 @@ def test_wrapped_collection_total_count_must_match_materialized_records() -> Non
         reviews_url: GitHubJsonPage(source_url=reviews_url, payload=[]),
         runs_url: GitHubJsonPage(
             source_url=runs_url,
-            payload={"total_count": 2, "workflow_runs": [{"id": 10, "workflow_id": 20, "run_attempt": 1}]},
+            payload={
+                "total_count": 2,
+                "workflow_runs": [
+                    {
+                        "id": 10,
+                        "workflow_id": 20,
+                        "run_attempt": 1,
+                        "pull_requests": [{"number": 302}],
+                    }
+                ],
+            },
         ),
     }
 
