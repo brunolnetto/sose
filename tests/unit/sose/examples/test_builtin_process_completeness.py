@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sose.examples.catalog import builtin_catalog
 from sose.examples.process_manifest import (
+    PROCESS_AUDIT_EXCLUDED_DOMAINS,
     ProcessEvidence,
     ProcessMaturity,
     audit_builtin_processes,
@@ -11,9 +12,18 @@ from sose.examples.process_manifest import (
 
 def test_every_builtin_business_domain_has_an_auditable_manifest_entry() -> None:
     catalog_domains = set(builtin_catalog().names(kind="domain"))
+    business_domains = catalog_domains - PROCESS_AUDIT_EXCLUDED_DOMAINS
     manifests = builtin_process_manifests()
 
-    assert set(manifests) == catalog_domains
+    assert set(manifests) == business_domains
+    assert "tutorial_job" not in manifests
+
+
+def test_process_audit_exclusions_are_explicit_catalog_domains() -> None:
+    catalog_domains = set(builtin_catalog().names(kind="domain"))
+
+    assert PROCESS_AUDIT_EXCLUDED_DOMAINS == frozenset({"tutorial_job"})
+    assert PROCESS_AUDIT_EXCLUDED_DOMAINS <= catalog_domains
 
 
 def test_unreviewed_domains_are_explicit_lower_bounds_not_false_gap_claims() -> None:
