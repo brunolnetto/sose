@@ -12,6 +12,7 @@ from sose.examples.record_to_report.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
+from tests.support.behavioral_conformance import operational_snapshot
 
 
 def _prepare_matched(persistence):
@@ -79,13 +80,9 @@ def test_pending_close_schedule_is_restart_equivalent():
         entities=r_entities,
     )
 
-    c_period = continuous.entity("accounting_period", c_entities.period_id)
-    r_period = restarted.entity("accounting_period", r_entities.period_id)
-    c_task = continuous.entity("close_task", c_entities.close_task_id)
-    r_task = restarted.entity("close_task", r_entities.close_task_id)
-    assert c_period == r_period
-    assert c_task == r_task
-    assert continuous.scheduled_work() == restarted.scheduled_work() == ()
+    assert operational_snapshot(restarted) == operational_snapshot(continuous)
+    assert restarted.entity("accounting_period", r_entities.period_id).state == "closed"
+    assert restarted.entity("close_task", r_entities.close_task_id).state == "completed"
 
 
 def test_pending_close_accountant_demand_survives_restart():
@@ -192,7 +189,6 @@ def test_unmatched_item_recovers_missing_adjustment_after_restart():
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
-    rebuilt_backend = rebuilt.backend
 
     first = ensure_adjustment(
         persistence,
