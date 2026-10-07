@@ -84,6 +84,31 @@ def test_validation_rejects_fit_not_bound_to_freeze() -> None:
         )
 
 
+def test_validation_rejects_tampered_fit_model_even_if_stored_spec_hash_is_unchanged() -> None:
+    fit, freeze, frozen = _frozen()
+    state = _with_holdout(frozen, count=12)
+    checkpoint = build_stage2_checkpoint_v2(state=state, model_freeze=freeze)
+    tampered_model = fit.model.model_copy(
+        update={
+            "human_analogs": (
+                DelayAnalogV2(
+                    workflow_active_seconds=9_999.0,
+                    unidentified_residual_seconds=9_999.0,
+                ),
+            )
+        }
+    )
+    forged = fit.model_copy(update={"model": tampered_model})
+
+    with pytest.raises(ValueError, match="fit model does not reconstruct"):
+        validate_prospective_stage2_v2(
+            state=state,
+            checkpoint=checkpoint,
+            stage1_fit=forged,
+            model_freeze=freeze,
+        )
+
+
 def test_predictions_do_not_depend_on_holdout_terminal_outcomes() -> None:
     fit, freeze, frozen = _frozen()
     first = _with_holdout(frozen, count=12, extra_seconds=0)
