@@ -1,0 +1,73 @@
+name: A1 Scientific Experiment v1 Final
+
+on:
+  push:
+    branches:
+      - automation/a1-scientific-report-v1-clean
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+      - name: Install
+        run: python -m pip install -e .
+      - name: Run official A0-A1 experiment and report
+        run: |
+          mkdir -p a1-scientific-v1
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          from sose.organizational.synthetic_a1_experiment import run_a0_a1_reference_experiment_v1
+          from sose.organizational.synthetic_a1_report import build_a1_scientific_report_v1
+
+          experiment = run_a0_a1_reference_experiment_v1()
+          report = build_a1_scientific_report_v1(experiment)
+          out = Path("a1-scientific-v1")
+
+          (out / "report.json").write_text(
+              json.dumps(report.canonical_payload(), sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
+              encoding="utf-8",
+          )
+          summary = {
+              "protocol_hash": report.protocol_hash,
+              "report_hash": report.report_hash,
+              "pair_count": report.pair_count,
+              "a0_stable_worlds": report.regime_summary.a0_stable_worlds,
+              "a0_saturated_worlds": report.regime_summary.a0_saturated_worlds,
+              "a1_nominal_stable_worlds": report.regime_summary.a1_nominal_stable_worlds,
+              "a1_adaptation_stabilized_worlds": report.regime_summary.a1_adaptation_stabilized_worlds,
+              "a1_saturated_worlds": report.regime_summary.a1_saturated_worlds,
+              "saturated_to_stable_worlds": report.regime_summary.saturated_to_stable_worlds,
+              "stable_to_saturated_worlds": report.regime_summary.stable_to_saturated_worlds,
+              "direction_agreement_count": report.intervention_direction_agreement_count,
+              "direction_change_count": report.intervention_direction_change_count,
+              "direction_agreement_rate": report.intervention_direction_agreement_rate,
+              "mean_agency_delta_lead_time": report.mean_agency_delta_lead_time,
+              "mean_agency_delta_throughput": report.mean_agency_delta_throughput,
+              "mean_agency_delta_operating_cost": report.mean_agency_delta_operating_cost,
+              "mean_adaptation_actor_time": report.mean_adaptation_actor_time,
+              "mean_adaptation_cost": report.mean_adaptation_cost,
+          }
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+      - name: Upload result
+        uses: actions/upload-artifact@v4
+        with:
+          name: a1-scientific-v1-final-${{ github.run_id }}
+          path: a1-scientific-v1/
+          if-no-files-found: error
+          retention-days: 90
