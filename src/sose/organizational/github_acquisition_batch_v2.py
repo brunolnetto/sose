@@ -19,8 +19,8 @@ def acquire_github_pr_batch_v2(
     """Acquire one all-or-nothing prospective evidence tranche."""
 
     unique_numbers = tuple(dict.fromkeys(pr_numbers))
-    if len(unique_numbers) < 2 or len(unique_numbers) != len(pr_numbers):
-        raise ValueError("batch acquisition requires at least two distinct pull requests")
+    if not unique_numbers or len(unique_numbers) != len(pr_numbers):
+        raise ValueError("batch acquisition requires one or more distinct pull requests")
     if any(number < 1 for number in unique_numbers):
         raise ValueError("pull request numbers must be positive")
 

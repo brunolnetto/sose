@@ -1,0 +1,114 @@
+name: Prospective Stage-2 Acquisition v2
+
+on:
+  workflow_dispatch:
+    inputs:
+      prs:
+        description: "Comma-separated merged PR numbers for this explicit Stage-2 tranche"
+        required: true
+        type: string
+      previous_run_id:
+        description: "Prior successful Stage-2 acquisition workflow run ID (leave blank for first tranche)"
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+  issues: read
+  pull-requests: read
+
+jobs:
+  acquire-and-advance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+
+      - name: Install package
+        run: python -m pip install -e .
+
+      - name: Materialize previous Stage-2 bundle
+        env:
+          SOSE_HAS_PREVIOUS: ${{ inputs.previous_run_id != '' }}
+        run: |
+          mkdir -p previous
+          if [ "$SOSE_HAS_PREVIOUS" = "true" ]; then
+            echo "previous Stage-2 bundle will be downloaded next"
+          else
+            cp docs/organizational/evidence/pr-review-v2-stage1/cumulative-acquisition.json previous/cumulative-acquisition.json
+            cp docs/organizational/evidence/pr-review-v2-stage1-freeze/frozen-state.json previous/prospective-state.json
+          fi
+
+      - name: Download previous Stage-2 artifacts
+        if: ${{ inputs.previous_run_id != '' }}
+        uses: actions/download-artifact@v4
+        with:
+          name: prospective-stage2-v2-${{ inputs.previous_run_id }}
+          path: previous
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.previous_run_id }}
+
+      - name: Acquire and advance explicit Stage-2 tranche
+        env:
+          SOSE_GITHUB_TOKEN: ${{ github.token }}
+          SOSE_REPOSITORY: ${{ github.repository }}
+          SOSE_PRS: ${{ inputs.prs }}
+          SOSE_HAS_PREVIOUS: ${{ inputs.previous_run_id != '' }}
+        run: |
+          python - <<'PY'
+          from datetime import datetime, timezone
+          import os
+          from pathlib import Path
+
+          from sose.organizational.github_acquisition_v2 import UrllibGitHubJsonClient
+          from sose.organizational.prospective_stage2_acquisition_runner_v2 import (
+              run_stage2_acquisition_v2,
+          )
+
+          pr_numbers = tuple(
+              int(part.strip())
+              for part in os.environ["SOSE_PRS"].split(",")
+              if part.strip()
+          )
+          has_previous = os.environ["SOSE_HAS_PREVIOUS"].lower() == "true"
+          previous_checkpoint = (
+              Path("previous/stage2-checkpoint.json") if has_previous else None
+          )
+
+          run_stage2_acquisition_v2(
+              repository=os.environ["SOSE_REPOSITORY"],
+              pr_numbers=pr_numbers,
+              captured_at=datetime.now(timezone.utc),
+              model_freeze_path=Path(
+                  "docs/organizational/evidence/pr-review-v2-stage1-freeze/model-freeze.json"
+              ),
+              previous_acquisition_path=Path("previous/cumulative-acquisition.json"),
+              previous_state_path=Path("previous/prospective-state.json"),
+              previous_checkpoint_path=previous_checkpoint,
+              output_dir=Path("stage2-output"),
+              client=UrllibGitHubJsonClient(
+                  token=os.environ["SOSE_GITHUB_TOKEN"].strip()
+              ),
+          )
+          PY
+
+      - name: Print Stage-2 checkpoint
+        run: cat stage2-output/stage2-checkpoint.json
+
+      - name: Upload immutable Stage-2 artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: prospective-stage2-v2-${{ github.run_id }}
+          path: stage2-output/
+          if-no-files-found: error
+          retention-days: 90
