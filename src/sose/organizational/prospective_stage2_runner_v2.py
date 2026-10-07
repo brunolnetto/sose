@@ -206,7 +206,7 @@ def _validate_freeze_binding(
     pre_freeze_records = tuple(
         record
         for record in state.snapshot.records
-        if record.opened_at <= model_freeze.frozen_at
+        if record.merged_at <= model_freeze.frozen_at
     )
     pre_freeze_keys = {
         (record.repository, record.pr_number)
