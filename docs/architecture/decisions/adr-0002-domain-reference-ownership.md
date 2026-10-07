@@ -1,6 +1,6 @@
 # ADR-0002 — DomainReference owns experiment-domain semantics
 
-- **Status:** Accepted
+- **Status:** Proposed
 - **Date:** 2026-10-07
 - **Decision owners:** SOSE maintainers
 - **Related PRD(s):** `PRD-0001`
@@ -28,7 +28,7 @@ Introduce a `DomainReference` experiment capability associated with an existing 
 - configurable exogenous parameter definitions;
 - construction of a configured domain `ModelSpec`;
 - domain-supported interventions;
-- supported agency configurations/policies;
+- typed supported agency capabilities/configurations, including policy/controller identifiers and parameter schemas/defaults/bounds;
 - execution adapter into the domain runtime;
 - projection from raw domain execution into standard experiment observations;
 - ground-truth claims;
@@ -81,6 +81,7 @@ The first implementation remains outside the kernel/stable public API until mate
 ### Constraints introduced
 
 - generic experiment code must contain no domain-specific business concepts;
+- domain references must expose enough typed agency configuration metadata for pre-execution validation; returning only an agency-level enum is insufficient;
 - a `DomainReference` must bind to an existing domain identity;
 - experiment capability must not imply process-canonical maturity that has not been evidenced;
 - domain-specific ground truth and regime logic stay domain-owned;
