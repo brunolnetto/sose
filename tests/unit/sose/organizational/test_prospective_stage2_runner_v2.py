@@ -114,10 +114,7 @@ def test_stage2_rejects_freeze_artifact_not_bound_to_previous_frozen_state() -> 
 
 def test_stage2_accepts_freeze_snapshot_that_contains_pre_freeze_interstitial() -> None:
     protocol = _protocol()
-    training = (
-        _record(302, opened_at=REGISTERED_AT + timedelta(minutes=1)),
-        _record(303, opened_at=REGISTERED_AT + timedelta(minutes=2)),
-    )
+    training = _training_records()
     pre = advance_prospective_evidence_state_v2(records=training, protocol=protocol)
     with_interstitial = advance_prospective_evidence_state_v2(
         records=(
@@ -221,16 +218,23 @@ def _protocol() -> ProspectiveStudyProtocolV2:
     return ProspectiveStudyProtocolV2(
         protocol_document_hash="0" * 64,
         registration_merged_at=REGISTERED_AT,
-        training_count=2,
+        training_count=18,
         holdout_count=12,
     )
 
 
-def _frozen_state():
-    training = (
-        _record(302, opened_at=REGISTERED_AT + timedelta(minutes=1)),
-        _record(303, opened_at=REGISTERED_AT + timedelta(minutes=2)),
+def _training_records() -> tuple[GitHubPREvidenceRecordV2, ...]:
+    return tuple(
+        _record(
+            302 + index,
+            opened_at=REGISTERED_AT + timedelta(minutes=index + 1),
+        )
+        for index in range(18)
     )
+
+
+def _frozen_state():
+    training = _training_records()
     pre = advance_prospective_evidence_state_v2(records=training, protocol=_protocol())
     return advance_prospective_evidence_state_v2(
         records=training,
