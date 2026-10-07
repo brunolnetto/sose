@@ -107,6 +107,22 @@ def build_a1_scientific_report_v1(
         raise ValueError("A1 scientific report requires lead_time outcome")
     margin = lead_metric.equivalence_margin
 
+    replication_plan = experiment.design.protocol.replication_plan
+    if replication_plan.min_replications != replication_plan.max_replications:
+        raise ValueError("A1 scientific report requires a fixed replication plan")
+    expected_identities = {
+        (design_index, arm_id, replication)
+        for design_index in range(experiment.design.protocol.sample_size)
+        for arm_id in ("baseline", *experiment.design.protocol.intervention_ids)
+        for replication in range(replication_plan.min_replications)
+    }
+    identities = [
+        (pair.design_index, pair.arm_id, pair.replication)
+        for pair in experiment.pairs
+    ]
+    if set(identities) != expected_identities or len(identities) != len(expected_identities):
+        raise ValueError("scientific report requires complete unique paired evidence")
+
     by_key = {
         (pair.design_index, pair.arm_id, pair.replication): pair
         for pair in experiment.pairs
