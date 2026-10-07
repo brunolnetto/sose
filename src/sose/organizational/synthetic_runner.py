@@ -117,16 +117,17 @@ def run_reference_synthetic_experiment(
     ):
         raise ValueError("replications must remain inside the preregistered replication bounds")
 
-    expected_worlds = (
-        protocol.sample_size
-        * (1 + len(protocol.intervention_ids))
-        * len(protocol.agency_levels)
-    )
+    expected_identities = {
+        (design_index, arm_id, level.value)
+        for design_index in range(protocol.sample_size)
+        for arm_id in ("baseline", *protocol.intervention_ids)
+        for level in protocol.agency_levels
+    }
     identities = {
         (world.design_index, world.arm_id, world.agency_level.value)
         for world in worlds
     }
-    if len(worlds) != expected_worlds or len(identities) != expected_worlds:
+    if identities != expected_identities or len(worlds) != len(expected_identities):
         raise ValueError("complete synthetic world design is required")
     if any(world.protocol_hash != protocol.protocol_hash for world in worlds):
         raise ValueError("synthetic world protocol hash mismatch")
@@ -243,14 +244,19 @@ def _run_reference_world(
     measurement_start = protocol.warmup
     measurement_end = protocol.horizon
     measurement_duration = measurement_end - measurement_start
-    completed = tuple(
+    lead_time_cohort = tuple(
         item
         for item in items
         if item.arrival_at >= measurement_start and item.completed_at <= measurement_end
     )
-    leads = tuple(item.lead_time for item in completed)
+    measurement_departures = tuple(
+        item
+        for item in items
+        if measurement_start < item.completed_at <= measurement_end
+    )
+    leads = tuple(item.lead_time for item in lead_time_cohort)
     completed_items = sum(item.completed_at <= measurement_end for item in items)
-    throughput = len(completed) / measurement_duration
+    throughput = len(measurement_departures) / measurement_duration
     mean_wip = sum(
         max(
             0.0,
@@ -265,14 +271,21 @@ def _run_reference_world(
         mean_lead = fmean(ordered)
         median_lead = median(ordered)
         p90_lead = ordered[max(1, ceil(0.90 * len(ordered))) - 1]
-        rework_fraction = sum(item.reworked for item in completed) / len(completed)
+        rework_fraction = (
+            sum(item.reworked for item in lead_time_cohort) / len(lead_time_cohort)
+        )
     else:
         mean_lead = median_lead = p90_lead = rework_fraction = 0.0
 
     base_cost_rate = _cost_rate(world)
+    transition_parameter = (
+        None
+        if protocol.cost_analysis is None
+        else protocol.cost_analysis.transition_cost_parameter
+    )
     uncertain_transition_cost = (
-        float(world.exogenous_parameters.get("transition_cost", 0.0))
-        if world.arm_id != "baseline"
+        float(world.exogenous_parameters.get(transition_parameter, 0.0))
+        if world.arm_id != "baseline" and transition_parameter is not None
         else 0.0
     )
     total_cost = (
