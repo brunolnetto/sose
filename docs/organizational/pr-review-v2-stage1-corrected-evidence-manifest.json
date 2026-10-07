@@ -75,5 +75,17 @@
     "observed_workflow_active_mean": 527.8333333333334,
     "residual_elapsed_mean": 1624.1666666666667
   },
-  "scientific_boundary": "The corrected artifact is the only Stage-1 evidence eligible for v2 model fitting/freezing. Residual elapsed time is not identified as human service effort and must remain inferable/unidentified unless independently evidenced."
+  "scientific_boundary": "The corrected artifact is the only Stage-1 evidence eligible for v2 model fitting/freezing. Residual elapsed time is not identified as human service effort and must remain inferable/unidentified unless independently evidenced.",
+  "repository_archive": {
+    "directory": "docs/organizational/evidence/pr-review-v2-stage1",
+    "exact_corrected_run": 37548381207,
+    "files": {
+      "bound-protocol.json": "sha256:c98f0e5053e54087e2f726798db3af795178f55ee9056bab8fa342fa2c4f787f",
+      "cumulative-acquisition.json": "sha256:e6edbe75e41aec264ecc33a8ca93b4cd7b819dd958282c93fc79f9b1c78a6101",
+      "prospective-state.json": "sha256:a75beef21aff96e84d2c1fc864330f8e7e5ab60b89e2ef73dd4133753de25157",
+      "stage1-readiness.json": "sha256:8a4c0bc61ce25558105bfea2c4b28bff76b71b45e9f532475bb76fd1e1f6cdea",
+      "tranche-acquisition.json": "sha256:e6edbe75e41aec264ecc33a8ca93b4cd7b819dd958282c93fc79f9b1c78a6101"
+    },
+    "note": "These are the exact canonical files downloaded from corrected artifact 11452330367 and retained in Git beyond Actions artifact expiration."
+  }
 }
