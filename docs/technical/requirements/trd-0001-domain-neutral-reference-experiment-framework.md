@@ -239,7 +239,7 @@ ExperimentResultManifest
 DomainExperimentResult
 ```
 
-Initial placement should remain under the organizational/experiment layer rather than the kernel until at least two materially different domains demonstrate the contract.
+Initial placement remains under the organizational/experiment layer rather than the kernel until Manufacturing, Order-to-Cash, and MRO all satisfy the process-maturity prerequisites and pass the common experiment conformance suite. The current queue reference plus one additional domain is not sufficient for promotion.
 
 ### 4.2 Existing catalog integration
 
@@ -354,14 +354,16 @@ Experiment execution uses existing persistent job/engine boundaries.
 
 ### Checkpoint unit
 
-A checkpoint must make durable together:
+A checkpoint must make authoritative operational truth durable together:
 
 - experiment/job position;
 - completed world/replication identities;
 - domain durable truth for active executions;
-- emitted events/ledgers;
-- output sink checkpoint;
+- emitted events/ledgers or their authoritative operational records;
+- durable analytical-delivery/outbox intent for newly committed result evidence;
 - fencing/lease version.
+
+The external analytical sink checkpoint is deliberately **not** part of this atomic transaction. SOSE preserves the existing asynchronous sink boundary: operational progress and the durable delivery record commit first; sink publication/acknowledgement advances independently and idempotently.
 
 ### Idempotency
 
@@ -382,7 +384,8 @@ Only the current fenced worker may advance the persistent experiment position or
 - domain execution failure is recorded with typed failure/provenance;
 - infrastructure failure is retryable according to job policy;
 - invalid scientific configuration fails before execution;
-- a partially written analytical sink cannot advance committed experiment position.
+- analytical sink unavailability cannot roll back already committed operational experiment progress; pending delivery remains durable and retryable;
+- if sink publication succeeds before a crash but acknowledgement does not, retry uses the same deterministic batch/result identity and must be idempotent.
 
 ## 8. Performance and scalability
 
@@ -453,9 +456,23 @@ Every experiment-capable domain must pass the same suite:
 9. happy and sad execution evidence;
 10. continuous-vs-restart equivalence.
 
+### Process-maturity prerequisite
+
+Organizational Dynamics consumes mature process canonicals; it does not substitute for them.
+
+Before a built-in business domain is promoted as an experiment reference:
+
+1. its process evidence audit must be complete for the relevant code snapshot;
+2. the standalone process must be at least **PC5 Observable**;
+3. experiment claims must cite the process-manifest/specification provenance supporting the mechanics they exercise.
+
+Before the multi-domain experiment framework is promoted as the architectural reference, the repository must also contain at least one credible **PC6 Composable** process composition, consistent with the existing process dependency graph.
+
+Manufacturing and MRO follow the normative process roadmap: their experiment promotion cannot bypass the Trading Company composition prerequisite and their W6 promotion to PC5.
+
 ### Cross-domain promotion gate
 
-Manufacturing, O2C, and MRO must all pass before the generic contract is promoted as stable/public.
+Manufacturing, O2C, and MRO must each satisfy the process-maturity prerequisite and pass the same experiment conformance suite before the generic contract is promoted as stable/public.
 
 ### A0/A1 compatibility
 
@@ -467,13 +484,14 @@ The current synthetic modules remain working compatibility/reference implementat
 
 Migration sequence:
 
-1. define generic types/contracts around existing behavior;
-2. adapt current queue reference without changing its evidence claim;
-3. add Manufacturing;
-4. add O2C;
-5. add MRO;
-6. remove experiment-specific orchestration duplication only after conformance proves equivalence;
-7. mark stable public surfaces before 1.0.
+1. define provisional generic types/contracts around the already verified synthetic reference;
+2. adapt the current queue reference without changing its evidence claim;
+3. keep the abstraction in the organizational/experiment layer while process-canonical prerequisites advance independently;
+4. onboard O2C only after its process reference reaches the required PC5 gate;
+5. onboard Manufacturing and MRO only after the normative process roadmap permits W6 promotion and each reaches PC5;
+6. require at least one credible PC6 composition before architectural-reference promotion;
+7. remove experiment-specific orchestration duplication only after all three pilot domains prove equivalence under the common suite;
+8. mark stable public surfaces before 1.0.
 
 No existing persisted domain state is migrated solely to introduce the experiment framework.
 
@@ -497,61 +515,83 @@ Rejected. Many target organizations have no useful closed form; ADR-0003 permits
 
 ## 14. Implementation plan
 
-### Gate A — framework extraction
+### Gate A — provisional framework extraction
 
 1. generic experiment identity/result/ground-truth types;
-2. generic orchestration around existing A0 reference;
+2. generic orchestration around the already verified synthetic A0 reference;
 3. generic A0/A1 comparison hooks;
 4. conformance toolkit.
 
-Exit: current reference experiment runs through generic orchestration.
+Exit: current synthetic reference runs through generic orchestration. The framework remains provisional in the organizational layer.
 
-### Gate B — Manufacturing
+### Gate P — process-canonical prerequisites
 
-5. Manufacturing parameter/intervention/ground-truth adapter;
-6. Manufacturing A0/A1 execution/observation;
+This gate is governed by the existing Process Canonical Roadmap rather than by the experiment implementation.
+
+Required before pilot-domain experiment promotion:
+
+- complete evidence audit for the selected domain;
+- PC5 standalone process maturity for each experiment reference;
+- at least one credible PC6 composition before the experiment framework becomes an architectural reference;
+- Trading Company composition prerequisite satisfied before Manufacturing/MRO W6 promotion.
+
+Design/prototyping may occur earlier, but immature process references must not be promoted as scientific organizational-dynamics references.
+
+### Gate B — O2C experiment reference
+
+After O2C reaches PC5:
+
+5. O2C adapter and workflow-specific ground truth;
+6. O2C A0/A1 execution/observation;
 7. evidence/report.
 
-Exit: first non-reference domain passes suite.
+Exit: administrative/information workflow passes the common suite.
 
-### Gate C — O2C
+### Gate C — Manufacturing experiment reference
 
-8. O2C adapter and workflow-specific ground truth;
-9. O2C A0/A1 execution;
+After the normative W5/W6 prerequisite and Manufacturing PC5:
+
+8. Manufacturing parameter/intervention/ground-truth adapter;
+9. Manufacturing A0/A1 execution/observation;
 10. evidence/report.
 
-Exit: administrative/information workflow passes same suite.
+Exit: physical-flow/bottleneck workflow passes the same suite.
 
-### Gate D — MRO
+### Gate D — MRO experiment reference
+
+After the normative W5/W6 prerequisite and MRO PC5:
 
 11. MRO adapter for resources/inventory/precedence;
 12. MRO A0/A1 execution;
 13. evidence/report.
 
-Exit: resource/availability-rich workflow passes same suite.
+Exit: resource/availability-rich workflow passes the same suite.
 
 ### Gate E — generality promotion
 
-14. cross-domain conformance matrix;
-15. remove accidental domain-specific assumptions;
-16. promote stable contract.
+14. verify the required PC6 composition exists;
+15. run the cross-domain experiment conformance matrix;
+16. remove accidental domain-specific assumptions;
+17. promote the contract from provisional organizational code to its stable/public location only if all three pilots pass.
 
 ### Gate F — A2
 
-17. generic observation/action controller contract;
-18. noise/delay/cooldown/transition-cost semantics;
-19. A2 execution across the three reference domains.
+18. dedicated child TRD for observation/action controller semantics;
+19. generic observation/action controller contract;
+20. noise/delay/cooldown/transition-cost semantics;
+21. A2 execution across the three qualified reference domains.
 
 ### Gate G — productization
 
-20. standard data product;
-21. persistent distributed experiment job;
-22. configuration schema;
-23. CLI/API;
-24. SQLite/PostgreSQL conformance;
-25. 1.0 documentation/release gate.
+22. child TRDs for standard data product, persistent/distributed experiment jobs, and configuration/CLI/API;
+23. standard data product;
+24. persistent distributed experiment job using the authoritative operational + durable-outbox sink boundary;
+25. configuration schema;
+26. CLI/API;
+27. SQLite/PostgreSQL conformance;
+28. 1.0 documentation/release gate.
 
-PR boundaries may be refined, but gate ordering is normative.
+PR boundaries may be refined, but dependency/gate ordering is normative.
 
 ## 15. Risks and open questions
 
@@ -571,7 +611,8 @@ PR boundaries may be refined, but gate ordering is normative.
 - [ ] PRD-0001 requirements are traceably mapped.
 - [ ] ADR-0002/0003/0004 accepted.
 - [ ] Current A0/A1 reference executes through generic framework.
-- [ ] Manufacturing, O2C, and MRO pass one conformance suite.
+- [ ] Manufacturing, O2C, and MRO each have complete evidence audits, reach at least PC5, and pass one experiment conformance suite.
+- [ ] At least one credible PC6 composition exists before framework architectural-reference promotion.
 - [ ] No generic framework type contains domain-specific business nouns.
 - [ ] Exogenous/endogenous separation is enforced in tests.
 - [ ] Ground-truth claims are typed and eligibility-aware.
