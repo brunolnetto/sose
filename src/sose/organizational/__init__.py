@@ -26,6 +26,14 @@ from .model_spec import (
 )
 from .observations import ObservedEventKind, ObservedPREvent, ObservedPRTrace
 from .sampling import sample_parameter_space
+from .synthetic_analysis import (
+    AnalyticalWorldReference,
+    SyntheticEffectRecovery,
+    SyntheticRecoveryReport,
+    SyntheticWorldRecovery,
+    analytical_world_reference,
+    analyze_reference_synthetic_experiment,
+)
 from .synthetic_runner import (
     SyntheticExperimentDataset,
     SyntheticItemRecord,
@@ -46,6 +54,7 @@ from .validation import (
 )
 
 __all__ = [
+    "AnalyticalWorldReference",
     "CostAnalysisPlan",
     "DistributionSummary",
     "EvidenceClass",
@@ -73,11 +82,16 @@ __all__ = [
     "StructuralDiff",
     "SurrogateAnalysisPlan",
     "SurrogateModel",
+    "SyntheticEffectRecovery",
     "SyntheticExperimentDataset",
     "SyntheticItemRecord",
+    "SyntheticRecoveryReport",
     "SyntheticRunResult",
+    "SyntheticWorldRecovery",
     "SyntheticWorldSpec",
     "ValidationCheck",
+    "analytical_world_reference",
+    "analyze_reference_synthetic_experiment",
     "assess_lead_time_validation",
     "calibrate_observed_item_flow",
     "compare_lead_time_distributions",
