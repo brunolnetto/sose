@@ -111,6 +111,50 @@ def test_stage2_rejects_freeze_artifact_not_bound_to_previous_frozen_state() -> 
         )
 
 
+
+def test_stage2_rejects_different_freeze_identity_with_same_protocol_and_snapshot() -> None:
+    previous = _frozen_state()
+    freeze = _freeze(previous)
+    forged = freeze.model_copy(update={"training_state_hash": "e" * 64})
+
+    with pytest.raises(ValueError, match="exact pre-freeze state"):
+        advance_stage2_artifacts_v2(
+            model_freeze=forged,
+            tranche=_snapshot(_record(330, opened_at=FROZEN_AT + timedelta(minutes=1))),
+            previous_acquisition=_snapshot(*previous.snapshot.records),
+            previous_state=previous,
+        )
+
+
+def test_later_stage2_tranche_requires_previous_checkpoint_chain() -> None:
+    previous = _frozen_state()
+    freeze = _freeze(previous)
+    first = advance_stage2_artifacts_v2(
+        model_freeze=freeze,
+        tranche=_snapshot(_record(330, opened_at=FROZEN_AT + timedelta(minutes=1))),
+        previous_acquisition=_snapshot(*previous.snapshot.records),
+        previous_state=previous,
+    )
+
+    with pytest.raises(ValueError, match="previous Stage-2 checkpoint"):
+        advance_stage2_artifacts_v2(
+            model_freeze=freeze,
+            tranche=_snapshot(_record(331, opened_at=FROZEN_AT + timedelta(minutes=2))),
+            previous_acquisition=first.acquisition,
+            previous_state=first.state,
+        )
+
+    second = advance_stage2_artifacts_v2(
+        model_freeze=freeze,
+        tranche=_snapshot(_record(331, opened_at=FROZEN_AT + timedelta(minutes=2))),
+        previous_acquisition=first.acquisition,
+        previous_state=first.state,
+        previous_checkpoint=first.checkpoint,
+    )
+    assert second.checkpoint.holdout_observed == 2
+    assert second.checkpoint.model_freeze_hash == first.checkpoint.model_freeze_hash
+
+
 def test_checkpoint_rejects_forged_progress_fields() -> None:
     previous = _frozen_state()
     result = advance_stage2_artifacts_v2(
