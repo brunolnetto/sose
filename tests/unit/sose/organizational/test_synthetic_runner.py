@@ -226,3 +226,21 @@ def test_runner_rejects_protocol_world_mismatch_and_replication_bounds() -> None
             assert expected in str(exc)
         else:
             raise AssertionError("expected synthetic runner validation error")
+
+
+def test_reference_runner_refuses_unimplemented_agency_mechanics() -> None:
+    protocol, worlds = _worlds()
+    forged = worlds[0].model_copy(update={"agency_level": AgencyLevel.A1})
+
+    try:
+        run_reference_synthetic_experiment(
+            protocol=protocol,
+            worlds=(forged, *worlds[1:]),
+            root_seed=1,
+            replications=2,
+        )
+    except ValueError as exc:
+        assert "A0" in str(exc)
+        assert "reference" in str(exc)
+    else:
+        raise AssertionError("expected unsupported agency-level rejection")
