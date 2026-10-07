@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, InstanceOf
 
 from .agency import AgencyLevel, AgencySpec
 from .experiment import (
@@ -37,18 +37,18 @@ class ReferenceSyntheticExperimentDesignV1(BaseModel):
 
     design_seed: int
     root_seed: int
-    baseline: ModelSpec
-    protocol: ExperimentProtocol
-    interventions: tuple[ModelIntervention, ...]
-    worlds: tuple[SyntheticWorldSpec, ...]
+    baseline: InstanceOf[ModelSpec]
+    protocol: InstanceOf[ExperimentProtocol]
+    interventions: tuple[InstanceOf[ModelIntervention], ...]
+    worlds: tuple[InstanceOf[SyntheticWorldSpec], ...]
 
 
 class ReferenceSyntheticExperimentResultV1(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
 
-    design: ReferenceSyntheticExperimentDesignV1
-    dataset: SyntheticExperimentDataset
-    report: SyntheticRecoveryReport
+    design: InstanceOf[ReferenceSyntheticExperimentDesignV1]
+    dataset: InstanceOf[SyntheticExperimentDataset]
+    report: InstanceOf[SyntheticRecoveryReport]
 
     @property
     def report_hash(self) -> str:
