@@ -221,7 +221,7 @@ def _run_reference_world(
         queue_time = service_start - arrival_at
         completed_at = service_start + processing_time + rework_time
         server_available_at = completed_at
-        lead_time = completed_at - arrival_at
+        lead_time = queue_time + processing_time + rework_time
 
         items.append(
             SyntheticItemRecord(
