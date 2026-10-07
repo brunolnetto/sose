@@ -271,7 +271,7 @@ def run_a0_a1_reference_experiment_v1(
                 pair.delta_operating_cost for pair in pairs
             ),
             mean_adaptation_actor_time=fmean(
-                pair.a1_run.adaptation_actor_time for pair in pairs
+                pair.a1_run.adaptation_actor_time_measurement for pair in pairs
             ),
             mean_adaptation_cost=fmean(
                 pair.a1_run.adaptation_cost for pair in pairs
