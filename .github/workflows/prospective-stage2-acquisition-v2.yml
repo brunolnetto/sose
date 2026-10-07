@@ -19,6 +19,10 @@ permissions:
   issues: read
   pull-requests: read
 
+concurrency:
+  group: prospective-stage2-v2
+  cancel-in-progress: false
+
 jobs:
   acquire-and-advance:
     runs-on: ubuntu-latest
