@@ -98,13 +98,6 @@ class DomainReference(Protocol):
     def build_model(self, point: ParameterPoint) -> ModelSpec: ...
     def interventions(self) -> tuple[ModelIntervention, ...]: ...
     def supported_agency(self) -> tuple[AgencyLevel, ...]: ...
-
-    def build_worlds(
-        self,
-        protocol: ExperimentProtocol,
-        seed: int,
-    ) -> tuple[ExperimentWorld, ...]: ...
-
     def execute(
         self,
         execution: DomainExecutionRequest,
@@ -126,7 +119,7 @@ class DomainReference(Protocol):
     ) -> RegimeReference: ...
 ```
 
-This is a target contract, not permission to move domain behavior into a generic base class.
+This is a target contract, not permission to move domain behavior into a generic base class. World expansion, DOE sampling, design indices, comparison groups, and CRN assignment remain framework-owned; the domain supplies the semantic ingredients from which those worlds are constructed.
 
 ### 3.2 DomainExperiment framework
 
