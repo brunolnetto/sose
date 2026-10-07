@@ -114,7 +114,7 @@ def build_reference_synthetic_canonical() -> tuple[
             set_values={"/parameters/service_capacity": 1.8},
             operating_cost=0.45,
             transition_cost=12.0,
-            transition_time=40.0,
+            transition_time=0.0,
         ),
         ModelIntervention(
             intervention_id="policy-standardize",
@@ -122,7 +122,7 @@ def build_reference_synthetic_canonical() -> tuple[
             set_values={"/parameters/service_cv": 0.35},
             operating_cost=0.10,
             transition_cost=5.0,
-            transition_time=10.0,
+            transition_time=0.0,
         ),
         ModelIntervention(
             intervention_id="automation",
@@ -130,7 +130,7 @@ def build_reference_synthetic_canonical() -> tuple[
             set_values={"/parameters/rework_probability": 0.01},
             operating_cost=0.25,
             transition_cost=18.0,
-            transition_time=30.0,
+            transition_time=0.0,
         ),
         ModelIntervention(
             intervention_id="structural-cell",
@@ -142,7 +142,7 @@ def build_reference_synthetic_canonical() -> tuple[
             },
             operating_cost=0.65,
             transition_cost=30.0,
-            transition_time=60.0,
+            transition_time=0.0,
         ),
     )
 
