@@ -1,6 +1,6 @@
 # ADR-0002 — DomainReference owns experiment-domain semantics
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-07
 - **Decision owners:** SOSE maintainers
 - **Related PRD(s):** `PRD-0001`
