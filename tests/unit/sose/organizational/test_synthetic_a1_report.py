@@ -65,10 +65,18 @@ def test_report_exposes_regime_displacement_and_adaptation_cost_separately() -> 
     assert report.regime_summary.stable_to_saturated_worlds == 0
     assert report.mean_adaptation_actor_time > 0.0
     assert report.mean_adaptation_cost > 0.0
+    assert report.intervention_direction_eligible_count > 0
+    assert report.intervention_direction_ineligible_count > 0
+    assert report.intervention_direction_agreement_rate is not None
     assert 0.0 <= report.intervention_direction_agreement_rate <= 1.0
     assert (
         report.intervention_direction_agreement_count
         + report.intervention_direction_change_count
+        == report.intervention_direction_eligible_count
+    )
+    assert (
+        report.intervention_direction_eligible_count
+        + report.intervention_direction_ineligible_count
         == len(report.intervention_effects)
     )
 
@@ -80,9 +88,14 @@ def test_report_keeps_effect_magnitude_and_direction_without_composite_score() -
     for effect in report.intervention_effects:
         assert effect.a0_delta_mean_lead_time == effect.a0_delta_mean_lead_time
         assert effect.a1_delta_mean_lead_time == effect.a1_delta_mean_lead_time
-        assert effect.a0_direction in {-1, 0, 1}
-        assert effect.a1_direction in {-1, 0, 1}
-        assert effect.direction_changed == (effect.a0_direction != effect.a1_direction)
+        if effect.direction_eligible:
+            assert effect.a0_direction in {-1, 0, 1}
+            assert effect.a1_direction in {-1, 0, 1}
+            assert effect.direction_changed == (effect.a0_direction != effect.a1_direction)
+        else:
+            assert effect.a0_direction is None
+            assert effect.a1_direction is None
+            assert effect.direction_changed is None
 
 
 def test_report_rejects_missing_or_duplicate_paired_evidence() -> None:
