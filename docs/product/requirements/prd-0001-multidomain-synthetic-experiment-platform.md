@@ -1,6 +1,6 @@
 # PRD-0001 — SOSE 1.0 Multi-Domain Synthetic Organizational Experiment Platform
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Owner:** SOSE maintainers
 - **Created:** 2026-10-07
 - **Last updated:** 2026-10-07
