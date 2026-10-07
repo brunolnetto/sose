@@ -201,6 +201,12 @@ def _validate_fit_freeze_binding(
     stage1_fit: Stage1PRReviewFitV2,
     model_freeze: ProspectiveModelFreezeArtifactV2,
 ) -> None:
+    rebuilt_model_spec = stage1_fit.model.build_model_spec()
+    if rebuilt_model_spec.model_spec_hash != stage1_fit.model_spec_hash:
+        raise ValueError("Stage-1 fit model does not reconstruct stored ModelSpec")
+    if rebuilt_model_spec.model_spec_hash != model_freeze.model_spec_hash:
+        raise ValueError("Stage-1 fit model does not reconstruct frozen ModelSpec")
+
     bindings = (
         (stage1_fit.training_state_hash, model_freeze.training_state_hash),
         (stage1_fit.protocol_hash, model_freeze.protocol_hash),
