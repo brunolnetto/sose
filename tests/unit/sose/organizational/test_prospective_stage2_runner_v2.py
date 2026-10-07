@@ -112,6 +112,48 @@ def test_stage2_rejects_freeze_artifact_not_bound_to_previous_frozen_state() -> 
 
 
 
+def test_stage2_accepts_freeze_snapshot_that_contains_pre_freeze_interstitial() -> None:
+    protocol = _protocol()
+    training = (
+        _record(302, opened_at=REGISTERED_AT + timedelta(minutes=1)),
+        _record(303, opened_at=REGISTERED_AT + timedelta(minutes=2)),
+    )
+    pre = advance_prospective_evidence_state_v2(records=training, protocol=protocol)
+    with_interstitial = advance_prospective_evidence_state_v2(
+        records=(
+            *training,
+            _record(
+                329,
+                opened_at=FROZEN_AT - timedelta(minutes=1),
+                merged_at=FROZEN_AT - timedelta(seconds=1),
+            ),
+        ),
+        protocol=protocol,
+        previous_state=pre,
+    )
+    frozen = advance_prospective_evidence_state_v2(
+        records=with_interstitial.snapshot.records,
+        protocol=protocol,
+        model_frozen_at=FROZEN_AT,
+        previous_state=with_interstitial,
+    )
+    freeze = _freeze_for_state(
+        frozen,
+        training_state_hash=with_interstitial.state_hash,
+        snapshot_hash=with_interstitial.snapshot_hash,
+    )
+
+    result = advance_stage2_artifacts_v2(
+        model_freeze=freeze,
+        tranche=_snapshot(_record(330, opened_at=FROZEN_AT + timedelta(minutes=1))),
+        previous_acquisition=_snapshot(*frozen.snapshot.records),
+        previous_state=frozen,
+    )
+
+    assert ("brunolnetto/sose", 329) in result.state.cohort.interstitial_keys
+    assert result.state.cohort.holdout_keys == (("brunolnetto/sose", 330),)
+
+
 def test_stage2_rejects_different_freeze_identity_with_same_protocol_and_snapshot() -> None:
     previous = _frozen_state()
     freeze = _freeze(previous)
@@ -199,6 +241,19 @@ def _frozen_state():
 
 
 def _freeze(frozen_state) -> ProspectiveModelFreezeArtifactV2:
+    return _freeze_for_state(
+        frozen_state,
+        training_state_hash=frozen_state.previous_state_hash,
+        snapshot_hash=frozen_state.snapshot_hash,
+    )
+
+
+def _freeze_for_state(
+    frozen_state,
+    *,
+    training_state_hash: str,
+    snapshot_hash: str,
+) -> ProspectiveModelFreezeArtifactV2:
     spec = build_model_spec(PullRequestFlowConfig())
     criteria = LeadTimeValidationCriteria(
         max_abs_mean_difference_seconds=1.0,
@@ -208,9 +263,9 @@ def _freeze(frozen_state) -> ProspectiveModelFreezeArtifactV2:
     )
     return ProspectiveModelFreezeArtifactV2(
         readiness_checkpoint_hash="1" * 64,
-        training_state_hash=frozen_state.previous_state_hash,
+        training_state_hash=training_state_hash,
         protocol_hash=frozen_state.protocol_hash,
-        snapshot_hash=frozen_state.snapshot_hash,
+        snapshot_hash=snapshot_hash,
         frozen_at=FROZEN_AT,
         model_spec=spec,
         model_spec_hash=spec.model_spec_hash,
