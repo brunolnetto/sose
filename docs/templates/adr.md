@@ -61,4 +61,4 @@ How will we know implementations conform to this decision?
 
 ## Notes
 
-After status becomes **Accepted**, substantive changes require a new ADR that supersedes this one.
+After status becomes **Accepted**, substantive changes to the recorded decision require a new ADR that supersedes this one. Lifecycle metadata such as `Status`, `Superseded by`, and reciprocal supersession links may still be updated.
