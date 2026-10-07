@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, InstanceOf
 from .synthetic_a1_experiment import (
     A0A1ExperimentSummary,
     A0A1ReferenceExperimentResultV1,
+    A1RegimeKind,
 )
 
 
@@ -26,9 +27,10 @@ class A1InterventionEffectV1(BaseModel):
     a1_delta_throughput: float = Field(allow_inf_nan=False)
     a0_delta_operating_cost: float = Field(allow_inf_nan=False)
     a1_delta_operating_cost: float = Field(allow_inf_nan=False)
-    a0_direction: int = Field(ge=-1, le=1)
-    a1_direction: int = Field(ge=-1, le=1)
-    direction_changed: bool
+    direction_eligible: bool
+    a0_direction: int | None = Field(default=None, ge=-1, le=1)
+    a1_direction: int | None = Field(default=None, ge=-1, le=1)
+    direction_changed: bool | None = None
     agency_delta_intervention_effect: float = Field(allow_inf_nan=False)
 
 
@@ -41,9 +43,12 @@ class A1ScientificReportV1(BaseModel):
     pair_count: int = Field(ge=1)
     regime_summary: InstanceOf[A0A1ExperimentSummary]
     intervention_effects: tuple[InstanceOf[A1InterventionEffectV1], ...]
+    intervention_direction_eligible_count: int = Field(ge=0)
+    intervention_direction_ineligible_count: int = Field(ge=0)
     intervention_direction_agreement_count: int = Field(ge=0)
     intervention_direction_change_count: int = Field(ge=0)
-    intervention_direction_agreement_rate: float = Field(
+    intervention_direction_agreement_rate: float | None = Field(
+        default=None,
         ge=0.0,
         le=1.0,
         allow_inf_nan=False,
@@ -62,6 +67,12 @@ class A1ScientificReportV1(BaseModel):
             "intervention_effects": [
                 effect.model_dump(mode="json") for effect in self.intervention_effects
             ],
+            "intervention_direction_eligible_count": (
+                self.intervention_direction_eligible_count
+            ),
+            "intervention_direction_ineligible_count": (
+                self.intervention_direction_ineligible_count
+            ),
             "intervention_direction_agreement_count": (
                 self.intervention_direction_agreement_count
             ),
@@ -141,6 +152,7 @@ def build_a1_scientific_report_v1(
             a1_throughput: list[float] = []
             a0_cost: list[float] = []
             a1_cost: list[float] = []
+            direction_eligibility: list[bool] = []
 
             for replication in replications:
                 baseline = by_key.get((design_index, "baseline", replication))
@@ -171,11 +183,20 @@ def build_a1_scientific_report_v1(
                     intervention.a1_run.total_operating_cost
                     - baseline.a1_run.total_operating_cost
                 )
+                direction_eligibility.append(
+                    baseline.a0_stable
+                    and intervention.a0_stable
+                    and baseline.a1_regime is not A1RegimeKind.SATURATED
+                    and intervention.a1_regime is not A1RegimeKind.SATURATED
+                )
 
+            if len(set(direction_eligibility)) != 1:
+                raise ValueError("regime eligibility must be constant across replications")
+            direction_eligible = direction_eligibility[0]
             a0_delta_lead = fmean(a0_lead)
             a1_delta_lead = fmean(a1_lead)
-            a0_direction = _direction(a0_delta_lead, margin)
-            a1_direction = _direction(a1_delta_lead, margin)
+            a0_direction = _direction(a0_delta_lead, margin) if direction_eligible else None
+            a1_direction = _direction(a1_delta_lead, margin) if direction_eligible else None
             intervention_effects.append(
                 A1InterventionEffectV1(
                     design_index=design_index,
@@ -187,27 +208,43 @@ def build_a1_scientific_report_v1(
                     a1_delta_throughput=fmean(a1_throughput),
                     a0_delta_operating_cost=fmean(a0_cost),
                     a1_delta_operating_cost=fmean(a1_cost),
+                    direction_eligible=direction_eligible,
                     a0_direction=a0_direction,
                     a1_direction=a1_direction,
-                    direction_changed=a0_direction != a1_direction,
+                    direction_changed=(
+                        a0_direction != a1_direction
+                        if direction_eligible
+                        else None
+                    ),
                     agency_delta_intervention_effect=a1_delta_lead - a0_delta_lead,
                 )
             )
 
+    eligible_effects = tuple(
+        effect for effect in intervention_effects if effect.direction_eligible
+    )
     agreement = sum(
         effect.a0_direction == effect.a1_direction
-        for effect in intervention_effects
+        for effect in eligible_effects
     )
-    changes = len(intervention_effects) - agreement
+    changes = len(eligible_effects) - agreement
 
     return A1ScientificReportV1(
         protocol_hash=experiment.design.protocol.protocol_hash,
         pair_count=len(experiment.pairs),
         regime_summary=experiment.summary,
         intervention_effects=tuple(intervention_effects),
+        intervention_direction_eligible_count=len(eligible_effects),
+        intervention_direction_ineligible_count=(
+            len(intervention_effects) - len(eligible_effects)
+        ),
         intervention_direction_agreement_count=agreement,
         intervention_direction_change_count=changes,
-        intervention_direction_agreement_rate=agreement / len(intervention_effects),
+        intervention_direction_agreement_rate=(
+            agreement / len(eligible_effects)
+            if eligible_effects
+            else None
+        ),
         mean_agency_delta_lead_time=fmean(
             pair.delta_mean_lead_time for pair in experiment.pairs
         ),
