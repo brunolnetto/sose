@@ -59,7 +59,7 @@ A TRD owns:
 - test strategy and conformance gates;
 - implementation plan and rollout.
 
-A TRD must link to the PRD(s) it satisfies.
+A TRD must link to the PRD(s) it satisfies when a PRD applies. When the change matrix permits a PRD-less TRD, the TRD must explicitly record `Satisfies PRD(s): none` with a short rationale.
 
 ### ADR
 
@@ -76,7 +76,7 @@ Typical ADR subjects include:
 - architectural invariants;
 - decisions that are expensive or risky to reverse.
 
-An accepted ADR is immutable except for typo/link corrections. A changed decision requires a new ADR that supersedes the old one.
+An accepted ADR is immutable in its recorded context, decision, drivers, consequences, and alternatives. Typo/link corrections plus lifecycle metadata updates (`Status`, `Superseded by`, and reciprocal supersession links) are allowed. A changed decision requires a new ADR that supersedes the old one.
 
 ## When each artifact is required
 
@@ -123,7 +123,7 @@ implementation PRs
 validation / evidence / release
 ```
 
-PRD and TRD should be accepted before substantial implementation begins.
+When required by the change matrix, PRD and TRD should be accepted before substantial implementation begins. A TRD may intentionally have no PRD when the matrix permits it, but that exemption must be explicit in the TRD.
 
 For a tightly scoped single-PR change, a PRD/TRD may accompany the implementation only when the change is not cross-cutting and reviewers can evaluate the design independently of the code. Cross-cutting decisions require the planning artifacts first.
 
@@ -151,7 +151,7 @@ Allowed statuses:
 - `Superseded`
 - `Rejected`
 
-Accepted ADRs are append-only historical records. Architectural evolution is represented by new ADRs.
+Accepted ADRs are append-only historical records with respect to decision content. Their lifecycle status and supersession metadata may be updated to reflect deprecation or replacement. Architectural evolution itself is represented by new ADRs.
 
 ## Traceability
 
