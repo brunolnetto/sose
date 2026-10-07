@@ -45,7 +45,7 @@ def test_a1_regime_reference_contains_nominal_adaptive_and_saturated_cases() -> 
 
 
 def test_a0_a1_pairing_preserves_crn_latents() -> None:
-    result = run_a0_a1_reference_experiment_v1(replications=2)
+    result = run_a0_a1_reference_experiment_v1()
     pair = result.pairs[0]
 
     count = min(len(pair.a0_run.items), len(pair.a1_run.items))
@@ -62,9 +62,9 @@ def test_a0_a1_pairing_preserves_crn_latents() -> None:
 
 
 def test_a0_a1_experiment_reports_regime_rescue_and_adaptation_cost() -> None:
-    result = run_a0_a1_reference_experiment_v1(replications=2)
+    result = run_a0_a1_reference_experiment_v1()
 
-    assert len(result.pairs) == 12 * 3 * 2
+    assert len(result.pairs) == 12 * 3 * 16
     assert result.summary.a0_saturated_worlds > 0
     assert result.summary.a1_adaptation_stabilized_worlds > 0
     assert result.summary.a1_saturated_worlds > 0
@@ -74,7 +74,7 @@ def test_a0_a1_experiment_reports_regime_rescue_and_adaptation_cost() -> None:
 
 
 def test_long_horizon_adaptation_time_is_derived_from_actor_ledger() -> None:
-    result = run_a0_a1_reference_experiment_v1(replications=2)
+    result = run_a0_a1_reference_experiment_v1()
     longest = max(
         (pair.a1_run for pair in result.pairs),
         key=lambda run: run.adaptation_count,
