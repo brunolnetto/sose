@@ -1,6 +1,6 @@
 # ADR-0004 — Define A0/A1/A2 agency ownership boundaries
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-07
 - **Decision owners:** SOSE maintainers
 - **Related PRD(s):** `PRD-0001`
