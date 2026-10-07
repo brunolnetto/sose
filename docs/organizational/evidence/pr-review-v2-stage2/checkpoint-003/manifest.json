@@ -1,0 +1,20 @@
+{
+  "manifest_version": "pr-review-prospective-stage2-archive/v2",
+  "repository": "brunolnetto/sose",
+  "checkpoint_number": 3,
+  "holdout_observed": 3,
+  "holdout_target": 12,
+  "validation_allowed": false,
+  "workflow_run_id": 37615948499,
+  "artifact_id": 11480455061,
+  "artifact_digest": "sha256:fe328e3781f1c275f2387bc83d89ef90ecdfe7c145381de3dd68f70668d7c1e0",
+  "model_freeze_hash": "7f233393f783cf7b9ee5aa2de11bd99b7a56b7b249e67c5e72423eceafc08f7d",
+  "state_hash": "c72581764f0950dc9a697866fd083d75b49eb50ccddb1778bebbd097c0301275",
+  "snapshot_hash": "ddac6a7ac4db2dc6da5bedd7d664eb18cb9344e0f7f03f6a5305236de34bf8f2",
+  "files": {
+    "cumulative-acquisition.json": "sha256:5d2ae119d7974e8ef2fa6a33235f6df8ac8971e2fcd82268c18e75afbe00963e",
+    "prospective-state.json": "sha256:9cd5030aba7041d2076795434362f2544382e638e255859e95830e6e63c85088",
+    "stage2-checkpoint.json": "sha256:869e277ea17b925dc5712177938341d15888d4c77fa7b6b4347788cb2a991f4d",
+    "tranche-acquisition.json": "sha256:7ea9de0f0c90c7014098d080dead2666f870084af2df6f345f4bd449d9bf9003"
+  }
+}
