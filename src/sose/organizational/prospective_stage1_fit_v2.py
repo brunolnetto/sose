@@ -277,7 +277,7 @@ def fit_stage1_pr_review_v2(
         snapshot_hash=state.snapshot_hash,
         training_keys=state.cohort.training_keys,
         model=model,
-        model_spec=model_spec,
+        model_spec=model_spec.canonical_payload(),
         model_spec_hash=model_spec.model_spec_hash,
         simulation_seed=simulation_seed,
         training_bot_fraction=bot_fraction,
