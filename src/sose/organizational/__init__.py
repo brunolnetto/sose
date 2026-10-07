@@ -26,6 +26,12 @@ from .model_spec import (
 )
 from .observations import ObservedEventKind, ObservedPREvent, ObservedPRTrace
 from .sampling import sample_parameter_space
+from .synthetic_runner import (
+    SyntheticExperimentDataset,
+    SyntheticItemRecord,
+    SyntheticRunResult,
+    run_reference_synthetic_experiment,
+)
 from .synthetic_study import SyntheticWorldSpec, generate_synthetic_worlds
 from .validation import (
     DistributionSummary,
@@ -67,6 +73,9 @@ __all__ = [
     "StructuralDiff",
     "SurrogateAnalysisPlan",
     "SurrogateModel",
+    "SyntheticExperimentDataset",
+    "SyntheticItemRecord",
+    "SyntheticRunResult",
     "SyntheticWorldSpec",
     "ValidationCheck",
     "assess_lead_time_validation",
@@ -76,5 +85,6 @@ __all__ = [
     "normalize_github_pr_trace",
     "sample_parameter_space",
     "generate_synthetic_worlds",
+    "run_reference_synthetic_experiment",
     "summarize_distribution",
 ]
