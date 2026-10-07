@@ -1,6 +1,6 @@
 # ADR-0004 — Define A0/A1/A2 agency ownership boundaries
 
-- **Status:** Accepted
+- **Status:** Proposed
 - **Date:** 2026-10-07
 - **Decision owners:** SOSE maintainers
 - **Related PRD(s):** `PRD-0001`
@@ -163,7 +163,7 @@ When comparing A0/A1/A2 for a world:
 
 - some intuitive adaptive behaviors must be classified carefully;
 - A2 requires additional observation/action infrastructure;
-- domains must expose agency-capable policies through explicit contracts;
+- domains must expose agency-capable policies/controllers through typed capability contracts containing configurable identifiers, schemas, defaults, bounds, and compatibility constraints;
 - not every organization will support every agency level immediately.
 
 ### Constraints introduced
