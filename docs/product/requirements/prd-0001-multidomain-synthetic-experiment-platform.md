@@ -79,7 +79,7 @@ That is incompatible with the intended end state: a user should be able to selec
 - **FR-12 — Standard data product:** results shall be exportable through a stable schema for runs, worlds, events/ledgers, metrics, regimes, interventions, agency actions, ground truth, and experiment metadata.
 - **FR-13 — Configuration-first execution:** the 1.0 product shall support selecting a domain and experiment through configuration plus CLI/API without modifying experiment framework code.
 - **FR-14 — Cross-domain conformance:** Manufacturing, Order-to-Cash, and MRO shall pass the same domain-experiment conformance suite before the framework is considered general.
-- **FR-15 — Process maturity prerequisite:** a built-in business domain shall not be promoted as an organizational experiment reference until its process evidence audit is complete and it reaches at least PC5; architectural-reference promotion also requires at least one credible PC6 composition.
+- **FR-15 — Process maturity prerequisite:** a built-in business domain shall not enter official Organizational Dynamics experiment execution/evidence until its process evidence audit is complete, it reaches at least PC5, and the repository has at least one credible PC6 composition; prototypes on the synthetic reference may precede this gate.
 - **FR-16 — Pilot preregistration:** every promoted domain experiment shall have an accepted domain-specific PRD/TRD and a frozen preregistration protocol before official experiment execution/evidence, defining the scientific question, permissible claims, exogenous axes, interventions, agency configurations, ground truth/eligibility, DOE, replication/seeds/CRN, metrics, exclusions, falsification criteria, and provenance.
 
 ### Quality / operational
@@ -112,7 +112,7 @@ That is incompatible with the intended end state: a user should be able to selec
 
 - Existing deterministic randomness and durable-truth semantics remain authoritative.
 - Process canonicals remain domain-owned; the experiment framework consumes them and does not replace them.
-- Organizational Dynamics experiments are downstream of process-canonical maturity: pilot domains must reach PC5 before experiment promotion, and framework architectural-reference promotion requires a credible PC6 composition.
+- Organizational Dynamics experiments are downstream of process-canonical maturity: pilot domains must reach PC5 and the repository must already contain a credible PC6 composition before official domain experiment execution/evidence.
 - Manufacturing/MRO experiment rollout must respect the existing Trading Company → W6 dependency rather than bypassing the Process Canonical Roadmap.
 - Framework extraction must respect the existing architecture rule: do not erase domain meaning to obtain superficial reuse.
 - Ground-truth claims must state assumptions and eligibility.
@@ -152,9 +152,9 @@ The exact CLI shape is a technical-design concern and may evolve before 1.0.
 
 - [ ] One domain-neutral experiment contract exists and contains no queue-specific concepts.
 - [ ] Existing A0/A1 reference experiment is expressible through the common contract without losing current scientific boundaries.
-- [ ] Order-to-Cash, Manufacturing, and MRO each have a complete evidence audit and reach at least PC5 before their experiment reference is promoted.
+- [ ] Order-to-Cash, Manufacturing, and MRO each have a complete evidence audit and reach at least PC5 before their official experiment reference executes/publishes evidence.
+- [ ] At least one credible PC6 composition exists before any built-in pilot enters official Organizational Dynamics experiment execution/evidence.
 - [ ] Each pilot has an accepted domain-specific PRD/TRD and a frozen preregistration protocol before official runs/evidence are generated.
-- [ ] At least one credible PC6 composition exists before the experiment framework is promoted as the architectural reference.
 - [ ] Manufacturing passes the common experiment conformance suite without framework special-casing.
 - [ ] Order-to-Cash passes the same suite without framework special-casing.
 - [ ] MRO passes the same suite without framework special-casing.
