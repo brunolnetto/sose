@@ -181,9 +181,9 @@ def analyze_reference_synthetic_experiment(
         raise ValueError("dataset protocol hash does not match experiment protocol")
     if any(world.agency_level.value != "A0" for world in worlds):
         raise ValueError("reference synthetic analytical recovery supports A0 mechanics only")
-    if any(world.intervention_transition_time > protocol.warmup for world in worlds):
+    if any(world.intervention_transition_time != 0.0 for world in worlds):
         raise ValueError(
-            "stationary synthetic recovery requires intervention transition time <= warmup"
+            "stationary synthetic recovery excludes intervention transition downtime"
         )
 
     world_by_hash = {world.world_hash: world for world in worlds}
