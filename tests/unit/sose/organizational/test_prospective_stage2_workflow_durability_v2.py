@@ -9,10 +9,13 @@ def test_stage2_workflow_persists_canonical_bundle_to_durable_evidence_branch() 
 
     assert "contents: write" in text
     assert "evidence/prospective-v2-stage2" in text
-    assert "stage2-output/cumulative-acquisition.json" in text
-    assert "stage2-output/prospective-state.json" in text
-    assert "stage2-output/stage2-checkpoint.json" in text
-    assert "stage2-output/tranche-acquisition.json" in text
+    assert 'output="$GITHUB_WORKSPACE/stage2-output"' in text
+    assert (
+        "cumulative-acquisition.json prospective-state.json "
+        "stage2-checkpoint.json tranche-acquisition.json"
+    ) in text
+    assert 'cp "$output/$name" "$destination/$name"' in text
+    assert 'cp "$output/$name" "$root/latest/$name"' in text
     assert "checkpoint-" in text
     assert "latest" in text
 
