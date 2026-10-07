@@ -130,6 +130,10 @@ def run_reference_synthetic_experiment(
         raise ValueError("complete synthetic world design is required")
     if any(world.protocol_hash != protocol.protocol_hash for world in worlds):
         raise ValueError("synthetic world protocol hash mismatch")
+    if any(world.agency_level.value != "A0" for world in worlds):
+        raise ValueError(
+            "reference synthetic runner currently implements A0 mechanics only"
+        )
 
     runs: list[SyntheticRunResult] = []
     for world in worlds:
