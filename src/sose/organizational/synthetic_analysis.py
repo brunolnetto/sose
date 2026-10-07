@@ -179,6 +179,12 @@ def analyze_reference_synthetic_experiment(
 
     if dataset.protocol_hash != protocol.protocol_hash:
         raise ValueError("dataset protocol hash does not match experiment protocol")
+    if any(world.agency_level.value != "A0" for world in worlds):
+        raise ValueError("reference synthetic analytical recovery supports A0 mechanics only")
+    if any(world.intervention_transition_time > protocol.warmup for world in worlds):
+        raise ValueError(
+            "stationary synthetic recovery requires intervention transition time <= warmup"
+        )
 
     world_by_hash = {world.world_hash: world for world in worlds}
     run_world_hashes = {run.world_hash for run in dataset.runs}
@@ -208,6 +214,11 @@ def analyze_reference_synthetic_experiment(
         runs = runs_by_world[world.world_hash]
         if len(runs) != dataset.replications:
             raise ValueError("each synthetic world must have exactly the declared replications")
+        replication_indices = {run.replication for run in runs}
+        if replication_indices != set(range(dataset.replications)):
+            raise ValueError(
+                "each synthetic world must bind exact replication indices 0..R-1"
+            )
 
         observed_lead = fmean(run.mean_lead_time for run in runs)
         observed_throughput = fmean(run.throughput for run in runs)
