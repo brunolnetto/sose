@@ -78,26 +78,25 @@ def test_batch_acquisition_is_canonical_by_pr_creation_order() -> None:
     assert len(snapshot.acquisition_hash) == 64
 
 
-def test_batch_rejects_duplicate_or_too_small_pr_sets_before_network_access() -> None:
-    client = FakeClient(_pages((302, 303)))
+def test_batch_accepts_single_pr_and_rejects_duplicates_before_network_access() -> None:
+    single = FakeClient(_pages((302,)))
+    snapshot = acquire_github_pr_batch_v2(
+        repository=REPOSITORY,
+        pr_numbers=(302,),
+        client=single,
+        captured_at=CAPTURED_AT,
+    )
+    assert tuple(artifact.evidence.pr_number for artifact in snapshot.artifacts) == (302,)
 
-    with pytest.raises(ValueError, match="at least two distinct"):
+    duplicate = FakeClient(_pages((302, 303)))
+    with pytest.raises(ValueError, match="distinct pull requests"):
         acquire_github_pr_batch_v2(
             repository=REPOSITORY,
             pr_numbers=(302, 302),
-            client=client,
+            client=duplicate,
             captured_at=CAPTURED_AT,
         )
-    assert client.requests == []
-
-    with pytest.raises(ValueError, match="at least two distinct"):
-        acquire_github_pr_batch_v2(
-            repository=REPOSITORY,
-            pr_numbers=(302,),
-            client=client,
-            captured_at=CAPTURED_AT,
-        )
-    assert client.requests == []
+    assert duplicate.requests == []
 
 
 def test_batch_publication_is_canonical_and_idempotent(tmp_path: Path) -> None:
