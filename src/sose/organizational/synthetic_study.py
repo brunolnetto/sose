@@ -6,7 +6,7 @@ import json
 from types import MappingProxyType
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, InstanceOf, StringConstraints, model_validator
 
 from .agency import AgencyLevel, AgencySpec
 from .experiment import ExperimentProtocol
@@ -33,7 +33,7 @@ class SyntheticWorldSpec(BaseModel):
     intervention_operating_cost: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     intervention_transition_cost: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     intervention_transition_time: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
-    model_spec: ModelSpec
+    model_spec: InstanceOf[ModelSpec]
     model_spec_hash: NonBlankString
 
     @model_validator(mode="after")
