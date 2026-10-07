@@ -107,6 +107,17 @@ def run_a1_reference_world(
     items: list[SyntheticItemRecord] = []
     actor_intervals: list[ActorLedgerInterval] = []
     actor_cursor = 0.0
+    if world.intervention_transition_time > 0.0:
+        actor_intervals.append(
+            ActorLedgerInterval(
+                start=0.0,
+                end=world.intervention_transition_time,
+                category=ActorCategory.UNAVAILABLE,
+                secondary_labels=("intervention_transition",),
+                model_spec_hash=world.model_spec_hash,
+            )
+        )
+        actor_cursor = world.intervention_transition_time
     adaptation_count = 0
     adaptation_actor_time = 0.0
     item_index = 0
