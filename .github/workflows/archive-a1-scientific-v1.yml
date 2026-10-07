@@ -1,0 +1,135 @@
+name: Archive A1 Scientific v1
+
+on:
+  push:
+    branches:
+      - automation/a1-scientific-report-v1-final
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  archive:
+    if: ${{ !contains(github.event.head_commit.message, '[a1-scientific-archive]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: automation/a1-scientific-report-v1-final
+      - name: Download exact final artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: a1-scientific-v1-clean-37692117988
+          path: a1-result
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 37692117988
+      - name: Verify result bytes
+        run: |
+          printf '%s  %s\n'             a4fdf12d8f257e4066ed2b02b73334ae9d052bcfbaf31f6dac4b67b1a497aa2c a1-result/report.json             8ed7b89a7b76968009ff98eb5ee1e0a85664c664979daede3c4b78915455c4c8 a1-result/summary.json             | sha256sum --check --strict
+      - name: Persist result and interpretation
+        run: |
+          destination=docs/organizational/evidence/synthetic-a1-reference-v1
+          mkdir -p "$destination"
+          cp a1-result/report.json "$destination/"
+          cp a1-result/summary.json "$destination/"
+          cat > "$destination/manifest.json" <<'JSON'
+          {
+            "manifest_version": "synthetic-a1-reference/v1",
+            "workflow_run_id": 37692117988,
+            "workflow_head_sha": "e1eb1a517444cdbf1461797b2559e42a1703b20b",
+            "artifact_id": 11513453262,
+            "artifact_digest": "sha256:f90bd76778158850a4be7e718a106272d00fb5cc92f1a1fefcf4d03137185360",
+            "report_sha256": "a4fdf12d8f257e4066ed2b02b73334ae9d052bcfbaf31f6dac4b67b1a497aa2c",
+            "summary_sha256": "8ed7b89a7b76968009ff98eb5ee1e0a85664c664979daede3c4b78915455c4c8",
+            "protocol_hash": "c5a23cb810a1dfea2355870eeefecb365489d249804023ad377c00755fd7ac29",
+            "report_hash": "a51a1495d0f7f1097b24ad1ac0a5ffa2ec219068e6706b045859e38276b9eb6d"
+          }
+          JSON
+          cat > "$destination/RESULT.md" <<'MD'
+          # A1 synthetic agency experiment v1
+
+          This is a synthetic verification experiment with known mechanics, not empirical validation.
+
+          ## Design
+
+          The fixed exogenous DOE from the A0 reference study is evaluated under two agency regimes:
+
+          - A0: fixed actor policy.
+          - A1: backlog-triggered local batching adaptation within unchanged organizational structure.
+
+          Each of 12 design points has three arms (baseline, capacity expansion, rework-reducing automation), and every A0/A1 world pair shares the same exogenous inputs and CRN stream. The official design uses 16 replications, yielding 36 world pairs x 16 = 576 paired replicated observations.
+
+          A1 activates at backlog pressure 2.0, applies service multiplier 0.70, pays 0.05 actor-time units per activation, and records that effort explicitly as ADAPTATION.
+
+          ## Regime result
+
+          | Regime measure | Result |
+          | --- | ---: |
+          | A0 nominally stable worlds | 20 |
+          | A0 saturated worlds | 16 |
+          | A1 nominally stable worlds | 20 |
+          | A1 adaptation-stabilized worlds | 10 |
+          | A1 saturated worlds | 6 |
+          | A0 saturated -> A1 stable | **10 / 16 (62.5%)** |
+          | A0 stable -> A1 saturated | **0** |
+
+          The regime classification is mechanistic, not inferred from observed WIP or lead time:
+
+          - nominal load: lambda E[S]
+          - adapted load: lambda (m E[S] + t_adapt)
+          - nominal load < 1 -> nominal stable
+          - nominal load >= 1 and adapted load < 1 -> adaptation-stabilized
+          - adapted load >= 1 -> saturated
+
+          ## Intervention robustness
+
+          Across 12 design points x 2 interventions, the direction of the lead-time effect was preserved in **24 / 24 intervention comparisons (100%)** between A0 and A1.
+
+          This does not mean agency is irrelevant. A1 materially changed intervention magnitudes, while the signs remained the same in this design. Agency displaced the regime map and compressed or amplified intervention effects without reversing their direction.
+
+          ## Finite-horizon operational effects
+
+          Averaged across the 576 paired replications:
+
+          - A1 - A0 mean lead time: **-56.084 simulation-time units**
+          - A1 - A0 throughput: **+0.08647 items per simulation-time unit**
+          - A1 - A0 operating cost: **+3.661 cost units**
+          - mean A1 adaptation actor time: **24.407 actor-time units**
+          - mean A1 adaptation cost: **3.661 cost units**
+
+          These lead-time and throughput magnitudes are finite-horizon operational outcomes. They must not be interpreted as stationary expectations for worlds classified as saturated.
+
+          ## What this verifies
+
+          The experiment provides executable evidence that, under the implemented reference mechanics:
+
+          1. local actor adaptation can move the stability boundary without rewriting organization structure;
+          2. the engine preserves CRN pairing while agency changes execution policy;
+          3. adaptation effort remains explicit actor time rather than disappearing into item elapsed time;
+          4. capacity and automation interventions retain their beneficial lead-time direction across all tested design points, although agency changes effect magnitude;
+          5. adaptation has a measurable cost and therefore is not modeled as a free performance improvement.
+
+          ## Falsification and limits
+
+          The hypothesis that local adaptation can alter organizational regime boundaries would have failed in this design if no nominally saturated A0 world became mechanically stable under A1. The observed result is 10 rescued worlds.
+
+          The experiment does not establish that every A1 policy improves outcomes or preserves intervention direction. Only one explicit batching policy is tested. It also does not establish empirical validity for real organizations.
+
+          Out of scope here remain A2 managerial observation/action, learning, trust, incentives, politics, turnover, endogenous demand, multi-actor authority conflict, institutional change (A3), and transient structural interventions.
+
+          ## Provenance
+
+          - protocol hash: c5a23cb810a1dfea2355870eeefecb365489d249804023ad377c00755fd7ac29
+          - report hash: a51a1495d0f7f1097b24ad1ac0a5ffa2ec219068e6706b045859e38276b9eb6d
+          - workflow run: 37692117988
+          - artifact: 11513453262
+          - artifact digest: sha256:f90bd76778158850a4be7e718a106272d00fb5cc92f1a1fefcf4d03137185360
+          MD
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$destination"
+          git commit -m "docs: persist A1 scientific v1 result [a1-scientific-archive]"
+          git push origin HEAD:automation/a1-scientific-report-v1-final
