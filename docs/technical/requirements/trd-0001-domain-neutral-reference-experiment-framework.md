@@ -1,6 +1,6 @@
 # TRD-0001 — Domain-Neutral Reference Experiment Framework
 
-- **Status:** Accepted
+- **Status:** Draft
 - **Owner:** SOSE maintainers
 - **Created:** 2026-10-07
 - **Last updated:** 2026-10-07
@@ -33,7 +33,7 @@ At the same time, SOSE already contains a separate business-process canonical sy
 | PRD FR-1 | experiment capability descriptor layered onto existing built-in domain/process catalog | catalog conformance |
 | FR-2 | `ParameterSpaceSpec` derived/declared by DomainReference | schema + domain tests |
 | FR-3 | domain-owned intervention catalog | intervention conformance |
-| FR-4 | agency execution adapter with explicit A0/A1/A2 boundary | agency conformance |
+| FR-4 | domain-owned typed `AgencyCapabilitySpec` descriptors plus explicit A0/A1/A2 execution boundary | schema validation + agency conformance |
 | FR-5 | generic `ExperimentProtocol` + deterministic sampler | existing sampling tests + cross-domain tests |
 | FR-6 | explicit comparison/CRN grouping contract | latent-stream equality tests |
 | FR-7 | typed GroundTruth records and eligibility | ground-truth conformance |
@@ -44,6 +44,8 @@ At the same time, SOSE already contains a separate business-process canonical sy
 | FR-12 | versioned standard data-product schema | schema tests |
 | FR-13 | config resolver + CLI/API orchestration | CLI/API integration |
 | FR-14 | Manufacturing/O2C/MRO same-suite gate | cross-domain matrix |
+| FR-15 | process-maturity prerequisite before domain/framework promotion | `ProcessManifest` maturity/provenance + PC6 composition tests |
+| FR-16 | accepted domain-specific PRD/TRD plus frozen experiment preregistration before official pilot execution | document links + preregistration/protocol hash audit |
 | QR-1/2 | canonical hashes + deterministic RNG + restart equivalence | continuous-vs-rebuild |
 | QR-3 | manifest binds protocol/domain/model/seed/evidence/result | evidence integrity |
 | QR-4/5 | GroundTruthKind + eligibility/falsification | report tests |
@@ -97,7 +99,7 @@ class DomainReference(Protocol):
     def parameter_space(self) -> ParameterSpaceSpec: ...
     def build_model(self, point: ParameterPoint) -> ModelSpec: ...
     def interventions(self) -> tuple[ModelIntervention, ...]: ...
-    def supported_agency(self) -> tuple[AgencyLevel, ...]: ...
+    def agency_capabilities(self) -> tuple[AgencyCapabilitySpec, ...]: ...
     def execute(
         self,
         execution: DomainExecutionRequest,
@@ -120,6 +122,8 @@ class DomainReference(Protocol):
 ```
 
 This is a target contract, not permission to move domain behavior into a generic base class. World expansion, DOE sampling, design indices, comparison groups, and CRN assignment remain framework-owned; the domain supplies the semantic ingredients from which those worlds are constructed.
+
+`AgencyCapabilitySpec` is domain-owned metadata sufficient for configuration-first validation. At minimum it identifies the agency level plus allowed policy/controller identifiers and their parameter schema, defaults, bounds, and compatibility constraints. A2 capabilities additionally reference the supported observation/action contracts. The generic framework validates a selected agency configuration against this descriptor before constructing/executing worlds; it must not learn domain policy semantics by hard-coding them.
 
 ### 3.2 DomainExperiment framework
 
@@ -226,6 +230,7 @@ Target types:
 DomainReferenceIdentity
 ParameterDefinition
 ParameterSpaceSpec
+AgencyCapabilitySpec
 ExperimentWorld
 DomainExecutionRequest
 DomainExecutionResult
@@ -541,55 +546,62 @@ Design/prototyping may occur earlier, but immature process references must not b
 
 After O2C reaches PC5:
 
-5. O2C adapter and workflow-specific ground truth;
-6. O2C A0/A1 execution/observation;
-7. evidence/report.
+5. author and accept an O2C-specific experiment PRD/TRD;
+6. freeze a hash-addressed O2C preregistration protocol **before official execution**, including question/claims/non-claims, exogenous axes, interventions, agency capabilities, ground truth and eligibility, DOE, replication/seeds/CRN, warmup/horizon where relevant, metrics, exclusions, falsification criteria, and artifact provenance;
+7. implement the O2C adapter and workflow-specific ground truth;
+8. implement O2C A0/A1 execution/observation;
+9. execute only the frozen protocol and persist evidence/report.
 
-Exit: administrative/information workflow passes the common suite.
+Exit: administrative/information workflow passes the common suite under its preregistered protocol.
 
 ### Gate C — Manufacturing experiment reference
 
 After the normative W5/W6 prerequisite and Manufacturing PC5:
 
-8. Manufacturing parameter/intervention/ground-truth adapter;
-9. Manufacturing A0/A1 execution/observation;
-10. evidence/report.
+10. author and accept a Manufacturing-specific experiment PRD/TRD;
+11. freeze the Manufacturing preregistration protocol before official execution, with the same required scientific fields as Gate B;
+12. implement Manufacturing parameter/intervention/ground-truth adapter;
+13. implement Manufacturing A0/A1 execution/observation;
+14. execute only the frozen protocol and persist evidence/report.
 
-Exit: physical-flow/bottleneck workflow passes the same suite.
+Exit: physical-flow/bottleneck workflow passes the same suite under its preregistered protocol.
 
 ### Gate D — MRO experiment reference
 
 After the normative W5/W6 prerequisite and MRO PC5:
 
-11. MRO adapter for resources/inventory/precedence;
-12. MRO A0/A1 execution;
-13. evidence/report.
+15. author and accept an MRO-specific experiment PRD/TRD;
+16. freeze the MRO preregistration protocol before official execution, with the same required scientific fields as Gate B;
+17. implement MRO adapter for resources/inventory/precedence;
+18. implement MRO A0/A1 execution;
+19. execute only the frozen protocol and persist evidence/report.
 
-Exit: resource/availability-rich workflow passes the same suite.
+Exit: resource/availability-rich workflow passes the same suite under its preregistered protocol.
 
 ### Gate E — generality promotion
 
-14. verify the required PC6 composition exists;
-15. run the cross-domain experiment conformance matrix;
-16. remove accidental domain-specific assumptions;
-17. promote the contract from provisional organizational code to its stable/public location only if all three pilots pass.
+20. verify the required PC6 composition exists;
+21. run the cross-domain experiment conformance matrix;
+22. remove accidental domain-specific assumptions;
+23. promote the contract from provisional organizational code to its stable/public location only if all three pilots pass.
 
 ### Gate F — A2
 
-18. dedicated child TRD for observation/action controller semantics;
-19. generic observation/action controller contract;
-20. noise/delay/cooldown/transition-cost semantics;
-21. A2 execution across the three qualified reference domains.
+24. dedicated child TRD for observation/action controller semantics;
+25. generic observation/action controller contract;
+26. noise/delay/cooldown/transition-cost semantics;
+27. preregister A2 scientific experiments before official execution;
+28. A2 execution across the three qualified reference domains.
 
 ### Gate G — productization
 
-22. child TRDs for standard data product, persistent/distributed experiment jobs, and configuration/CLI/API;
-23. standard data product;
-24. persistent distributed experiment job using the authoritative operational + durable-outbox sink boundary;
-25. configuration schema;
-26. CLI/API;
-27. SQLite/PostgreSQL conformance;
-28. 1.0 documentation/release gate.
+29. child TRDs for standard data product, persistent/distributed experiment jobs, and configuration/CLI/API;
+30. standard data product;
+31. persistent distributed experiment job using the authoritative operational + durable-outbox sink boundary;
+32. configuration schema;
+33. CLI/API;
+34. SQLite/PostgreSQL conformance;
+35. 1.0 documentation/release gate.
 
 PR boundaries may be refined, but dependency/gate ordering is normative.
 
@@ -612,6 +624,7 @@ PR boundaries may be refined, but dependency/gate ordering is normative.
 - [ ] ADR-0002/0003/0004 accepted.
 - [ ] Current A0/A1 reference executes through generic framework.
 - [ ] Manufacturing, O2C, and MRO each have complete evidence audits, reach at least PC5, and pass one experiment conformance suite.
+- [ ] Every official pilot result is bound to an accepted domain-specific PRD/TRD and a preregistration hash frozen before execution.
 - [ ] At least one credible PC6 composition exists before framework architectural-reference promotion.
 - [ ] No generic framework type contains domain-specific business nouns.
 - [ ] Exogenous/endogenous separation is enforced in tests.
@@ -629,6 +642,7 @@ TRD-0001 is the umbrella technical contract for the domain-neutral experiment ar
 
 Before implementation of the corresponding gates, dedicated child TRDs are required for:
 
+- each pilot domain experiment (domain-specific scientific question, permissible claims, DOE/replication/seed/CRN/metrics/falsification and provenance), paired with its domain-specific PRD and frozen preregistration protocol;
 - A2 observation/action controller semantics and persistence;
 - standard analytical data-product schemas/materialization;
 - persistent/distributed experiment-job coordination if existing job contracts require extension;
