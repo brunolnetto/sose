@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+from enum import StrEnum
 from statistics import fmean
 from typing import Annotated
 
@@ -13,6 +14,13 @@ from .synthetic_study import SyntheticWorldSpec
 
 
 NonBlankString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+
+
+class RegimeTransition(StrEnum):
+    STABLE_TO_STABLE = "stable_to_stable"
+    STABLE_TO_SATURATED = "stable_to_saturated"
+    SATURATED_TO_STABLE = "saturated_to_stable"
+    SATURATED_TO_SATURATED = "saturated_to_saturated"
 
 
 class AnalyticalWorldReference(BaseModel):
@@ -62,8 +70,12 @@ class SyntheticEffectRecovery(BaseModel):
     arm_id: NonBlankString
     baseline_world_hash: NonBlankString
     intervention_world_hash: NonBlankString
+    regime_transition: RegimeTransition
     expected_delta_mean_lead_time: float | None = Field(default=None, allow_inf_nan=False)
     simulated_delta_mean_lead_time: float | None = Field(default=None, allow_inf_nan=False)
+    expected_delta_throughput: float = Field(allow_inf_nan=False)
+    simulated_delta_throughput: float = Field(allow_inf_nan=False)
+    simulated_delta_operating_cost: float = Field(allow_inf_nan=False)
     null_region: bool
     direction_recovered: bool | None = None
 
@@ -255,6 +267,24 @@ def analyze_reference_synthetic_experiment(
             - baseline_runs[index].mean_lead_time
             for index in sorted(baseline_runs)
         )
+        simulated_delta_throughput = fmean(
+            intervention_runs[index].throughput
+            - baseline_runs[index].throughput
+            for index in sorted(baseline_runs)
+        )
+        simulated_delta_cost = fmean(
+            intervention_runs[index].total_operating_cost
+            - baseline_runs[index].total_operating_cost
+            for index in sorted(baseline_runs)
+        )
+        expected_delta_throughput = (
+            intervention_reference.expected_throughput
+            - baseline_reference.expected_throughput
+        )
+        regime_transition = _regime_transition(
+            baseline_reference.stable,
+            intervention_reference.stable,
+        )
 
         if (
             baseline_reference.expected_mean_lead_time is None
@@ -281,8 +311,12 @@ def analyze_reference_synthetic_experiment(
                 arm_id=world.arm_id,
                 baseline_world_hash=baseline.world_hash,
                 intervention_world_hash=world.world_hash,
+                regime_transition=regime_transition,
                 expected_delta_mean_lead_time=expected_delta,
                 simulated_delta_mean_lead_time=simulated_delta,
+                expected_delta_throughput=expected_delta_throughput,
+                simulated_delta_throughput=simulated_delta_throughput,
+                simulated_delta_operating_cost=simulated_delta_cost,
                 null_region=null_region,
                 direction_recovered=direction_recovered,
             )
@@ -322,3 +356,17 @@ def _effect_direction(value: float, margin: float) -> int:
     if abs(value) <= margin:
         return 0
     return 1 if value > 0.0 else -1
+
+
+
+def _regime_transition(
+    baseline_stable: bool,
+    intervention_stable: bool,
+) -> RegimeTransition:
+    if baseline_stable and intervention_stable:
+        return RegimeTransition.STABLE_TO_STABLE
+    if baseline_stable and not intervention_stable:
+        return RegimeTransition.STABLE_TO_SATURATED
+    if not baseline_stable and intervention_stable:
+        return RegimeTransition.SATURATED_TO_STABLE
+    return RegimeTransition.SATURATED_TO_SATURATED
