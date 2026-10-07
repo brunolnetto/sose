@@ -108,10 +108,28 @@ def advance_stage2_artifacts_v2(
     tranche: GitHubPRAcquisitionSnapshotV2,
     previous_acquisition: GitHubPRAcquisitionSnapshotV2,
     previous_state: ProspectiveEvidenceStateV2,
+    previous_checkpoint: ProspectiveStage2CheckpointV2 | None = None,
 ) -> ProspectiveStage2AdvancementV2:
     """Append one Stage-2 tranche without permitting model changes or holdout overflow."""
 
     _validate_freeze_binding(model_freeze=model_freeze, state=previous_state)
+    if previous_state.snapshot_hash == model_freeze.snapshot_hash:
+        if previous_state.previous_state_hash != model_freeze.training_state_hash:
+            raise ValueError("freeze artifact does not bind to exact pre-freeze state")
+        if previous_checkpoint is not None:
+            raise ValueError("previous Stage-2 checkpoint is not valid before first Stage-2 advancement")
+    else:
+        if previous_checkpoint is None:
+            raise ValueError("previous Stage-2 checkpoint is required after Stage-2 has started")
+        expected_previous = build_stage2_checkpoint_v2(
+            state=previous_state,
+            model_freeze=model_freeze,
+        )
+        if previous_checkpoint.checkpoint_hash != expected_previous.checkpoint_hash:
+            raise ValueError("previous Stage-2 checkpoint does not match previous state")
+        if previous_checkpoint.model_freeze_hash != model_freeze.freeze_hash:
+            raise ValueError("previous Stage-2 checkpoint does not bind the exact model freeze")
+
     if previous_state.cohort.status is ProspectiveCohortStatus.COMPLETE:
         raise ValueError("Stage-2 holdout is already complete")
     if previous_state.cohort.status is not ProspectiveCohortStatus.COLLECTING_HOLDOUT:
