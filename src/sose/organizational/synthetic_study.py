@@ -105,6 +105,8 @@ def generate_synthetic_worlds(
         )
 
     intervention_by_id = {item.intervention_id: item for item in interventions}
+    if "baseline" in intervention_by_id:
+        raise ValueError("baseline is a reserved synthetic arm identifier")
     if len(intervention_by_id) != len(interventions):
         raise ValueError("duplicate intervention ids are not allowed")
     if set(intervention_by_id) != set(protocol.intervention_ids):
@@ -155,6 +157,10 @@ def generate_synthetic_worlds(
                     transition_time = 0.0
                 else:
                     model_spec, _ = intervention.apply(agency_point_spec)
+                    if model_spec.agency.level is not level:
+                        raise ValueError(
+                            "intervention cannot rewrite the selected synthetic agency level"
+                        )
                     intervention_class = intervention.intervention_class
                     operating_cost = intervention.operating_cost
                     transition_cost = intervention.transition_cost
