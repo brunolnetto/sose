@@ -1,6 +1,6 @@
 # PRD-0001 — SOSE 1.0 Multi-Domain Synthetic Organizational Experiment Platform
 
-- **Status:** Accepted
+- **Status:** Draft
 - **Owner:** SOSE maintainers
 - **Created:** 2026-10-07
 - **Last updated:** 2026-10-07
@@ -68,7 +68,7 @@ That is incompatible with the intended end state: a user should be able to selec
 - **FR-1 — Domain reference catalog:** SOSE shall expose experiment-capable domain references through a common registry connected to the existing built-in domain/process catalog.
 - **FR-2 — Parameter exposure:** every experiment-capable domain shall explicitly declare configurable exogenous parameters, ranges, units/meaning, defaults, and evidence class.
 - **FR-3 — Intervention exposure:** every domain shall declare supported interventions and their mechanism, operating cost, transition cost/time, and structural scope.
-- **FR-4 — Agency exposure:** the framework shall execute supported agency levels through a common experiment contract without silently changing non-agency mechanics.
+- **FR-4 — Agency exposure:** every experiment-capable domain shall expose typed agency capabilities, including level, policy/controller identifiers, configurable parameter schemas/defaults/bounds, and any required observation/action contract; the framework shall validate these before world execution without acquiring domain-specific knowledge.
 - **FR-5 — DOE:** users shall be able to define or select a deterministic sampling design and replication policy over declared exogenous inputs.
 - **FR-6 — CRN:** paired comparisons shall use explicit common-random-number groups when the comparison claims paired stochastic control.
 - **FR-7 — Ground truth:** each claim shall identify its ground-truth class and eligibility conditions.
@@ -80,6 +80,7 @@ That is incompatible with the intended end state: a user should be able to selec
 - **FR-13 — Configuration-first execution:** the 1.0 product shall support selecting a domain and experiment through configuration plus CLI/API without modifying experiment framework code.
 - **FR-14 — Cross-domain conformance:** Manufacturing, Order-to-Cash, and MRO shall pass the same domain-experiment conformance suite before the framework is considered general.
 - **FR-15 — Process maturity prerequisite:** a built-in business domain shall not be promoted as an organizational experiment reference until its process evidence audit is complete and it reaches at least PC5; architectural-reference promotion also requires at least one credible PC6 composition.
+- **FR-16 — Pilot preregistration:** every promoted domain experiment shall have an accepted domain-specific PRD/TRD and a frozen preregistration protocol before official experiment execution/evidence, defining the scientific question, permissible claims, exogenous axes, interventions, agency configurations, ground truth/eligibility, DOE, replication/seeds/CRN, metrics, exclusions, falsification criteria, and provenance.
 
 ### Quality / operational
 
@@ -105,6 +106,7 @@ That is incompatible with the intended end state: a user should be able to selec
 | Result provenance | experiment-specific | 100% hash-addressed standard manifest | evidence tests |
 | Framework-specific code needed per new domain | substantial | domain adapter/reference only | onboarding review |
 | Standard result schema | experiment-specific | one versioned schema | schema/conformance test |
+| Pilot preregistration | ad hoc per prior experiment | 100% official pilot experiments frozen before execution | document/protocol hash audit |
 
 ## 7. Constraints
 
@@ -151,6 +153,7 @@ The exact CLI shape is a technical-design concern and may evolve before 1.0.
 - [ ] One domain-neutral experiment contract exists and contains no queue-specific concepts.
 - [ ] Existing A0/A1 reference experiment is expressible through the common contract without losing current scientific boundaries.
 - [ ] Order-to-Cash, Manufacturing, and MRO each have a complete evidence audit and reach at least PC5 before their experiment reference is promoted.
+- [ ] Each pilot has an accepted domain-specific PRD/TRD and a frozen preregistration protocol before official runs/evidence are generated.
 - [ ] At least one credible PC6 composition exists before the experiment framework is promoted as the architectural reference.
 - [ ] Manufacturing passes the common experiment conformance suite without framework special-casing.
 - [ ] Order-to-Cash passes the same suite without framework special-casing.
