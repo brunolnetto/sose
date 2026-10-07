@@ -5,7 +5,7 @@
 - **Created:** 2026-10-07
 - **Last updated:** 2026-10-07
 - **Related TRDs:** `TRD-0001`
-- **Related ADRs:** `ADR-0002`, `ADR-0003`, `ADR-0004`
+- **Related ADRs:** `ADR-0002`, `ADR-0003`, `ADR-0004`, `ADR-0005`
 - **Related issues/PRs:** TBD
 
 ## 1. Problem
