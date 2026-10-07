@@ -227,7 +227,6 @@ def fit_stage1_pr_review_v2(
     acceptance_bootstrap_seed: int,
     acceptance_bootstrap_replicates: int = 2_048,
     acceptance_quantile: float = 0.95,
-    holdout_count: int | None = None,
 ) -> Stage1PRReviewFitV2:
     """Fit only the persisted Stage-1 training partition; ignore interstitial items."""
 
@@ -264,11 +263,10 @@ def fit_stage1_pr_review_v2(
     )
     model_spec = model.build_model_spec()
     bot_fraction = len(bot_analogs) / len(training_records)
-    resolved_holdout_count = holdout_count or state.cohort.holdout_count
     criteria = derive_stage2_acceptance_criteria_v2(
         model=model,
         training_bot_fraction=bot_fraction,
-        holdout_count=resolved_holdout_count,
+        holdout_count=state.cohort.holdout_count,
         seed=acceptance_bootstrap_seed,
         replicates=acceptance_bootstrap_replicates,
         quantile=acceptance_quantile,
