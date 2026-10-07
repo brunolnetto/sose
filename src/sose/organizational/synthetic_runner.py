@@ -156,6 +156,27 @@ def run_reference_synthetic_experiment(
     )
 
 
+def run_a0_reference_world(
+    *,
+    protocol: ExperimentProtocol,
+    world: SyntheticWorldSpec,
+    root_seed: int,
+    replication: int,
+) -> SyntheticRunResult:
+    """Run one A0 reference world while preserving the public CRN contract."""
+
+    if world.protocol_hash != protocol.protocol_hash:
+        raise ValueError("synthetic world protocol hash mismatch")
+    if world.agency_level.value != "A0":
+        raise ValueError("A0 reference runner requires an A0 world")
+    return _run_reference_world(
+        protocol=protocol,
+        world=world,
+        root_seed=root_seed,
+        replication=replication,
+    )
+
+
 def _run_reference_world(
     *,
     protocol: ExperimentProtocol,

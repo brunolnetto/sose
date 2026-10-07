@@ -222,3 +222,20 @@ def test_a1_adaptation_can_reduce_delay_without_rewriting_structure() -> None:
     assert adapted.model_spec_hash == active.model_spec_hash
     assert adapted.mean_lead_time < unadapted.mean_lead_time
     assert adapted.adaptation_count > unadapted.adaptation_count
+
+
+def test_intervention_transition_downtime_is_unavailable_not_idle() -> None:
+    protocol, world = _world(trigger=1e9, multiplier=0.75, adaptation_time=0.0)
+    transitioned = world.model_copy(update={"intervention_transition_time": 3.0})
+
+    run = run_a1_reference_world(
+        protocol=protocol,
+        world=transitioned,
+        root_seed=99,
+        replication=0,
+    )
+
+    assert run.actor_ledger.intervals[0].category is ActorCategory.UNAVAILABLE
+    assert run.actor_ledger.intervals[0].start == 0.0
+    assert run.actor_ledger.intervals[0].end == 3.0
+    assert run.actor_ledger.unavailable_time == 3.0
