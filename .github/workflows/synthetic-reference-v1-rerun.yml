@@ -1,0 +1,102 @@
+name: Synthetic Reference Experiment v1 Rerun
+
+on:
+  push:
+    branches:
+      - automation/synthetic-reference-experiment-v1-clean
+
+permissions:
+  contents: read
+
+jobs:
+  run-experiment:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install package
+        run: python -m pip install -e .
+
+      - name: Run corrected synthetic reference experiment
+        run: |
+          mkdir -p synthetic-reference-v1
+          python - <<'PY'
+          from collections import Counter
+          import json
+          from pathlib import Path
+
+          from sose.organizational.synthetic_reference_experiment import (
+              run_reference_synthetic_experiment_v1,
+          )
+
+          result = run_reference_synthetic_experiment_v1()
+          out = Path("synthetic-reference-v1")
+          files = {
+              "protocol.json": result.design.protocol.canonical_payload(),
+              "worlds.json": [world.canonical_payload() for world in result.design.worlds],
+              "dataset.json": result.dataset.canonical_payload(),
+              "report.json": result.report.canonical_payload(),
+          }
+          for name, payload in files.items():
+              (out / name).write_text(
+                  json.dumps(
+                      payload,
+                      sort_keys=True,
+                      separators=(",", ":"),
+                      ensure_ascii=False,
+                      allow_nan=False,
+                  ) + "\n",
+                  encoding="utf-8",
+              )
+
+          transitions = Counter(
+              effect.regime_transition.value for effect in result.report.effects
+          )
+          directions = [
+              effect
+              for effect in result.report.effects
+              if effect.direction_recovered is not None and not effect.null_region
+          ]
+          summary = {
+              "protocol_hash": result.design.protocol.protocol_hash,
+              "dataset_hash": result.dataset.dataset_hash,
+              "report_hash": result.report.report_hash,
+              "design_seed": result.design.design_seed,
+              "root_seed": result.design.root_seed,
+              "design_points": result.design.protocol.sample_size,
+              "world_count": result.report.world_count,
+              "replications": result.dataset.replications,
+              "run_count": len(result.dataset.runs),
+              "stable_world_count": result.report.stable_world_count,
+              "saturated_world_count": result.report.saturated_world_count,
+              "mean_relative_error_stable": result.report.mean_relative_error_stable,
+              "direction_recovery_rate": result.report.direction_recovery_rate,
+              "eligible_direction_effects": len(directions),
+              "recovered_direction_effects": sum(
+                  bool(effect.direction_recovered) for effect in directions
+              ),
+              "null_region_effects": sum(
+                  effect.null_region for effect in result.report.effects
+              ),
+              "regime_transitions": dict(sorted(transitions.items())),
+          }
+          (out / "summary.json").write_text(
+              json.dumps(summary, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+          print(json.dumps(summary, indent=2, sort_keys=True))
+          PY
+
+      - name: Upload corrected synthetic experiment artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: synthetic-reference-v1-corrected-${{ github.run_id }}
+          path: synthetic-reference-v1/
+          if-no-files-found: error
+          retention-days: 90
