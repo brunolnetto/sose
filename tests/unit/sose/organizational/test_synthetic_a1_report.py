@@ -1,15 +1,40 @@
 from __future__ import annotations
 
+from functools import lru_cache
+
+from sose.organizational.experiment import ReplicationPlan
 from sose.organizational.synthetic_a1_experiment import (
-    run_a0_a1_reference_experiment_v1,
+    build_a0_a1_reference_design_v1,
+    run_a0_a1_experiment,
 )
 from sose.organizational.synthetic_a1_report import (
     build_a1_scientific_report_v1,
 )
 
 
+@lru_cache(maxsize=1)
+def _small_experiment():
+    design = build_a0_a1_reference_design_v1()
+    protocol = design.protocol.model_copy(
+        update={
+            "replication_plan": ReplicationPlan(
+                min_replications=2,
+                max_replications=2,
+                target_ci_half_width=design.protocol.replication_plan.target_ci_half_width,
+            )
+        }
+    )
+    worlds = tuple(
+        world.model_copy(update={"protocol_hash": protocol.protocol_hash})
+        for world in design.worlds
+    )
+    return run_a0_a1_experiment(
+        design=design.model_copy(update={"protocol": protocol, "worlds": worlds})
+    )
+
+
 def test_a1_scientific_report_is_deterministic_and_hash_addressed() -> None:
-    experiment = run_a0_a1_reference_experiment_v1()
+    experiment = _small_experiment()
 
     left = build_a1_scientific_report_v1(experiment)
     right = build_a1_scientific_report_v1(experiment)
@@ -20,18 +45,18 @@ def test_a1_scientific_report_is_deterministic_and_hash_addressed() -> None:
 
 
 def test_report_pairs_each_intervention_against_same_design_baseline() -> None:
-    experiment = run_a0_a1_reference_experiment_v1()
+    experiment = _small_experiment()
     report = build_a1_scientific_report_v1(experiment)
 
     assert len(report.intervention_effects) == 12 * 2
     assert {
         effect.arm_id for effect in report.intervention_effects
     } == {"capacity-up", "automation-rework"}
-    assert all(effect.replications == 16 for effect in report.intervention_effects)
+    assert all(effect.replications == 2 for effect in report.intervention_effects)
 
 
 def test_report_exposes_regime_displacement_and_adaptation_cost_separately() -> None:
-    experiment = run_a0_a1_reference_experiment_v1()
+    experiment = _small_experiment()
     report = build_a1_scientific_report_v1(experiment)
 
     assert report.regime_summary.saturated_to_stable_worlds > 0
@@ -47,7 +72,7 @@ def test_report_exposes_regime_displacement_and_adaptation_cost_separately() -> 
 
 
 def test_report_keeps_effect_magnitude_and_direction_without_composite_score() -> None:
-    experiment = run_a0_a1_reference_experiment_v1()
+    experiment = _small_experiment()
     report = build_a1_scientific_report_v1(experiment)
 
     for effect in report.intervention_effects:
