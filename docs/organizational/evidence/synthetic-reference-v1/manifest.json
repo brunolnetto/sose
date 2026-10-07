@@ -1,0 +1,11 @@
+{
+  "manifest_version": "synthetic-reference-experiment/v1",
+  "workflow_run_id": 37640122367,
+  "artifact_id": 11492180296,
+  "artifact_digest": "sha256:4be4a7b9de9ff077c5ae750386acf3e3af4b24288adf76bc3db15935d16a5a5b",
+  "dataset_sha256": "72f7ebbd16b0ee1d051764f6c5e6afb2fb907f75dfcb13359ff713503bae14a2",
+  "protocol_sha256": "3c27b7d50aff1319c917692c13d2b94c5d07599dc6df43e641ec9742a0a0fd0b",
+  "worlds_sha256": "12ad739f461ba9cc7c5386476e923b0670ee80c723344eec9029bf90f247d22c",
+  "report_sha256": "573fab07c08d682eee850bdfcf37163b9925fac64aeb99c2d4bc998aa9c7c374",
+  "summary_sha256": "e875b06b23f6cb0e8736e47db1e2dc08935e5b4d1bc1349d4bc077c7232ed7bf"
+}

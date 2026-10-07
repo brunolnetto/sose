@@ -1,0 +1,23 @@
+{
+  "dataset_hash": "fbf544db78119f3ffac810f01fa5c3aa4d527f151df19c18345936415e30503d",
+  "design_points": 12,
+  "design_seed": 20261007,
+  "direction_recovery_rate": 1.0,
+  "eligible_direction_effects": 7,
+  "mean_relative_error_stable": 0.11188033228047849,
+  "null_region_effects": 1,
+  "protocol_hash": "6eae3c942bb90f68ef2d0533559f926994f4abbfa1fc145885b51437a6844061",
+  "recovered_direction_effects": 7,
+  "regime_transitions": {
+    "saturated_to_saturated": 6,
+    "saturated_to_stable": 10,
+    "stable_to_stable": 8
+  },
+  "replications": 16,
+  "report_hash": "2381d34fa2a47fec6e622e7665e719f17a93edd50e7f8b630c2242f248ecd4d6",
+  "root_seed": 20261007,
+  "run_count": 576,
+  "saturated_world_count": 14,
+  "stable_world_count": 22,
+  "world_count": 36
+}
