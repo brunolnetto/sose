@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import pytest
+
 from sose.organizational.agency import AgencyLevel
 from sose.organizational.experiment import ReplicationPlan
 from sose.organizational.ledger import ActorCategory
@@ -110,3 +112,43 @@ def test_long_horizon_adaptation_time_is_derived_from_actor_ledger() -> None:
         0.0,
     )
     assert longest.adaptation_actor_time == recorded
+
+
+def test_runner_rejects_incomplete_or_duplicate_world_design() -> None:
+    design = build_a0_a1_reference_design_v1()
+
+    incomplete = design.model_copy(update={"worlds": design.worlds[:-1]})
+    with pytest.raises(ValueError, match="complete A0/A1 world design"):
+        run_a0_a1_experiment(design=incomplete)
+
+    duplicate = design.model_copy(update={"worlds": (*design.worlds, design.worlds[-1])})
+    with pytest.raises(ValueError, match="complete A0/A1 world design"):
+        run_a0_a1_experiment(design=duplicate)
+
+
+def test_runner_rejects_non_agency_mechanical_differences_inside_pair() -> None:
+    design = build_a0_a1_reference_design_v1()
+    target = next(
+        world for world in design.worlds
+        if world.design_index == 0
+        and world.arm_id == "baseline"
+        and world.agency_level is AgencyLevel.A1
+    )
+    payload = target.model_spec.canonical_payload()
+    payload["parameters"]["service_capacity"] = (
+        float(payload["parameters"]["service_capacity"]) * 1.1
+    )
+    changed_spec = target.model_spec.__class__.model_validate(payload)
+    changed_world = target.model_copy(
+        update={
+            "model_spec": changed_spec,
+            "model_spec_hash": changed_spec.model_spec_hash,
+        }
+    )
+    worlds = tuple(
+        changed_world if world is target else world
+        for world in design.worlds
+    )
+
+    with pytest.raises(ValueError, match="differ only by agency"):
+        run_a0_a1_experiment(design=design.model_copy(update={"worlds": worlds}))
