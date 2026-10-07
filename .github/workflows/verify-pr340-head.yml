@@ -1,0 +1,50 @@
+name: Verify PR340 Head
+
+on:
+  push:
+    branches:
+      - automation/a0-a1-synthetic-experiment-v1
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sose
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sose"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
+      SOSE_RUN_PROCESS_CHAOS: "1"
+      SOSE_RUN_FENCING_CHAOS: "1"
+      SOSE_RUN_STORAGE_CHAOS: "1"
+      SOSE_FULL_CHAOS_CANONICALS: "1"
+      SOSE_FULL_CHAOS_PHASES: "1"
+      SOSE_FULL_PROCESS_CHAOS: "1"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip check
+      - name: Full pytest and coverage gate
+        run: |
+          python -m pytest -q --cov=sose --cov-branch --cov-report=term-missing --cov-fail-under=95
