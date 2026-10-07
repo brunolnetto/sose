@@ -68,7 +68,7 @@ jobs:
 
       - name: Download previous Stage-2 artifacts
         if: ${{ inputs.previous_run_id != '' }}
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: prospective-stage2-v2-${{ inputs.previous_run_id }}
           path: previous
@@ -188,7 +188,7 @@ jobs:
           fi
 
       - name: Upload immutable Stage-2 artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: prospective-stage2-v2-${{ github.run_id }}
           path: stage2-output/
