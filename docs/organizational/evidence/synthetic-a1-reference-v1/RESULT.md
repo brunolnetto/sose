@@ -4,12 +4,9 @@ This is a synthetic verification experiment with known mechanics, not empirical 
 
 ## Design
 
-The fixed exogenous DOE from the A0 reference study is evaluated under two agency regimes:
+The fixed exogenous DOE is evaluated under A0 fixed policy and A1 backlog-triggered local batching adaptation. Each design point shares one CRN group across baseline, capacity, automation, A0, and A1, so both agency and intervention contrasts use matched stochastic streams.
 
-- A0: fixed actor policy.
-- A1: backlog-triggered local batching adaptation within unchanged organizational structure.
-
-Each of 12 design points has three arms (baseline, capacity expansion, rework-reducing automation), and every A0/A1 world pair shares the same exogenous inputs and CRN stream. The official design uses 16 replications, yielding 36 world pairs x 16 = 576 paired replicated observations.
+The official design contains 12 design points, three arms, two agency levels, and 16 replications: 36 A0/A1 world pairs and 576 paired replicated observations.
 
 A1 activates at backlog pressure 2.0, applies service multiplier 0.70, pays 0.05 actor-time units per activation, and records that effort explicitly as ADAPTATION.
 
@@ -25,54 +22,59 @@ A1 activates at backlog pressure 2.0, applies service multiplier 0.70, pays 0.05
 | A0 saturated -> A1 stable | **10 / 16 (62.5%)** |
 | A0 stable -> A1 saturated | **0** |
 
-The regime classification is mechanistic, not inferred from observed WIP or lead time:
+Regime classification is mechanistic from exogenous inputs and policy parameters, not inferred from realized WIP or lead time.
 
-- nominal load: lambda E[S]
-- adapted load: lambda (m E[S] + t_adapt)
-- nominal load < 1 -> nominal stable
-- nominal load >= 1 and adapted load < 1 -> adaptation-stabilized
-- adapted load >= 1 -> saturated
+## Intervention-direction robustness
 
-## Intervention robustness
+There are 24 design-point/intervention contrasts in total.
 
-Across 12 design points x 2 interventions, the direction of the lead-time effect was preserved in **24 / 24 intervention comparisons (100%)** between A0 and A1.
+- Stationarily eligible under both A0 and A1: **8**
+- Ineligible because at least one compared world is saturated: **16**
+- Direction agreement among eligible contrasts: **8 / 8 = 100%**
+- Direction changes among eligible contrasts: **0**
 
-This does not mean agency is irrelevant. A1 materially changed intervention magnitudes, while the signs remained the same in this design. Agency displaced the regime map and compressed or amplified intervention effects without reversing their direction.
+Saturated contrasts retain their finite-horizon effect magnitudes in report.json, but they are explicitly excluded from direction agreement because saturated queues do not have finite stationary mean lead time.
+
+Therefore the defensible claim is not 24/24. It is: **all 8 stationary-eligible intervention contrasts preserve their beneficial lead-time direction under A1**.
 
 ## Finite-horizon operational effects
 
-Averaged across the 576 paired replications:
+Averaged across all 576 A0/A1 paired replications:
 
-- A1 - A0 mean lead time: **-56.084 simulation-time units**
-- A1 - A0 throughput: **+0.08647 items per simulation-time unit**
-- A1 - A0 operating cost: **+3.661 cost units**
-- mean A1 adaptation actor time: **24.407 actor-time units**
-- mean A1 adaptation cost: **3.661 cost units**
+- A1 - A0 mean lead time: **-55.157 simulation-time units**
+- A1 - A0 throughput: **+0.08603 items per simulation-time unit**
+- A1 - A0 operating cost: **+3.668 cost units**
+- mean A1 adaptation actor time: **24.451 actor-time units**
+- mean A1 adaptation cost: **3.668 cost units**
 
-These lead-time and throughput magnitudes are finite-horizon operational outcomes. They must not be interpreted as stationary expectations for worlds classified as saturated.
+These aggregate lead-time and throughput magnitudes include finite-horizon saturated worlds and must not be interpreted as stationary expectations.
 
 ## What this verifies
 
-The experiment provides executable evidence that, under the implemented reference mechanics:
+Under the implemented reference mechanics:
 
-1. local actor adaptation can move the stability boundary without rewriting organization structure;
-2. the engine preserves CRN pairing while agency changes execution policy;
-3. adaptation effort remains explicit actor time rather than disappearing into item elapsed time;
-4. capacity and automation interventions retain their beneficial lead-time direction across all tested design points, although agency changes effect magnitude;
-5. adaptation has a measurable cost and therefore is not modeled as a free performance improvement.
+1. local A1 adaptation can move the mechanistic stability boundary without rewriting organizational structure;
+2. 10 of 16 nominally saturated A0 worlds are stabilized by the fixed A1 policy;
+3. no nominally stable A0 world is classified as saturated by A1;
+4. all stationary-eligible capacity/automation effects retain beneficial lead-time direction under A1;
+5. agency materially changes effect magnitude and regime location even where intervention direction is preserved;
+6. adaptation effort and cost remain explicit rather than being hidden in item elapsed time;
+7. CRN is shared across agency levels and intervention arms, reducing avoidable Monte Carlo noise in contrasts.
 
 ## Falsification and limits
 
-The hypothesis that local adaptation can alter organizational regime boundaries would have failed in this design if no nominally saturated A0 world became mechanically stable under A1. The observed result is 10 rescued worlds.
+The regime-shift hypothesis would fail in this design if zero saturated A0 worlds became A1-stable. Ten are rescued.
 
-The experiment does not establish that every A1 policy improves outcomes or preserves intervention direction. Only one explicit batching policy is tested. It also does not establish empirical validity for real organizations.
+Direction preservation is only asserted for the eight stationary-eligible contrasts. The 16 saturated contrasts are not evidence for or against stationary direction preservation.
 
-Out of scope here remain A2 managerial observation/action, learning, trust, incentives, politics, turnover, endogenous demand, multi-actor authority conflict, institutional change (A3), and transient structural interventions.
+Only one explicit A1 batching policy, one-resource reference process, fixed structural interventions, and a finite DOE are tested. This does not establish empirical validity for real organizations or generalize to all adaptive policies.
+
+Out of scope remain A2 managerial observation/action, learning, trust, incentives, politics, turnover, endogenous demand, multi-actor authority conflict, institutional change (A3), and transient structural interventions.
 
 ## Provenance
 
 - protocol hash: c5a23cb810a1dfea2355870eeefecb365489d249804023ad377c00755fd7ac29
-- report hash: a51a1495d0f7f1097b24ad1ac0a5ffa2ec219068e6706b045859e38276b9eb6d
-- workflow run: 37692117988
-- artifact: 11513453262
-- artifact digest: sha256:f90bd76778158850a4be7e718a106272d00fb5cc92f1a1fefcf4d03137185360
+- report hash: c47333851b92843b529761e77a8850ab746c21e7e4cc8a1d900fed7b19a63a13
+- workflow run: 37692924898
+- artifact: 11514201903
+- artifact digest: sha256:58325caf056d922301654ff5a03b6dbf52e6dfadfe8d9e5343c9c50202df9995

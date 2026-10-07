@@ -1,11 +1,11 @@
 {
   "manifest_version": "synthetic-a1-reference/v1",
-  "workflow_run_id": 37692117988,
-  "workflow_head_sha": "e1eb1a517444cdbf1461797b2559e42a1703b20b",
-  "artifact_id": 11513453262,
-  "artifact_digest": "sha256:f90bd76778158850a4be7e718a106272d00fb5cc92f1a1fefcf4d03137185360",
-  "report_sha256": "a4fdf12d8f257e4066ed2b02b73334ae9d052bcfbaf31f6dac4b67b1a497aa2c",
-  "summary_sha256": "8ed7b89a7b76968009ff98eb5ee1e0a85664c664979daede3c4b78915455c4c8",
+  "workflow_run_id": 37692924898,
+  "workflow_head_sha": "d0456b29182253d1f2ff6c770c3aaa23bcf56ac4",
+  "artifact_id": 11514201903,
+  "artifact_digest": "sha256:58325caf056d922301654ff5a03b6dbf52e6dfadfe8d9e5343c9c50202df9995",
+  "report_sha256": "d74039a6018da90733317f63b3809ddec085c7351dda1412733b61b353e48f21",
+  "summary_sha256": "126faf9b41be0d979dd9e4a296ea3e659795fdfdcc310e55d86cef9827ef9674",
   "protocol_hash": "c5a23cb810a1dfea2355870eeefecb365489d249804023ad377c00755fd7ac29",
-  "report_hash": "a51a1495d0f7f1097b24ad1ac0a5ffa2ec219068e6706b045859e38276b9eb6d"
+  "report_hash": "c47333851b92843b529761e77a8850ab746c21e7e4cc8a1d900fed7b19a63a13"
 }
