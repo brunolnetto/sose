@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from math import isclose
+
 from sose.organizational.agency import A1Policy, A1PolicyName, AgencyLevel, AgencySpec
 from sose.organizational.experiment import (
     ExperimentProtocol,
@@ -135,8 +137,29 @@ def test_a1_reference_run_is_deterministic_and_emits_adaptation_ledger() -> None
     assert left.adaptation_count > 0
     assert left.adaptation_actor_time > 0.0
     assert left.adaptation_cost > 0.0
-    assert left.actor_ledger.duration_by_category()[ActorCategory.ADAPTATION] == left.adaptation_actor_time
+    assert isclose(
+        left.actor_ledger.duration_by_category()[ActorCategory.ADAPTATION],
+        left.adaptation_actor_time,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    )
     left.actor_ledger.assert_complete(start=0.0, end=left.actor_observed_until)
+    assert all(
+        isclose(
+            item.lead_time,
+            item.queue_time + item.processing_time + item.rework_time,
+            rel_tol=0.0,
+            abs_tol=1e-12,
+        )
+        for item in left.items
+    )
+    assert left.adaptation_actor_time_measurement <= left.adaptation_actor_time
+    assert isclose(
+        left.adaptation_cost,
+        left.adaptation_actor_time_measurement * 2.0,
+        rel_tol=0.0,
+        abs_tol=1e-12,
+    )
 
 
 def test_a1_crn_latents_do_not_depend_on_policy_activation() -> None:
