@@ -1,0 +1,25 @@
+{
+  "acceptance_bootstrap_replicates": 4096,
+  "acceptance_bootstrap_seed": 20261006,
+  "acceptance_criteria": {
+    "max_abs_mean_difference_seconds": 1506.833333333333,
+    "max_abs_median_difference_seconds": 1707.5,
+    "max_abs_p90_difference_seconds": 6600.0,
+    "max_ecdf_distance": 0.41666666666666674
+  },
+  "acceptance_criteria_hash": "0cf731106c5d54e785f021a82517718133d423ddc03c2aeb1f3490d5239fdd3b",
+  "acceptance_quantile": 0.95,
+  "bot_analogs": 2,
+  "cohort_status_after_freeze": "collecting_holdout",
+  "fit_hash": "db78781b89ff4f82b60387e3f8901a62d9460b91508513a8af670d8d4ba23422",
+  "freeze_hash": "7f233393f783cf7b9ee5aa2de11bd99b7a56b7b249e67c5e72423eceafc08f7d",
+  "frozen_at": "2026-10-07T00:21:36.272697+00:00",
+  "frozen_state_hash": "4ce81f953d84e98783d9bd09eb62eeae0ab9365b7786ef3d3905b67beff8911d",
+  "holdout_items_after_freeze": 0,
+  "human_analogs": 16,
+  "model_spec_hash": "13d9570d43fd0d75233cd1f5e195f2b9d3d1d2dba9610c0016fb3bd5d6a3be91",
+  "simulation_seed": 20261005,
+  "snapshot_hash": "23b35742cab04156460418056983d2c32ed68464fb8b503d681526d52ef422b3",
+  "training_items": 18,
+  "training_state_hash": "ec96209137db9e46322cb2da572377b1b592e508f88515e881e8c875b1d87fd0"
+}
