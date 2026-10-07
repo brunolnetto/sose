@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from enum import StrEnum
+from functools import lru_cache
 from statistics import fmean
 
 from pydantic import BaseModel, ConfigDict, Field, InstanceOf
@@ -170,16 +171,15 @@ def classify_a1_regime(world: SyntheticWorldSpec) -> A1RegimeReference:
     )
 
 
-def run_a0_a1_reference_experiment_v1(
-    *,
-    replications: int = 16,
-) -> A0A1ReferenceExperimentResultV1:
-    """Run paired A0/A1 worlds using identical exogenous design and CRN streams."""
-
-    if not 2 <= replications <= 16:
-        raise ValueError("replications must be between 2 and 16")
+@lru_cache(maxsize=1)
+def run_a0_a1_reference_experiment_v1() -> A0A1ReferenceExperimentResultV1:
+    """Run the exact preregistered paired A0/A1 reference experiment."""
 
     design = build_a0_a1_reference_design_v1()
+    replication_plan = design.protocol.replication_plan
+    if replication_plan.min_replications != replication_plan.max_replications:
+        raise ValueError("reference v1 requires a fixed replication count")
+    replications = replication_plan.min_replications
     by_key: dict[tuple[int, str], dict[AgencyLevel, SyntheticWorldSpec]] = {}
     for world in design.worlds:
         by_key.setdefault((world.design_index, world.arm_id), {})[
