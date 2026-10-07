@@ -239,6 +239,10 @@ def run_a1_reference_world(
         intervals=tuple(actor_intervals),
     )
     actor_ledger.assert_complete(start=0.0, end=actor_observed_until)
+    adaptation_actor_time = actor_ledger.duration_by_category().get(
+        ActorCategory.ADAPTATION,
+        0.0,
+    )
 
     measurement_start = protocol.warmup
     measurement_end = protocol.horizon
