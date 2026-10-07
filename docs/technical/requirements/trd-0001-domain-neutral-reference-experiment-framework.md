@@ -465,13 +465,14 @@ Every experiment-capable domain must pass the same suite:
 
 Organizational Dynamics consumes mature process canonicals; it does not substitute for them.
 
-Before a built-in business domain is promoted as an experiment reference:
+Before a built-in business domain enters **official Organizational Dynamics experiment execution or evidence publication**:
 
 1. its process evidence audit must be complete for the relevant code snapshot;
 2. the standalone process must be at least **PC5 Observable**;
-3. experiment claims must cite the process-manifest/specification provenance supporting the mechanics they exercise.
+3. the repository must already contain at least one credible **PC6 Composable** process composition, consistent with the existing process dependency graph;
+4. experiment claims must cite the process-manifest/specification provenance supporting the mechanics they exercise.
 
-Before the multi-domain experiment framework is promoted as the architectural reference, the repository must also contain at least one credible **PC6 Composable** process composition, consistent with the existing process dependency graph.
+The provisional synthetic reference is not a promoted business-process canonical and may continue to support framework design/verification before this gate. That exception must not be used to publish an immature built-in domain as a scientific organizational reference.
 
 Manufacturing and MRO follow the normative process roadmap: their experiment promotion cannot bypass the Trading Company composition prerequisite and their W6 promotion to PC5.
 
@@ -533,18 +534,18 @@ Exit: current synthetic reference runs through generic orchestration. The framew
 
 This gate is governed by the existing Process Canonical Roadmap rather than by the experiment implementation.
 
-Required before pilot-domain experiment promotion:
+Required before official pilot-domain experiment execution/evidence:
 
 - complete evidence audit for the selected domain;
 - PC5 standalone process maturity for each experiment reference;
-- at least one credible PC6 composition before the experiment framework becomes an architectural reference;
+- at least one credible PC6 composition already demonstrated;
 - Trading Company composition prerequisite satisfied before Manufacturing/MRO W6 promotion.
 
 Design/prototyping may occur earlier, but immature process references must not be promoted as scientific organizational-dynamics references.
 
 ### Gate B — O2C experiment reference
 
-After O2C reaches PC5:
+After O2C reaches PC5 **and the global credible-PC6 prerequisite is satisfied**:
 
 5. author and accept an O2C-specific experiment PRD/TRD;
 6. freeze a hash-addressed O2C preregistration protocol **before official execution**, including question/claims/non-claims, exogenous axes, interventions, agency capabilities, ground truth and eligibility, DOE, replication/seeds/CRN, warmup/horizon where relevant, metrics, exclusions, falsification criteria, and artifact provenance;
@@ -625,7 +626,7 @@ PR boundaries may be refined, but dependency/gate ordering is normative.
 - [ ] Current A0/A1 reference executes through generic framework.
 - [ ] Manufacturing, O2C, and MRO each have complete evidence audits, reach at least PC5, and pass one experiment conformance suite.
 - [ ] Every official pilot result is bound to an accepted domain-specific PRD/TRD and a preregistration hash frozen before execution.
-- [ ] At least one credible PC6 composition exists before framework architectural-reference promotion.
+- [ ] At least one credible PC6 composition exists before any built-in pilot enters official Organizational Dynamics experiment execution/evidence.
 - [ ] No generic framework type contains domain-specific business nouns.
 - [ ] Exogenous/endogenous separation is enforced in tests.
 - [ ] Ground-truth claims are typed and eligibility-aware.
