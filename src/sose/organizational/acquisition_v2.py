@@ -192,7 +192,7 @@ class GitHubPRAcquisitionSnapshotV2(BaseModel):
 
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    artifacts: tuple[GitHubPRAcquisitionArtifactV2, ...] = Field(min_length=2)
+    artifacts: tuple[GitHubPRAcquisitionArtifactV2, ...] = Field(min_length=1)
 
     @model_validator(mode="after")
     def canonicalize_and_validate(self) -> "GitHubPRAcquisitionSnapshotV2":
