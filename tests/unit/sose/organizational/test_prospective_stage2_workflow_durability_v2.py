@@ -4,6 +4,14 @@ from pathlib import Path
 WORKFLOW = Path(".github/workflows/prospective-stage2-acquisition-v2.yml")
 
 
+def test_stage2_workflow_serializes_restore_acquire_persist_chain() -> None:
+    text = WORKFLOW.read_text(encoding="utf-8")
+
+    assert "concurrency:" in text
+    assert "group: prospective-stage2-v2" in text
+    assert "cancel-in-progress: false" in text
+
+
 def test_stage2_workflow_persists_canonical_bundle_to_durable_evidence_branch() -> None:
     text = WORKFLOW.read_text(encoding="utf-8")
 
