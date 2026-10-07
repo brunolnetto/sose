@@ -1,6 +1,6 @@
 # ADR-0003 — Use typed ground-truth claims instead of one universal truth model
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-07
 - **Decision owners:** SOSE maintainers
 - **Related PRD(s):** `PRD-0001`
