@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from sose.organizational.agency import AgencyLevel
+from sose.organizational.ledger import ActorCategory
 from sose.organizational.synthetic_a1_experiment import (
     A1RegimeKind,
     build_a0_a1_reference_design_v1,
@@ -80,10 +81,7 @@ def test_long_horizon_adaptation_time_is_derived_from_actor_ledger() -> None:
     )
 
     recorded = longest.actor_ledger.duration_by_category().get(
-        __import__(
-            "sose.organizational.ledger",
-            fromlist=["ActorCategory"],
-        ).ActorCategory.ADAPTATION,
+        ActorCategory.ADAPTATION,
         0.0,
     )
     assert longest.adaptation_actor_time == recorded
