@@ -175,7 +175,17 @@ def classify_a1_regime(world: SyntheticWorldSpec) -> A1RegimeReference:
 def run_a0_a1_reference_experiment_v1() -> A0A1ReferenceExperimentResultV1:
     """Run the exact preregistered paired A0/A1 reference experiment."""
 
-    design = build_a0_a1_reference_design_v1()
+    return run_a0_a1_experiment(
+        design=build_a0_a1_reference_design_v1(),
+    )
+
+
+def run_a0_a1_experiment(
+    *,
+    design: ReferenceSyntheticExperimentDesignV1,
+) -> A0A1ReferenceExperimentResultV1:
+    """Run a paired design using exactly the replication plan embedded in it."""
+
     replication_plan = design.protocol.replication_plan
     if replication_plan.min_replications != replication_plan.max_replications:
         raise ValueError("reference v1 requires a fixed replication count")
