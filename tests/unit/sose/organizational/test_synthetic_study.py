@@ -281,3 +281,61 @@ def test_design_rejects_wrong_baseline_intervention_set_and_missing_agency_templ
             assert expected in str(exc)
         else:
             raise AssertionError("expected synthetic design validation error")
+
+
+def test_design_reserves_baseline_arm_identifier() -> None:
+    baseline = _baseline()
+    protocol = _protocol(baseline).model_copy(
+        update={"intervention_ids": ("baseline", "automation")}
+    )
+    interventions = (
+        ModelIntervention(
+            intervention_id="baseline",
+            intervention_class=InterventionClass.CAPACITY,
+            set_values={"/parameters/service_capacity": 2.0},
+        ),
+        _interventions()[1],
+    )
+
+    try:
+        generate_synthetic_worlds(
+            protocol=protocol,
+            baseline=baseline,
+            interventions=interventions,
+            agency_specs=_agency_specs(),
+            seed=1,
+        )
+    except ValueError as exc:
+        assert "baseline" in str(exc)
+        assert "reserved" in str(exc)
+    else:
+        raise AssertionError("expected reserved baseline arm rejection")
+
+
+def test_interventions_cannot_rewrite_selected_agency_axis() -> None:
+    baseline = _baseline()
+    protocol = _protocol(baseline)
+    interventions = (
+        ModelIntervention(
+            intervention_id="capacity-up",
+            intervention_class=InterventionClass.CAPACITY,
+            set_values={
+                "/parameters/service_capacity": 1.8,
+                "/agency": AgencySpec(level=AgencyLevel.A0).canonical_payload(),
+            },
+        ),
+        _interventions()[1],
+    )
+
+    try:
+        generate_synthetic_worlds(
+            protocol=protocol,
+            baseline=baseline,
+            interventions=interventions,
+            agency_specs=_agency_specs(),
+            seed=1,
+        )
+    except ValueError as exc:
+        assert "agency level" in str(exc)
+    else:
+        raise AssertionError("expected intervention agency-axis rewrite rejection")
