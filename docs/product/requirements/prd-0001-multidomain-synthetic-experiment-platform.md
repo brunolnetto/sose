@@ -79,6 +79,7 @@ That is incompatible with the intended end state: a user should be able to selec
 - **FR-12 — Standard data product:** results shall be exportable through a stable schema for runs, worlds, events/ledgers, metrics, regimes, interventions, agency actions, ground truth, and experiment metadata.
 - **FR-13 — Configuration-first execution:** the 1.0 product shall support selecting a domain and experiment through configuration plus CLI/API without modifying experiment framework code.
 - **FR-14 — Cross-domain conformance:** Manufacturing, Order-to-Cash, and MRO shall pass the same domain-experiment conformance suite before the framework is considered general.
+- **FR-15 — Process maturity prerequisite:** a built-in business domain shall not be promoted as an organizational experiment reference until its process evidence audit is complete and it reaches at least PC5; architectural-reference promotion also requires at least one credible PC6 composition.
 
 ### Quality / operational
 
@@ -96,7 +97,8 @@ That is incompatible with the intended end state: a user should be able to selec
 | Metric | Baseline | Target | Measurement |
 |---|---:|---:|---|
 | Domains using one experiment contract | 1 queue reference | ≥3 materially different domains | cross-domain conformance |
-| Reference domains | queue reference | Manufacturing + O2C + MRO | conformance matrix |
+| Reference domains | queue reference | PC5 Manufacturing + PC5 O2C + PC5 MRO | process manifest + conformance matrix |
+| Composable process prerequisite | not an experiment prerequisite today | ≥1 credible PC6 composition before framework promotion | process manifest/composition tests |
 | A0/A1 shared orchestration | partial/specific | 100% common orchestration | code/conformance audit |
 | Paired CRN correctness | verified in current A0/A1 reference | 100% conforming paired comparisons | deterministic latent-stream tests |
 | Restart equivalence | engine-level available | required for persistent experiment jobs | continuous-vs-rebuild test |
@@ -108,6 +110,8 @@ That is incompatible with the intended end state: a user should be able to selec
 
 - Existing deterministic randomness and durable-truth semantics remain authoritative.
 - Process canonicals remain domain-owned; the experiment framework consumes them and does not replace them.
+- Organizational Dynamics experiments are downstream of process-canonical maturity: pilot domains must reach PC5 before experiment promotion, and framework architectural-reference promotion requires a credible PC6 composition.
+- Manufacturing/MRO experiment rollout must respect the existing Trading Company → W6 dependency rather than bypassing the Process Canonical Roadmap.
 - Framework extraction must respect the existing architecture rule: do not erase domain meaning to obtain superficial reuse.
 - Ground-truth claims must state assumptions and eligibility.
 - The existing A0/A1 synthetic evidence remains valid historical evidence and becomes a compatibility/reference fixture where practical.
@@ -146,7 +150,9 @@ The exact CLI shape is a technical-design concern and may evolve before 1.0.
 
 - [ ] One domain-neutral experiment contract exists and contains no queue-specific concepts.
 - [ ] Existing A0/A1 reference experiment is expressible through the common contract without losing current scientific boundaries.
-- [ ] Manufacturing passes the common experiment conformance suite.
+- [ ] Order-to-Cash, Manufacturing, and MRO each have a complete evidence audit and reach at least PC5 before their experiment reference is promoted.
+- [ ] At least one credible PC6 composition exists before the experiment framework is promoted as the architectural reference.
+- [ ] Manufacturing passes the common experiment conformance suite without framework special-casing.
 - [ ] Order-to-Cash passes the same suite without framework special-casing.
 - [ ] MRO passes the same suite without framework special-casing.
 - [ ] All three domains expose exogenous parameter spaces, interventions, ground truth, regimes, A0/A1 execution, and standard observations.
@@ -162,13 +168,15 @@ The exact CLI shape is a technical-design concern and may evolve before 1.0.
 
 The capability will be delivered in gates rather than one large release:
 
-1. domain-neutral experiment framework;
-2. three-domain conformance;
-3. A2 extension;
-4. standard data product;
-5. persistent job integration;
-6. configuration/CLI/API product surface;
-7. broader domain catalog promotion.
+1. provisional domain-neutral experiment framework around the verified synthetic reference;
+2. process-canonical prerequisites from the existing roadmap (pilot PC5 and credible PC6 composition);
+3. qualified O2C / Manufacturing / MRO experiment references;
+4. three-domain conformance and framework promotion;
+5. A2 extension;
+6. standard data product;
+7. persistent job integration;
+8. configuration/CLI/API product surface;
+9. broader domain catalog promotion.
 
 Each gate must preserve the previous gates' conformance suites.
 
@@ -179,7 +187,7 @@ Each gate must preserve the previous gates' conformance suites.
 | Over-generalizing after one reference experiment | framework can erase domain semantics | require Manufacturing/O2C/MRO conformance before stable promotion |
 | Ground truth differs radically by domain | misleading common scores | ADR-0003 taxonomy + per-claim eligibility |
 | A1/A2 ownership becomes ambiguous | causal attribution breaks | ADR-0004 |
-| Domain process maturity varies | experiments may rest on weak canonicals | bind experiment capability to explicit process evidence/maturity |
+| Domain process maturity varies | experiments may rest on weak canonicals | require complete evidence audit + PC5 per pilot; require credible PC6 composition before framework promotion |
 | Large experiment datasets | storage/CI pressure | standard compact report + external/persistent dataset artifact |
 | Warehouse proliferation | operational complexity | stabilize SQLite/PostgreSQL first |
 | A2 policies inspect hidden state | unrealistic managerial claims | observation contract, noise/delay/cooldown restrictions |
