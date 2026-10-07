@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -12,7 +13,10 @@ from sose.organizational.prospective_model_freeze_v2 import (
 from sose.organizational.prospective_protocol_v2 import ProspectiveStudyProtocolV2
 from sose.organizational.prospective_stage1_fit_v2 import DelayAnalogV2, PRReviewV2TailModel
 from sose.organizational.prospective_stage2_runner_v2 import build_stage2_checkpoint_v2
-from sose.organizational.prospective_stage2_validation_v2 import validate_prospective_stage2_v2
+from sose.organizational.prospective_stage2_validation_v2 import (
+    run_prospective_stage2_validation_files_v2,
+    validate_prospective_stage2_v2,
+)
 from sose.organizational.prospective_state_v2 import advance_prospective_evidence_state_v2
 from sose.organizational.source_evidence_v2 import GitHubPREvidenceRecordV2
 from sose.organizational.validation import LeadTimeValidationCriteria
@@ -76,6 +80,36 @@ def test_predictions_do_not_depend_on_holdout_terminal_outcomes() -> None:
 
     assert first_result.simulated_lead_times_seconds == second_result.simulated_lead_times_seconds
     assert first_result.observed != second_result.observed
+
+
+
+def test_file_runner_publishes_one_idempotent_validation_artifact(tmp_path: Path) -> None:
+    freeze, frozen = _frozen()
+    state = _with_holdout(frozen, count=12)
+    checkpoint = build_stage2_checkpoint_v2(state=state, model_freeze=freeze)
+    freeze_path = tmp_path / "freeze.json"
+    state_path = tmp_path / "state.json"
+    checkpoint_path = tmp_path / "checkpoint.json"
+    output_path = tmp_path / "validation.json"
+    freeze_path.write_text(freeze.canonical_json() + "\n", encoding="utf-8")
+    state_path.write_text(state.canonical_json() + "\n", encoding="utf-8")
+    checkpoint_path.write_text(checkpoint.canonical_json() + "\n", encoding="utf-8")
+
+    first = run_prospective_stage2_validation_files_v2(
+        model_freeze_path=freeze_path,
+        state_path=state_path,
+        checkpoint_path=checkpoint_path,
+        output_path=output_path,
+    )
+    repeated = run_prospective_stage2_validation_files_v2(
+        model_freeze_path=freeze_path,
+        state_path=state_path,
+        checkpoint_path=checkpoint_path,
+        output_path=output_path,
+    )
+
+    assert repeated == first
+    assert output_path.read_text(encoding="utf-8") == first.canonical_json() + "\n"
 
 
 def test_validation_rejects_checkpoint_from_different_freeze_identity() -> None:
