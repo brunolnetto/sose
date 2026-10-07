@@ -1,6 +1,6 @@
 # ADR-0003 — Use typed ground-truth claims instead of one universal truth model
 
-- **Status:** Accepted
+- **Status:** Proposed
 - **Date:** 2026-10-07
 - **Decision owners:** SOSE maintainers
 - **Related PRD(s):** `PRD-0001`
@@ -129,6 +129,8 @@ Saturated/non-stationary worlds must not receive stationary mean comparisons mer
 Realized endogenous outputs cannot define a mechanistic regime label that is later presented as independently recovered ground truth.
 
 Cross-domain reports may summarize counts/rates only among explicitly comparable eligible claims.
+
+For an official experiment, the intended claims, their ground-truth kinds, assumptions, eligibility rules, metrics, and falsification criteria must be frozen in the accepted domain-specific preregistration protocol before result execution/inspection. Corrections after a discovered implementation/protocol defect require explicit versioned deviation documentation and a complete rerun; they must not silently retune claims against observed results.
 
 ## Alternatives considered
 
