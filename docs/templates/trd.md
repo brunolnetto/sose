@@ -4,7 +4,7 @@
 - **Owner:** <name/team>
 - **Created:** YYYY-MM-DD
 - **Last updated:** YYYY-MM-DD
-- **Satisfies PRD(s):** <links>
+- **Satisfies PRD(s):** <links OR `none — <rationale>` when the governance matrix permits a PRD-less TRD>
 - **Related ADRs:** <links or TBD>
 - **Implementation PRs:** <links or TBD>
 
@@ -16,7 +16,7 @@ Describe the current implementation, constraints, and why technical change is re
 
 | Requirement | Design response | Verification |
 |---|---|---|
-| PRD FR/QR | ... | test/gate/evidence |
+| PRD FR/QR or standalone technical requirement | ... | test/gate/evidence |
 
 ## 3. Proposed design
 
@@ -98,7 +98,7 @@ Break implementation into reviewable PRs with dependency order and exit criteria
 
 ## 16. Acceptance / exit criteria
 
-- [ ] All mapped PRD requirements satisfied.
+- [ ] All mapped PRD requirements satisfied, or the PRD-less rationale remains valid.
 - [ ] Required conformance gates green.
 - [ ] Required ADRs accepted.
 - [ ] Migration/recovery path validated.
