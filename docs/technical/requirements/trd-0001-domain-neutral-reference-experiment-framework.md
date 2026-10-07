@@ -1,6 +1,6 @@
 # TRD-0001 — Domain-Neutral Reference Experiment Framework
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Owner:** SOSE maintainers
 - **Created:** 2026-10-07
 - **Last updated:** 2026-10-07
