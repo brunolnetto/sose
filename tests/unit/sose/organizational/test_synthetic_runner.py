@@ -244,3 +244,107 @@ def test_reference_runner_refuses_unimplemented_agency_mechanics() -> None:
         assert "reference" in str(exc)
     else:
         raise AssertionError("expected unsupported agency-level rejection")
+
+
+def test_throughput_counts_measurement_window_departures_from_pre_warmup_arrivals() -> None:
+    protocol, worlds = _worlds()
+    dataset = run_reference_synthetic_experiment(
+        protocol=protocol,
+        worlds=worlds,
+        root_seed=1234,
+        replications=2,
+    )
+    run = dataset.runs[0]
+
+    window_departures = sum(
+        protocol.warmup < item.completed_at <= protocol.horizon
+        for item in run.items
+    )
+    assert run.throughput == window_departures / (protocol.horizon - protocol.warmup)
+
+
+def test_cost_uses_preregistered_transition_cost_parameter_name() -> None:
+    baseline = _baseline()
+    protocol = _protocol(baseline).model_copy(
+        update={
+            "parameter_ranges": {
+                **dict(_protocol(baseline).parameter_ranges),
+                "migration_cost": ParameterRange(low=2.0, high=4.0),
+            },
+            "cost_analysis": CostAnalysisPlan(
+                operating_cost_metric="operating_cost",
+                transition_cost_parameter="migration_cost",
+            ),
+        }
+    )
+    updated_baseline = ModelSpec(
+        parameters={
+            **dict(baseline.parameters),
+            "migration_cost": 3.0,
+        },
+        parameter_evidence={
+            **dict(baseline.parameter_evidence),
+            "migration_cost": EvidenceClass.ASSUMED,
+        },
+        demand=dict(baseline.demand),
+        costs=dict(baseline.costs),
+    )
+    protocol = protocol.model_copy(
+        update={"baseline_model_spec_hash": updated_baseline.model_spec_hash}
+    )
+    worlds = generate_synthetic_worlds(
+        protocol=protocol,
+        baseline=updated_baseline,
+        interventions=(
+            ModelIntervention(
+                intervention_id="capacity-up",
+                intervention_class=InterventionClass.CAPACITY,
+                set_values={"/parameters/service_capacity": 1.8},
+                transition_cost=2.0,
+            ),
+            ModelIntervention(
+                intervention_id="automation",
+                intervention_class=InterventionClass.AUTOMATION,
+                set_values={"/parameters/rework_probability": 0.02},
+                transition_cost=3.0,
+            ),
+        ),
+        agency_specs={AgencyLevel.A0: AgencySpec(level=AgencyLevel.A0)},
+        seed=8,
+    )
+    dataset = run_reference_synthetic_experiment(
+        protocol=protocol,
+        worlds=worlds,
+        root_seed=7,
+        replications=2,
+    )
+
+    baseline_run = next(run for run in dataset.runs if run.arm_id == "baseline")
+    capacity_run = next(run for run in dataset.runs if run.arm_id == "capacity-up")
+
+    uncertain = next(
+        world.exogenous_parameters["migration_cost"]
+        for world in worlds
+        if world.world_hash == capacity_run.world_hash
+    )
+    measurement = protocol.horizon - protocol.warmup
+    assert baseline_run.total_operating_cost == baseline_run.total_operating_cost
+    assert capacity_run.total_operating_cost >= uncertain + 2.0 + measurement * 1.5
+
+
+def test_runner_requires_exact_cartesian_world_identities() -> None:
+    protocol, worlds = _worlds()
+    forged = worlds[-1].model_copy(update={"design_index": 999})
+    malformed = (*worlds[:-1], forged)
+
+    try:
+        run_reference_synthetic_experiment(
+            protocol=protocol,
+            worlds=malformed,
+            root_seed=1,
+            replications=2,
+        )
+    except ValueError as exc:
+        assert "complete synthetic world design" in str(exc)
+    else:
+        raise AssertionError("expected exact Cartesian design rejection")
