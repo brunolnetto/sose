@@ -5,6 +5,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 
 from sose.organizational.acquisition_v2 import (
+    GitHubEndpointCaptureV2,
     GitHubPRAcquisitionArtifactV2,
     GitHubPRAcquisitionManifestV2,
     GitHubPRAcquisitionSnapshotV2,
@@ -196,16 +197,31 @@ def _record(
 
 
 def _snapshot(*records: GitHubPREvidenceRecordV2) -> GitHubPRAcquisitionSnapshotV2:
-    artifacts = tuple(
-        GitHubPRAcquisitionArtifactV2(
-            manifest=GitHubPRAcquisitionManifestV2(
-                repository=record.repository,
-                pr_number=record.pr_number,
-                captured_at=record.merged_at + timedelta(seconds=1),
-                source_urls=(record.source_url,),
-            ),
-            evidence=record,
+    def capture(endpoint: str, record: GitHubPREvidenceRecordV2) -> GitHubEndpointCaptureV2:
+        return GitHubEndpointCaptureV2(
+            endpoint=endpoint,
+            pages_fetched=1,
+            record_count=(1 if endpoint == "pull_request" else 0),
+            complete=True,
+            source_urls=(f"{record.source_url}/{endpoint}?page=1",),
         )
-        for record in records
-    )
-    return GitHubPRAcquisitionSnapshotV2(artifacts=artifacts)
+
+    artifacts = []
+    for record in records:
+        manifest = GitHubPRAcquisitionManifestV2(
+            repository=record.repository,
+            pr_number=record.pr_number,
+            captured_at=record.merged_at + timedelta(seconds=1),
+            pull_request=capture("pull_request", record),
+            timeline=capture("timeline", record),
+            reviews=capture("reviews", record),
+            workflow_runs=capture("workflow_runs", record),
+            workflow_jobs=GitHubEndpointCaptureV2(
+                endpoint="workflow_jobs",
+                pages_fetched=0,
+                record_count=0,
+                complete=True,
+            ),
+        )
+        artifacts.append(GitHubPRAcquisitionArtifactV2(manifest=manifest, evidence=record))
+    return GitHubPRAcquisitionSnapshotV2(artifacts=tuple(artifacts))
