@@ -123,7 +123,7 @@ implementation PRs
 validation / evidence / release
 ```
 
-When required by the change matrix, PRD and TRD should be accepted before substantial implementation begins. A TRD may intentionally have no PRD when the matrix permits it, but that exemption must be explicit in the TRD.
+When required by the change matrix, When required by the change matrix, PRD and TRD should be accepted before substantial implementation begins. A TRD may intentionally have no PRD when the matrix permits it, but that exemption must be explicit in the TRD. A TRD may intentionally have no PRD when the matrix permits it, but that exemption must be explicit in the TRD.
 
 For a tightly scoped single-PR change, a PRD/TRD may accompany the implementation only when the change is not cross-cutting and reviewers can evaluate the design independently of the code. Cross-cutting decisions require the planning artifacts first.
 
