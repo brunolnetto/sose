@@ -3,6 +3,9 @@ from __future__ import annotations
 from hashlib import sha256
 import json
 from math import ceil
+import os
+from pathlib import Path
+import tempfile
 from statistics import fmean, median
 from typing import Annotated, Literal
 
@@ -255,3 +258,57 @@ def _tail_summary(values: tuple[float, ...]) -> TailDistributionSummaryV2:
         maximum=maximum,
         max_to_median_ratio=ratio,
     )
+
+
+def run_prospective_stage2_validation_files_v2(
+    *,
+    model_freeze_path: str | Path,
+    state_path: str | Path,
+    checkpoint_path: str | Path,
+    output_path: str | Path,
+) -> ProspectiveStage2ValidationArtifactV2:
+    """Execute the frozen Stage-2 validation from local immutable artifacts only."""
+
+    freeze = ProspectiveModelFreezeArtifactV2.model_validate_json(
+        Path(model_freeze_path).read_text(encoding="utf-8")
+    )
+    state = ProspectiveEvidenceStateV2.model_validate_json(
+        Path(state_path).read_text(encoding="utf-8")
+    )
+    checkpoint = ProspectiveStage2CheckpointV2.model_validate_json(
+        Path(checkpoint_path).read_text(encoding="utf-8")
+    )
+    result = validate_prospective_stage2_v2(
+        state=state,
+        checkpoint=checkpoint,
+        model_freeze=freeze,
+    )
+    _publish_exclusive(Path(output_path), result.canonical_json() + "\n")
+    return result
+
+
+def _publish_exclusive(path: Path, serialized: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        if path.read_text(encoding="utf-8") == serialized:
+            return
+        raise FileExistsError(f"output already contains a different artifact: {path}")
+
+    descriptor, temporary_name = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    temporary = Path(temporary_name)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8", newline="\n") as handle:
+            handle.write(serialized)
+            handle.flush()
+            os.fsync(handle.fileno())
+        try:
+            os.link(temporary, path)
+        except FileExistsError:
+            if path.read_text(encoding="utf-8") != serialized:
+                raise
+    finally:
+        temporary.unlink(missing_ok=True)
