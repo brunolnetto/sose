@@ -1,0 +1,11 @@
+{
+  "manifest_version": "synthetic-a1-reference/v1",
+  "workflow_run_id": 37692117988,
+  "workflow_head_sha": "e1eb1a517444cdbf1461797b2559e42a1703b20b",
+  "artifact_id": 11513453262,
+  "artifact_digest": "sha256:f90bd76778158850a4be7e718a106272d00fb5cc92f1a1fefcf4d03137185360",
+  "report_sha256": "a4fdf12d8f257e4066ed2b02b73334ae9d052bcfbaf31f6dac4b67b1a497aa2c",
+  "summary_sha256": "8ed7b89a7b76968009ff98eb5ee1e0a85664c664979daede3c4b78915455c4c8",
+  "protocol_hash": "c5a23cb810a1dfea2355870eeefecb365489d249804023ad377c00755fd7ac29",
+  "report_hash": "a51a1495d0f7f1097b24ad1ac0a5ffa2ec219068e6706b045859e38276b9eb6d"
+}

@@ -1,0 +1,20 @@
+{
+  "a0_saturated_worlds": 16,
+  "a0_stable_worlds": 20,
+  "a1_adaptation_stabilized_worlds": 10,
+  "a1_nominal_stable_worlds": 20,
+  "a1_saturated_worlds": 6,
+  "direction_agreement_count": 24,
+  "direction_agreement_rate": 1.0,
+  "direction_change_count": 0,
+  "mean_adaptation_actor_time": 24.407009298517735,
+  "mean_adaptation_cost": 3.6610513947776604,
+  "mean_agency_delta_lead_time": -56.083796905158394,
+  "mean_agency_delta_operating_cost": 3.6610513947776635,
+  "mean_agency_delta_throughput": 0.08647395833333332,
+  "pair_count": 576,
+  "protocol_hash": "c5a23cb810a1dfea2355870eeefecb365489d249804023ad377c00755fd7ac29",
+  "report_hash": "a51a1495d0f7f1097b24ad1ac0a5ffa2ec219068e6706b045859e38276b9eb6d",
+  "saturated_to_stable_worlds": 10,
+  "stable_to_saturated_worlds": 0
+}
