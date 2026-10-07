@@ -203,14 +203,17 @@ def _validate_freeze_binding(
     if cohort.model_frozen_at != model_freeze.frozen_at:
         raise ValueError("freeze artifact does not bind to prospective state freeze timestamp")
 
-    training_keys = set(cohort.training_keys)
-    training_records = tuple(
+    pre_freeze_records = tuple(
         record
         for record in state.snapshot.records
-        if (record.repository, record.pr_number) in training_keys
+        if record.opened_at <= model_freeze.frozen_at
     )
-    if len(training_records) != cohort.training_count:
+    pre_freeze_keys = {
+        (record.repository, record.pr_number)
+        for record in pre_freeze_records
+    }
+    if not set(cohort.training_keys).issubset(pre_freeze_keys):
         raise ValueError("freeze artifact does not bind to complete training evidence")
-    training_snapshot = GitHubPREvidenceSnapshotV2(records=training_records)
-    if training_snapshot.snapshot_hash != model_freeze.snapshot_hash:
-        raise ValueError("freeze artifact does not bind to prospective state training snapshot")
+    pre_freeze_snapshot = GitHubPREvidenceSnapshotV2(records=pre_freeze_records)
+    if pre_freeze_snapshot.snapshot_hash != model_freeze.snapshot_hash:
+        raise ValueError("freeze artifact does not bind to prospective state pre-freeze snapshot")
