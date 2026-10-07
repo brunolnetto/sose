@@ -112,7 +112,7 @@ def build_a0_a1_reference_design_v1() -> ReferenceSyntheticExperimentDesignV1:
     )
     paired_crn_worlds = tuple(
         world.model_copy(
-            update={"crn_group": f"design:{world.design_index}:arm:{world.arm_id}"}
+            update={"crn_group": f"design:{world.design_index}"}
         )
         for world in worlds
     )

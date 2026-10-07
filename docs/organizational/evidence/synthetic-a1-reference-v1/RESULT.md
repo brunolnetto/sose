@@ -1,0 +1,80 @@
+# A1 synthetic agency experiment v1
+
+This is a synthetic verification experiment with known mechanics, not empirical validation.
+
+## Design
+
+The fixed exogenous DOE is evaluated under A0 fixed policy and A1 backlog-triggered local batching adaptation. Each design point shares one CRN group across baseline, capacity, automation, A0, and A1, so both agency and intervention contrasts use matched stochastic streams.
+
+The official design contains 12 design points, three arms, two agency levels, and 16 replications: 36 A0/A1 world pairs and 576 paired replicated observations.
+
+A1 activates at backlog pressure 2.0, applies service multiplier 0.70, pays 0.05 actor-time units per activation, and records that effort explicitly as ADAPTATION.
+
+## Regime result
+
+| Regime measure | Result |
+| --- | ---: |
+| A0 nominally stable worlds | 20 |
+| A0 saturated worlds | 16 |
+| A1 nominally stable worlds | 20 |
+| A1 adaptation-stabilized worlds | 10 |
+| A1 saturated worlds | 6 |
+| A0 saturated -> A1 stable | **10 / 16 (62.5%)** |
+| A0 stable -> A1 saturated | **0** |
+
+Regime classification is mechanistic from exogenous inputs and policy parameters, not inferred from realized WIP or lead time.
+
+## Intervention-direction robustness
+
+There are 24 design-point/intervention contrasts in total.
+
+- Stationarily eligible under both A0 and A1: **8**
+- Ineligible because at least one compared world is saturated: **16**
+- Direction agreement among eligible contrasts: **8 / 8 = 100%**
+- Direction changes among eligible contrasts: **0**
+
+Saturated contrasts retain their finite-horizon effect magnitudes in report.json, but they are explicitly excluded from direction agreement because saturated queues do not have finite stationary mean lead time.
+
+Therefore the defensible claim is not 24/24. It is: **all 8 stationary-eligible intervention contrasts preserve their beneficial lead-time direction under A1**.
+
+## Finite-horizon operational effects
+
+Averaged across all 576 A0/A1 paired replications:
+
+- A1 - A0 mean lead time: **-55.157 simulation-time units**
+- A1 - A0 throughput: **+0.08603 items per simulation-time unit**
+- A1 - A0 operating cost: **+3.668 cost units**
+- mean A1 adaptation actor time: **24.451 actor-time units**
+- mean A1 adaptation cost: **3.668 cost units**
+
+These aggregate lead-time and throughput magnitudes include finite-horizon saturated worlds and must not be interpreted as stationary expectations.
+
+## What this verifies
+
+Under the implemented reference mechanics:
+
+1. local A1 adaptation can move the mechanistic stability boundary without rewriting organizational structure;
+2. 10 of 16 nominally saturated A0 worlds are stabilized by the fixed A1 policy;
+3. no nominally stable A0 world is classified as saturated by A1;
+4. all stationary-eligible capacity/automation effects retain beneficial lead-time direction under A1;
+5. agency materially changes effect magnitude and regime location even where intervention direction is preserved;
+6. adaptation effort and cost remain explicit rather than being hidden in item elapsed time;
+7. CRN is shared across agency levels and intervention arms, reducing avoidable Monte Carlo noise in contrasts.
+
+## Falsification and limits
+
+The regime-shift hypothesis would fail in this design if zero saturated A0 worlds became A1-stable. Ten are rescued.
+
+Direction preservation is only asserted for the eight stationary-eligible contrasts. The 16 saturated contrasts are not evidence for or against stationary direction preservation.
+
+Only one explicit A1 batching policy, one-resource reference process, fixed structural interventions, and a finite DOE are tested. This does not establish empirical validity for real organizations or generalize to all adaptive policies.
+
+Out of scope remain A2 managerial observation/action, learning, trust, incentives, politics, turnover, endogenous demand, multi-actor authority conflict, institutional change (A3), and transient structural interventions.
+
+## Provenance
+
+- protocol hash: c5a23cb810a1dfea2355870eeefecb365489d249804023ad377c00755fd7ac29
+- report hash: c47333851b92843b529761e77a8850ab746c21e7e4cc8a1d900fed7b19a63a13
+- workflow run: 37692924898
+- artifact: 11514201903
+- artifact digest: sha256:58325caf056d922301654ff5a03b6dbf52e6dfadfe8d9e5343c9c50202df9995

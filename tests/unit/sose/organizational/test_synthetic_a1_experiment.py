@@ -50,6 +50,13 @@ def test_a0_a1_design_pairs_same_exogenous_worlds_and_crn_groups() -> None:
         ] = world
 
     assert all(set(pair) == {AgencyLevel.A0, AgencyLevel.A1} for pair in by_key.values())
+    for design_index in range(design.protocol.sample_size):
+        groups = {
+            world.crn_group
+            for world in design.worlds
+            if world.design_index == design_index
+        }
+        assert groups == {f"design:{design_index}"}
     for pair in by_key.values():
         a0 = pair[AgencyLevel.A0]
         a1 = pair[AgencyLevel.A1]
