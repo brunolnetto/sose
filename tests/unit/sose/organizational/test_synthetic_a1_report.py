@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from functools import lru_cache
 
+import pytest
+
 from sose.organizational.experiment import ReplicationPlan
 from sose.organizational.synthetic_a1_experiment import (
     build_a0_a1_reference_design_v1,
@@ -81,3 +83,17 @@ def test_report_keeps_effect_magnitude_and_direction_without_composite_score() -
         assert effect.a0_direction in {-1, 0, 1}
         assert effect.a1_direction in {-1, 0, 1}
         assert effect.direction_changed == (effect.a0_direction != effect.a1_direction)
+
+
+def test_report_rejects_missing_or_duplicate_paired_evidence() -> None:
+    experiment = _small_experiment()
+
+    missing = experiment.model_copy(update={"pairs": experiment.pairs[:-1]})
+    with pytest.raises(ValueError, match="complete unique paired evidence"):
+        build_a1_scientific_report_v1(missing)
+
+    duplicate = experiment.model_copy(
+        update={"pairs": (*experiment.pairs, experiment.pairs[-1])}
+    )
+    with pytest.raises(ValueError, match="complete unique paired evidence"):
+        build_a1_scientific_report_v1(duplicate)
