@@ -260,3 +260,62 @@ def test_recovery_report_is_hash_addressed_and_rejects_incomplete_world_binding(
         assert "world binding" in str(exc)
     else:
         raise AssertionError("expected incomplete world-binding rejection")
+
+
+def test_analysis_rejects_non_a0_worlds() -> None:
+    protocol, worlds, dataset = _worlds_and_dataset()
+    forged_world = worlds[0].model_copy(update={"agency_level": AgencyLevel.A1})
+    malformed = (forged_world, *worlds[1:])
+
+    try:
+        analyze_reference_synthetic_experiment(
+            protocol=protocol,
+            worlds=malformed,
+            dataset=dataset,
+        )
+    except ValueError as exc:
+        assert "A0" in str(exc)
+    else:
+        raise AssertionError("expected A0-only analytical boundary")
+
+
+def test_analysis_requires_exact_replication_indices_per_world() -> None:
+    protocol, worlds, dataset = _worlds_and_dataset()
+    target = dataset.runs[0].world_hash
+    target_runs = [run for run in dataset.runs if run.world_hash == target]
+    forged = target_runs[0].model_copy(update={"replication": target_runs[1].replication})
+    runs = list(dataset.runs)
+    runs[runs.index(target_runs[0])] = forged
+    malformed = dataset.model_copy(update={"runs": tuple(runs)})
+
+    try:
+        analyze_reference_synthetic_experiment(
+            protocol=protocol,
+            worlds=worlds,
+            dataset=malformed,
+        )
+    except ValueError as exc:
+        assert "replication indices" in str(exc)
+    else:
+        raise AssertionError("expected replication-index binding rejection")
+
+
+def test_stationary_recovery_requires_transition_to_finish_before_warmup() -> None:
+    protocol, worlds, dataset = _worlds_and_dataset()
+    target = worlds[1]
+    forged = target.model_copy(
+        update={"intervention_transition_time": protocol.warmup + 1.0}
+    )
+    malformed = tuple(forged if world.world_hash == target.world_hash else world for world in worlds)
+
+    try:
+        analyze_reference_synthetic_experiment(
+            protocol=protocol,
+            worlds=malformed,
+            dataset=dataset,
+        )
+    except ValueError as exc:
+        assert "warmup" in str(exc)
+        assert "transition" in str(exc)
+    else:
+        raise AssertionError("expected stationary-transition guard")
