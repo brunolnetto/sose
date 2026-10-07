@@ -271,7 +271,7 @@ def _freeze_for_state(
         protocol_hash=frozen_state.protocol_hash,
         snapshot_hash=snapshot_hash,
         frozen_at=FROZEN_AT,
-        model_spec=spec,
+        model_spec=spec.canonical_payload(),
         model_spec_hash=spec.model_spec_hash,
         simulation_seed=7,
         acceptance_criteria=criteria,
