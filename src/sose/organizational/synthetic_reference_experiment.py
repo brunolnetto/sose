@@ -93,7 +93,7 @@ def build_reference_synthetic_experiment_v1() -> ReferenceSyntheticExperimentDes
             "arrival_rate": ParameterRange(low=0.35, high=1.45),
             "service_capacity": ParameterRange(low=0.75, high=1.15),
             "service_cv": ParameterRange(low=0.20, high=1.20),
-            "rework_probability": ParameterRange(low=0.00, high=0.40),
+            "rework_probability": ParameterRange(low=0.05, high=0.40),
             "transition_cost": ParameterRange(low=0.0, high=10.0),
         },
         sampling_design=SamplingDesign.LATIN_HYPERCUBE,
