@@ -127,6 +127,7 @@ def test_acceptance_criteria_are_training_only_deterministic_and_non_composite()
     independently_derived = derive_stage2_acceptance_criteria_v2(
         model=fit.model,
         training_bot_fraction=fit.training_bot_fraction,
+        holdout_count=12,
         seed=43,
         replicates=128,
         quantile=0.95,
