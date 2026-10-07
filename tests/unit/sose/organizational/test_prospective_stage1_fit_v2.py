@@ -53,16 +53,16 @@ def test_stage1_fit_preserves_tail_as_unidentified_residual_not_actor_effort() -
         acceptance_bootstrap_seed=43,
         acceptance_bootstrap_replicates=128,
         acceptance_quantile=0.95,
-        holdout_count=2,
     )
 
-    assert tuple(analog.unidentified_residual_seconds for analog in fit.model.human_analogs) == (
-        70.0,
-        870.0,
+    human_residuals = tuple(
+        analog.unidentified_residual_seconds for analog in fit.model.human_analogs
     )
-    assert tuple(analog.unidentified_residual_seconds for analog in fit.model.bot_analogs) == (
-        7_470.0,
-    )
+    assert 70.0 in human_residuals
+    assert 870.0 in human_residuals
+    assert tuple(
+        analog.unidentified_residual_seconds for analog in fit.model.bot_analogs
+    ) == (7_470.0,)
     assert fit.model_spec.parameter_evidence["human_delay_analog_pairs"] is EvidenceClass.INFERABLE
     assert fit.model_spec.parameter_evidence["bot_delay_analog_pairs"] is EvidenceClass.INFERABLE
     assert fit.model_spec.parameter_evidence["bot_stratification"] is EvidenceClass.OBSERVED
@@ -89,7 +89,6 @@ def test_prediction_is_counter_keyed_and_conditions_only_on_creation_time_bot_fl
         acceptance_bootstrap_seed=43,
         acceptance_bootstrap_replicates=64,
         acceptance_quantile=0.95,
-        holdout_count=2,
     )
     cases = (
         PRReviewV2Case(pr_id="future-human", opened_at=0.0, author_is_bot=False),
@@ -123,13 +122,11 @@ def test_acceptance_criteria_are_training_only_deterministic_and_non_composite()
         acceptance_bootstrap_seed=43,
         acceptance_bootstrap_replicates=128,
         acceptance_quantile=0.95,
-        holdout_count=3,
     )
 
     independently_derived = derive_stage2_acceptance_criteria_v2(
         model=fit.model,
         training_bot_fraction=fit.training_bot_fraction,
-        holdout_count=3,
         seed=43,
         replicates=128,
         quantile=0.95,
@@ -144,9 +141,9 @@ def test_acceptance_criteria_are_training_only_deterministic_and_non_composite()
 
 
 def test_fit_uses_only_persisted_training_keys_not_interstitial_items() -> None:
-    protocol = _protocol(training_count=2, holdout_count=2)
+    protocol = _protocol()
     first = advance_prospective_evidence_state_v2(
-        records=(
+        records=_training_records(
             _record(302, opened_offset=10, lead_time=100, jobs=((10, 40),)),
             _record(303, opened_offset=20, lead_time=200, jobs=((20, 50),)),
         ),
@@ -155,7 +152,7 @@ def test_fit_uses_only_persisted_training_keys_not_interstitial_items() -> None:
     state = advance_prospective_evidence_state_v2(
         records=(
             *first.snapshot.records,
-            _record(304, opened_offset=30, lead_time=9_000, jobs=((30, 60),)),
+            _record(400, opened_offset=10_000, lead_time=9_000, jobs=((10_000, 10_030),)),
         ),
         protocol=protocol,
         previous_state=first,
@@ -167,25 +164,46 @@ def test_fit_uses_only_persisted_training_keys_not_interstitial_items() -> None:
         acceptance_bootstrap_seed=43,
         acceptance_bootstrap_replicates=64,
         acceptance_quantile=0.95,
-        holdout_count=2,
     )
 
-    assert fit.training_keys == (("brunolnetto/sose", 302), ("brunolnetto/sose", 303))
-    assert len(fit.model.human_analogs) == 2
+    assert fit.training_keys == first.cohort.training_keys
+    assert len(fit.model.human_analogs) == 18
     assert all(analog.lead_time_seconds != 9_000.0 for analog in fit.model.human_analogs)
 
 
 def _state(*records: GitHubPREvidenceRecordV2):
-    protocol = _protocol(training_count=len(records), holdout_count=2)
-    return advance_prospective_evidence_state_v2(records=records, protocol=protocol)
+    return advance_prospective_evidence_state_v2(
+        records=_training_records(*records),
+        protocol=_protocol(),
+    )
 
 
-def _protocol(*, training_count: int, holdout_count: int) -> ProspectiveStudyProtocolV2:
+def _training_records(
+    *records: GitHubPREvidenceRecordV2,
+) -> tuple[GitHubPREvidenceRecordV2, ...]:
+    supplied = {record.pr_number for record in records}
+    filler: list[GitHubPREvidenceRecordV2] = []
+    candidate = 500
+    while len(records) + len(filler) < 18:
+        while candidate in supplied:
+            candidate += 1
+        offset = 20_000 + len(filler) * 200
+        filler.append(
+            _record(
+                candidate,
+                opened_offset=offset,
+                lead_time=100,
+                jobs=((offset, offset + 30),),
+            )
+        )
+        candidate += 1
+    return (*records, *filler)
+
+
+def _protocol() -> ProspectiveStudyProtocolV2:
     return ProspectiveStudyProtocolV2(
         protocol_document_hash="0" * 64,
         registration_merged_at=REGISTERED_AT,
-        training_count=training_count,
-        holdout_count=holdout_count,
     )
 
 
