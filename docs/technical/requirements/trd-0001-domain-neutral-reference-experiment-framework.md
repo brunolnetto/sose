@@ -582,7 +582,21 @@ PR boundaries may be refined, but gate ordering is normative.
 - [ ] Configuration/CLI/API can run a built-in conforming domain without framework code edits.
 - [ ] Documentation/evidence persists every promoted scientific claim.
 
-## 17. Change history
+## 17. Follow-on technical requirements
+
+TRD-0001 is the umbrella technical contract for the domain-neutral experiment architecture. It intentionally does not freeze every productization detail.
+
+Before implementation of the corresponding gates, dedicated child TRDs are required for:
+
+- A2 observation/action controller semantics and persistence;
+- standard analytical data-product schemas/materialization;
+- persistent/distributed experiment-job coordination if existing job contracts require extension;
+- configuration schema and CLI/API product surfaces;
+- additional authoritative persistence adapters beyond the stabilized SQLite/PostgreSQL boundary.
+
+Child TRDs must satisfy PRD-0001, preserve ADR-0002/0003/0004, and map their own narrower acceptance criteria. They may refine implementation details but may not silently alter the ownership or scientific boundaries defined here.
+
+## 18. Change history
 
 | Date | Change | Rationale |
 |---|---|---|
