@@ -70,3 +70,20 @@ def test_a0_a1_experiment_reports_regime_rescue_and_adaptation_cost() -> None:
     assert result.summary.saturated_to_stable_worlds > 0
     assert result.summary.mean_adaptation_actor_time > 0.0
     assert result.summary.mean_adaptation_cost > 0.0
+
+
+def test_long_horizon_adaptation_time_is_derived_from_actor_ledger() -> None:
+    result = run_a0_a1_reference_experiment_v1(replications=2)
+    longest = max(
+        (pair.a1_run for pair in result.pairs),
+        key=lambda run: run.adaptation_count,
+    )
+
+    recorded = longest.actor_ledger.duration_by_category().get(
+        __import__(
+            "sose.organizational.ledger",
+            fromlist=["ActorCategory"],
+        ).ActorCategory.ADAPTATION,
+        0.0,
+    )
+    assert longest.adaptation_actor_time == recorded
