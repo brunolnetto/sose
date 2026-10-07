@@ -26,6 +26,7 @@ from .model_spec import (
 )
 from .observations import ObservedEventKind, ObservedPREvent, ObservedPRTrace
 from .sampling import sample_parameter_space
+from .synthetic_study import SyntheticWorldSpec, generate_synthetic_worlds
 from .validation import (
     DistributionSummary,
     LeadTimeValidation,
@@ -66,6 +67,7 @@ __all__ = [
     "StructuralDiff",
     "SurrogateAnalysisPlan",
     "SurrogateModel",
+    "SyntheticWorldSpec",
     "ValidationCheck",
     "assess_lead_time_validation",
     "calibrate_observed_item_flow",
@@ -73,5 +75,6 @@ __all__ = [
     "empirical_cdf_max_distance",
     "normalize_github_pr_trace",
     "sample_parameter_space",
+    "generate_synthetic_worlds",
     "summarize_distribution",
 ]
