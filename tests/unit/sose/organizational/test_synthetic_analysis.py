@@ -22,6 +22,7 @@ from sose.organizational.model_spec import (
     ModelSpec,
 )
 from sose.organizational.synthetic_analysis import (
+    RegimeTransition,
     analytical_world_reference,
     analyze_reference_synthetic_experiment,
 )
@@ -224,6 +225,8 @@ def test_recovery_report_uses_exogenous_mechanical_regimes_and_paired_effects() 
     assert all(effect.arm_id != "baseline" for effect in report.effects)
     assert all(effect.expected_delta_mean_lead_time is not None for effect in report.effects)
     assert all(effect.simulated_delta_mean_lead_time is not None for effect in report.effects)
+    assert all(effect.regime_transition is RegimeTransition.STABLE_TO_STABLE for effect in report.effects)
+    assert all(effect.simulated_delta_operating_cost >= 0.0 for effect in report.effects)
 
     capacity_effects = [effect for effect in report.effects if effect.arm_id == "capacity-up"]
     automation_effects = [effect for effect in report.effects if effect.arm_id == "automation"]
