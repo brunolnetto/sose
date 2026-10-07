@@ -59,6 +59,10 @@ def test_reference_interventions_are_stationary_and_mechanistically_distinct() -
         )
         assert automation.model_spec.parameters["rework_probability"] == 0.02
         assert (
+            automation.model_spec.parameters["rework_probability"]
+            < baseline.model_spec.parameters["rework_probability"]
+        )
+        assert (
             automation.model_spec.parameters["service_capacity"]
             == baseline.model_spec.parameters["service_capacity"]
         )
