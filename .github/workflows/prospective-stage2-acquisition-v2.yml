@@ -8,16 +8,20 @@ on:
         required: true
         type: string
       previous_run_id:
-        description: "Prior successful Stage-2 acquisition workflow run ID (leave blank for first tranche)"
+        description: "Optional prior Stage-2 Actions run ID; durable evidence branch is used when omitted"
         required: false
         default: ""
         type: string
 
 permissions:
-  contents: read
+  contents: write
   actions: read
   issues: read
   pull-requests: read
+
+concurrency:
+  group: prospective-stage2-v2
+  cancel-in-progress: false
 
 jobs:
   acquire-and-advance:
@@ -36,16 +40,30 @@ jobs:
       - name: Install package
         run: python -m pip install -e .
 
-      - name: Materialize previous Stage-2 bundle
+      - name: Restore previous Stage-2 bundle from durable evidence branch
         env:
-          SOSE_HAS_PREVIOUS: ${{ inputs.previous_run_id != '' }}
+          SOSE_PREVIOUS_RUN_ID: ${{ inputs.previous_run_id }}
+          SOSE_EVIDENCE_BRANCH: evidence/prospective-v2-stage2
         run: |
+          set -euo pipefail
           mkdir -p previous
-          if [ "$SOSE_HAS_PREVIOUS" = "true" ]; then
-            echo "previous Stage-2 bundle will be downloaded next"
+
+          if [ -n "$SOSE_PREVIOUS_RUN_ID" ]; then
+            echo "SOSE_HAS_PREVIOUS=true" >> "$GITHUB_ENV"
+            echo "Previous bundle will be restored from Actions run $SOSE_PREVIOUS_RUN_ID"
+          elif git ls-remote --exit-code --heads origin "$SOSE_EVIDENCE_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$SOSE_EVIDENCE_BRANCH:refs/remotes/origin/$SOSE_EVIDENCE_BRANCH"
+            root=docs/organizational/evidence/pr-review-v2-stage2-runtime/latest
+            git show "origin/$SOSE_EVIDENCE_BRANCH:$root/cumulative-acquisition.json" > previous/cumulative-acquisition.json
+            git show "origin/$SOSE_EVIDENCE_BRANCH:$root/prospective-state.json" > previous/prospective-state.json
+            git show "origin/$SOSE_EVIDENCE_BRANCH:$root/stage2-checkpoint.json" > previous/stage2-checkpoint.json
+            echo "SOSE_HAS_PREVIOUS=true" >> "$GITHUB_ENV"
+            echo "Restored previous bundle from durable evidence branch"
           else
             cp docs/organizational/evidence/pr-review-v2-stage1/cumulative-acquisition.json previous/cumulative-acquisition.json
             cp docs/organizational/evidence/pr-review-v2-stage1-freeze/frozen-state.json previous/prospective-state.json
+            echo "SOSE_HAS_PREVIOUS=false" >> "$GITHUB_ENV"
+            echo "No Stage-2 evidence branch exists; using frozen Stage-1 base"
           fi
 
       - name: Download previous Stage-2 artifacts
@@ -63,7 +81,6 @@ jobs:
           SOSE_GITHUB_TOKEN: ${{ github.token }}
           SOSE_REPOSITORY: ${{ github.repository }}
           SOSE_PRS: ${{ inputs.prs }}
-          SOSE_HAS_PREVIOUS: ${{ inputs.previous_run_id != '' }}
         run: |
           python - <<'PY'
           from datetime import datetime, timezone
@@ -104,6 +121,71 @@ jobs:
 
       - name: Print Stage-2 checkpoint
         run: cat stage2-output/stage2-checkpoint.json
+
+      - name: Persist canonical bundle to durable evidence branch
+        env:
+          SOSE_EVIDENCE_BRANCH: evidence/prospective-v2-stage2
+        run: |
+          set -euo pipefail
+          observed="$(python - <<'PY'
+          import json
+          from pathlib import Path
+          print(json.loads(Path("stage2-output/stage2-checkpoint.json").read_text())["holdout_observed"])
+          PY
+          )"
+          checkpoint="$(printf '%03d' "$observed")"
+          output="$GITHUB_WORKSPACE/stage2-output"
+          worktree="$RUNNER_TEMP/stage2-evidence"
+
+          if git ls-remote --exit-code --heads origin "$SOSE_EVIDENCE_BRANCH" >/dev/null 2>&1; then
+            git fetch origin "$SOSE_EVIDENCE_BRANCH:refs/remotes/origin/$SOSE_EVIDENCE_BRANCH"
+            git worktree add --detach "$worktree" "origin/$SOSE_EVIDENCE_BRANCH"
+            cd "$worktree"
+            git switch -C "$SOSE_EVIDENCE_BRANCH" "origin/$SOSE_EVIDENCE_BRANCH"
+          else
+            git worktree add --detach "$worktree" HEAD
+            cd "$worktree"
+            git switch --orphan "$SOSE_EVIDENCE_BRANCH"
+            git rm -rf . >/dev/null 2>&1 || true
+          fi
+
+          root=docs/organizational/evidence/pr-review-v2-stage2-runtime
+          destination="$root/checkpoint-$checkpoint"
+          rm -rf "$destination" "$root/latest"
+          mkdir -p "$destination" "$root/latest"
+
+          for name in cumulative-acquisition.json prospective-state.json stage2-checkpoint.json tranche-acquisition.json; do
+            cp "$output/$name" "$destination/$name"
+            cp "$output/$name" "$root/latest/$name"
+          done
+
+          python - <<PY
+          import json
+          from pathlib import Path
+          payload = {
+              "workflow_run_id": int("${GITHUB_RUN_ID}"),
+              "checkpoint": int("$observed"),
+              "source_commit": "${GITHUB_SHA}",
+          }
+          for target in (
+              Path("$destination/source.json"),
+              Path("$root/latest/source.json"),
+          ):
+              target.write_text(
+                  json.dumps(payload, sort_keys=True, separators=(",", ":")) + "\n",
+                  encoding="utf-8",
+              )
+          PY
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$root"
+          if git diff --cached --quiet; then
+            echo "Durable evidence branch already contains this exact checkpoint"
+          else
+            git commit -m "evidence: persist Stage-2 checkpoint $checkpoint"
+            git push origin "HEAD:$SOSE_EVIDENCE_BRANCH"
+          fi
 
       - name: Upload immutable Stage-2 artifacts
         uses: actions/upload-artifact@v4
