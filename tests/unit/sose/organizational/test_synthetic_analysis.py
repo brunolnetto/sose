@@ -300,11 +300,11 @@ def test_analysis_requires_exact_replication_indices_per_world() -> None:
         raise AssertionError("expected replication-index binding rejection")
 
 
-def test_stationary_recovery_requires_transition_to_finish_before_warmup() -> None:
+def test_stationary_recovery_rejects_transition_downtime() -> None:
     protocol, worlds, dataset = _worlds_and_dataset()
     target = worlds[1]
     forged = target.model_copy(
-        update={"intervention_transition_time": protocol.warmup + 1.0}
+        update={"intervention_transition_time": 1.0}
     )
     malformed = tuple(forged if world.world_hash == target.world_hash else world for world in worlds)
 
@@ -315,7 +315,7 @@ def test_stationary_recovery_requires_transition_to_finish_before_warmup() -> No
             dataset=dataset,
         )
     except ValueError as exc:
-        assert "warmup" in str(exc)
         assert "transition" in str(exc)
+        assert "stationary" in str(exc)
     else:
         raise AssertionError("expected stationary-transition guard")
