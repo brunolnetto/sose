@@ -54,6 +54,7 @@ class A1AdaptiveRunResult(BaseModel):
     total_operating_cost: float = Field(ge=0.0, allow_inf_nan=False)
     adaptation_count: int = Field(ge=0)
     adaptation_actor_time: float = Field(ge=0.0, allow_inf_nan=False)
+    adaptation_actor_time_measurement: float = Field(ge=0.0, allow_inf_nan=False)
     adaptation_cost: float = Field(ge=0.0, allow_inf_nan=False)
     actor_observed_until: float = Field(ge=0.0, allow_inf_nan=False)
     actor_ledger: ActorLedger
@@ -157,17 +158,17 @@ def run_a1_reference_world(
         processing_time = primary * service_multiplier
         rework_time = rework * service_multiplier
 
-        service_start = max(arrival_at, server_available_at)
-        if actor_cursor < service_start:
+        capacity_start = max(arrival_at, server_available_at)
+        if actor_cursor < capacity_start:
             actor_intervals.append(
                 ActorLedgerInterval(
                     start=actor_cursor,
-                    end=service_start,
+                    end=capacity_start,
                     category=ActorCategory.IDLE,
                     model_spec_hash=world.model_spec_hash,
                 )
             )
-            actor_cursor = service_start
+            actor_cursor = capacity_start
 
         if adapting and policy.adaptation_time > 0.0:
             adaptation_end = actor_cursor + policy.adaptation_time
@@ -186,6 +187,7 @@ def run_a1_reference_world(
         if adapting:
             adaptation_count += 1
 
+        service_start = actor_cursor
         execution_time = processing_time + rework_time
         completed_at = actor_cursor + execution_time
         if execution_time > 0.0:
@@ -273,7 +275,18 @@ def run_a1_reference_world(
     else:
         mean_lead = median_lead = p90_lead = rework_fraction = 0.0
 
-    adaptation_cost = adaptation_actor_time * policy.adaptation_cost_rate
+    adaptation_actor_time_measurement = sum(
+        max(
+            0.0,
+            min(interval.end, measurement_end)
+            - max(interval.start, measurement_start),
+        )
+        for interval in actor_intervals
+        if interval.category is ActorCategory.ADAPTATION
+    )
+    adaptation_cost = (
+        adaptation_actor_time_measurement * policy.adaptation_cost_rate
+    )
     total_operating_cost = (
         (_cost_rate(world) + world.intervention_operating_cost) * measurement_duration
         + world.intervention_transition_cost
@@ -300,6 +313,7 @@ def run_a1_reference_world(
         total_operating_cost=total_operating_cost,
         adaptation_count=adaptation_count,
         adaptation_actor_time=adaptation_actor_time,
+        adaptation_actor_time_measurement=adaptation_actor_time_measurement,
         adaptation_cost=adaptation_cost,
         actor_observed_until=actor_observed_until,
         actor_ledger=actor_ledger,
