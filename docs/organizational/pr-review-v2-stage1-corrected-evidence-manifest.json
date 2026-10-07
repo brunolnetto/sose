@@ -1,0 +1,91 @@
+{
+  "manifest_version": "pr-review-prospective-stage1-corrected-evidence-manifest/v2",
+  "repository": "brunolnetto/sose",
+  "protocol_registration_pr": 301,
+  "training_prs": [
+    302,
+    303,
+    304,
+    305,
+    306,
+    307,
+    308,
+    309,
+    310,
+    312,
+    314,
+    316,
+    318,
+    320,
+    321,
+    322,
+    323,
+    324
+  ],
+  "defective_bootstrap": {
+    "workflow_run_id": 37539632949,
+    "artifact_id": 11447678321,
+    "artifact_digest": "sha256:b37092b67697083f81a0a1fde57a001b9f4465d93a0adff18d6f42c8e2682e44",
+    "snapshot_hash": "3dba532b03eef685dd78817d13c2e62c2c7c0b5db2803c3e09344b19c7251649",
+    "state_hash": "01f7978decc59f7774f7373730058c668ff2259c77b9f12c3cbd5803af860ebe",
+    "readiness_checkpoint_hash": "f4e8b69bd8bd509ddf15af7f480c6e5d719c86ed7c394497b9af5867859c58fc",
+    "defect": "All 18 acquired PRs contained zero workflow jobs because historical merged workflow-run list payloads no longer preserved pull_requests identity. Superseded before any model fitting or freeze."
+  },
+  "corrected_reacquisition": {
+    "workflow_run_id": 37548381207,
+    "artifact_id": 11452330367,
+    "artifact_digest": "sha256:c6375f3227f310de3a875a56ee9a4a944c849921ecfd19ef12b1f345346bb419",
+    "protocol_hash": "79b9bdd8b87f5d6dd15872742a0af322784447bff71a45d1bfa386d0e835b7ee",
+    "snapshot_hash": "23b35742cab04156460418056983d2c32ed68464fb8b503d681526d52ef422b3",
+    "state_hash": "ec96209137db9e46322cb2da572377b1b592e508f88515e881e8c875b1d87fd0",
+    "readiness_checkpoint_hash": "968bae3f1fefcb03a835c5b3e1d457e086c1ad057c9345337d66475a7cafa5a0",
+    "training_observed": 18,
+    "training_target": 18,
+    "training_remaining": 0,
+    "freeze_allowed": true,
+    "holdout_exposed": false,
+    "training_completed_at": "2026-10-06T22:16:54Z",
+    "workflow_job_counts": {
+      "302": 72,
+      "303": 24,
+      "304": 36,
+      "305": 36,
+      "306": 36,
+      "307": 24,
+      "308": 48,
+      "309": 96,
+      "310": 12,
+      "312": 36,
+      "314": 12,
+      "316": 36,
+      "318": 36,
+      "320": 144,
+      "321": 36,
+      "322": 12,
+      "323": 12,
+      "324": 48
+    }
+  },
+  "stage1_descriptive_metrics_seconds": {
+    "lead_time_mean": 2152,
+    "lead_time_median": 791,
+    "lead_time_p90": 7734,
+    "lead_time_maximum": 8012,
+    "lead_time_max_to_median_ratio": 10.128950695322377,
+    "observed_workflow_active_mean": 527.8333333333334,
+    "residual_elapsed_mean": 1624.1666666666667
+  },
+  "scientific_boundary": "The corrected artifact is the only Stage-1 evidence eligible for v2 model fitting/freezing. Residual elapsed time is not identified as human service effort and must remain inferable/unidentified unless independently evidenced.",
+  "repository_archive": {
+    "directory": "docs/organizational/evidence/pr-review-v2-stage1",
+    "exact_corrected_run": 37548381207,
+    "files": {
+      "bound-protocol.json": "sha256:c98f0e5053e54087e2f726798db3af795178f55ee9056bab8fa342fa2c4f787f",
+      "cumulative-acquisition.json": "sha256:e6edbe75e41aec264ecc33a8ca93b4cd7b819dd958282c93fc79f9b1c78a6101",
+      "prospective-state.json": "sha256:a75beef21aff96e84d2c1fc864330f8e7e5ab60b89e2ef73dd4133753de25157",
+      "stage1-readiness.json": "sha256:8a4c0bc61ce25558105bfea2c4b28bff76b71b45e9f532475bb76fd1e1f6cdea",
+      "tranche-acquisition.json": "sha256:e6edbe75e41aec264ecc33a8ca93b4cd7b819dd958282c93fc79f9b1c78a6101"
+    },
+    "note": "These are the exact canonical files downloaded from corrected artifact 11452330367 and retained in Git beyond Actions artifact expiration."
+  }
+}
