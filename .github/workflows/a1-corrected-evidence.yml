@@ -1,4 +1,4 @@
-name: A1 Scientific Corrected Evidence
+name: Archive Corrected A1 Scientific Evidence
 
 on:
   push:
@@ -6,65 +6,131 @@ on:
       - automation/a1-scientific-evidence-rerun
 
 permissions:
-  contents: read
+  contents: write
+  actions: read
 
 jobs:
-  run:
+  archive:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - name: Checkout target PR branch
+        uses: actions/checkout@v4
         with:
-          python-version: "3.14"
-      - run: python -m pip install -e .
-      - name: Run corrected official experiment
+          ref: automation/a1-scientific-report-v1-final
+      - name: Download exact corrected artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: a1-corrected-37692924898
+          path: a1-corrected
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 37692924898
+      - name: Verify exact bytes
         run: |
-          mkdir -p a1-corrected
-          python - <<'PY'
-          import json
-          from pathlib import Path
-          from sose.organizational.synthetic_a1_experiment import run_a0_a1_reference_experiment_v1
-          from sose.organizational.synthetic_a1_report import build_a1_scientific_report_v1
-
-          experiment = run_a0_a1_reference_experiment_v1()
-          report = build_a1_scientific_report_v1(experiment)
-          out = Path("a1-corrected")
-          (out / "report.json").write_text(
-              json.dumps(report.canonical_payload(), sort_keys=True, separators=(",", ":"), allow_nan=False) + "\n",
-              encoding="utf-8",
-          )
-          summary = {
-              "protocol_hash": report.protocol_hash,
-              "report_hash": report.report_hash,
-              "pair_count": report.pair_count,
-              "a0_stable_worlds": report.regime_summary.a0_stable_worlds,
-              "a0_saturated_worlds": report.regime_summary.a0_saturated_worlds,
-              "a1_nominal_stable_worlds": report.regime_summary.a1_nominal_stable_worlds,
-              "a1_adaptation_stabilized_worlds": report.regime_summary.a1_adaptation_stabilized_worlds,
-              "a1_saturated_worlds": report.regime_summary.a1_saturated_worlds,
-              "saturated_to_stable_worlds": report.regime_summary.saturated_to_stable_worlds,
-              "stable_to_saturated_worlds": report.regime_summary.stable_to_saturated_worlds,
-              "direction_eligible_count": report.intervention_direction_eligible_count,
-              "direction_ineligible_count": report.intervention_direction_ineligible_count,
-              "direction_agreement_count": report.intervention_direction_agreement_count,
-              "direction_change_count": report.intervention_direction_change_count,
-              "direction_agreement_rate": report.intervention_direction_agreement_rate,
-              "mean_agency_delta_lead_time": report.mean_agency_delta_lead_time,
-              "mean_agency_delta_throughput": report.mean_agency_delta_throughput,
-              "mean_agency_delta_operating_cost": report.mean_agency_delta_operating_cost,
-              "mean_adaptation_actor_time": report.mean_adaptation_actor_time,
-              "mean_adaptation_cost": report.mean_adaptation_cost,
+          printf '%s  %s\n'             d74039a6018da90733317f63b3809ddec085c7351dda1412733b61b353e48f21 a1-corrected/report.json             126faf9b41be0d979dd9e4a296ea3e659795fdfdcc310e55d86cef9827ef9674 a1-corrected/summary.json             | sha256sum --check --strict
+      - name: Replace persisted scientific evidence
+        run: |
+          destination=docs/organizational/evidence/synthetic-a1-reference-v1
+          mkdir -p "$destination"
+          cp a1-corrected/report.json "$destination/"
+          cp a1-corrected/summary.json "$destination/"
+          cat > "$destination/manifest.json" <<'JSON'
+          {
+            "manifest_version": "synthetic-a1-reference/v1",
+            "workflow_run_id": 37692924898,
+            "workflow_head_sha": "d0456b29182253d1f2ff6c770c3aaa23bcf56ac4",
+            "artifact_id": 11514201903,
+            "artifact_digest": "sha256:58325caf056d922301654ff5a03b6dbf52e6dfadfe8d9e5343c9c50202df9995",
+            "report_sha256": "d74039a6018da90733317f63b3809ddec085c7351dda1412733b61b353e48f21",
+            "summary_sha256": "126faf9b41be0d979dd9e4a296ea3e659795fdfdcc310e55d86cef9827ef9674",
+            "protocol_hash": "c5a23cb810a1dfea2355870eeefecb365489d249804023ad377c00755fd7ac29",
+            "report_hash": "c47333851b92843b529761e77a8850ab746c21e7e4cc8a1d900fed7b19a63a13"
           }
-          (out / "summary.json").write_text(
-              json.dumps(summary, indent=2, sort_keys=True) + "\n",
-              encoding="utf-8",
-          )
-          print(json.dumps(summary, indent=2, sort_keys=True))
-          PY
-      - uses: actions/upload-artifact@v4
-        with:
-          name: a1-corrected-${{ github.run_id }}
-          path: a1-corrected/
-          if-no-files-found: error
-          retention-days: 90
+          JSON
+          cat > "$destination/RESULT.md" <<'MD'
+          # A1 synthetic agency experiment v1
+
+          This is a synthetic verification experiment with known mechanics, not empirical validation.
+
+          ## Design
+
+          The fixed exogenous DOE is evaluated under A0 fixed policy and A1 backlog-triggered local batching adaptation. Each design point shares one CRN group across baseline, capacity, automation, A0, and A1, so both agency and intervention contrasts use matched stochastic streams.
+
+          The official design contains 12 design points, three arms, two agency levels, and 16 replications: 36 A0/A1 world pairs and 576 paired replicated observations.
+
+          A1 activates at backlog pressure 2.0, applies service multiplier 0.70, pays 0.05 actor-time units per activation, and records that effort explicitly as ADAPTATION.
+
+          ## Regime result
+
+          | Regime measure | Result |
+          | --- | ---: |
+          | A0 nominally stable worlds | 20 |
+          | A0 saturated worlds | 16 |
+          | A1 nominally stable worlds | 20 |
+          | A1 adaptation-stabilized worlds | 10 |
+          | A1 saturated worlds | 6 |
+          | A0 saturated -> A1 stable | **10 / 16 (62.5%)** |
+          | A0 stable -> A1 saturated | **0** |
+
+          Regime classification is mechanistic from exogenous inputs and policy parameters, not inferred from realized WIP or lead time.
+
+          ## Intervention-direction robustness
+
+          There are 24 design-point/intervention contrasts in total.
+
+          - Stationarily eligible under both A0 and A1: **8**
+          - Ineligible because at least one compared world is saturated: **16**
+          - Direction agreement among eligible contrasts: **8 / 8 = 100%**
+          - Direction changes among eligible contrasts: **0**
+
+          Saturated contrasts retain their finite-horizon effect magnitudes in report.json, but they are explicitly excluded from direction agreement because saturated queues do not have finite stationary mean lead time.
+
+          Therefore the defensible claim is not 24/24. It is: **all 8 stationary-eligible intervention contrasts preserve their beneficial lead-time direction under A1**.
+
+          ## Finite-horizon operational effects
+
+          Averaged across all 576 A0/A1 paired replications:
+
+          - A1 - A0 mean lead time: **-55.157 simulation-time units**
+          - A1 - A0 throughput: **+0.08603 items per simulation-time unit**
+          - A1 - A0 operating cost: **+3.668 cost units**
+          - mean A1 adaptation actor time: **24.451 actor-time units**
+          - mean A1 adaptation cost: **3.668 cost units**
+
+          These aggregate lead-time and throughput magnitudes include finite-horizon saturated worlds and must not be interpreted as stationary expectations.
+
+          ## What this verifies
+
+          Under the implemented reference mechanics:
+
+          1. local A1 adaptation can move the mechanistic stability boundary without rewriting organizational structure;
+          2. 10 of 16 nominally saturated A0 worlds are stabilized by the fixed A1 policy;
+          3. no nominally stable A0 world is classified as saturated by A1;
+          4. all stationary-eligible capacity/automation effects retain beneficial lead-time direction under A1;
+          5. agency materially changes effect magnitude and regime location even where intervention direction is preserved;
+          6. adaptation effort and cost remain explicit rather than being hidden in item elapsed time;
+          7. CRN is shared across agency levels and intervention arms, reducing avoidable Monte Carlo noise in contrasts.
+
+          ## Falsification and limits
+
+          The regime-shift hypothesis would fail in this design if zero saturated A0 worlds became A1-stable. Ten are rescued.
+
+          Direction preservation is only asserted for the eight stationary-eligible contrasts. The 16 saturated contrasts are not evidence for or against stationary direction preservation.
+
+          Only one explicit A1 batching policy, one-resource reference process, fixed structural interventions, and a finite DOE are tested. This does not establish empirical validity for real organizations or generalize to all adaptive policies.
+
+          Out of scope remain A2 managerial observation/action, learning, trust, incentives, politics, turnover, endogenous demand, multi-actor authority conflict, institutional change (A3), and transient structural interventions.
+
+          ## Provenance
+
+          - protocol hash: c5a23cb810a1dfea2355870eeefecb365489d249804023ad377c00755fd7ac29
+          - report hash: c47333851b92843b529761e77a8850ab746c21e7e4cc8a1d900fed7b19a63a13
+          - workflow run: 37692924898
+          - artifact: 11514201903
+          - artifact digest: sha256:58325caf056d922301654ff5a03b6dbf52e6dfadfe8d9e5343c9c50202df9995
+          MD
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$destination"
+          git commit -m "docs: replace A1 result with stationary-eligible analysis"
+          git push origin HEAD:automation/a1-scientific-report-v1-final
