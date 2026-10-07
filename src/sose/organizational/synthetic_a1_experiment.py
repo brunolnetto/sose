@@ -190,6 +190,19 @@ def run_a0_a1_experiment(
     if replication_plan.min_replications != replication_plan.max_replications:
         raise ValueError("reference v1 requires a fixed replication count")
     replications = replication_plan.min_replications
+    expected_identities = {
+        (design_index, arm_id, level)
+        for design_index in range(design.protocol.sample_size)
+        for arm_id in ("baseline", *design.protocol.intervention_ids)
+        for level in design.protocol.agency_levels
+    }
+    identities = [
+        (world.design_index, world.arm_id, world.agency_level)
+        for world in design.worlds
+    ]
+    if set(identities) != expected_identities or len(identities) != len(expected_identities):
+        raise ValueError("complete A0/A1 world design with no duplicates is required")
+
     by_key: dict[tuple[int, str], dict[AgencyLevel, SyntheticWorldSpec]] = {}
     for world in design.worlds:
         by_key.setdefault((world.design_index, world.arm_id), {})[
@@ -210,6 +223,8 @@ def run_a0_a1_experiment(
             raise ValueError("A0/A1 pairs must share identical exogenous parameters")
         if a0_world.crn_group != a1_world.crn_group:
             raise ValueError("A0/A1 pairs must share one CRN group")
+        if _non_agency_pair_payload(a0_world) != _non_agency_pair_payload(a1_world):
+            raise ValueError("A0/A1 paired worlds must differ only by agency")
 
         a0_stable = analytical_world_reference(a0_world).stable
         a1_regime = classify_a1_regime(a1_world)
@@ -288,3 +303,20 @@ def run_a0_a1_experiment(
             ),
         ),
     )
+
+
+
+def _non_agency_pair_payload(world: SyntheticWorldSpec) -> dict[str, object]:
+    model_payload = world.model_spec.canonical_payload()
+    model_payload.pop("agency", None)
+    return {
+        "design_index": world.design_index,
+        "arm_id": world.arm_id,
+        "baseline_model_spec_hash": world.baseline_model_spec_hash,
+        "exogenous_parameters": dict(world.exogenous_parameters),
+        "intervention_class": world.intervention_class,
+        "intervention_operating_cost": world.intervention_operating_cost,
+        "intervention_transition_cost": world.intervention_transition_cost,
+        "intervention_transition_time": world.intervention_transition_time,
+        "model_spec_without_agency": model_payload,
+    }
