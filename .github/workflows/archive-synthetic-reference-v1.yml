@@ -1,0 +1,99 @@
+name: Archive Synthetic Reference v1
+
+on:
+  push:
+    branches:
+      - automation/synthetic-reference-experiment-v1-clean
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  archive:
+    if: ${{ !contains(github.event.head_commit.message, '[synthetic-archive]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: automation/synthetic-reference-experiment-v1-clean
+
+      - name: Download exact experiment artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: synthetic-reference-v1-37640122367
+          path: synthetic-reference-v1
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: 37640122367
+
+      - name: Verify exact artifact contents
+        run: |
+          printf '%s  %s\n'             3c27b7d50aff1319c917692c13d2b94c5d07599dc6df43e641ec9742a0a0fd0b synthetic-reference-v1/protocol.json             12ad739f461ba9cc7c5386476e923b0670ee80c723344eec9029bf90f247d22c synthetic-reference-v1/worlds.json             573fab07c08d682eee850bdfcf37163b9925fac64aeb99c2d4bc998aa9c7c374 synthetic-reference-v1/report.json             e875b06b23f6cb0e8736e47db1e2dc08935e5b4d1bc1349d4bc077c7232ed7bf synthetic-reference-v1/summary.json             72f7ebbd16b0ee1d051764f6c5e6afb2fb907f75dfcb13359ff713503bae14a2 synthetic-reference-v1/dataset.json             | sha256sum --check --strict
+
+      - name: Persist compact result and provenance
+        run: |
+          destination=docs/organizational/evidence/synthetic-reference-v1
+          mkdir -p "$destination"
+          cp synthetic-reference-v1/protocol.json "$destination/"
+          cp synthetic-reference-v1/worlds.json "$destination/"
+          cp synthetic-reference-v1/report.json "$destination/"
+          cp synthetic-reference-v1/summary.json "$destination/"
+
+          cat > "$destination/manifest.json" <<'JSON'
+          {
+            "manifest_version": "synthetic-reference-experiment/v1",
+            "workflow_run_id": 37640122367,
+            "artifact_id": 11492180296,
+            "artifact_digest": "sha256:4be4a7b9de9ff077c5ae750386acf3e3af4b24288adf76bc3db15935d16a5a5b",
+            "dataset_sha256": "72f7ebbd16b0ee1d051764f6c5e6afb2fb907f75dfcb13359ff713503bae14a2",
+            "protocol_sha256": "3c27b7d50aff1319c917692c13d2b94c5d07599dc6df43e641ec9742a0a0fd0b",
+            "worlds_sha256": "12ad739f461ba9cc7c5386476e923b0670ee80c723344eec9029bf90f247d22c",
+            "report_sha256": "573fab07c08d682eee850bdfcf37163b9925fac64aeb99c2d4bc998aa9c7c374",
+            "summary_sha256": "e875b06b23f6cb0e8736e47db1e2dc08935e5b4d1bc1349d4bc077c7232ed7bf"
+          }
+          JSON
+
+          cat > "$destination/RESULT.md" <<'MD'
+          # Synthetic organizational reference experiment v1
+
+          This is a **verification experiment against known synthetic generating mechanics**.
+          It is not empirical validation and uses no observed organizational outcomes.
+
+          ## Fixed design
+
+          - 12 Latin-hypercube design points.
+          - Three arms per design point: baseline, capacity expansion, and rework-reducing automation.
+          - 36 worlds total, 16 CRN replications each, 576 replicated runs.
+          - Fixed design and root seed: `20261007`.
+          - Regime coordinates use exogenous inputs only: arrival rate, service capacity, service CV, rework probability, and transition cost.
+          - WIP, throughput, queueing delay, and lead time are outputs only.
+
+          ## Result
+
+          - Stable worlds: **22 / 36**.
+          - Saturated worlds: **14 / 36**.
+          - Mean relative error versus stationary M/G/1 ground truth in stable worlds: **11.19%**.
+          - Direction recovery for eligible non-null intervention effects: **7 / 7 = 100%**.
+          - Null-region effects: **1**.
+          - Regime transitions across intervention arms:
+            - stable → stable: **8**
+            - saturated → stable: **10**
+            - saturated → saturated: **6**
+            - stable → saturated: **0**
+
+          ## Interpretation
+
+          The reference generator recovers intervention direction perfectly for every eligible non-null effect in this design. The analytical lead-time discrepancy is concentrated near the critical boundary: for stable worlds with offered load below 0.70, mean relative error is approximately **2.14%**; worlds with offered load at or above 0.95 dominate the aggregate error because finite-horizon queue backlogs converge slowly near saturation.
+
+          This result supports the intended claim: SOSE can synthesize organizational process data from explicit exogenous mechanics and recover known regime/intervention structure without using endogenous outputs as DOE coordinates.
+
+          The result does **not** establish empirical validity for real organizations, A1/A2 agency behavior, or transient intervention dynamics. Those remain separate experiments.
+          MD
+
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add "$destination"
+          git commit -m "docs: persist synthetic reference v1 result [synthetic-archive]"
+          git push origin HEAD:automation/synthetic-reference-experiment-v1-clean
