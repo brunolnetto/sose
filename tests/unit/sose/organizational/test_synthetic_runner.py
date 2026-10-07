@@ -328,8 +328,8 @@ def test_cost_uses_preregistered_transition_cost_parameter_name() -> None:
         if world.world_hash == capacity_run.world_hash
     )
     measurement = protocol.horizon - protocol.warmup
-    assert baseline_run.total_operating_cost == baseline_run.total_operating_cost
-    assert capacity_run.total_operating_cost >= uncertain + 2.0 + measurement * 1.5
+    assert baseline_run.total_operating_cost == measurement * 1.5
+    assert capacity_run.total_operating_cost == uncertain + 2.0 + measurement * 1.5
 
 
 def test_runner_requires_exact_cartesian_world_identities() -> None:
