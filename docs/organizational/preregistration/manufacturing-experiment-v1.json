@@ -31,7 +31,7 @@
     "no A1/A2 agency claim",
     "no queueing/stationary analytical claim",
     "no congestion/load regime claim",
-    "no demand-surge effect claim unless preflight proves executable durable workload impact before freeze"
+    "no demand-surge effect claim in v1"
   ],
   "candidate_exogenous_axes": {
     "quantity": {
@@ -99,9 +99,15 @@
     "seed policy",
     "world/run/evidence/report hashes"
   ],
-  "freeze_rule": "Freeze after machine-downtime and yield-degradation preflight semantics pass and all protocol/document hashes are bound; no official result execution or inspection before freeze.",
+  "freeze_rule": "Freeze only after Manufacturing DomainReference adapter implementation, downtime/yield preflight, generic conformance, restart preflight, and generation/validation of the canonical ExperimentProtocol payload; no official result execution or inspection before freeze.",
   "excluded_from_v1": [
     "demand_surge: current single-order reference has no demonstrated durable workload/pressure effect",
     "quality_outcome as DOE axis: categorical domain configuration is outside the generic numeric parameter-space contract"
-  ]
+  ],
+  "protocol_artifact": {
+    "schema": "sose.organizational.experiment.ExperimentProtocol",
+    "path": "docs/organizational/preregistration/manufacturing-experiment-v1-protocol.json",
+    "generation_rule": "generated only after Manufacturing DomainReference adapter/preflight acceptance; baseline_model_spec_hash must equal the accepted adapter default build_model() hash",
+    "status": "not_yet_materialized"
+  }
 }
