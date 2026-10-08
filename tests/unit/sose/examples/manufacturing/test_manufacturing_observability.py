@@ -60,7 +60,7 @@ def test_manufacturing_kpis_are_derived_from_projection_and_events() -> None:
     projection = manufacturing_projection(persistence, entities=entities)
     kpis = manufacturing_kpis(persistence, entities=entities)
 
-    assert kpis.completed is True
+    assert kpis.completion is True
     assert kpis.lead_time_seconds == projection.lead_time_seconds
     assert kpis.output_quantity == pytest.approx(8.0)
     assert kpis.yield_ratio == pytest.approx(1.0)
@@ -69,7 +69,7 @@ def test_manufacturing_kpis_are_derived_from_projection_and_events() -> None:
     assert kpis.breakdown_count == 0
 
     assert set(asdict(kpis)) == {
-        "completed",
+        "completion",
         "lead_time_seconds",
         "output_quantity",
         "yield_ratio",
@@ -90,7 +90,7 @@ def test_projection_exposes_incomplete_state_without_inventing_terminal_metrics(
     assert projection.completed is False
     assert projection.finished_goods_quantity == pytest.approx(0.0)
     assert projection.lead_time_seconds is None
-    assert kpis.completed is False
+    assert kpis.completion is False
     assert kpis.lead_time_seconds is None
     assert kpis.yield_ratio is None
 
@@ -137,7 +137,7 @@ def test_quality_hold_projects_wip_without_premature_yield() -> None:
     assert projection.lead_time_seconds is None
     assert kpis.output_quantity == pytest.approx(0.0)
     assert kpis.yield_ratio is None
-    assert kpis.completed is False
+    assert kpis.completion is False
 
 
 def test_manufacturing_pc5_observability_evidence_is_complete() -> None:
@@ -147,7 +147,7 @@ def test_manufacturing_pc5_observability_evidence_is_complete() -> None:
     assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset()
     assert manifest.kpis == frozenset(
         {
-            "completed",
+            "completion",
             "lead_time_seconds",
             "output_quantity",
             "yield_ratio",
