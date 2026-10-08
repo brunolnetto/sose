@@ -10,7 +10,7 @@ if TYPE_CHECKING:
     from .simulation import PaymentEntities
 
 
-def __dispute_entity_id() -> str:
+def _dispute_entity_id() -> str:
     return deterministic_id(
         "entity",
         "payment_dispute",
