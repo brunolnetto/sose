@@ -7,10 +7,10 @@ from sose.examples.process_manifest import (
 )
 
 
-def test_multidomain_pilot_process_audits_are_complete_at_pc4() -> None:
+def test_remaining_multidomain_pilot_process_audits_are_complete_at_pc4() -> None:
     manifests = builtin_process_manifests()
 
-    for domain in ("manufacturing", "mro", "order_to_cash"):
+    for domain in ("mro", "order_to_cash"):
         manifest = manifests[domain]
         assert manifest.assessment_complete is True
         assert manifest.maturity is ProcessMaturity.PC4_DURABLE
@@ -18,16 +18,14 @@ def test_multidomain_pilot_process_audits_are_complete_at_pc4() -> None:
         assert not manifest.is_complete_process_canonical
 
 
-def test_manufacturing_pc5_gap_is_observability_contract_only() -> None:
+def test_manufacturing_is_promoted_to_pc5_with_complete_observability_evidence() -> None:
     manifest = builtin_process_manifests()["manufacturing"]
 
-    assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset(
-        {
-            ProcessEvidence.KPIS,
-            ProcessEvidence.PROJECTION_CONTRACT,
-            ProcessEvidence.CONFIGURATION_DOCUMENTATION,
-        }
-    )
+    assert manifest.assessment_complete is True
+    assert manifest.maturity is ProcessMaturity.PC5_OBSERVABLE
+    assert not manifest.is_maturity_lower_bound
+    assert manifest.is_complete_process_canonical
+    assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset()
 
 
 def test_mro_pc5_gap_is_observability_contract_only() -> None:
