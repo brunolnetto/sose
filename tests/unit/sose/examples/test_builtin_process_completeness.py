@@ -109,7 +109,7 @@ def test_audit_orders_domains_by_maturity_then_name_and_reports_next_gate() -> N
     ]
 
     fulfillment = next(row for row in audit if row.domain == "warehouse_fulfillment")
-    assert fulfillment.next_maturity is ProcessMaturity.PC3_OPERATIONAL
+    assert fulfillment.next_maturity is ProcessMaturity.PC6_COMPOSABLE
     assert not fulfillment.assessment_is_lower_bound
     assert fulfillment.missing_for_next_gate == frozenset(
         {
