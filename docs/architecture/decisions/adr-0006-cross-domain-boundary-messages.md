@@ -39,6 +39,19 @@ into consumer-owned commands/effects. Consumers never mutate producer private st
 Duplicate delivery is resolved through deterministic consumption identity and durable
 acknowledgement/effect evidence.
 
+For domain concepts that historically have standalone local ownership but move to a
+different owner in composition, the composition adapter **replaces** the local owner.
+It must not mirror a second authoritative copy.
+
+The first explicit case is inventory:
+
+- Warehouse Fulfillment standalone keeps its current local InventoryLot semantics.
+- Trading Company composed mode assigns stock position/reservation ownership to
+  Warehouse Management.
+- Composed Warehouse Fulfillment receives immutable WM reservation/availability IDs
+  and requests stock effects through boundary contracts; it does not mutate or mirror
+  authoritative stock quantities locally.
+
 ## Decision drivers
 
 - explicit business ownership;
@@ -68,6 +81,8 @@ acknowledgement/effect evidence.
 ### Constraints introduced
 
 - no mutable entity object crosses a domain ownership boundary;
+- composed-mode ownership adapters replace conflicting standalone ownership rather
+  than synchronizing two authoritative truths;
 - every message and consumption has deterministic semantic identity;
 - correlation/causation survives persistence;
 - retry reuses identity;
@@ -111,7 +126,9 @@ Conformance proves:
 - idempotent duplicate delivery;
 - restart-equivalent composed execution;
 - preserved correlation/causation;
-- no direct cross-domain private-state mutation.
+- no direct cross-domain private-state mutation;
+- Warehouse Fulfillment composed mode contains no authoritative duplicate of
+  Warehouse Management stock/reservation truth while standalone mode remains valid.
 
 ## References
 
