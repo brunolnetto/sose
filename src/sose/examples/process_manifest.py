@@ -459,6 +459,16 @@ def builtin_process_manifests() -> dict[str, ProcessManifest]:
         from .logistics.process_audit import process_manifest as logistics_process_manifest
 
         manifests["logistics"] = logistics_process_manifest()
+    if "manufacturing" in manifests:
+        from .manufacturing.process_audit import (
+            process_manifest as manufacturing_process_manifest,
+        )
+
+        manifests["manufacturing"] = manufacturing_process_manifest()
+    if "mro" in manifests:
+        from .mro.process_audit import process_manifest as mro_process_manifest
+
+        manifests["mro"] = mro_process_manifest()
     if "order_to_cash" in manifests:
         from .order_to_cash.process_audit import process_manifest as o2c_process_manifest
 
