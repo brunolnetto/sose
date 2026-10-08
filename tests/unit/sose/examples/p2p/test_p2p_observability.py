@@ -10,6 +10,7 @@ from sose.examples.p2p.definition import definition
 from sose.examples.p2p.observability import p2p_kpis, p2p_projection
 from sose.examples.p2p.process_audit import process_manifest
 from sose.examples.p2p.simulation import (
+    build_runtime,
     run_happy_path,
     run_shortage_backorder,
     seed_happy_path,
@@ -111,6 +112,31 @@ def test_p2p_kpis_preserve_shortage_backorder_history_after_recovery() -> None:
     assert projection.backordered is False
     assert kpis.backorder_count == 1
     assert kpis.consumed is True
+
+
+
+def test_p2p_kpis_include_uncorrelated_supplier_delay_transition() -> None:
+    persistence = MemoryPersistence()
+    entities = seed_happy_path(persistence)
+    context, engine = build_runtime(persistence)
+
+    engine.advance_tick()
+    engine.advance_tick()
+    engine.advance_tick()
+
+    purchase_order = persistence.entity("purchase_order", entities.purchase_order_id)
+    assert purchase_order is not None and purchase_order.state == "confirmed"
+
+    command = context.commands.create(
+        "mark_delayed",
+        target=purchase_order,
+        key=("p2p-supplier-delay", purchase_order.id, "mark-delayed"),
+    )
+    engine.dispatch(command)
+
+    kpis = p2p_kpis(persistence, entities=entities)
+    assert kpis.supplier_delay_count == 1
+    assert kpis.transition_count >= 6
 
 
 def test_p2p_pc5_observability_evidence_is_complete() -> None:
