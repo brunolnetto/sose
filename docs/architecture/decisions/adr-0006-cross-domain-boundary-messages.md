@@ -1,6 +1,6 @@
 # ADR-0006 — Cross-domain composition uses immutable durable boundary messages
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-10-08
 - **Decision owners:** SOSE maintainers
 - **Related PRD(s):** PRD-0003
