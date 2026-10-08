@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from sose.backends.simpy import SimPyBackend
+from sose.examples.warehouse_fulfillment.scenarios import ORIGIN
 from sose.examples.warehouse_fulfillment.simulation import (
     _entity,
     allocate_order,
@@ -9,7 +11,7 @@ from sose.examples.warehouse_fulfillment.simulation import (
     build_runtime,
     correct_lot_balance,
     pack_order,
-    pick_allocation,
+    _apply_pick_allocation_completion,
     pick_order,
     seed_reference,
     ship_order,
@@ -21,7 +23,9 @@ def _runtime(**seed_kwargs):
     persistence = MemoryPersistence()
     entities = seed_reference(persistence, **seed_kwargs)
     _, engine = build_runtime(persistence)
-    return persistence, entities, engine
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+    return persistence, entities, engine, backend
 
 
 def _save(persistence, entity):
@@ -37,7 +41,7 @@ def test_missing_entity_guard_is_observable():
 
 
 def test_allocate_order_terminal_and_non_requested_states_are_idempotent():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None
 
@@ -53,7 +57,7 @@ def test_allocate_order_terminal_and_non_requested_states_are_idempotent():
 
 
 def test_allocate_order_replays_existing_durable_allocation_index():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     assert allocate_order(persistence, engine, entities=entities)
 
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
@@ -88,7 +92,7 @@ def test_allocate_order_replays_existing_durable_allocation_index():
 
 
 def test_allocate_order_rejects_missing_allocation_from_durable_index():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None
     order.attributes["allocation_ids"] = ["missing-allocation"]
@@ -99,13 +103,13 @@ def test_allocate_order_rejects_missing_allocation_from_durable_index():
 
 
 def test_pick_allocation_is_idempotent_after_pick():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     assert allocate_order(persistence, engine, entities=entities)
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None
     aid = str(order.attributes["allocation_ids"][0])
 
-    first = pick_allocation(
+    first = _apply_pick_allocation_completion(
         persistence,
         engine,
         entities=entities,
@@ -121,7 +125,7 @@ def test_pick_allocation_is_idempotent_after_pick():
         lot_after_first.attributes["allocated"],
     )
 
-    second = pick_allocation(
+    second = _apply_pick_allocation_completion(
         persistence,
         engine,
         entities=entities,
@@ -138,7 +142,7 @@ def test_pick_allocation_is_idempotent_after_pick():
 
 
 def test_pick_allocation_detects_corrupt_allocated_projection():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     assert allocate_order(persistence, engine, entities=entities)
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None
@@ -152,7 +156,7 @@ def test_pick_allocation_detects_corrupt_allocated_projection():
     _save(persistence, lot)
 
     with pytest.raises(RuntimeError, match="allocation projection"):
-        pick_allocation(
+        _apply_pick_allocation_completion(
             persistence,
             engine,
             entities=entities,
@@ -161,7 +165,7 @@ def test_pick_allocation_detects_corrupt_allocated_projection():
 
 
 def test_pick_allocation_detects_corrupt_on_hand_projection():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     assert allocate_order(persistence, engine, entities=entities)
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None
@@ -175,7 +179,7 @@ def test_pick_allocation_detects_corrupt_on_hand_projection():
     _save(persistence, lot)
 
     with pytest.raises(RuntimeError, match="on-hand projection"):
-        pick_allocation(
+        _apply_pick_allocation_completion(
             persistence,
             engine,
             entities=entities,
@@ -184,49 +188,49 @@ def test_pick_allocation_detects_corrupt_on_hand_projection():
 
 
 def test_pick_order_rejects_unallocated_order_and_accepts_shipped_replay():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
 
     with pytest.raises(RuntimeError, match="pick requires allocated"):
-        pick_order(persistence, engine, entities=entities)
+        pick_order(persistence, engine, backend, entities=entities)
 
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None
     order.state = "shipped"
     _save(persistence, order)
 
-    assert pick_order(persistence, engine, entities=entities) is True
+    assert pick_order(persistence, engine, backend, entities=entities) is True
 
 
 def test_pack_order_rejects_wrong_state_and_accepts_packed_replay():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
 
     with pytest.raises(RuntimeError, match="pack requires picking"):
-        pack_order(persistence, engine, entities=entities)
+        pack_order(persistence, engine, backend, entities=entities)
 
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None
     order.state = "packed"
     _save(persistence, order)
 
-    assert pack_order(persistence, engine, entities=entities) is True
+    assert pack_order(persistence, engine, backend, entities=entities) is True
 
 
 def test_ship_order_rejects_wrong_state_and_accepts_shipped_replay():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
 
     with pytest.raises(RuntimeError, match="ship requires packed"):
-        ship_order(persistence, engine, entities=entities)
+        ship_order(persistence, engine, backend, entities=entities)
 
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None
     order.state = "shipped"
     _save(persistence, order)
 
-    assert ship_order(persistence, engine, entities=entities) is True
+    assert ship_order(persistence, engine, backend, entities=entities) is True
 
 
 def test_correction_rejects_non_positive_sequence():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
 
     with pytest.raises(ValueError, match="sequence must be positive"):
         correct_lot_balance(
@@ -239,7 +243,7 @@ def test_correction_rejects_non_positive_sequence():
 
 
 def test_correction_negative_projection_guard_is_fault_injectable():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     lot = persistence.entity("warehouse_inventory_lot", entities.lot_ids[0])
     assert lot is not None
 
@@ -260,7 +264,7 @@ def test_correction_negative_projection_guard_is_fault_injectable():
 
 
 def test_primary_only_allocation_does_not_use_substitute_when_short():
-    persistence, entities, engine = _runtime(
+    persistence, entities, engine, backend = _runtime(
         requested_quantity=7.0,
         primary_on_hand=6.0,
         substitute_on_hand=100.0,
@@ -273,7 +277,7 @@ def test_primary_only_allocation_does_not_use_substitute_when_short():
 
 
 def test_allocation_identity_is_stable_for_seeded_lot():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     assert allocate_order(persistence, engine, entities=entities)
 
     expected = allocation_id(entities.order_id, entities.lot_ids[0])
