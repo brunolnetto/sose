@@ -437,73 +437,63 @@ def test_warehouse_reconcile_requested_and_tick_guard_paths(monkeypatch):
     )
 
 
-def test_warehouse_pick_pack_ship_progression(monkeypatch):
+def test_warehouse_reconcile_allocates_then_delegates_to_service_flow(monkeypatch):
     entities = SimpleNamespace(order_id="O1")
+    allocated = SimpleNamespace(state="allocated")
+    persistence = _EntityPersistence(
+        {("warehouse_fulfillment_order", "O1"): allocated}
+    )
     calls: list[str] = []
-    progression = iter(
-        [
-            SimpleNamespace(state="picking"),
-            SimpleNamespace(state="packed"),
-        ]
-    )
-
-    class _ReloadingPersistence:
-        def entity(self, kind: str, entity_id: str):
-            assert kind == "warehouse_fulfillment_order"
-            return next(progression)
 
     monkeypatch.setattr(
         warehouse_definition,
-        "pick_order",
-        lambda *args, **kwargs: calls.append("pick"),
+        "_reconcile_requested",
+        lambda *args, **kwargs: allocated,
     )
     monkeypatch.setattr(
         warehouse_definition,
-        "pack_order",
-        lambda *args, **kwargs: calls.append("pack"),
-    )
-    monkeypatch.setattr(
-        warehouse_definition,
-        "ship_order",
-        lambda *args, **kwargs: calls.append("ship"),
+        "reconcile_fulfillment_services",
+        lambda *args, **kwargs: calls.append("services"),
     )
 
-    warehouse_definition._reconcile_pick_pack_ship(
-        _ReloadingPersistence(),
+    warehouse_definition._reconcile_tick(
+        persistence,
         object(),
-        entities=entities,
-        order=SimpleNamespace(state="allocated"),
-    )
-
-    assert calls == ["pick", "pack", "ship"]
-
-
-def test_warehouse_pick_pack_ship_noop_path(monkeypatch):
-    calls: list[str] = []
-    monkeypatch.setattr(
-        warehouse_definition,
-        "pick_order",
-        lambda *args, **kwargs: calls.append("pick"),
-    )
-    monkeypatch.setattr(
-        warehouse_definition,
-        "pack_order",
-        lambda *args, **kwargs: calls.append("pack"),
-    )
-    monkeypatch.setattr(
-        warehouse_definition,
-        "ship_order",
-        lambda *args, **kwargs: calls.append("ship"),
-    )
-
-    warehouse_definition._reconcile_pick_pack_ship(
-        _EntityPersistence({}),
         object(),
-        entities=SimpleNamespace(order_id="O1"),
-        order=SimpleNamespace(state="requested"),
+        warehouse_definition.definition.default_config(),
+        entities,
     )
 
-    assert calls == []
+    assert calls == ["services"]
+
+
+def test_warehouse_reconcile_stops_when_allocation_cannot_progress(monkeypatch):
+    entities = SimpleNamespace(order_id="O1")
+    requested = SimpleNamespace(state="requested")
+    persistence = _EntityPersistence(
+        {("warehouse_fulfillment_order", "O1"): requested}
+    )
+
+    monkeypatch.setattr(
+        warehouse_definition,
+        "_reconcile_requested",
+        lambda *args, **kwargs: None,
+    )
+    monkeypatch.setattr(
+        warehouse_definition,
+        "reconcile_fulfillment_services",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("service flow must not run without an allocation")
+        ),
+    )
+
+    warehouse_definition._reconcile_tick(
+        persistence,
+        object(),
+        object(),
+        warehouse_definition.definition.default_config(),
+        entities,
+    )
 
 
 def test_order_to_cash_receivable_creation_and_receivable_state_edges(monkeypatch):
