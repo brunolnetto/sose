@@ -20,11 +20,28 @@ def process_manifest() -> ProcessManifest:
         ProcessMaturity.PC4_DURABLE,
     ):
         evidence.update(PROCESS_MATURITY_REQUIREMENTS[level])
+    evidence.update(
+        {
+            ProcessEvidence.KPIS,
+            ProcessEvidence.ERD,
+            ProcessEvidence.STATECHART_DOCUMENTATION,
+            ProcessEvidence.PROCESS_DIAGRAM,
+            ProcessEvidence.PROJECTION_CONTRACT,
+            ProcessEvidence.CONFIGURATION_DOCUMENTATION,
+        }
+    )
 
     simulation = "src/sose/examples/order_to_cash/simulation.py"
     entities = "src/sose/examples/order_to_cash/entities.py"
     statecharts = "src/sose/examples/order_to_cash/statecharts.py"
     definition = "src/sose/examples/order_to_cash/definition.py"
+    specification = "docs/examples/order-to-cash/specification.md"
+    observability = "src/sose/examples/order_to_cash/observability.py"
+    config = "src/sose/examples/order_to_cash/config.py"
+    observability_test = (
+        "tests/unit/sose/examples/order_to_cash/"
+        "test_order_to_cash_observability.py"
+    )
     runtime = (
         "tests/unit/sose/examples/order_to_cash/"
         "test_order_to_cash_runtime.py"
@@ -62,6 +79,20 @@ def process_manifest() -> ProcessManifest:
         ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, runtime, process_equivalence),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
         ProcessEvidence.FAULT_RECOVERY: (runtime, restart),
+        ProcessEvidence.KPIS: (observability, observability_test, specification),
+        ProcessEvidence.ERD: (specification,),
+        ProcessEvidence.STATECHART_DOCUMENTATION: (statecharts, statechart_test, specification),
+        ProcessEvidence.PROCESS_DIAGRAM: (specification,),
+        ProcessEvidence.PROJECTION_CONTRACT: (
+            observability,
+            observability_test,
+            specification,
+        ),
+        ProcessEvidence.CONFIGURATION_DOCUMENTATION: (
+            config,
+            definition,
+            specification,
+        ),
     }
 
     return ProcessManifest(
@@ -79,6 +110,20 @@ def process_manifest() -> ProcessManifest:
                 "overdue_collection",
             }
         ),
+        kpis=frozenset(
+            {
+                "cash_collection",
+                "order_to_cash_seconds",
+                "amount",
+                "transition_count",
+                "credit_hold_count",
+                "partial_fulfillment_count",
+                "overdue_count",
+                "collection_case_count",
+                "collection_escalation_count",
+            }
+        ),
+        specification_path=specification,
         evidence_sources=evidence_sources,
         assessment_complete=True,
     )
