@@ -134,6 +134,17 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
     return registry
 
 
+def _next_logical_time(
+    persistence: MemoryPersistence,
+    previous: datetime,
+) -> datetime:
+    candidate = previous + timedelta(minutes=1)
+    position = persistence.simulation_position()
+    if position is not None and position.logical_time > candidate:
+        return position.logical_time
+    return candidate
+
+
 def _publish(
     service: BoundaryService,
     *,
@@ -242,8 +253,8 @@ def _execute_intent(
         fulfillment.ship_order(persistence, engine, entities=fixtures.fulfillment)
 
     elif intent.name == "composition.deliver_shipment":
-        _, engine = logistics.build_runtime(persistence, now=logistics.ORIGIN)
-        backend = SimPyBackend(origin=logistics.ORIGIN)
+        _, engine = logistics.build_runtime(persistence, now=intent.due_at)
+        backend = SimPyBackend(origin=intent.due_at)
         engine.rebuild_backend(backend)
         pending = tuple(
             work
@@ -339,8 +350,8 @@ def _execute_intent(
         o2c.ensure_receivable(persistence, engine, entities=fixtures.o2c)
 
     elif intent.name == "composition.settle_customer_payment":
-        _, engine = payments.build_runtime(persistence, now=payments.ORIGIN)
-        backend = SimPyBackend(origin=payments.ORIGIN)
+        _, engine = payments.build_runtime(persistence, now=intent.due_at)
+        backend = SimPyBackend(origin=intent.due_at)
         engine.rebuild_backend(backend)
         if not payments.reconcile_authorization(
             persistence,
@@ -366,8 +377,8 @@ def _execute_intent(
         )
 
     elif intent.name == "composition.post_customer_journal":
-        _, engine = r2r.build_runtime(persistence, now=r2r.ORIGIN)
-        backend = SimPyBackend(origin=r2r.ORIGIN)
+        _, engine = r2r.build_runtime(persistence, now=intent.due_at)
+        backend = SimPyBackend(origin=intent.due_at)
         engine.rebuild_backend(backend)
         if not r2r.submit_and_post_journal(
             persistence,
@@ -481,7 +492,7 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
         occurrence_key="dispatch-ready",
         correlation_id=correlation_id,
         causation_id=messages[-1].message_id,
-        produced_at=origin + timedelta(minutes=1),
+        produced_at=_next_logical_time(persistence, messages[-1].produced_at),
         payload={
             "fulfillment_order_id": fixtures.fulfillment.order_id,
             "shipment_id": fixtures.logistics.shipment_id,
@@ -511,7 +522,7 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
         occurrence_key="delivery-completed",
         correlation_id=correlation_id,
         causation_id=messages[-1].message_id,
-        produced_at=origin + timedelta(minutes=2),
+        produced_at=_next_logical_time(persistence, messages[-1].produced_at),
         payload={
             "shipment_id": fixtures.logistics.shipment_id,
             "order_id": fixtures.o2c.order_id,
@@ -541,7 +552,7 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
         occurrence_key="payment-requested",
         correlation_id=correlation_id,
         causation_id=messages[-1].message_id,
-        produced_at=origin + timedelta(minutes=3),
+        produced_at=_next_logical_time(persistence, messages[-1].produced_at),
         payload={
             "order_id": fixtures.o2c.order_id,
             "payment_id": fixtures.payments.payment_id,
@@ -573,7 +584,7 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
         occurrence_key="customer-settlement-entry",
         correlation_id=correlation_id,
         causation_id=messages[-1].message_id,
-        produced_at=origin + timedelta(minutes=4),
+        produced_at=_next_logical_time(persistence, messages[-1].produced_at),
         payload={
             "payment_id": fixtures.payments.payment_id,
             "journal_id": fixtures.r2r.journal_id,
