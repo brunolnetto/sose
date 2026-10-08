@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from sose.persistence.base import Persistence
 
-from .simulation import R2REntities, adjustment_id, close_task_id
+from .identity import adjustment_id, close_task_id
+
+if TYPE_CHECKING:
+    from .simulation import R2REntities
 
 
 @dataclass(frozen=True, slots=True)
