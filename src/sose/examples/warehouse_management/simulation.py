@@ -200,6 +200,52 @@ def _save(persistence: Persistence, *entities) -> None:
             uow.save_entity(entity)
 
 
+def receive_external_replenishment(
+    persistence: Persistence,
+    engine: Engine,
+    *,
+    stock_id: str,
+    quantity: float,
+    receipt_reference: str,
+    caused_by=None,
+    correlation_id: str | None = None,
+) -> bool:
+    """Idempotently apply a foreign procurement receipt to WM-owned stock truth."""
+
+    if quantity <= 0:
+        raise ValueError("replenishment quantity must be positive")
+    if not receipt_reference:
+        raise ValueError("receipt_reference cannot be empty")
+
+    stock = _entity(persistence, "warehouse_management_stock", stock_id)
+    receipts = dict(stock.attributes.get("external_receipts", {}))
+    existing = receipts.get(receipt_reference)
+    if existing is not None:
+        if float(existing) != float(quantity):
+            raise ValueError(
+                f"receipt replay conflict: {receipt_reference}"
+            )
+        return False
+
+    stock.attributes["on_hand"] = float(stock.attributes["on_hand"]) + float(quantity)
+    receipts[receipt_reference] = float(quantity)
+    stock.attributes["external_receipts"] = receipts
+
+    event = engine.context.events.create(
+        "warehouse_management.replenishment_received",
+        entity=stock,
+        caused_by=caused_by,
+        correlation_id=correlation_id,
+        key=("warehouse-management", stock.id, "external-receipt", receipt_reference),
+        receipt_reference=receipt_reference,
+        quantity=float(quantity),
+    )
+    with persistence.transaction() as uow:
+        uow.save_entity(stock)
+        uow.append_event(event)
+    return True
+
+
 def _dispatch(engine: Engine, entity, event: str, *, key: tuple[object, ...]) -> None:
     command = engine.context.commands.create(
         event,
