@@ -65,10 +65,24 @@ def test_customer_demand_path_preserves_boundary_and_domain_causality() -> None:
         )
 
     message_ids = set(result.message_ids)
-    event_causation = {
-        event.causation_id
+    composed_event_types = {
+        "warehouse_fulfillment_order",
+        "warehouse_allocation",
+        "warehouse_inventory_occurrence",
+        "shipment",
+        "delivery_attempt",
+        "card_payment",
+        "journal_entry",
+    }
+    composed_events = tuple(
+        event
         for event in persistence.events()
-        if event.causation_id is not None
+        if event.entity_type in composed_event_types
+    )
+
+    assert composed_events
+    assert {event.correlation_id for event in composed_events} == {
+        result.correlation_id
     }
 
     assert messages[-1].source_domain == "cards_payments"
