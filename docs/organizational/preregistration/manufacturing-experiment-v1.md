@@ -28,13 +28,16 @@ Can the SOSE Manufacturing PC5 canonical preserve preregistered durable invarian
 
 The draft allows only executable Manufacturing inputs:
 
-- `quantity` — bounded during preflight;
-- `quality_outcome` — categorical configured condition;
+- `quantity` only as a DOE axis, with range `[1, 1000]`;
+- Latin Hypercube sampling with 6 design points;
 - nominal arm;
 - machine downtime;
-- yield degradation.
+- yield degradation;
+- A0 only;
+- 2 fixed replications per world;
+- root seed `20261008`.
 
-Demand surge remains excluded until a preflight proves that the current single-order reference converts that scenario into durable additional workload/pressure.
+`quality_outcome` is not numerically encoded into the generic DOE; its quality-hold/rework path remains invariant/process evidence. Demand surge is excluded from v1 because the current single-order slice has no demonstrated durable additional workload/pressure behavior.
 
 ## Freeze gate
 
@@ -42,12 +45,10 @@ This preregistration is **not yet frozen**.
 
 Before official execution:
 
-1. quantity bounds must be fixed;
-2. candidate arms must pass semantic preflight;
-3. DOE/sample size must be fixed;
-4. replication count/root seed must be fixed;
-5. all eligibility/falsification rules must be finalized;
-6. the JSON protocol must be canonicalized and hash-addressed;
-7. status changes to `frozen`.
+1. machine-downtime and yield-degradation arms must pass semantic preflight;
+2. all eligibility/falsification rules must be finalized;
+3. the JSON protocol must be canonicalized and hash-addressed;
+4. PRD/TRD/protocol/code provenance must be bound;
+5. status changes to `frozen`.
 
 No official result may be executed/inspected before that freeze.
