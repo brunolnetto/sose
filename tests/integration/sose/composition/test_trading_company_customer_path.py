@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sose.composition.model import DeliveryStatus
 from sose.composition.trading_company_customer import run_customer_demand_path
+from sose.examples.warehouse_fulfillment import simulation as fulfillment
 
 
 def _entities_of_type(persistence, entity_type: str):
@@ -37,7 +38,7 @@ def test_customer_demand_path_composes_domains_with_warehouse_owned_stock() -> N
         result.reservation_reference
     ]
     assert reservation == {
-        "sku": "SKU-A",
+        "sku": fulfillment.PRIMARY_SKU,
         "quantity": 10.0,
         "consumed": True,
         "consumption_reference": result.consumption_reference,
