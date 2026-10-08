@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import datetime, timedelta
 
 import pytest
@@ -73,7 +74,7 @@ def test_same_semantic_message_with_changed_payload_is_rejected() -> None:
 
 def test_publish_is_idempotent_and_claim_order_is_deterministic() -> None:
     service = BoundaryService(MemoryPersistence())
-    later = _message(occurrence_key="later").model_copy(produced_at=NOW + timedelta(seconds=1))
+    later = replace(_message(occurrence_key="later"), produced_at=NOW + timedelta(seconds=1))
     earlier = _message(occurrence_key="earlier")
 
     first = service.publish(later)
