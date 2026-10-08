@@ -309,9 +309,13 @@ stateDiagram-v2
     in_transit --> delayed: mark_delayed
     in_transit --> received: receive
     received --> closed: close
+    created --> cancelled: cancel
+    submitted --> cancelled: cancel
+    confirmed --> cancelled: cancel
 ```
 
-Cancellation is legal from `created`, `submitted`, and `confirmed`.
+Cancellation is a first-class executable terminal path from `created`, `submitted`,
+and `confirmed`.
 
 | Current state | Command | Preconditions | Next state | Durable evidence |
 |---|---|---|---|---|
@@ -321,6 +325,7 @@ Cancellation is legal from `created`, `submitted`, and `confirmed`.
 | `confirmed` / `in_transit` | `mark_delayed` | supplier delay observed | `delayed` | command/event |
 | `in_transit` | `receive` | durable lead-time work reaches delivery | `received` | ScheduledWork execution |
 | `received` | `close` | PO receiving obligation satisfied | `closed` | command/event |
+| `created` / `submitted` / `confirmed` | `cancel` | procurement commitment cancelled | `cancelled` | command/event |
 
 ### 5.3 Receipt StateChart
 
@@ -357,9 +362,13 @@ stateDiagram-v2
     waiting_inventory --> allocated: allocate
     backordered --> allocated: allocate
     allocated --> consumed: consume
+    open --> cancelled: cancel
+    waiting_inventory --> cancelled: cancel
+    backordered --> cancelled: cancel
 ```
 
-Cancellation is legal from `open`, `waiting_inventory`, and `backordered`.
+Cancellation is a first-class executable terminal path from `open`,
+`waiting_inventory`, and `backordered`.
 
 | Current state | Command | Operational precondition | Next state | Durable evidence |
 |---|---|---|---|---|
@@ -367,6 +376,7 @@ Cancellation is legal from `open`, `waiting_inventory`, and `backordered`.
 | `open` / `waiting_inventory` | `backorder` | shortage remains unresolved | `backordered` | transition event |
 | `open` / `waiting_inventory` / `backordered` | `allocate` | Store + Container withdrawals terminal | `allocated` | terminal inventory results |
 | `allocated` | `consume` | allocation completed | `consumed` | transition event |
+| `open` / `waiting_inventory` / `backordered` | `cancel` | material demand withdrawn | `cancelled` | transition event |
 
 ## 6. Process specifications
 
@@ -670,3 +680,91 @@ flowchart LR
 | happy-path restart | runtime/reconcilers | `test_p2p_restart_equivalence.py` |
 | partial/rejected receipts | receiving outcome handling | `test_p2p_receipt_exceptions.py` |
 | receipt sad-path restart | same | `test_p2p_receipt_exception_restart.py` |
+
+
+## 14. KPI contract
+
+`p2p_kpis()` exposes read-only KPIs derived from durable entities and immutable
+transition events under the reference-flow correlation identity.
+
+| KPI | Type | Definition |
+|---|---|---|
+| `procure_to_consumption_seconds` | float or null | Requisition creation to terminal MaterialDemand consumption; null before consumption |
+| `quantity` | float | requested procurement quantity from the durable Requisition |
+| `transition_count` | integer | correlated immutable state-transition event count |
+| `supplier_delay_count` | integer | PurchaseOrder transitions entering `delayed` |
+| `partial_receipt_count` | integer | Receipt transitions entering `partial` |
+| `rejected_receipt_count` | integer | Receipt transitions entering `rejected` |
+| `backorder_count` | integer | MaterialDemand transitions entering `backordered` |
+| `consumed` | boolean | true only when durable MaterialDemand state is `consumed` |
+
+Historical exception counts are reconstructed from immutable events rather than inferred
+from final state. These KPIs are observations and are not automatically valid exogenous
+experiment coordinates.
+
+## 15. Projection contract
+
+`p2p_projection()` is the canonical read-only consumer projection of the executable
+operational P2P slice.
+
+| Field | Durable source |
+|---|---|
+| `requisition_id` | persisted Requisition identity |
+| `purchase_order_id` | persisted PurchaseOrder identity |
+| `receipt_id` | persisted Receipt identity |
+| `material_demand_id` | persisted MaterialDemand identity |
+| `requisition_state` | Requisition state |
+| `purchase_order_state` | PurchaseOrder state |
+| `receipt_state` | Receipt state |
+| `material_demand_state` | MaterialDemand state |
+| `sku` | Requisition attributes |
+| `quantity` | Requisition attributes |
+| `supplier` | PurchaseOrder attributes |
+| `inventory_level` | durable Container `inventory` level |
+| `stocked` | Receipt terminal state |
+| `consumed` | MaterialDemand terminal state |
+| `backordered` | current MaterialDemand state |
+| `procure_to_consumption_seconds` | terminal entity timestamps; null before consumption |
+
+Projection rules:
+
+1. projection is read-only and idempotent;
+2. required reference entities being absent is an error rather than permission to
+   fabricate a replacement;
+3. inventory quantity comes from the durable Container, not from a reconstructed sum;
+4. terminal cycle time remains null before durable consumption;
+5. current `backordered` state and historical `backorder_count` are deliberately
+   separate concepts;
+6. the projection does not add supplier invoices, AP, payment, or financial settlement
+   to this operational reference slice.
+
+## 16. Configuration contract
+
+The recurring P2P reference uses `P2PConfig`.
+
+| Field | Default | Constraint / operational meaning | Runtime mutable |
+|---|---|---|---|
+| `start_at` | reference `ORIGIN` | logical process start | no |
+| `tick_step` | 1 hour | recurring logical step | yes |
+| `random_seed` | 42 | deterministic stochastic root seed | yes |
+| `quantity` | 10.0 | positive requested quantity; executable reference also bounds it by inventory capacity | no |
+| `receipt_outcome` | `accepted` | one of `accepted`, `partial`, `rejected` | yes |
+| `auto_consume_inventory` | true | reconcile stocked inventory through allocation/consumption automatically | yes |
+
+The runtime-mutable fields are exactly those declared by the domain definition:
+`tick_step`, `random_seed`, `receipt_outcome`, and
+`auto_consume_inventory`.
+
+Configuration never bypasses StateCharts, ScheduledWork, finite receiving resources,
+or durable Store/Container inventory semantics.
+
+## 17. PC5 promotion boundary
+
+The observable contract consists of executable KPIs/projection plus the normative ERD,
+complete StateCharts, Mermaid process diagrams, and configuration table in this
+specification.
+
+This qualifies Procure-to-Pay as **PC5 — Observable**. It does not make the process
+PC6-composable and does not authorize an Organizational Dynamics experiment. Cross-domain
+ingress/egress contracts and execution remain the PC6 gate, while official experiments
+additionally require their accepted domain-specific PRD/TRD and frozen preregistration.
