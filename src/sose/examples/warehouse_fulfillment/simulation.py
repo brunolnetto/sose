@@ -826,9 +826,8 @@ def _release_service_capacity(
     if bool(task.attributes.get("resource_released", False)):
         return
 
-    reservation_id = task.attributes.get("reservation_id")
-    if reservation_id is not None:
-        engine.resources.release(backend, str(reservation_id))
+    request_id = str(task.attributes["request_id"])
+    engine.resources.withdraw(backend, request_id)
 
     task = _entity(
         persistence,
@@ -864,7 +863,7 @@ def _apply_completed_service_task(
             pack_order(persistence, engine, entities=entities)
         elif stage == "ship":
             ship_order(persistence, engine, entities=entities)
-        else:  # pragma: no cover - task creation owns the stage set
+        else:
             raise ValueError(f"unknown fulfillment service stage: {stage}")
 
         task = _entity(
