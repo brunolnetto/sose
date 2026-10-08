@@ -191,6 +191,22 @@ class _RuntimeDomainReference(Protocol):
     def classify_regime(self, world: ExperimentWorld) -> RegimeReference: ...
 
 
+class DomainEvidenceRecord(BaseModel):
+    """Opaque raw domain evidence retained for audit/re-projection."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
+
+    world_hash: NonBlankString
+    replication: int = Field(ge=0)
+    evidence_hash: NonBlankString
+    evidence: object
+
+    @model_validator(mode="after")
+    def validate_hash(self) -> "DomainEvidenceRecord":
+        _validate_sha256(self.evidence_hash, field="evidence_hash")
+        return self
+
+
 class ExperimentRunRecord(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
 
@@ -254,7 +270,7 @@ class GroundTruthAssessment(BaseModel):
     claim_id: NonBlankString
     claim_hash: NonBlankString
     eligible: bool
-    observed: float | None = Field(default=None, allow_inf_nan=False)
+    observed: float | str | None = Field(default=None)
     passed: bool | None = None
     reason: str | None = None
 
@@ -298,9 +314,28 @@ class DomainExperimentResult(BaseModel):
     plan: InstanceOf[DomainExperimentPlan]
     worlds: tuple[InstanceOf[ExperimentWorld], ...]
     runs: tuple[InstanceOf[ExperimentRunRecord], ...]
+    evidence: tuple[InstanceOf[DomainEvidenceRecord], ...]
     references: tuple[InstanceOf[WorldReferenceRecord], ...]
     assessments: tuple[InstanceOf[GroundTruthAssessment], ...]
     manifest: InstanceOf[ExperimentResultManifest]
+
+    @model_validator(mode="after")
+    def validate_evidence_binding(self) -> "DomainExperimentResult":
+        run_bindings = {
+            (run.world_hash, run.replication): run.evidence_hash
+            for run in self.runs
+        }
+        evidence_bindings = {
+            (item.world_hash, item.replication): item.evidence_hash
+            for item in self.evidence
+        }
+        if len(run_bindings) != len(self.runs):
+            raise ValueError("duplicate run identities are not allowed")
+        if len(evidence_bindings) != len(self.evidence):
+            raise ValueError("duplicate evidence identities are not allowed")
+        if run_bindings != evidence_bindings:
+            raise ValueError("raw evidence must exactly bind every experiment run")
+        return self
 
     @property
     def result_hash(self) -> str:
@@ -336,8 +371,13 @@ def run_domain_experiment(
         record.world_hash: record.ground_truth
         for record in references
     }
+    reference_by_world = {
+        record.world_hash: record
+        for record in references
+    }
 
     runs: list[ExperimentRunRecord] = []
+    evidence_records: list[DomainEvidenceRecord] = []
     assessments: list[GroundTruthAssessment] = []
     for world in worlds:
         for replication in range(replication_plan.min_replications):
@@ -350,6 +390,14 @@ def run_domain_experiment(
                 )
             )
             observation = reference.observation(execution)
+            evidence_records.append(
+                DomainEvidenceRecord(
+                    world_hash=world.world_hash,
+                    replication=replication,
+                    evidence_hash=execution.evidence_hash,
+                    evidence=execution.evidence,
+                )
+            )
             runs.append(
                 ExperimentRunRecord(
                     world_hash=world.world_hash,
@@ -372,11 +420,13 @@ def run_domain_experiment(
                     replication=replication,
                     claim=claim,
                     observation=observation,
+                    regime=reference_by_world[world.world_hash].regime,
                 )
                 for claim in claims_by_world[world.world_hash]
             )
 
     run_tuple = tuple(runs)
+    evidence_tuple = tuple(evidence_records)
     assessment_tuple = tuple(assessments)
     result_hash = _canonical_hash(
         {
@@ -402,6 +452,7 @@ def run_domain_experiment(
         plan=plan,
         worlds=worlds,
         runs=run_tuple,
+        evidence=evidence_tuple,
         references=references,
         assessments=assessment_tuple,
         manifest=manifest,
@@ -427,6 +478,7 @@ def _assess_claim(
     replication: int,
     claim: GroundTruthClaim,
     observation: ExperimentObservation,
+    regime: RegimeReference,
 ) -> GroundTruthAssessment:
     if not claim.eligible:
         return GroundTruthAssessment(
@@ -437,6 +489,32 @@ def _assess_claim(
             eligible=False,
             reason=claim.ineligibility_reason,
         )
+    if claim.target_kind is GroundTruthTargetKind.REGIME:
+        observed_regime = regime.label
+        expected_regime = claim.expected
+        if (
+            claim.comparison_rule.kind is not GroundTruthComparisonKind.EXACT
+            or not isinstance(expected_regime, str)
+        ):
+            return GroundTruthAssessment(
+                world_hash=world_hash,
+                replication=replication,
+                claim_id=claim.claim_id,
+                claim_hash=claim.claim_hash,
+                eligible=True,
+                observed=observed_regime,
+                reason="regime claims require an exact string expectation",
+            )
+        return GroundTruthAssessment(
+            world_hash=world_hash,
+            replication=replication,
+            claim_id=claim.claim_id,
+            claim_hash=claim.claim_hash,
+            eligible=True,
+            observed=observed_regime,
+            passed=observed_regime == expected_regime,
+        )
+
     if claim.target_kind is not GroundTruthTargetKind.METRIC:
         return GroundTruthAssessment(
             world_hash=world_hash,
@@ -444,7 +522,7 @@ def _assess_claim(
             claim_id=claim.claim_id,
             claim_hash=claim.claim_hash,
             eligible=True,
-            reason="claim target is not a standard numerical metric",
+            reason="claim target is not assessed by the Gate-A runtime",
         )
 
     observed = observation.metrics.get(claim.target_name)
