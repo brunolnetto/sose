@@ -278,6 +278,9 @@ def reserve_external_stock(
 
     if quantity <= 0:
         raise ValueError("reservation quantity must be positive")
+    normalized_quantity = round(float(quantity), 6)
+    if normalized_quantity <= 0:
+        raise ValueError("reservation quantity is below supported precision")
     if not sku:
         raise ValueError("reservation sku cannot be empty")
     if not reservation_reference:
@@ -294,7 +297,7 @@ def reserve_external_stock(
     existing = reservations.get(reservation_reference)
     expected = {
         "sku": sku,
-        "quantity": float(quantity),
+        "quantity": normalized_quantity,
         "consumed": False,
         "consumption_reference": None,
     }
@@ -302,7 +305,7 @@ def reserve_external_stock(
         existing_record = dict(existing)
         if (
             str(existing_record.get("sku")) != sku
-            or float(existing_record.get("quantity", 0.0)) != float(quantity)
+            or float(existing_record.get("quantity", 0.0)) != normalized_quantity
         ):
             raise ValueError(
                 f"reservation replay conflict: {reservation_reference}"
@@ -311,10 +314,10 @@ def reserve_external_stock(
 
     on_hand = float(stock.attributes.get("on_hand", 0.0))
     reserved = float(stock.attributes.get("reserved", 0.0))
-    if on_hand - reserved + 1e-9 < float(quantity):
+    if on_hand - reserved + 1e-9 < normalized_quantity:
         return False
 
-    stock.attributes["reserved"] = round(reserved + float(quantity), 6)
+    stock.attributes["reserved"] = round(reserved + normalized_quantity, 6)
     reservations[reservation_reference] = expected
     stock.attributes["external_reservations"] = reservations
 
@@ -326,7 +329,7 @@ def reserve_external_stock(
         key=("warehouse-management", stock.id, "external-reservation", reservation_reference),
         reservation_reference=reservation_reference,
         sku=sku,
-        quantity=float(quantity),
+        quantity=normalized_quantity,
     )
     with persistence.transaction() as uow:
         uow.save_entity(stock)
@@ -350,6 +353,9 @@ def consume_external_reservation(
 
     if quantity <= 0:
         raise ValueError("consumption quantity must be positive")
+    normalized_quantity = round(float(quantity), 6)
+    if normalized_quantity <= 0:
+        raise ValueError("consumption quantity is below supported precision")
     if not sku:
         raise ValueError("consumption sku cannot be empty")
     if not reservation_reference:
@@ -372,7 +378,7 @@ def consume_external_reservation(
     record = dict(existing)
     if (
         str(record.get("sku")) != sku
-        or float(record.get("quantity", 0.0)) != float(quantity)
+        or float(record.get("quantity", 0.0)) != normalized_quantity
     ):
         raise ValueError(
             f"reservation consumption conflict: {reservation_reference}"
@@ -387,11 +393,11 @@ def consume_external_reservation(
 
     on_hand = float(stock.attributes.get("on_hand", 0.0))
     reserved = float(stock.attributes.get("reserved", 0.0))
-    if reserved + 1e-9 < float(quantity) or on_hand + 1e-9 < float(quantity):
+    if reserved + 1e-9 < normalized_quantity or on_hand + 1e-9 < normalized_quantity:
         raise RuntimeError("reserved stock projection cannot satisfy consumption")
 
-    stock.attributes["on_hand"] = round(on_hand - float(quantity), 6)
-    stock.attributes["reserved"] = round(reserved - float(quantity), 6)
+    stock.attributes["on_hand"] = round(on_hand - normalized_quantity, 6)
+    stock.attributes["reserved"] = round(reserved - normalized_quantity, 6)
     record["consumed"] = True
     record["consumption_reference"] = consumption_reference
     reservations[reservation_reference] = record
