@@ -125,10 +125,10 @@ No experiment projection may write domain state.
 
 ## 6. Determinism and reproducibility
 
-Official v1 freezes:
+Official v1 freezes only **after the adapter and preflight implementation are accepted**:
 
 - domain/code provenance;
-- protocol hash;
+- the canonical framework `ExperimentProtocol` payload and protocol hash;
 - parameter bounds/levels;
 - intervention catalog;
 - replication count;
@@ -211,11 +211,11 @@ Rejected because no Manufacturing-specific local adaptive policy has yet been de
 
 ## 14. Implementation plan
 
-1. preflight downtime/yield scenario semantics against the generic adapter;
-2. finalize and freeze preregistration;
-3. add Manufacturing DomainReference adapter;
-4. pass generic conformance;
-5. add restart-equivalent experiment execution;
+1. add the Manufacturing DomainReference adapter without executing official evidence;
+2. preflight downtime/yield semantics against that adapter;
+3. pass generic conformance and restart-equivalence preflight;
+4. materialize a real `ExperimentProtocol` payload whose `baseline_model_spec_hash` equals the accepted adapter default model;
+5. finalize/freeze the preregistration, protocol, code hash, and document provenance;
 6. execute official evidence;
 7. persist report/manifest;
 8. plan A1 separately.
