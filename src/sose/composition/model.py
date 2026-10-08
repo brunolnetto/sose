@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from enum import StrEnum
+from enum import Enum
 from hashlib import sha256
 import json
 from typing import Any, Mapping
@@ -10,7 +10,7 @@ from typing import Any, Mapping
 from sose.core.identity import deterministic_id
 
 
-class DeliveryStatus(StrEnum):
+class DeliveryStatus(Enum):
     PENDING = "pending"
     CLAIMED = "claimed"
     CONSUMED = "consumed"
