@@ -208,6 +208,13 @@ class ManufacturingReferenceDomain:
             yield_factor=yield_factor,
             downtime_hours=downtime_hours,
         )
+        if request.protocol.warmup != 0.0:
+            raise ValueError("Manufacturing v1 requires zero warmup")
+        required_horizon = max(1.0, downtime_hours)
+        if request.protocol.horizon < required_horizon:
+            raise ValueError(
+                "Manufacturing protocol horizon is shorter than configured arm duration"
+            )
 
         persistence = MemoryPersistence()
         entities = seed_happy_path(persistence, quantity=quantity)
@@ -242,7 +249,7 @@ class ManufacturingReferenceDomain:
             quantity=quantity,
         )
 
-        machine_reacquired = downtime_hours == 0.0
+        machine_reacquired = False
         if downtime_hours > 0.0:
             if not reconcile_scenario_breakdown(
                 persistence,
