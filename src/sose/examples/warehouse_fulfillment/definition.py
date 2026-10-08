@@ -22,6 +22,9 @@ def _seed(persistence: Persistence, config: WarehouseFulfillmentConfig):
         primary_on_hand=config.primary_on_hand,
         substitute_on_hand=config.substitute_on_hand,
         allow_substitute=config.allow_substitute,
+        picker_capacity=config.picker_capacity,
+        packing_station_capacity=config.packing_station_capacity,
+        shipping_dock_capacity=config.shipping_dock_capacity,
     )
 
 def _order_or_error(persistence, entities):
@@ -49,17 +52,45 @@ def _reconcile_requested(persistence, engine, *, entities, order):
     return _reload_order(persistence, entities)
 
 
-def _reconcile_pick_pack_ship(persistence, engine, *, entities, order):
+def _reconcile_pick_pack_ship(
+    persistence,
+    engine,
+    backend,
+    config,
+    *,
+    entities,
+    order,
+):
     if order is not None and order.state in {"allocated", "picking"}:
-        pick_order(persistence, engine, entities=entities)
+        if not pick_order(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            duration=config.pick_duration,
+        ):
+            return
         order = _reload_order(persistence, entities)
 
     if order is not None and order.state == "picking":
-        pack_order(persistence, engine, entities=entities)
+        if not pack_order(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            duration=config.pack_duration,
+        ):
+            return
         order = _reload_order(persistence, entities)
 
     if order is not None and order.state == "packed":
-        ship_order(persistence, engine, entities=entities)
+        ship_order(
+            persistence,
+            engine,
+            backend,
+            entities=entities,
+            duration=config.ship_duration,
+        )
 
 
 def _reconcile_tick(persistence, engine, backend, config, entities):
@@ -80,6 +111,8 @@ def _reconcile_tick(persistence, engine, backend, config, entities):
     _reconcile_pick_pack_ship(
         persistence,
         engine,
+        backend,
+        config,
         entities=entities,
         order=order,
     )
