@@ -1,6 +1,6 @@
 # PRD-0003 — Trading Company PC6 Composition
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Owner:** SOSE maintainers
 - **Created:** 2026-10-08
 - **Last updated:** 2026-10-08
