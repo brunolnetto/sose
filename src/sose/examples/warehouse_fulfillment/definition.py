@@ -1,18 +1,31 @@
 from datetime import datetime
+
 from sose.domain.config import DomainDefinition
 from sose.persistence.base import Persistence
+
 from .config import WarehouseFulfillmentConfig
 from .simulation import (
     allocate_order,
     build_runtime,
-    pack_order,
-    pick_order,
+    reconcile_fulfillment_services,
     seed_reference,
-    ship_order,
 )
 
-def _build(persistence: Persistence, config: WarehouseFulfillmentConfig, now: datetime, tick: int):
-    return build_runtime(persistence, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
+
+def _build(
+    persistence: Persistence,
+    config: WarehouseFulfillmentConfig,
+    now: datetime,
+    tick: int,
+):
+    return build_runtime(
+        persistence,
+        now=now,
+        tick=tick,
+        step=config.tick_step,
+        random_seed=config.random_seed,
+    )
+
 
 def _seed(persistence: Persistence, config: WarehouseFulfillmentConfig):
     return seed_reference(
@@ -22,7 +35,11 @@ def _seed(persistence: Persistence, config: WarehouseFulfillmentConfig):
         primary_on_hand=config.primary_on_hand,
         substitute_on_hand=config.substitute_on_hand,
         allow_substitute=config.allow_substitute,
+        picker_capacity=config.picker_capacity,
+        packing_station_capacity=config.packing_station_capacity,
+        shipping_dock_capacity=config.shipping_dock_capacity,
     )
+
 
 def _order_or_error(persistence, entities):
     order = persistence.entity(
@@ -49,19 +66,6 @@ def _reconcile_requested(persistence, engine, *, entities, order):
     return _reload_order(persistence, entities)
 
 
-def _reconcile_pick_pack_ship(persistence, engine, *, entities, order):
-    if order is not None and order.state in {"allocated", "picking"}:
-        pick_order(persistence, engine, entities=entities)
-        order = _reload_order(persistence, entities)
-
-    if order is not None and order.state == "picking":
-        pack_order(persistence, engine, entities=entities)
-        order = _reload_order(persistence, entities)
-
-    if order is not None and order.state == "packed":
-        ship_order(persistence, engine, entities=entities)
-
-
 def _reconcile_tick(persistence, engine, backend, config, entities):
     if not config.auto_progress_fulfillment:
         return
@@ -77,11 +81,15 @@ def _reconcile_tick(persistence, engine, backend, config, entities):
     )
     if order is None:
         return
-    _reconcile_pick_pack_ship(
+
+    reconcile_fulfillment_services(
         persistence,
         engine,
+        backend,
         entities=entities,
-        order=order,
+        pick_duration=config.pick_duration,
+        pack_duration=config.pack_duration,
+        ship_duration=config.ship_duration,
     )
 
 
@@ -92,5 +100,11 @@ definition = DomainDefinition(
     build_runtime=_build,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
-    runtime_mutable_fields=frozenset(["tick_step","random_seed","auto_progress_fulfillment"]),
+    runtime_mutable_fields=frozenset(
+        [
+            "tick_step",
+            "random_seed",
+            "auto_progress_fulfillment",
+        ]
+    ),
 )
