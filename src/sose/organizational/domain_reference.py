@@ -9,7 +9,7 @@ from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, Field, InstanceOf, StringConstraints, model_validator
+from pydantic import BaseModel, ConfigDict, Field, InstanceOf, StringConstraints, field_serializer, model_validator
 
 from .agency import AgencyLevel
 from .experiment import ParameterRange
@@ -32,6 +32,50 @@ class GroundTruthTargetKind(StrEnum):
     REGIME = "regime"
     INVARIANT = "invariant"
     RELATION = "relation"
+
+
+class GroundTruthComparisonKind(StrEnum):
+    EXACT = "exact"
+    ABSOLUTE_TOLERANCE = "absolute_tolerance"
+    RELATIVE_TOLERANCE = "relative_tolerance"
+    LOWER_BOUND = "lower_bound"
+    UPPER_BOUND = "upper_bound"
+
+
+class GroundTruthComparisonRule(BaseModel):
+    """Explicit rule used to decide whether an eligible observation matches a claim.
+
+    Semantics:
+    - exact: observed equals expected;
+    - absolute_tolerance: abs(observed - expected) <= tolerance;
+    - relative_tolerance: abs(observed - expected) / abs(expected) <= tolerance;
+    - lower_bound: observed >= expected;
+    - upper_bound: observed <= expected.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: GroundTruthComparisonKind
+    tolerance: float | None = Field(default=None, gt=0.0, allow_inf_nan=False)
+
+    @model_validator(mode="after")
+    def validate_tolerance(self) -> "GroundTruthComparisonRule":
+        tolerance_kinds = {
+            GroundTruthComparisonKind.ABSOLUTE_TOLERANCE,
+            GroundTruthComparisonKind.RELATIVE_TOLERANCE,
+        }
+        if self.kind in tolerance_kinds:
+            if self.tolerance is None:
+                raise ValueError(f"{self.kind.value} requires a positive tolerance")
+        elif self.tolerance is not None:
+            raise ValueError(f"{self.kind.value} does not accept tolerance")
+        return self
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "kind": self.kind.value,
+            "tolerance": self.tolerance,
+        }
 
 
 class DomainReferenceIdentity(BaseModel):
@@ -169,6 +213,20 @@ class AgencyCapabilitySpec(BaseModel):
             "action_contract_ids": sorted(self.action_contract_ids),
         }
 
+    @field_serializer("parameter_ranges")
+    def serialize_parameter_ranges(
+        self,
+        value: Mapping[str, ParameterRange],
+    ) -> dict[str, object]:
+        return {
+            name: bounds.canonical_payload()
+            for name, bounds in value.items()
+        }
+
+    @field_serializer("defaults")
+    def serialize_defaults(self, value: Mapping[str, float]) -> dict[str, float]:
+        return dict(value)
+
     @property
     def capability_hash(self) -> str:
         return _canonical_hash(self.canonical_payload())
@@ -184,6 +242,7 @@ class GroundTruthClaim(BaseModel):
     target_kind: GroundTruthTargetKind
     target_name: NonBlankString
     expected: object
+    comparison_rule: InstanceOf[GroundTruthComparisonRule]
     assumptions: tuple[NonBlankString, ...] = Field(min_length=1)
     eligibility_rule: NonBlankString
     eligible: bool
@@ -193,6 +252,19 @@ class GroundTruthClaim(BaseModel):
     @model_validator(mode="after")
     def validate_and_freeze(self) -> "GroundTruthClaim":
         _validate_json(self.expected, path="/expected")
+        if self.comparison_rule.kind is not GroundTruthComparisonKind.EXACT:
+            if not _is_finite_number(self.expected):
+                raise ValueError(
+                    "non-exact ground-truth comparison requires a finite numeric expected value"
+                )
+            if (
+                self.comparison_rule.kind
+                is GroundTruthComparisonKind.RELATIVE_TOLERANCE
+                and float(self.expected) == 0.0
+            ):
+                raise ValueError(
+                    "relative_tolerance ground-truth comparison requires non-zero expected value"
+                )
         if self.eligible and self.ineligibility_reason is not None:
             raise ValueError("eligible ground-truth claim cannot have ineligibility_reason")
         if not self.eligible and self.ineligibility_reason is None:
@@ -211,12 +283,17 @@ class GroundTruthClaim(BaseModel):
             "target_kind": self.target_kind.value,
             "target_name": self.target_name,
             "expected": _thaw_json(self.expected),
+            "comparison_rule": self.comparison_rule.canonical_payload(),
             "assumptions": sorted(self.assumptions),
             "eligibility_rule": self.eligibility_rule,
             "eligible": self.eligible,
             "ineligibility_reason": self.ineligibility_reason,
             "provenance": sorted(self.provenance),
         }
+
+    @field_serializer("expected")
+    def serialize_expected(self, value: object) -> object:
+        return _thaw_json(value)
 
     @property
     def claim_hash(self) -> str:
@@ -337,3 +414,12 @@ def _thaw_json(value: object) -> object:
     if isinstance(value, tuple):
         return [_thaw_json(child) for child in value]
     return value
+
+
+
+def _is_finite_number(value: object) -> bool:
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and isfinite(float(value))
+    )
