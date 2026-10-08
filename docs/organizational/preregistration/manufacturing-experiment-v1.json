@@ -1,0 +1,102 @@
+{
+  "preregistration_version": "manufacturing-organizational-experiment/v1-draft",
+  "status": "draft",
+  "domain": "manufacturing",
+  "scientific_question": "Can the SOSE Manufacturing PC5 canonical preserve preregistered durable invariants and recover the mechanistic effects of implemented finite disruption scenarios under deterministic replicated A0 execution?",
+  "claims": [
+    {
+      "id": "mfg-v1-invariants",
+      "kind": "INVARIANT",
+      "target": "MFG-01..MFG-10 applicable durable invariants",
+      "eligibility": "all valid official worlds",
+      "falsification": "any invariant violation falsifies the claim"
+    },
+    {
+      "id": "mfg-v1-yield",
+      "kind": "MECHANISTIC",
+      "target": "yield-degradation reduces durable output/yield relative to paired nominal execution when completion is eligible",
+      "eligibility": "paired nominal/yield worlds with completed orders",
+      "falsification": "paired yield arm does not reduce output/yield as configured"
+    },
+    {
+      "id": "mfg-v1-downtime",
+      "kind": "MECHANISTIC",
+      "target": "machine downtime produces durable breakdown/machine_down evidence and does not bypass resource reacquisition",
+      "eligibility": "worlds in which downtime overlaps an eligible setup/production interval",
+      "falsification": "downtime fails to produce required durable breakdown/recovery evidence"
+    }
+  ],
+  "non_claims": [
+    "no empirical validation",
+    "no A1/A2 agency claim",
+    "no queueing/stationary analytical claim",
+    "no congestion/load regime claim",
+    "no demand-surge effect claim unless preflight proves executable durable workload impact before freeze"
+  ],
+  "candidate_exogenous_axes": {
+    "quantity": {
+      "type": "continuous",
+      "bounds": "TBD by preflight against executable Manufacturing capacities"
+    },
+    "quality_outcome": {
+      "type": "categorical",
+      "levels": [
+        "pass",
+        "hold"
+      ],
+      "role": "environment/configuration condition, not realized outcome"
+    }
+  },
+  "candidate_interventions": [
+    "nominal",
+    "machine_downtime",
+    "yield_degradation"
+  ],
+  "excluded_until_preflight": [
+    "demand_surge"
+  ],
+  "agency_levels": [
+    "A0"
+  ],
+  "ground_truth_kinds": [
+    "INVARIANT",
+    "MECHANISTIC"
+  ],
+  "outcomes": [
+    "completed",
+    "lead_time_seconds",
+    "output_quantity",
+    "yield_ratio",
+    "transition_count",
+    "rework_count",
+    "breakdown_count"
+  ],
+  "doe": {
+    "design": "TBD after preflight",
+    "sample_size": "TBD after preflight"
+  },
+  "replication": {
+    "count": "TBD after preflight",
+    "root_seed": "TBD before freeze",
+    "crn": "paired arms share framework-assigned comparison groups"
+  },
+  "eligibility_rules": [
+    "terminal lead_time/yield claims require completed orders",
+    "stationary analytical comparisons are ineligible because none are preregistered",
+    "scenario claims require executable overlap/activation semantics established by preflight"
+  ],
+  "exclusions": [
+    "worlds are not excluded post hoc for poor performance or tail behavior",
+    "implementation/protocol defects require versioned deviation and complete rerun"
+  ],
+  "provenance_requirements": [
+    "PRD-0004 hash",
+    "TRD-0004 hash",
+    "Manufacturing PC5 process-manifest/specification provenance",
+    "protocol hash",
+    "domain/model/code identity",
+    "seed policy",
+    "world/run/evidence/report hashes"
+  ],
+  "freeze_rule": "No official result execution or inspection before status becomes frozen and all TBD fields are resolved."
+}
