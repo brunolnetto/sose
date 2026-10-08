@@ -127,6 +127,7 @@ def test_p2p_kpis_include_uncorrelated_supplier_delay_transition() -> None:
     purchase_order = persistence.entity("purchase_order", entities.purchase_order_id)
     assert purchase_order is not None and purchase_order.state == "confirmed"
 
+    before = p2p_kpis(persistence, entities=entities)
     command = context.commands.create(
         "mark_delayed",
         target=purchase_order,
@@ -136,7 +137,7 @@ def test_p2p_kpis_include_uncorrelated_supplier_delay_transition() -> None:
 
     kpis = p2p_kpis(persistence, entities=entities)
     assert kpis.supplier_delay_count == 1
-    assert kpis.transition_count >= 6
+    assert kpis.transition_count == before.transition_count + 1
 
 
 def test_p2p_pc5_observability_evidence_is_complete() -> None:
