@@ -48,6 +48,9 @@ def test_customer_demand_path_composes_domains_without_private_state_mutation() 
     assert [message.causation_id for message in messages[1:]] == [
         message.message_id for message in messages[:-1]
     ]
+    assert [message.produced_at for message in messages] == sorted(
+        message.produced_at for message in messages
+    )
 
     assert all(persistence.command(effect_id) is None for effect_id in result.effect_ids)
 
