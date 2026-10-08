@@ -2,87 +2,100 @@
 
 ## Result
 
-Current audited maturity: **PC4 — Durable**.
+Current audited maturity: **PC5 — Observable**.
 
 This audit applies to the executable operational P2P slice described by
 `specification.md`: internal requisition through supplier lead time, receiving,
-stocking, allocation, and material consumption. It does not expand the example
-into supplier invoicing, accounts payable, or payment settlement.
+stocking, allocation, and material consumption. It deliberately does not expand the
+reference into supplier invoicing, accounts payable, or payment settlement.
 
 ## PC0–PC4 evidence
 
-The current implementation proves the cumulative gates through PC4:
+The implementation retains the cumulative evidence through PC4:
 
-- entities and executable StateCharts for requisition, purchase order, receipt,
-  and material demand;
+- entities and executable StateCharts for Requisition, PurchaseOrder, Receipt, and
+  MaterialDemand;
 - command/event happy path from requested requisition to consumed material;
-- explicit sad paths for receiving contention, shortage/backorder, partial
-  receipt, and rejected receipt;
-- finite operational resources `receiving_dock` and `inspector`;
-- durable resource contention/queueing;
-- durable supplier lead-time semantics through ScheduledWork;
-- Store + Container durable inventory effects;
-- continuous-vs-multi-restart semantic equivalence, including resource, Store,
-  Container, schedule, scenario, event, and simulation-position state;
-- explicit terminal replay idempotence for stocking and consumption;
-- recurring `SimulationJob` reconciliation across supplier lead time through
-  material consumption;
-- recovery after a partially committed inventory effect and across receipt
-  exception restart boundaries.
+- receiving contention, shortage/backorder, partial receipt, and rejected-receipt
+  sad paths;
+- finite `receiving_dock` and `inspector` resources and durable contention;
+- durable supplier lead time through ScheduledWork;
+- durable Store + Container inventory effects;
+- continuous-vs-multi-restart semantic equivalence across entity, event, schedule,
+  scenario, resource, Store, Container, and simulation-position truth;
+- replay-idempotent stocking and consumption;
+- recurring reconciliation and fault-recovery evidence.
 
-## PC5 evidence already present
+## PC5 evidence
 
-Two observable-documentation requirements are already supported:
+All six PC5 requirements now have explicit executable/documented provenance.
 
-- `ERD` — business and durable operational ERDs are present in `specification.md`;
-- `PROCESS_DIAGRAM` — the happy path and representative sad paths are represented
-  as Mermaid process flows.
+### KPIs
 
-The specification also contains useful state diagrams, but they are not yet
-credited as `STATECHART_DOCUMENTATION`: the executable `PurchaseOrder` and
-`MaterialDemand` charts contain `cancelled` states and cancellation transitions
-that are only described in prose and are omitted from the Mermaid topology.
-Under the process-canonical standard, documentation must be complete enough to
-reconstruct the executable lifecycle rather than merely summarize it.
+`p2p_kpis()` defines and tests:
 
-## Exact PC5 gaps
+- `procure_to_consumption_seconds`;
+- `quantity`;
+- `transition_count`;
+- `supplier_delay_count`;
+- `partial_receipt_count`;
+- `rejected_receipt_count`;
+- `backorder_count`;
+- `consumed`.
 
-The current codebase snapshot does **not** provide audited evidence for:
+Exception-history KPIs are counted from immutable correlated transition events, not
+inferred from final entity state.
 
-1. `KPIS`
-   - no process KPI/SLA projection is defined and tested;
-   - examples could eventually include procurement lead time, receiving wait,
-     supplier-delay exposure, backorder duration, or first-pass receipt rate,
-     but the audit does not invent metrics.
+### ERD
 
-2. `STATECHART_DOCUMENTATION`
-   - executable StateCharts exist and are tested;
-   - the specification must still include the omitted cancellation states and
-     transitions in its documented topology.
+`specification.md` retains the normative business and durable-operational Mermaid
+ERDs and explicitly distinguishes semantic relationships from fabricated physical
+foreign keys.
 
-3. `PROJECTION_CONTRACT`
-   - durable process truth exists, but there is no named stable projection
-     boundary for analytics, process mining, control-room, or digital-twin
-     consumers.
+### StateChart documentation
 
-4. `CONFIGURATION_DOCUMENTATION`
-   - `P2PConfig` is validated code and the runtime consumes its parameters, but
-     the process specification does not yet document the configuration surface,
-     semantics, units, mutability, and operational consequences as a contract.
+The specification now mirrors all four executable StateCharts, including the
+PurchaseOrder and MaterialDemand cancellation states/transitions that were previously
+described only in prose.
 
-Therefore the next maturity gate is exactly PC5 with those four missing claims.
+### Process diagram
+
+The happy path and representative receiving, shortage, partial, and rejection flows are
+normative Mermaid diagrams.
+
+### Projection contract
+
+`p2p_projection()` provides a stable read-only projection over the four durable
+business entities plus the durable inventory Container. It does not fabricate financial
+P2P concepts outside the executable operational slice.
+
+### Configuration documentation
+
+The specification documents every `P2PConfig` field, constraints/meaning, and runtime
+mutability, aligned with `DomainDefinition.runtime_mutable_fields`.
+
+## Promotion decision
+
+Procure-to-Pay is promoted from **PC4 — Durable** to **PC5 — Observable**.
+
+The next maturity gate is **PC6 — Composable** and remains unmet until explicit ingress
+contracts, egress contracts, and cross-domain execution evidence exist.
+
+This promotion is a process-canonical qualification only. It does not authorize an
+official Organizational Dynamics experiment. The accepted SOSE 1.0 program separately
+requires domain-specific accepted PRD/TRD plus a hash-frozen preregistration before any
+official experiment execution/evidence.
 
 ## Audit discipline
 
-The audit deliberately distinguishes nearby but non-equivalent evidence:
+The audit keeps neighboring concepts separate:
 
-- having resource definitions is not enough; contention is separately tested;
-- having a rebuild test is not enough; restart equivalence uses a continuous
-  baseline and compares complete durable snapshots;
-- idempotent-looking code is not enough; terminal stocking and consumption are
-  explicitly replayed and required to leave the durable snapshot unchanged;
-- executable StateCharts are not the same as complete StateChart documentation;
-- having a Pydantic configuration model is not configuration documentation;
-- having rich persistence state is not a projection contract;
-- plausible operational measures are not KPIs until they are defined and
-  executable.
+- resource definitions do not prove contention;
+- restart recovery does not prove restart equivalence;
+- deterministic identities do not prove replay idempotence;
+- executable StateCharts do not count as documentation until the normative topology is
+  complete;
+- a Pydantic configuration model is not configuration documentation;
+- persistence records are not automatically a consumer projection;
+- plausible business measures are not KPIs until executable definitions/tests exist;
+- PC5 completeness does not imply PC6 integration.
