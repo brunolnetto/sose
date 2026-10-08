@@ -127,3 +127,44 @@ def test_a0_and_a1_worlds_share_structural_model_but_not_world_identity() -> Non
 
     assert a0.structural_configuration_hash == a1.structural_configuration_hash
     assert a0.world_hash != a1.world_hash
+
+
+
+def test_regime_ground_truth_is_assessed_against_regime_reference() -> None:
+    reference, plan = _small_plan()
+    result = run_domain_experiment(reference=reference, plan=plan)
+
+    regime_assessments = [
+        assessment
+        for assessment in result.assessments
+        if assessment.claim_id.endswith("configured-regime")
+    ]
+
+    assert regime_assessments
+    assert all(assessment.eligible for assessment in regime_assessments)
+    assert all(assessment.passed is True for assessment in regime_assessments)
+    assert {assessment.observed for assessment in regime_assessments}
+
+
+def test_runtime_retains_raw_evidence_bound_to_each_run_hash() -> None:
+    reference, plan = _small_plan()
+    result = run_domain_experiment(reference=reference, plan=plan)
+
+    assert len(result.evidence) == len(result.runs)
+    by_identity = {
+        (item.world_hash, item.replication): item
+        for item in result.evidence
+    }
+    for run in result.runs:
+        raw = by_identity[(run.world_hash, run.replication)]
+        assert raw.evidence_hash == run.evidence_hash
+        assert raw.evidence is not None
+
+
+def test_queue_reference_descriptor_points_to_a1_evidence() -> None:
+    reference = QueueReferenceDomain()
+
+    assert (
+        reference.descriptor.identity.specification_path
+        == "docs/organizational/evidence/synthetic-a1-reference-v1/RESULT.md"
+    )
