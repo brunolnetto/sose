@@ -167,31 +167,57 @@ def _exogenous_binding(
     descriptor: DomainReferenceDescriptor,
     worlds: tuple[ExperimentWorld, ...],
 ) -> ConformanceCheck:
+    """Verify DOE coordinates without confusing interventions with DOE corruption."""
+
     declared = {item.name for item in descriptor.parameters}
-    ok = True
+    by_design: dict[int, list[ExperimentWorld]] = defaultdict(list)
     for world in worlds:
-        if not set(world.exogenous_parameters) <= declared:
+        by_design[world.design_index].append(world)
+
+    ok = True
+    for design_index in sorted(by_design):
+        group = by_design[design_index]
+        expected_point = dict(group[0].exogenous_parameters)
+        if not set(expected_point) <= declared:
             ok = False
             break
-        for name, expected in world.exogenous_parameters.items():
-            actual = world.model_spec.parameters.get(name)
-            if (
-                isinstance(actual, bool)
-                or not isinstance(actual, (int, float))
-                or not isfinite(float(actual))
-                or float(actual) != expected
-            ):
-                ok = False
+
+        # Framework-owned arm/agency expansion must carry the same sampled point
+        # through every comparison world.
+        if any(dict(world.exogenous_parameters) != expected_point for world in group):
+            ok = False
+            break
+
+        # Only the baseline ModelSpec must equal the raw DOE point. Treatment
+        # ModelSpecs are expected to differ exactly because the framework applies
+        # the declared ModelIntervention after building the sampled point model.
+        baselines = [world for world in group if world.arm_id == "baseline"]
+        if not baselines:
+            ok = False
+            break
+        for world in baselines:
+            for name, expected in expected_point.items():
+                actual = world.model_spec.parameters.get(name)
+                if (
+                    isinstance(actual, bool)
+                    or not isinstance(actual, (int, float))
+                    or not isfinite(float(actual))
+                    or float(actual) != expected
+                ):
+                    ok = False
+                    break
+            if not ok:
                 break
         if not ok:
             break
+
     return ConformanceCheck(
         name="exogenous-binding",
         passed=ok,
         detail=(
-            "every world preserves all configured exogenous coordinates in ModelSpec"
+            "each design point is preserved across arms/agencies and binds the baseline ModelSpec"
             if ok
-            else "world/model exogenous binding mismatch detected"
+            else "DOE coordinates drift across worlds or fail baseline ModelSpec binding"
         ),
     )
 
