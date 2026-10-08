@@ -334,7 +334,7 @@ def _execute_intent(
 
     elif intent.name == "composition.reserve_fulfillment_inventory":
         _, engine = wm.build_runtime(persistence, now=intent.due_at)
-        if not wm.reserve_external_stock(
+        applied = wm.reserve_external_stock(
             persistence,
             engine,
             stock_id=str(intent.payload["stock_id"]),
@@ -343,8 +343,19 @@ def _execute_intent(
             reservation_reference=str(intent.payload["reservation_reference"]),
             caused_by=intent,
             correlation_id=correlation_id,
-        ):
-            raise RuntimeError("warehouse management inventory reservation failed")
+        )
+        if not applied:
+            stock = persistence.entity(
+                "warehouse_management_stock",
+                str(intent.payload["stock_id"]),
+            )
+            reservations = (
+                {}
+                if stock is None
+                else dict(stock.attributes.get("external_reservations", {}))
+            )
+            if str(intent.payload["reservation_reference"]) not in reservations:
+                raise RuntimeError("warehouse management inventory reservation failed")
 
     elif intent.name == "composition.accept_inventory_reservation":
         _, engine = fulfillment.build_runtime(persistence, now=intent.due_at)
@@ -381,7 +392,9 @@ def _execute_intent(
 
     elif intent.name == "composition.consume_fulfillment_inventory":
         _, engine = wm.build_runtime(persistence, now=intent.due_at)
-        if not wm.consume_external_reservation(
+        # False means the same reservation/consumption reference was already
+        # durably applied; that is a successful idempotent retry after a crash.
+        wm.consume_external_reservation(
             persistence,
             engine,
             stock_id=str(intent.payload["stock_id"]),
@@ -391,8 +404,7 @@ def _execute_intent(
             consumption_reference=str(intent.payload["consumption_reference"]),
             caused_by=intent,
             correlation_id=correlation_id,
-        ):
-            raise RuntimeError("warehouse management inventory consumption replayed")
+        )
 
     elif intent.name == "composition.deliver_shipment":
         for work in persistence.scheduled_work():
