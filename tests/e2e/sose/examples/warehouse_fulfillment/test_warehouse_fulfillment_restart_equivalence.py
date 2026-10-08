@@ -86,13 +86,28 @@ def _save(persistence, entity) -> None:
 def _snapshot(persistence, entities) -> dict[str, object]:
     order = _order(persistence, entities)
     allocation_ids = _allocation_ids(persistence, entities)
+    occurrence_ids = {
+        str(value)
+        for value in order.attributes.get("occurrence_ids", [])
+    }
+    for lot_id in entities.lot_ids:
+        lot = persistence.entity("warehouse_inventory_lot", lot_id)
+        assert lot is not None
+        occurrence_ids.update(
+            str(value) for value in lot.attributes.get("occurrence_ids", [])
+        )
+
+    task_ids = [
+        *(service_task_id("pick", allocation_id) for allocation_id in allocation_ids),
+        service_task_id("pack", order.id),
+        service_task_id("ship", order.id),
+    ]
     entity_keys = [
         ("warehouse_fulfillment_order", entities.order_id),
         *(("warehouse_inventory_lot", lot_id) for lot_id in entities.lot_ids),
         *(("warehouse_allocation", allocation_id) for allocation_id in allocation_ids),
-        *(("warehouse_fulfillment_service_task", service_task_id("pick", allocation_id)) for allocation_id in allocation_ids),
-        ("warehouse_fulfillment_service_task", service_task_id("pack", order.id)),
-        ("warehouse_fulfillment_service_task", service_task_id("ship", order.id)),
+        *(("warehouse_fulfillment_service_task", task_id) for task_id in task_ids),
+        *(("warehouse_inventory_occurrence", occurrence_id) for occurrence_id in sorted(occurrence_ids)),
     ]
 
     entities_snapshot = {}
@@ -106,9 +121,13 @@ def _snapshot(persistence, entities) -> dict[str, object]:
         )
 
     scheduled = tuple(persistence.scheduled_work())
+    completion_command_ids = tuple(
+        deterministic_id("command", "warehouse-service", task_id, "complete")
+        for task_id in task_ids
+    )
     commands = tuple(
-        persistence.command(work.command_id)
-        for work in scheduled
+        (command_id, persistence.command(command_id))
+        for command_id in completion_command_ids
     )
     return {
         "entities": entities_snapshot,
@@ -320,4 +339,4 @@ def test_terminal_flow_leaves_no_resource_or_schedule_leaks():
     assert snapshot["resource_reservations"] == ()
     assert snapshot["resource_release_intents"] == ()
     assert snapshot["scheduled_work"] == ()
-    assert snapshot["commands"] == ()
+    assert all(command is None for _, command in snapshot["commands"])
