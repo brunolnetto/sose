@@ -150,6 +150,31 @@ class ModelIntervention(BaseModel):
     transition_cost: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
     transition_time: float = Field(default=0.0, ge=0.0, allow_inf_nan=False)
 
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "intervention_id": self.intervention_id,
+            "intervention_class": self.intervention_class.value,
+            "set_values": deepcopy(self.set_values),
+            "remove_paths": list(self.remove_paths),
+            "mechanisms_added": list(self.mechanisms_added),
+            "mechanisms_removed": list(self.mechanisms_removed),
+            "mechanisms_changed": list(self.mechanisms_changed),
+            "operating_cost": self.operating_cost,
+            "transition_cost": self.transition_cost,
+            "transition_time": self.transition_time,
+        }
+
+    @property
+    def intervention_hash(self) -> str:
+        payload = json.dumps(
+            self.canonical_payload(),
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+            allow_nan=False,
+        ).encode("utf-8")
+        return sha256(payload).hexdigest()
+
     def apply(self, spec: ModelSpec) -> tuple[ModelSpec, StructuralDiff]:
         payload = deepcopy(spec.canonical_payload())
         for path in self.remove_paths:
