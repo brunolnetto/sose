@@ -57,7 +57,7 @@ class QueueReferenceDomain:
                 reference_id="synthetic-queue-v1",
                 reference_version="1",
                 process_manifest_domain="synthetic-reference-fixture",
-                specification_path="docs/organizational/evidence/synthetic-reference-v1/RESULT.md",
+                specification_path="docs/organizational/evidence/synthetic-a1-reference-v1/RESULT.md",
             ),
             parameters=tuple(
                 ParameterDefinition(
