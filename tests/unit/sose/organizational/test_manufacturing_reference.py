@@ -86,6 +86,8 @@ def test_manufacturing_preflight_executes_all_arms_and_preserves_expected_mechan
 
             assert nominal.observation.metrics["breakdown_count"] == 0.0
             assert yield_run.observation.metrics["breakdown_count"] == 0.0
+            assert nominal.observation.metrics["machine_reacquired"] == 0.0
+            assert yield_run.observation.metrics["machine_reacquired"] == 0.0
             assert downtime.observation.metrics["breakdown_count"] == 1.0
             assert downtime.observation.metrics["preemption_count"] == 1.0
             assert downtime.observation.metrics["machine_reacquired"] == 1.0
@@ -151,3 +153,16 @@ def test_manufacturing_has_no_demand_surge_or_quality_hold_experiment_arm() -> N
     assert plan.protocol.intervention_ids == ("machine_downtime", "yield_degradation")
     assert set(plan.protocol.parameter_ranges) == {"quantity"}
     assert plan.protocol.agency_levels == (AgencyLevel.A0,)
+
+
+
+def test_manufacturing_rejects_protocol_horizon_shorter_than_configured_downtime() -> None:
+    reference = ManufacturingReferenceDomain()
+    plan = build_manufacturing_preflight_plan_v1(reference)
+    short_protocol = plan.protocol.model_copy(update={"horizon": 2.0})
+    short_plan = plan.model_copy(update={"protocol": short_protocol})
+
+    import pytest
+
+    with pytest.raises(ValueError, match="horizon"):
+        run_domain_experiment(reference=reference, plan=short_plan)
