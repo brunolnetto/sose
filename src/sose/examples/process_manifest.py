@@ -307,22 +307,16 @@ def _registered_only_manifest(domain: str) -> ProcessManifest:
 
 
 def _warehouse_fulfillment_manifest() -> ProcessManifest:
-    """Audit the current Warehouse Fulfillment reference without inferring PC3."""
+    """Warehouse Fulfillment is a complete PC5 observable process canonical."""
 
-    evidence = set(_requirements_through(ProcessMaturity.PC2_PROCESS))
-    evidence.update(
-        {
-            ProcessEvidence.SAD_PATHS,
-            ProcessEvidence.DURABLE_STATE,
-            ProcessEvidence.REPLAY_IDEMPOTENCE,
-            ProcessEvidence.RECURRING_RECONCILIATION,
-        }
-    )
+    evidence = set(_requirements_through(ProcessMaturity.PC5_OBSERVABLE))
 
     simulation = "src/sose/examples/warehouse_fulfillment/simulation.py"
     entities = "src/sose/examples/warehouse_fulfillment/entities.py"
     statecharts = "src/sose/examples/warehouse_fulfillment/statecharts.py"
     definition = "src/sose/examples/warehouse_fulfillment/definition.py"
+    config = "src/sose/examples/warehouse_fulfillment/config.py"
+    observability = "src/sose/examples/warehouse_fulfillment/observability.py"
     happy_path = (
         "tests/integration/sose/examples/warehouse_fulfillment/"
         "test_warehouse_fulfillment_happy_path.py"
@@ -335,9 +329,17 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
         "tests/integration/sose/examples/warehouse_fulfillment/"
         "test_warehouse_fulfillment_sad_paths.py"
     )
+    service_capacity = (
+        "tests/integration/sose/examples/warehouse_fulfillment/"
+        "test_warehouse_fulfillment_service_capacity.py"
+    )
     restart = (
         "tests/e2e/sose/examples/warehouse_fulfillment/"
         "test_warehouse_fulfillment_restart_equivalence.py"
+    )
+    observability_test = (
+        "tests/unit/sose/examples/warehouse_fulfillment/"
+        "test_warehouse_fulfillment_observability.py"
     )
     recurring = "tests/unit/sose/jobs/test_recurring_domain_reconciliation.py"
     specification = "docs/examples/warehouse-fulfillment/specification.md"
@@ -349,28 +351,57 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
         ProcessEvidence.HAPPY_PATH: (happy_path,),
         ProcessEvidence.E2E_TERMINAL_OUTCOME: (happy_path,),
         ProcessEvidence.SAD_PATHS: (sad_paths,),
+        ProcessEvidence.FINITE_RESOURCES: (simulation, service_capacity),
+        ProcessEvidence.CAPACITY_CONTENTION: (service_capacity,),
+        ProcessEvidence.TIME_SEMANTICS: (simulation, config, service_capacity),
         ProcessEvidence.DURABLE_STATE: (simulation, restart),
+        ProcessEvidence.RESTART_EQUIVALENCE: (restart,),
         ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, sad_paths, restart),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
+        ProcessEvidence.FAULT_RECOVERY: (restart,),
+        ProcessEvidence.KPIS: (observability, observability_test, specification),
+        ProcessEvidence.ERD: (specification,),
+        ProcessEvidence.STATECHART_DOCUMENTATION: (specification,),
+        ProcessEvidence.PROCESS_DIAGRAM: (specification,),
+        ProcessEvidence.PROJECTION_CONTRACT: (
+            observability,
+            observability_test,
+            specification,
+        ),
+        ProcessEvidence.CONFIGURATION_DOCUMENTATION: (config, specification),
     }
     return ProcessManifest(
         domain="warehouse_fulfillment",
         evidence=frozenset(evidence),
         trigger="fulfillment_order_requested",
         terminal_outcomes=frozenset({"shipped"}),
+        resources=frozenset(
+            {"fulfillment_picker", "packing_station", "shipping_dock"}
+        ),
         sad_paths=frozenset(
             {
                 "insufficient_inventory",
                 "pack_before_all_allocations_picked",
                 "conflicting_correction_replay",
                 "correction_below_allocated_quantity",
+                "service_capacity_contention",
+                "restart_recovery",
+            }
+        ),
+        kpis=frozenset(
+            {
+                "completion",
+                "lead_time_seconds",
+                "fill_rate",
+                "transition_count",
+                "substitution_count",
+                "correction_count",
             }
         ),
         specification_path=specification,
         evidence_sources=evidence_sources,
         assessment_complete=True,
     )
-
 
 def _warehouse_management_manifest() -> ProcessManifest:
     # Audit evidence is intentionally explicit. Warehouse Management now has

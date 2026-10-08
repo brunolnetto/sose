@@ -112,35 +112,191 @@ different domain repeats the same ownership/projection/occurrence contract.
 
 ## 12. Process-canonical audit
 
-Current audited maturity: **PC2 — Process**.
+Current audited maturity: **PC5 — Observable**.
 
-The example proves the complete PC1 behavioral gate and reaches a durable
-terminal business outcome (`shipped`) from a requested fulfillment order. It
-also already contains evidence above PC2 for durable entity state, replay-safe
-immutable occurrences, and recurring job reconciliation.
+Warehouse Fulfillment now satisfies the complete standalone process-canonical contract:
 
-Those higher-level capabilities do not permit skipping PC3. The current PC3
-gaps are:
+- PC3: finite picker, packing-station, and shipping-dock resources; capacity contention; explicit service durations and queue wait;
+- PC4: durable resource/service state, replay idempotence, recurring reconciliation, fault recovery, and continuous-vs-rebuild restart equivalence;
+- PC5: KPI projection, persistent ERD, full StateChart documentation, normative process diagram, projection boundary, and configuration contract.
 
-- `FINITE_RESOURCES`;
-- `CAPACITY_CONTENTION`;
-- `TIME_SEMANTICS`.
+Inventory remains material/business state. Picker/packing/shipping resources are the finite operational capacities.
 
-Inventory quantity is deliberately not counted as a finite operational
-`Resource`. `InventoryLot.on_hand` and allocation ownership are business state
-and material constraints. The current process does not model a contested
-service-capacity primitive such as a picker, packing station, or shipping dock,
-nor does it make processing duration or queue wait part of the fulfillment
-semantics.
+## 13. Persistent ERD
 
-Additional audited gaps above PC3 include:
+```mermaid
+erDiagram
+    FULFILLMENT_ORDER ||--o{ ALLOCATION : owns
+    INVENTORY_LOT ||--o{ ALLOCATION : supplies
+    FULFILLMENT_ORDER ||--o{ INVENTORY_OCCURRENCE : correlates
+    INVENTORY_LOT ||--o{ INVENTORY_OCCURRENCE : records
+    FULFILLMENT_ORDER ||--o{ SERVICE_TASK : requires
 
-- `RESTART_EQUIVALENCE`: the existing rebuild test proves recovery, not a
-  continuous-vs-rebuild state comparison;
-- `STATECHART_DOCUMENTATION`: the current prose lifecycle summary is incomplete
-  because the executable FulfillmentOrder chart also contains cancellation
-  transitions and a `cancelled` state.
+    FULFILLMENT_ORDER {
+        string id
+        string state
+        float requested_quantity
+    }
+    ALLOCATION {
+        string id
+        string state
+        float quantity
+        boolean substituted
+    }
+    INVENTORY_LOT {
+        string id
+        string state
+        float on_hand
+        float allocated
+    }
+    INVENTORY_OCCURRENCE {
+        string id
+        string state
+        string kind
+        float delta_on_hand
+    }
+    SERVICE_TASK {
+        string id
+        string state
+        string stage
+        string resource_name
+        datetime requested_at
+        datetime acquired_at
+        datetime completion_due_at
+    }
+```
 
-The next promotion step is therefore operational rather than persistence-first:
-introduce explicit service capacity, contention/queueing, and time semantics,
-then re-run the audit before closing the remaining PC4/PC5 gaps.
+Durable ownership remains split deliberately: inventory lots own material projection; allocations own reservation/fulfillment claims; immutable occurrences own movement evidence; resource reservations own finite service capacity.
+
+## 14. StateCharts
+
+### FulfillmentOrder
+
+```mermaid
+stateDiagram-v2
+    [*] --> requested
+    requested --> allocated: allocate
+    allocated --> picking: start_pick
+    picking --> packed: pack
+    packed --> shipped: ship
+    requested --> cancelled: cancel
+    allocated --> cancelled: cancel
+```
+
+### Allocation
+
+```mermaid
+stateDiagram-v2
+    [*] --> committed
+    committed --> picked: pick
+    committed --> released: release
+    picked --> shipped: ship
+```
+
+### FulfillmentServiceTask
+
+```mermaid
+stateDiagram-v2
+    [*] --> queued
+    queued --> in_progress: start
+    in_progress --> completed: complete
+```
+
+### InventoryOccurrence
+
+```mermaid
+stateDiagram-v2
+    [*] --> captured
+    captured --> committed: commit
+```
+
+## 15. Normative process flow
+
+```mermaid
+flowchart TD
+    A[Requested order] --> B{Inventory sufficient?}
+    B -- no --> X[Remain requested / no partial allocation]
+    B -- yes --> C[Persist complete allocations]
+    C --> D[Queue picker tasks]
+    D --> E[Acquire finite picker capacity]
+    E --> F[Wait pick duration]
+    F --> G[Commit pick occurrences + lot decrements]
+    G --> H{All allocations picked?}
+    H -- no --> D
+    H -- yes --> I[Queue packing task]
+    I --> J[Acquire packing station]
+    J --> K[Wait pack duration]
+    K --> L[Commit pack occurrence]
+    L --> M[Queue shipping task]
+    M --> N[Acquire shipping dock]
+    N --> O[Wait ship duration]
+    O --> P[Commit ship occurrence]
+    P --> Q[Order shipped]
+```
+
+Service completion never creates an early business effect: the durable service task completes first, then reconciliation applies the idempotent business transition and releases capacity.
+
+## 16. KPI contract
+
+`warehouse_fulfillment_kpis()` is a read-only projection over persisted facts.
+
+| KPI | Definition |
+|---|---|
+| `completion` | true only when the durable order state is `shipped` |
+| `lead_time_seconds` | shipped order `updated_at - created_at`; null before shipment |
+| `fulfilled_quantity` | picked quantity for a shipped order; otherwise zero |
+| `fill_rate` | fulfilled quantity / requested quantity |
+| `transition_count` | correlated immutable lifecycle transition events |
+| `substitution_count` | durable allocations marked as substitutions |
+| `correction_count` | durable correction occurrences |
+
+KPIs are descriptive outputs. They do not advance logical time, mutate inventory, dispatch commands, or become operational truth.
+
+## 17. Projection contract
+
+`warehouse_fulfillment_projection()` exposes:
+
+- order identity/state/completion;
+- requested quantity;
+- allocation count and allocated quantity;
+- picked quantity;
+- substitution allocation count;
+- immutable occurrence count;
+- terminal lead time.
+
+Rules:
+
+1. projection is read-only and idempotent;
+2. a missing referenced order/allocation is an error, not an invented row;
+3. values are derived only from persisted entities/evidence;
+4. terminal lead time remains null before `shipped`;
+5. projection never becomes a mutation API or source of truth.
+
+## 18. Configuration contract
+
+The recurring job uses `WarehouseFulfillmentConfig`.
+
+| Field | Default | Meaning | Runtime mutable |
+|---|---|---|---|
+| `start_at` | reference origin | logical job origin | no |
+| `tick_step` | 1 hour | recurring logical step | yes |
+| `random_seed` | 1429 | deterministic root seed | yes |
+| `requested_quantity` | 10 | requested order quantity | no |
+| `primary_on_hand` | 6 | initial primary inventory | no |
+| `substitute_on_hand` | 5 | initial substitute inventory | no |
+| `allow_substitute` | true | substitution policy | no |
+| `picker_capacity` | 1 | finite picker capacity | no |
+| `packing_station_capacity` | 1 | finite packing capacity | no |
+| `shipping_dock_capacity` | 1 | finite shipping capacity | no |
+| `pick_duration` | 1 hour | configured pick service time | no |
+| `pack_duration` | 1 hour | configured pack service time | no |
+| `ship_duration` | 1 hour | configured ship service time | no |
+| `auto_progress_fulfillment` | true | recurring progression toggle | yes |
+
+Configuration is an input contract and cannot bypass StateCharts, durable occurrences, resource ownership, or inventory invariants.
+
+## 19. Promotion decision
+
+Warehouse Fulfillment is promoted to **PC5 — Observable**.
+
+PC6 remains intentionally unclaimed. Promotion to PC6 requires stable cross-domain ingress/egress contracts and tested execution as part of the Trading Company composition.
