@@ -599,3 +599,73 @@ flowchart LR
 | happy-path multi-restart | runtime/reconcilers | `test_manufacturing_restart_equivalence.py` |
 | quality hold/rework | quality reconcilers | `test_manufacturing_quality_rework.py` |
 | rework restart equivalence | quality reconcilers | `test_manufacturing_rework_restart.py` |
+
+
+## 14. KPI contract
+
+Manufacturing exposes a read-only KPI projection from durable operational truth through
+`manufacturing_kpis()`. The KPI layer does not advance the simulation, dispatch
+commands, alter inventory, or write entity state.
+
+| KPI | Type | Definition |
+|---|---|---|
+| `completed` | boolean | true only when `ProductionOrder.state == completed` |
+| `lead_time_seconds` | float or null | `ProductionOrder.updated_at - created_at` after completion; null before completion |
+| `output_quantity` | float | durable `finished_goods` Container level |
+| `yield_ratio` | float or null | durable finished-goods output divided by planned order quantity after completion; null while the order is incomplete |
+| `transition_count` | integer | immutable correlated `entity.state_transition` event count |
+| `rework_count` | integer | correlated transitions entering/triggering production rework |
+| `breakdown_count` | integer | correlated transitions entering/triggering `machine_down` |
+
+These KPIs are descriptive outputs. They are not authoritative process state and they
+must not be fed back as exogenous configuration merely because they are observable.
+
+## 15. Projection contract
+
+`manufacturing_projection()` provides the canonical observable projection for the
+reference process.
+
+| Field | Source |
+|---|---|
+| `production_order_id` | persisted ProductionOrder identity |
+| `operation_id` | persisted Operation identity |
+| `order_state` | persisted ProductionOrder state |
+| `operation_state` | persisted Operation state |
+| `completed` | derived from persisted order state |
+| `planned_quantity` | persisted ProductionOrder attributes |
+| `raw_material_quantity` | durable `raw_material` Container |
+| `finished_goods_quantity` | durable `finished_goods` Container |
+| `wip_item_count` | durable items currently in Store `wip_buffer` |
+| `lead_time_seconds` | completed order timestamps; null while incomplete |
+
+Projection rules:
+
+1. projection is **read-only** and idempotent;
+2. missing Manufacturing business entities are an error rather than an invented empty row;
+3. absent durable Container state projects as quantity zero only for the named reference
+   Container fields;
+4. terminal metrics remain null until their prerequisites exist;
+5. the projection never becomes the source of operational truth;
+6. presentation layers, analytical sinks, or experiment reports may consume this
+   contract but must not mutate process state through it.
+
+## 16. Configuration contract
+
+The persistent Manufacturing job uses `ManufacturingConfig`.
+
+| Field | Default | Constraint / meaning | Runtime mutable |
+|---|---|---|---|
+| `start_at` | reference origin | logical start time of the job | no |
+| `tick_step` | 1 hour | logical recurring-job step | yes |
+| `random_seed` | 84 | deterministic stochastic root seed | yes |
+| `quantity` | 10.0 | planned production quantity, strictly positive and within reference capacities | no |
+| `auto_seed_material` | true | automatically make reference raw material available during recurring progression | yes |
+| `quality_outcome` | `pass` | recurring reference quality branch: `pass` or `hold` | yes |
+
+`start_at` and `quantity` define initial job/world identity for the reference flow and
+are not runtime-mutable. The mutable fields are the explicit
+`DomainDefinition.runtime_mutable_fields` declared by Manufacturing.
+
+Configuration changes do not bypass StateCharts, resource ownership, inventory
+operations, or durable reconciliation. A configuration surface is therefore an input
+contract, not an alternative mutation API.

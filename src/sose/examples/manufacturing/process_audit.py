@@ -25,6 +25,9 @@ def process_manifest() -> ProcessManifest:
             ProcessEvidence.ERD,
             ProcessEvidence.STATECHART_DOCUMENTATION,
             ProcessEvidence.PROCESS_DIAGRAM,
+            ProcessEvidence.KPIS,
+            ProcessEvidence.PROJECTION_CONTRACT,
+            ProcessEvidence.CONFIGURATION_DOCUMENTATION,
         }
     )
 
@@ -70,6 +73,12 @@ def process_manifest() -> ProcessManifest:
         "test_coverage_manufacturing_edges.py"
     )
     recurring = "tests/e2e/sose/jobs/test_recurring_reference_complete.py"
+    observability = "src/sose/examples/manufacturing/observability.py"
+    config = "src/sose/examples/manufacturing/config.py"
+    observability_test = (
+        "tests/unit/sose/examples/manufacturing/"
+        "test_manufacturing_observability.py"
+    )
 
     evidence_sources: dict[ProcessEvidence, tuple[str, ...]] = {
         ProcessEvidence.ENTITIES: (entities, happy_path),
@@ -106,6 +115,17 @@ def process_manifest() -> ProcessManifest:
         ProcessEvidence.ERD: (specification,),
         ProcessEvidence.STATECHART_DOCUMENTATION: (statecharts, specification),
         ProcessEvidence.PROCESS_DIAGRAM: (specification,),
+        ProcessEvidence.KPIS: (observability, observability_test, specification),
+        ProcessEvidence.PROJECTION_CONTRACT: (
+            observability,
+            observability_test,
+            specification,
+        ),
+        ProcessEvidence.CONFIGURATION_DOCUMENTATION: (
+            config,
+            definition,
+            specification,
+        ),
     }
 
     return ProcessManifest(
@@ -120,6 +140,17 @@ def process_manifest() -> ProcessManifest:
                 "capacity_contention",
                 "machine_breakdown",
                 "quality_hold_rework",
+            }
+        ),
+        kpis=frozenset(
+            {
+                "completion",
+                "lead_time_seconds",
+                "output_quantity",
+                "yield_ratio",
+                "transition_count",
+                "rework_count",
+                "breakdown_count",
             }
         ),
         specification_path=specification,
