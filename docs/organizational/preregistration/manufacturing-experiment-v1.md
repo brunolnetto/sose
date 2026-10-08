@@ -4,7 +4,8 @@
 - **Domain:** Manufacturing
 - **Related PRD:** PRD-0004
 - **Related TRD:** TRD-0004
-- **Canonical machine-readable protocol:** `manufacturing-experiment-v1.json`
+- **Scientific preregistration draft:** `manufacturing-experiment-v1.json`
+- **Canonical executable protocol at freeze:** `manufacturing-experiment-v1-protocol.json` (`ExperimentProtocol` schema; not yet materialized)
 
 ## Scientific question
 
@@ -47,8 +48,10 @@ Before official execution:
 
 1. machine-downtime and yield-degradation arms must pass semantic preflight;
 2. all eligibility/falsification rules must be finalized;
-3. the JSON protocol must be canonicalized and hash-addressed;
-4. PRD/TRD/protocol/code provenance must be bound;
-5. status changes to `frozen`.
+3. the Manufacturing DomainReference adapter must be implemented and accepted;
+4. generic conformance and restart preflight must pass;
+5. a real `ExperimentProtocol` JSON must be generated/validated from the accepted adapter, including the exact `baseline_model_spec_hash`;
+6. PRD/TRD/protocol/code provenance must be hash-bound;
+7. status changes to `frozen`.
 
 No official result may be executed/inspected before that freeze.
