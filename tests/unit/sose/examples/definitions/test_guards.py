@@ -170,7 +170,7 @@ def test_warehouse_reconcile_exits_when_order_already_shipped(monkeypatch):
     order.state = "shipped"
     _save(persistence, order)
 
-    for name in ("allocate_order", "pick_order", "pack_order", "ship_order"):
+    for name in ("allocate_order", "reconcile_fulfillment_services"):
         monkeypatch.setattr(
             warehouse_definition,
             name,
