@@ -68,10 +68,11 @@ It shall not expose unsupported generic capacity/load knobs.
 
 ### Exogenous parameter space
 
-The v1 preregistration may use:
+The v1 DOE uses one numeric exogenous axis:
 
-- planned quantity, within a bounded range verified by the reference domain;
-- quality branch as a categorical exogenous condition only if modeled as configuration, not inferred from outcomes.
+- `quantity`, with executable domain bound `0 < quantity <= 1000` and preregistered range `[1, 1000]`.
+
+`quality_outcome` is intentionally **not** a DOE axis because the generic framework parameter contract is numeric and the domain expresses quality branch categorically. Quality-hold/rework remains process/invariant evidence and may become a later experiment only through an explicit compatible contract rather than numeric encoding.
 
 `auto_seed_material` is treated as a setup/environment flag, not a continuous scientific axis.
 
@@ -86,7 +87,7 @@ Candidate intervention arms:
 - nominal;
 - machine downtime scenario;
 - yield degradation scenario;
-- demand surge only if preflight proves a durable workload/pressure effect.
+- demand surge excluded from v1.
 
 ### Outcomes
 
@@ -210,7 +211,7 @@ Rejected because no Manufacturing-specific local adaptive policy has yet been de
 
 ## 14. Implementation plan
 
-1. preflight candidate v1 controls/scenarios;
+1. preflight downtime/yield scenario semantics against the generic adapter;
 2. finalize and freeze preregistration;
 3. add Manufacturing DomainReference adapter;
 4. pass generic conformance;
