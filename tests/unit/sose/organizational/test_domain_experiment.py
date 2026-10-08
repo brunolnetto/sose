@@ -422,3 +422,35 @@ def test_intervention_hash_is_canonical_and_worlds_bind_it() -> None:
 
     assert capacity.intervention_hash == reference._interventions[0].intervention_hash
     assert baseline.intervention_hash is None
+
+
+
+def test_protocol_may_select_a_supported_intervention_subset() -> None:
+    reference = _reference()
+    protocol = _protocol(reference).model_copy(
+        update={"intervention_ids": ("capacity-up",)}
+    )
+
+    worlds = build_experiment_worlds(
+        reference=reference,
+        protocol=protocol,
+        agency_configurations=_agency(),
+        design_seed=6,
+    )
+
+    assert {world.arm_id for world in worlds} == {"baseline", "capacity-up"}
+
+
+def test_protocol_rejects_unknown_intervention_id() -> None:
+    reference = _reference()
+    protocol = _protocol(reference).model_copy(
+        update={"intervention_ids": ("capacity-up", "unknown-arm")}
+    )
+
+    with pytest.raises(ValueError, match="unknown intervention"):
+        build_experiment_worlds(
+            reference=reference,
+            protocol=protocol,
+            agency_configurations=_agency(),
+            design_seed=6,
+        )
