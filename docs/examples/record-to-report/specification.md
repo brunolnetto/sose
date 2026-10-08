@@ -176,22 +176,174 @@ Promotion is based on executable evidence for journal posting, reconciliation an
 
 ## 12. Process-canonical audit
 
-Current audited maturity: **PC4 — Durable**.
+Current audited maturity: **PC5 — Observable**.
 
-The PC0–PC4 chain is backed by executable provenance. The restart-equivalence gate no longer compares only the final period/task state: continuous execution and rebuilt execution must produce equal `operational_snapshot()` output, using the same complete durable-continuation vocabulary as the repository recovery and chaos gates. Replay safety is independently exercised by idempotent terminal journal/reconciliation handling, deterministic adjustment creation, and re-applying an already-posted adjustment without duplicating events. Finite posting outages and close-team shortages demonstrate deferred progress and recovery without leaking resource ownership or mutating lifecycle state directly.
+The PC0–PC4 chain remains backed by executable provenance: continuous/rebuilt execution
+must converge on the complete durable operational snapshot; replay safety is exercised
+through deterministic adjustment/close identities and idempotent reconciliation; finite
+posting/close-team scenarios recover without leaking ownership.
 
-For process completion, the audited terminal outcome is `close_task_completed`. `AccountingPeriod(closed)` is intentionally not treated as a final lifecycle state because the executable StateChart permits controlled reopen/reclose; the completed CloseTask is the durable terminal occurrence of one close cycle.
+For process completion, `close_task_completed` remains the terminal occurrence of one
+close cycle. `AccountingPeriod(closed)` is deliberately not treated as a globally
+terminal state because controlled reopen/reclose is executable behavior.
 
-Above PC4, the current specification supports one PC5 claim:
+PC5 is now backed by:
 
-- `STATECHART_DOCUMENTATION` — section 3 documents JournalEntry, ReconciliationItem, Adjustment, CloseTask, and AccountingPeriod lifecycles.
+- executable read-only projection and KPIs;
+- normative persistent ERD;
+- normative StateChart documentation;
+- normative end-to-end Mermaid process diagram;
+- explicit configuration contract.
 
-The remaining PC5 gaps are exactly:
+PC6 remains unmet: cross-domain accounting ingress/egress contracts and tested composed
+execution are separate evidence.
 
-- `KPIS`;
-- `ERD`;
-- `PROCESS_DIAGRAM`;
-- `PROJECTION_CONTRACT`;
-- `CONFIGURATION_DOCUMENTATION`.
+## 13. Normative persistent ERD
 
-Section 4 describes durable ownership, but it is not an explicit entity-relationship diagram and is therefore not credited as `ERD`. The indented state/process flows are also not credited as `PROCESS_DIAGRAM`: the PC5 contract requires a normative end-to-end Mermaid diagram. The current durable model likewise does not by itself define a consumer projection contract, and the presence of configurable runtime fields is not equivalent to documented configuration semantics.
+```mermaid
+erDiagram
+    ACCOUNTING_PERIOD ||--o{ JOURNAL_ENTRY : contains
+    ACCOUNTING_PERIOD ||--o{ RECONCILIATION_ITEM : contains
+    ACCOUNTING_PERIOD ||--o{ CLOSE_TASK : closes
+    JOURNAL_ENTRY ||--|| RECONCILIATION_ITEM : reconciles
+    RECONCILIATION_ITEM ||--o| ADJUSTMENT : may_require
+
+    ACCOUNTING_PERIOD {
+        string id
+        string state
+        int reopen_count
+        int version
+    }
+    JOURNAL_ENTRY {
+        string id
+        string state
+        string period_id
+        float amount
+        string currency
+    }
+    RECONCILIATION_ITEM {
+        string id
+        string state
+        string period_id
+        string journal_id
+        float amount
+    }
+    ADJUSTMENT {
+        string id
+        string state
+        string reconciliation_id
+        float amount
+    }
+    CLOSE_TASK {
+        string id
+        string state
+        string period_id
+        int ordinal
+    }
+```
+
+The relationships are semantic/correlational. Durable correlation, deterministic
+identity, immutable events, ScheduledWork, Resource records, scenario state, and
+SimulationPosition remain part of operational truth without being collapsed into the
+business ERD.
+
+## 14. Normative end-to-end process diagram
+
+```mermaid
+flowchart TD
+    A["JournalEntry(drafted)"] --> B["submitted"]
+    B -->|post| C["posted"]
+    B -->|reject| X["rejected"]
+    C --> D["ReconciliationItem(reconciling)"]
+    D -->|match| E["matched"]
+    D -->|unmatched| F["unmatched"]
+    F --> G["adjustment_required"]
+    G --> H["Adjustment(proposed → submitted → approved → posted)"]
+    H --> I["ReconciliationItem(reconciled)"]
+    E --> J["durable CloseTask schedule"]
+    I --> J
+    J --> K["CloseTask(in_progress)"]
+    K -->|close accountant + prerequisites| L["AccountingPeriod(close_ready)"]
+    L --> M["AccountingPeriod(closed)"]
+    M --> N["CloseTask(completed)"]
+    M -->|controlled reopen| O["AccountingPeriod(reopened)"]
+    O --> P["new deterministic CloseTask"]
+    P --> J
+```
+
+The close calendar starts work but never bypasses accounting prerequisites or
+close-accountant ownership.
+
+## 15. KPI contract
+
+`record_to_report_kpis()` exposes read-only KPIs derived from durable state and
+immutable transition history.
+
+| KPI | Type | Definition |
+|---|---|---|
+| `close_cycle_seconds` | float or null | current deterministic CloseTask creation to the first immutable transition into `completed`; null before completion |
+| `amount` | float | durable JournalEntry amount |
+| `transition_count` | integer | immutable process transitions through the current close-cycle ordinal |
+| `rejected_posting_count` | integer | JournalEntry transitions entering `rejected` |
+| `unmatched_count` | integer | ReconciliationItem transitions entering `unmatched` |
+| `adjustment_count` | integer | 1 when the deterministic Adjustment exists, otherwise 0 |
+| `adjustment_posted_count` | integer | Adjustment transitions entering `posted` |
+| `close_count` | integer | AccountingPeriod transitions entering `closed` |
+| `reopen_count` | integer | AccountingPeriod transitions entering `reopened` |
+| `close_task_completed_count` | integer | CloseTask transitions entering `completed` |
+| `closed` | boolean | current AccountingPeriod state is `closed` |
+
+A new reopen/reclose cycle adds a new deterministic CloseTask occurrence. Previous close
+events remain immutable and continue contributing to historical counts.
+
+## 16. Projection contract
+
+`record_to_report_projection()` is the canonical read-only projection.
+
+| Field | Durable source |
+|---|---|
+| `period_id` | persisted AccountingPeriod |
+| `journal_id` | persisted reference JournalEntry |
+| `reconciliation_id` | persisted ReconciliationItem |
+| `adjustment_id` | deterministic/persisted Adjustment when created |
+| `close_task_id` | deterministic CloseTask for current close-cycle ordinal |
+| entity state fields | corresponding persisted entities |
+| `amount`, `currency` | JournalEntry attributes |
+| `closed` | current AccountingPeriod state |
+| `close_cycle_ordinal` | persisted `reopen_count + 1` |
+| `close_cycle_seconds` | current CloseTask creation time to its first immutable transition into `completed` |
+
+Projection rules:
+
+1. projection is read-only and idempotent;
+2. required seeded entities missing from durable state are errors;
+3. Adjustment absence before causal creation is null, never fabricated state;
+4. controlled reopen selects a new deterministic CloseTask rather than rewriting the old one;
+5. historical closes/reopens remain observable in immutable event history;
+6. consumers cannot mutate process state through the projection.
+
+## 17. Configuration contract
+
+The recurring R2R reference uses `RecordToReportConfig`.
+
+| Field | Default | Constraint / operational meaning | Runtime mutable |
+|---|---|---|---|
+| `start_at` | reference `ORIGIN` | logical process start | no |
+| `tick_step` | 1 hour | recurring logical step | yes |
+| `random_seed` | 420 | deterministic stochastic root seed | yes |
+| `amount` | 1000.0 | journal amount, strictly positive | no |
+| `currency` | USD | journal/reconciliation currency | no |
+| `reconciliation_outcome` | `match` | `match` or `unmatched` branch | yes |
+| `close_delay` | 2 hours | positive durable delay before close work starts | yes |
+
+The runtime-mutable fields are exactly `tick_step`, `random_seed`,
+`reconciliation_outcome`, and `close_delay`.
+
+Configuration does not bypass StateCharts, accounting prerequisites, ScheduledWork,
+resource ownership, or scenario semantics.
+
+## 18. PC5 promotion boundary
+
+This qualifies Record-to-Report as **PC5 — Observable**. It does not define the
+cross-domain accounting outputs required for PC6 Trading Company composition, and it
+does not authorize an Organizational Dynamics experiment.

@@ -7,13 +7,13 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id
 from sose.core.randomness import RandomSource
 from sose.core.runtime import ResourceDefinition
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.memory import MemoryPersistence
 
+from .identity import adjustment_id, close_task_id, flow_correlation_id
 from .entities import (
     AccountingPeriod,
     Adjustment,
@@ -41,31 +41,6 @@ class R2REntities:
     journal_id: str
     reconciliation_id: str
     close_task_id: str
-
-
-def flow_correlation_id(period_id: str) -> str:
-    return deterministic_id("r2r-flow", period_id)
-
-
-def adjustment_id(reconciliation_id: str) -> str:
-    return deterministic_id(
-        "entity",
-        "accounting_adjustment",
-        "r2r-reference",
-        reconciliation_id,
-        "adjustment-1",
-    )
-
-
-def close_task_id(period_id: str, ordinal: int) -> str:
-    return deterministic_id(
-        "entity",
-        "close_task",
-        "r2r-reference",
-        period_id,
-        "close-task",
-        ordinal,
-    )
 
 
 def build_runtime(
