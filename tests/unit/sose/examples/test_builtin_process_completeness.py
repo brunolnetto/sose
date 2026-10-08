@@ -78,19 +78,20 @@ def test_warehouse_fulfillment_audit_stops_at_pc2_and_preserves_audited_higher_e
     assert ProcessEvidence.CONFIGURATION_DOCUMENTATION not in manifest.evidence
 
 
-def test_warehouse_management_audit_exposes_restart_equivalence_as_pc4_gap() -> None:
+def test_warehouse_management_audit_reaches_pc5_after_restart_equivalence() -> None:
     manifest = builtin_process_manifests()["warehouse_management"]
 
     assert manifest.assessment_complete
-    assert manifest.maturity is ProcessMaturity.PC3_OPERATIONAL
-    assert not manifest.is_complete_process_canonical
+    assert manifest.maturity is ProcessMaturity.PC5_OBSERVABLE
+    assert manifest.is_complete_process_canonical
     assert not manifest.is_integrated_process_canonical
     assert "dock" in manifest.resources
     assert "stock" not in manifest.resources
     assert "on_time" in manifest.kpis
-    assert ProcessEvidence.RESTART_EQUIVALENCE not in manifest.evidence
+    assert ProcessEvidence.RESTART_EQUIVALENCE in manifest.evidence
     assert ProcessEvidence.FAULT_RECOVERY in manifest.evidence
     assert ProcessEvidence.KPIS in manifest.evidence
+    assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset()
 
 
 def test_every_audited_process_claim_has_provenance_and_existing_sources() -> None:
