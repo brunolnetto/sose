@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
@@ -117,7 +118,7 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
         contract_version=1,
         handler=_intent_handler(
             intent_name="composition.settle_customer_payment",
-            entity_type="payment",
+            entity_type="card_payment",
             entity_id=fixtures.payments.payment_id,
         ),
     )
@@ -196,6 +197,38 @@ def _consume_next(
     return consumption.consumer_effect_id
 
 
+class _CausalCommandFactory:
+    def __init__(
+        self,
+        delegate,
+        *,
+        correlation_id: str,
+        caused_by: Command,
+    ) -> None:
+        self._delegate = delegate
+        self._correlation_id = correlation_id
+        self._caused_by = caused_by
+
+    def create(self, name: str, **kwargs):
+        kwargs["correlation_id"] = self._correlation_id
+        kwargs["caused_by"] = self._caused_by
+        return self._delegate.create(name, **kwargs)
+
+
+@contextmanager
+def _causal_command_scope(engine, *, intent: Command, correlation_id: str):
+    original = engine.context.commands
+    engine.context.commands = _CausalCommandFactory(
+        original,
+        correlation_id=correlation_id,
+        caused_by=intent,
+    )
+    try:
+        yield
+    finally:
+        engine.context.commands = original
+
+
 def _recovery_time(
     persistence: MemoryPersistence,
     requested_at: datetime,
@@ -254,69 +287,96 @@ def _execute_intent(
 
     if intent.name == "composition.fulfill_customer_order":
         _, engine = fulfillment.build_runtime(persistence, now=intent.due_at)
-        if not fulfillment.allocate_order(
-            persistence,
+        with _causal_command_scope(
             engine,
-            entities=fixtures.fulfillment,
+            intent=intent,
+            correlation_id=correlation_id,
         ):
-            raise RuntimeError("warehouse fulfillment allocation failed")
-        fulfillment.pick_order(persistence, engine, entities=fixtures.fulfillment)
-        fulfillment.pack_order(persistence, engine, entities=fixtures.fulfillment)
-        fulfillment.ship_order(persistence, engine, entities=fixtures.fulfillment)
+            if not fulfillment.allocate_order(
+                persistence,
+                engine,
+                entities=fixtures.fulfillment,
+            ):
+                raise RuntimeError("warehouse fulfillment allocation failed")
+            fulfillment.pick_order(persistence, engine, entities=fixtures.fulfillment)
+            fulfillment.pack_order(persistence, engine, entities=fixtures.fulfillment)
+            fulfillment.ship_order(persistence, engine, entities=fixtures.fulfillment)
 
     elif intent.name == "composition.deliver_shipment":
+        for work in persistence.scheduled_work():
+            scheduled = persistence.command(work.command_id)
+            if (
+                scheduled is not None
+                and scheduled.entity_type == "shipment"
+                and scheduled.entity_id == fixtures.logistics.shipment_id
+                and scheduled.name == "schedule_pickup"
+            ):
+                with persistence.transaction() as uow:
+                    uow.delete_scheduled_work(work.work_id)
+                    uow.delete_command(scheduled.command_id)
+
         recovery_time = _recovery_time(persistence, intent.due_at)
         _, engine = logistics.build_runtime(persistence, now=recovery_time)
         backend = SimPyBackend(origin=recovery_time)
-        engine.rebuild_backend(backend)
-        if backend.now < intent.due_at:
-            backend.run_until(intent.due_at)
-        pending = tuple(
-            work
-            for work in persistence.scheduled_work()
-            if persistence.command(work.command_id) is not None
-            and persistence.command(work.command_id).entity_type == "shipment"
-            and persistence.command(work.command_id).entity_id == fixtures.logistics.shipment_id
-        )
-        if not pending:
-            raise RuntimeError("logistics pickup work was not persisted")
-        backend.run_until(min(work.due_at for work in pending))
-        if not logistics.reconcile_pickup(
-            persistence,
+        with _causal_command_scope(
             engine,
-            backend,
-            entities=fixtures.logistics,
+            intent=intent,
+            correlation_id=correlation_id,
         ):
-            raise RuntimeError("logistics pickup failed")
-        if not logistics.reconcile_origin_hub(
-            persistence,
-            engine,
-            backend,
-            entities=fixtures.logistics,
-        ):
-            raise RuntimeError("logistics origin-hub handling failed")
-        if not logistics.reconcile_transfer(
-            persistence,
-            engine,
-            backend,
-            entities=fixtures.logistics,
-        ):
-            raise RuntimeError("logistics transfer failed")
-        if not logistics.reconcile_delivery_dispatch(
-            persistence,
-            engine,
-            backend,
-            entities=fixtures.logistics,
-            ordinal=1,
-        ):
-            raise RuntimeError("logistics delivery dispatch failed")
-        logistics.reconcile_delivery_success(
-            persistence,
-            engine,
-            backend,
-            entities=fixtures.logistics,
-            ordinal=1,
-        )
+            shipment = persistence.entity("shipment", fixtures.logistics.shipment_id)
+            if shipment is None:
+                raise RuntimeError("logistics shipment disappeared")
+            pickup_due = max(recovery_time, intent.due_at) + timedelta(hours=1)
+            pickup = engine.context.commands.create(
+                "schedule_pickup",
+                target=shipment,
+                due_at=pickup_due,
+                key=(
+                    "trading-company",
+                    shipment.id,
+                    "schedule-pickup",
+                    intent.command_id,
+                ),
+            )
+            engine.context.schedules.at(pickup_due, command=pickup)
+            engine.rebuild_backend(backend)
+            backend.run_until(pickup_due)
+            if not logistics.reconcile_pickup(
+                persistence,
+                engine,
+                backend,
+                entities=fixtures.logistics,
+            ):
+                raise RuntimeError("logistics pickup failed")
+            if not logistics.reconcile_origin_hub(
+                persistence,
+                engine,
+                backend,
+                entities=fixtures.logistics,
+            ):
+                raise RuntimeError("logistics origin-hub handling failed")
+            if not logistics.reconcile_transfer(
+                persistence,
+                engine,
+                backend,
+                entities=fixtures.logistics,
+            ):
+                raise RuntimeError("logistics transfer failed")
+            if not logistics.reconcile_delivery_dispatch(
+                persistence,
+                engine,
+                backend,
+                entities=fixtures.logistics,
+                ordinal=1,
+            ):
+                raise RuntimeError("logistics delivery dispatch failed")
+            logistics.reconcile_delivery_success(
+                persistence,
+                engine,
+                backend,
+                entities=fixtures.logistics,
+                ordinal=1,
+            )
 
     elif intent.name == "composition.complete_external_fulfillment":
         _, engine = o2c.build_runtime(persistence, now=intent.due_at)
@@ -371,28 +431,33 @@ def _execute_intent(
         engine.rebuild_backend(backend)
         if backend.now < intent.due_at:
             backend.run_until(intent.due_at)
-        if not payments.reconcile_authorization(
-            persistence,
+        with _causal_command_scope(
             engine,
-            backend,
-            entities=fixtures.payments,
-            outcome="authorize",
+            intent=intent,
+            correlation_id=correlation_id,
         ):
-            raise RuntimeError("payment authorization failed")
-        settlement_at = payments.reconcile_capture_and_schedule_settlement(
-            persistence,
-            engine,
-            backend,
-            entities=fixtures.payments,
-        )
-        backend.run_until(settlement_at)
-        payments.reconcile_settlement(
-            persistence,
-            engine,
-            backend,
-            entities=fixtures.payments,
-            outcome="success",
-        )
+            if not payments.reconcile_authorization(
+                persistence,
+                engine,
+                backend,
+                entities=fixtures.payments,
+                outcome="authorize",
+            ):
+                raise RuntimeError("payment authorization failed")
+            settlement_at = payments.reconcile_capture_and_schedule_settlement(
+                persistence,
+                engine,
+                backend,
+                entities=fixtures.payments,
+            )
+            backend.run_until(settlement_at)
+            payments.reconcile_settlement(
+                persistence,
+                engine,
+                backend,
+                entities=fixtures.payments,
+                outcome="success",
+            )
 
     elif intent.name == "composition.post_customer_journal":
         recovery_time = _recovery_time(persistence, intent.due_at)
@@ -401,13 +466,18 @@ def _execute_intent(
         engine.rebuild_backend(backend)
         if backend.now < intent.due_at:
             backend.run_until(intent.due_at)
-        if not r2r.submit_and_post_journal(
-            persistence,
+        with _causal_command_scope(
             engine,
-            backend,
-            entities=fixtures.r2r,
+            intent=intent,
+            correlation_id=correlation_id,
         ):
-            raise RuntimeError("R2R journal posting failed")
+            if not r2r.submit_and_post_journal(
+                persistence,
+                engine,
+                backend,
+                entities=fixtures.r2r,
+            ):
+                raise RuntimeError("R2R journal posting failed")
 
     else:
         raise ValueError(f"unsupported Trading Company customer intent: {intent.name}")
