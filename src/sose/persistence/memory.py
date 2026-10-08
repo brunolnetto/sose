@@ -31,6 +31,7 @@ from sose.core.runtime import (
 )
 from sose.domain.entity import Entity
 from sose.domain.delivery import DomainDelivery
+from sose.composition.model import BoundaryConsumption, BoundaryDelivery, BoundaryMessage
 from sose.scenarios.model import ScenarioRuntimeState
 from sose.jobs.model import SimulationJobState
 from sose.sinks.model import SinkCheckpoint, SinkDelivery
@@ -65,6 +66,9 @@ class _State:
     job_states: dict[str, SimulationJobState] = field(default_factory=dict)
     sink_deliveries: dict[str, SinkDelivery] = field(default_factory=dict)
     sink_checkpoints: dict[tuple[str, str], SinkCheckpoint] = field(default_factory=dict)
+    boundary_messages: dict[str, BoundaryMessage] = field(default_factory=dict)
+    boundary_deliveries: dict[str, BoundaryDelivery] = field(default_factory=dict)
+    boundary_consumptions: dict[str, BoundaryConsumption] = field(default_factory=dict)
     domain_deliveries: dict[str, DomainDelivery] = field(default_factory=dict)
     committed_tick: int = -1
 
@@ -120,6 +124,53 @@ class MemoryUnitOfWork:
         self._working.job_states[state.job_id] = deepcopy(state)
         self._mark_dirty("job_states", state.job_id)
 
+
+    def get_boundary_message(self, message_id: str) -> BoundaryMessage | None:
+        value = self._working.boundary_messages.get(message_id)
+        return deepcopy(value) if value else None
+
+    def save_boundary_message(self, message: BoundaryMessage) -> None:
+        existing = self._working.boundary_messages.get(message.message_id)
+        if existing is not None and existing != message:
+            raise ValueError(
+                f"boundary message identity conflict: {message.message_id}"
+            )
+        self._working.boundary_messages[message.message_id] = deepcopy(message)
+        self._mark_dirty("boundary_messages", message.message_id)
+
+    def get_boundary_delivery(self, delivery_id: str) -> BoundaryDelivery | None:
+        value = self._working.boundary_deliveries.get(delivery_id)
+        return deepcopy(value) if value else None
+
+    def boundary_deliveries(self) -> tuple[BoundaryDelivery, ...]:
+        return tuple(
+            deepcopy(self._working.boundary_deliveries[key])
+            for key in sorted(self._working.boundary_deliveries)
+        )
+
+    def save_boundary_delivery(self, delivery: BoundaryDelivery) -> None:
+        existing = self._working.boundary_deliveries.get(delivery.delivery_id)
+        if existing is not None and existing.message_id != delivery.message_id:
+            raise ValueError(
+                f"boundary delivery identity conflict: {delivery.delivery_id}"
+            )
+        self._working.boundary_deliveries[delivery.delivery_id] = deepcopy(delivery)
+        self._mark_dirty("boundary_deliveries", delivery.delivery_id)
+
+    def get_boundary_consumption(self, delivery_id: str) -> BoundaryConsumption | None:
+        value = self._working.boundary_consumptions.get(delivery_id)
+        return deepcopy(value) if value else None
+
+    def save_boundary_consumption(self, consumption: BoundaryConsumption) -> None:
+        existing = self._working.boundary_consumptions.get(consumption.delivery_id)
+        if existing is not None and existing != consumption:
+            raise ValueError(
+                f"boundary consumption identity conflict: {consumption.delivery_id}"
+            )
+        self._working.boundary_consumptions[consumption.delivery_id] = deepcopy(
+            consumption
+        )
+        self._mark_dirty("boundary_consumptions", consumption.delivery_id)
 
     def get_domain_delivery(self, mutation_id: str) -> DomainDelivery | None:
         value = self._working.domain_deliveries.get(mutation_id)
