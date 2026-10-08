@@ -106,10 +106,17 @@ def _customer_fixtures(store) -> customer._CustomerFixtures:
     origin = o2c.ORIGIN
     return customer._CustomerFixtures(
         o2c=o2c.seed_reference(store, now=origin, amount=250.0, currency="USD"),
-        fulfillment=fulfillment.seed_reference(
+        fulfillment=fulfillment.seed_composed_reference(
             store,
             now=origin,
             requested_quantity=10.0,
+        ),
+        warehouse=wm.seed_reference(
+            store,
+            now=origin,
+            origin_on_hand=20.0,
+            transfer_quantity=1.0,
+            sku=fulfillment.PRIMARY_SKU,
         ),
         logistics=logistics.seed_reference(store, now=origin),
         payments=payments.seed_reference(
@@ -128,12 +135,22 @@ def _customer_fixtures(store) -> customer._CustomerFixtures:
 
 
 def _customer_business_state(store, fixtures: customer._CustomerFixtures):
+    local_lots = tuple(
+        entity
+        for entity in store.entities()
+        if entity.entity_type == "warehouse_inventory_lot"
+    )
     return (
         store.entity("sales_order", fixtures.o2c.order_id),
         store.entity("warehouse_fulfillment_order", fixtures.fulfillment.order_id),
+        store.entity(
+            "warehouse_management_stock",
+            fixtures.warehouse.origin_stock_id,
+        ),
         store.entity("shipment", fixtures.logistics.shipment_id),
         store.entity("card_payment", fixtures.payments.payment_id),
         store.entity("journal_entry", fixtures.r2r.journal_id),
+        local_lots,
     )
 
 
@@ -153,6 +170,15 @@ def test_customer_path_is_continuous_equivalent_across_worker_death_and_restart(
         "trading-company-customer-demand",
         fixtures.o2c.order_id,
     )
+    reservation_reference = deterministic_id(
+        "trading-company-inventory-reservation",
+        fixtures.fulfillment.order_id,
+        fixtures.warehouse.origin_stock_id,
+    )
+    consumption_reference = deterministic_id(
+        "trading-company-inventory-consumption",
+        reservation_reference,
+    )
     messages = []
     effects = []
 
@@ -168,6 +194,53 @@ def test_customer_path_is_continuous_equivalent_across_worker_death_and_restart(
                 "order_id": fixtures.o2c.order_id,
                 "fulfillment_order_id": fixtures.fulfillment.order_id,
                 "requested_quantity": 10.0,
+                "sku": fulfillment.PRIMARY_SKU,
+            },
+        },
+        {
+            "contract_name": "warehouse.inventory_reservation_requested",
+            "source_domain": "warehouse_fulfillment",
+            "source_identity": fixtures.fulfillment.order_id,
+            "destination_domain": "warehouse_management",
+            "occurrence_key": "inventory-reservation-requested",
+            "owner_id": "warehouse-management-worker",
+            "payload": {
+                "fulfillment_order_id": fixtures.fulfillment.order_id,
+                "stock_id": fixtures.warehouse.origin_stock_id,
+                "reservation_reference": reservation_reference,
+                "sku": fulfillment.PRIMARY_SKU,
+                "quantity": 10.0,
+            },
+        },
+        {
+            "contract_name": "warehouse.inventory_reserved",
+            "source_domain": "warehouse_management",
+            "source_identity": fixtures.warehouse.origin_stock_id,
+            "destination_domain": "warehouse_fulfillment",
+            "occurrence_key": "inventory-reserved",
+            "owner_id": "warehouse-fulfillment-worker",
+            "payload": {
+                "fulfillment_order_id": fixtures.fulfillment.order_id,
+                "stock_id": fixtures.warehouse.origin_stock_id,
+                "reservation_reference": reservation_reference,
+                "sku": fulfillment.PRIMARY_SKU,
+                "quantity": 10.0,
+            },
+        },
+        {
+            "contract_name": "warehouse.inventory_consumption_requested",
+            "source_domain": "warehouse_fulfillment",
+            "source_identity": fixtures.fulfillment.order_id,
+            "destination_domain": "warehouse_management",
+            "occurrence_key": "inventory-consumption-requested",
+            "owner_id": "warehouse-management-worker",
+            "payload": {
+                "fulfillment_order_id": fixtures.fulfillment.order_id,
+                "stock_id": fixtures.warehouse.origin_stock_id,
+                "reservation_reference": reservation_reference,
+                "consumption_reference": consumption_reference,
+                "sku": fulfillment.PRIMARY_SKU,
+                "quantity": 10.0,
             },
         },
         {
@@ -271,15 +344,22 @@ def test_customer_path_is_continuous_equivalent_across_worker_death_and_restart(
 
     assert tuple(message.message_id for message in messages) == continuous.message_ids
     assert tuple(effects) == continuous.effect_ids
+    assert reservation_reference == continuous.reservation_reference
+    assert consumption_reference == continuous.consumption_reference
     assert _customer_business_state(store, fixtures) == (
         continuous.persistence.entity("sales_order", continuous.o2c_order_id),
         continuous.persistence.entity(
             "warehouse_fulfillment_order",
             continuous.fulfillment_order_id,
         ),
+        continuous.persistence.entity(
+            "warehouse_management_stock",
+            continuous.warehouse_stock_id,
+        ),
         continuous.persistence.entity("shipment", continuous.shipment_id),
         continuous.persistence.entity("card_payment", continuous.payment_id),
         continuous.persistence.entity("journal_entry", continuous.journal_id),
+        (),
     )
 
     rebuilt_semantics = _boundary_semantics(store)
@@ -520,6 +600,7 @@ def test_composed_consumer_fault_rolls_back_intent_before_retry(tmp_path) -> Non
             "order_id": fixtures.o2c.order_id,
             "fulfillment_order_id": fixtures.fulfillment.order_id,
             "requested_quantity": 10.0,
+            "sku": fulfillment.PRIMARY_SKU,
         },
     )
 
