@@ -22,17 +22,13 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_p2p_procurement_schedule_can_inherit_external_causality() -> None:
     store = MemoryPersistence()
-    entities = seed_happy_path(store, now=P2P_ORIGIN, quantity=5.0)
-    # Remove the standalone schedule so the same domain entities can be composed.
-    with store.transaction() as uow:
-        for work in tuple(store.scheduled_work()):
-            command = store.command(work.command_id)
-            if command is not None and command.entity_id in {
-                entities.requisition_id,
-                entities.purchase_order_id,
-            }:
-                uow.delete_scheduled_work(work.work_id)
-                uow.delete_command(command.command_id)
+    entities = seed_happy_path(
+        store,
+        now=P2P_ORIGIN,
+        quantity=5.0,
+        schedule=False,
+    )
+    assert store.scheduled_work() == ()
 
     _, engine = build_p2p_runtime(store, now=P2P_ORIGIN)
     cause = Command(
