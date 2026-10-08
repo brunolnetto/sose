@@ -1,10 +1,23 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
+from sose.core.identity import deterministic_id
 from sose.persistence.base import Persistence
 
-from .simulation import PaymentEntities, dispute_entity_id
+if TYPE_CHECKING:
+    from .simulation import PaymentEntities
+
+
+def __dispute_entity_id() -> str:
+    return deterministic_id(
+        "entity",
+        "payment_dispute",
+        "cards-reference",
+        "payment-1",
+        "dispute-1",
+    )
 
 
 _PAYMENT_TERMINAL_OUTCOMES = frozenset({"declined", "reversed", "refunded"})
@@ -50,7 +63,7 @@ def _process_events(
     *,
     payment_id: str,
 ):
-    process_entity_ids = {payment_id, dispute_entity_id()}
+    process_entity_ids = {payment_id, _dispute_entity_id()}
     return tuple(
         event
         for event in persistence.events()
@@ -70,7 +83,7 @@ def cards_payments_projection(
     if payment is None:
         raise RuntimeError(f"card payment was not persisted: {entities.payment_id}")
 
-    dispute_key = dispute_entity_id()
+    dispute_key = _dispute_entity_id()
     dispute = persistence.entity("payment_dispute", dispute_key)
     events = _process_events(persistence, payment_id=payment.id)
     settlement_events = tuple(
