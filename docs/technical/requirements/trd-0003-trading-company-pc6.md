@@ -106,9 +106,36 @@ The initial named contracts are:
 - payments.settlement_completed.v1;
 - accounting.entry_requested.v1;
 - warehouse.replenishment_requested.v1;
-- p2p.inventory_receipt_ready.v1.
+- p2p.inventory_receipt_ready.v1;
+- warehouse.inventory_reservation_requested.v1;
+- warehouse.inventory_reserved.v1;
+- warehouse.inventory_consumption_requested.v1;
+- warehouse.inventory_available.v1.
 
 The envelope is generic; payload schemas remain contract-specific.
+
+### 3.5 Warehouse Fulfillment standalone vs composed stock ownership
+
+Warehouse Fulfillment deliberately has two wiring modes with one business-process
+lifecycle:
+
+**Standalone mode** preserves the current reference behavior: local InventoryLot is
+authoritative for on_hand/allocated and immutable InventoryOccurrence evidence protects
+pick/correction replay.
+
+**Composed mode** replaces that local stock-ownership adapter at the PC6 boundary:
+
+1. Warehouse Management owns stock positions and reservation truth.
+2. WF requests reservation through warehouse.inventory_reservation_requested.v1.
+3. WM validates/reserves its own stock and emits warehouse.inventory_reserved.v1 /
+   warehouse.inventory_available.v1 with immutable reservation/stock reference IDs.
+4. WF creates/advances Fulfillment Allocation using those foreign IDs as references;
+   it does not persist authoritative on_hand/allocated copies.
+5. At durable pick completion, WF emits warehouse.inventory_consumption_requested.v1.
+6. WM applies the inventory decrement idempotently and remains the only stock owner.
+
+The composed adapter replaces the standalone stock owner; it does not synchronize two
+authoritative InventoryLot projections.
 
 ## 4. Ownership matrix
 
@@ -118,7 +145,7 @@ The envelope is generic; payload schemas remain contract-specific.
 | fulfillment order / allocations / pick-pack-ship | Warehouse Fulfillment |
 | transport shipment / leg | Logistics |
 | payment authorization / settlement | Cards & Payments |
-| stock position / site / transfer | Warehouse Management |
+| stock position / site / transfer / reservation | Warehouse Management |
 | purchase order / supplier obligation | P2P |
 | journal / reconciliation | R2R |
 | delivery/consumption metadata | composition layer |
@@ -181,6 +208,8 @@ Required:
 - duplicate delivery tests;
 - consumer idempotence tests;
 - ownership/no-private-mutation tests;
+- standalone-vs-composed Warehouse Fulfillment stock ownership tests;
+- no-duplicate-stock-truth assertions in composed mode;
 - customer-demand E2E path;
 - replenishment E2E path;
 - accounting-output path;
