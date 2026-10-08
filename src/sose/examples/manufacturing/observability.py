@@ -30,7 +30,7 @@ class ManufacturingKpis:
     completed: bool
     lead_time_seconds: float | None
     output_quantity: float
-    yield_ratio: float
+    yield_ratio: float | None
     transition_count: int
     rework_count: int
     breakdown_count: int
@@ -93,8 +93,8 @@ def manufacturing_kpis(
     output = projection.finished_goods_quantity
     yield_ratio = (
         output / projection.planned_quantity
-        if projection.planned_quantity > 0.0
-        else 0.0
+        if projection.completed and projection.planned_quantity > 0.0
+        else None
     )
 
     return ManufacturingKpis(
