@@ -63,6 +63,7 @@ class BadReference(FakeReference):
     def build_model(self, point: dict[str, float]) -> ModelSpec:
         return ModelSpec(
             demand={"kind": "synthetic_open_system"},
+            costs={"operating_cost": 1.0},
             parameters={
                 "arrival_rate": 0.8,
                 "service_capacity": 1.0,
