@@ -19,7 +19,8 @@ def test_order_to_cash_audit_reaches_pc5_with_explicit_observability_evidence() 
     assert manifest.assessment_complete
     assert manifest.maturity is ProcessMaturity.PC5_OBSERVABLE
     assert not manifest.is_maturity_lower_bound
-    assert not manifest.is_complete_process_canonical
+    assert manifest.is_complete_process_canonical
+    assert not manifest.is_integrated_process_canonical
     assert manifest.trigger == "sales_order_submitted"
     assert manifest.terminal_outcomes == frozenset({"collected"})
     assert manifest.resources == frozenset({"fulfillment_team", "collection_agent"})
