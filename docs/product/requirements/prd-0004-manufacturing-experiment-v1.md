@@ -1,6 +1,6 @@
 # PRD-0004 — Manufacturing Organizational Experiment v1
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Owner:** SOSE maintainers
 - **Created:** 2026-10-08
 - **Last updated:** 2026-10-08
