@@ -128,6 +128,7 @@ def seed_happy_path(
     *,
     now: datetime = ORIGIN,
     quantity: float = 10.0,
+    schedule: bool = True,
 ) -> P2PEntities:
     _validate_quantity(quantity)
     context, engine = build_runtime(persistence, now=now)
@@ -177,18 +178,20 @@ def seed_happy_path(
         )
     )
 
-    schedule_procurement_cycle(
-        persistence,
-        engine,
-        entities=P2PEntities(
-            requisition_id=requisition.id,
-            purchase_order_id=purchase_order.id,
-            receipt_id=receipt.id,
-            material_demand_id=material_demand.id,
-        ),
-        start_at=now,
-        correlation_id=correlation_id,
+    seeded = P2PEntities(
+        requisition_id=requisition.id,
+        purchase_order_id=purchase_order.id,
+        receipt_id=receipt.id,
+        material_demand_id=material_demand.id,
     )
+    if schedule:
+        schedule_procurement_cycle(
+            persistence,
+            engine,
+            entities=seeded,
+            start_at=now,
+            correlation_id=correlation_id,
+        )
 
     return P2PEntities(
         requisition_id=requisition.id,
