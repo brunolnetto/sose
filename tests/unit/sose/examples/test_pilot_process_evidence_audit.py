@@ -7,13 +7,16 @@ from sose.examples.process_manifest import (
 )
 
 
-def test_remaining_multidomain_pilot_process_audit_is_complete_at_pc4() -> None:
-    manifest = builtin_process_manifests()["order_to_cash"]
+def test_all_multidomain_pilot_process_audits_are_complete_at_pc5() -> None:
+    manifests = builtin_process_manifests()
 
-    assert manifest.assessment_complete is True
-    assert manifest.maturity is ProcessMaturity.PC4_DURABLE
-    assert not manifest.is_maturity_lower_bound
-    assert not manifest.is_complete_process_canonical
+    for domain in ("manufacturing", "mro", "order_to_cash"):
+        manifest = manifests[domain]
+        assert manifest.assessment_complete is True
+        assert manifest.maturity is ProcessMaturity.PC5_OBSERVABLE
+        assert not manifest.is_maturity_lower_bound
+        assert manifest.is_complete_process_canonical
+        assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset()
 
 
 def test_manufacturing_is_promoted_to_pc5_with_complete_observability_evidence() -> None:
@@ -34,21 +37,6 @@ def test_mro_is_promoted_to_pc5_with_complete_observability_evidence() -> None:
     assert not manifest.is_maturity_lower_bound
     assert manifest.is_complete_process_canonical
     assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset()
-
-
-def test_o2c_pc5_gap_is_explicit_after_existing_audit() -> None:
-    manifest = builtin_process_manifests()["order_to_cash"]
-
-    assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset(
-        {
-            ProcessEvidence.KPIS,
-            ProcessEvidence.ERD,
-            ProcessEvidence.STATECHART_DOCUMENTATION,
-            ProcessEvidence.PROCESS_DIAGRAM,
-            ProcessEvidence.PROJECTION_CONTRACT,
-            ProcessEvidence.CONFIGURATION_DOCUMENTATION,
-        }
-    )
 
 
 def test_pilot_audits_bind_every_nonbaseline_claim_to_provenance() -> None:

@@ -157,3 +157,216 @@ Reference-grade recovery gates will cover:
 Current status: **Reference implementation**.
 
 Promotion is based on executable evidence for credit/fulfillment gating, explicit partial fulfillment, idempotent invoice→Receivable causality, durable due/overdue scheduling, overdue→CollectionCase creation, collection-agent ownership and follow-up scheduling, finite scenario recovery, illegal cross-entity prerequisite rejection, and restart equivalence across scheduler, causal-creation, and resource-demand boundaries.
+
+
+## 10. Normative persistent ERD
+
+The following ERD is the canonical persistent business relationship model for this
+reference process. The relationships are semantic/correlational and do not imply that
+the current entity payloads store SQL foreign-key columns.
+
+```mermaid
+erDiagram
+    SALES_ORDER ||--|| RECEIVABLE : "invoice creates"
+    RECEIVABLE ||--o| COLLECTION_CASE : "overdue may create"
+
+    SALES_ORDER {
+        string id
+        string state
+        float amount
+        string currency
+        int version
+    }
+
+    RECEIVABLE {
+        string id
+        string state
+        string order_id
+        float amount
+        string currency
+        int version
+    }
+
+    COLLECTION_CASE {
+        string id
+        string state
+        string receivable_id
+        int version
+    }
+```
+
+Cross-entity traceability is additionally bound by deterministic identity and stable
+correlation/causation metadata.
+
+Durable operational support records include:
+
+- `Command` + `ScheduledWork` for due, overdue, and collection follow-up;
+- `ResourceDemand` / `ResourceReservation` for fulfillment and collection capacity;
+- immutable `DomainEvent` transition history;
+- `ScenarioRuntimeState` for external credit/fulfillment conditions;
+- `SimulationPosition` for logical recovery.
+
+## 11. Normative StateCharts
+
+These diagrams mirror the executable charts in
+`src/sose/examples/order_to_cash/statecharts.py`.
+
+### 11.1 SalesOrder
+
+```mermaid
+stateDiagram-v2
+    [*] --> submitted
+    submitted --> ordered: approve_credit
+    submitted --> credit_hold: hold_credit
+    credit_hold --> ordered: release_credit
+    submitted --> cancelled: cancel
+    credit_hold --> cancelled: cancel
+    ordered --> cancelled: cancel
+    ordered --> fulfilling: start_fulfillment
+    fulfilling --> partial_fulfillment: record_partial
+    fulfilling --> fulfilled: fulfill
+    partial_fulfillment --> fulfilled: fulfill
+    fulfilled --> shipped: ship
+    shipped --> invoiced: invoice
+    invoiced --> [*]
+    cancelled --> [*]
+```
+
+### 11.2 Receivable
+
+```mermaid
+stateDiagram-v2
+    [*] --> open
+    open --> due: mark_due
+    due --> overdue: mark_overdue
+    due --> disputed: dispute
+    overdue --> disputed: dispute
+    disputed --> due: resolve_dispute
+    due --> collected: collect
+    overdue --> collected: collect
+    collected --> [*]
+```
+
+### 11.3 CollectionCase
+
+```mermaid
+stateDiagram-v2
+    [*] --> opened
+    opened --> assigned: assign
+    assigned --> contacted: contact
+    contacted --> promised: promise
+    contacted --> escalated: escalate
+    promised --> escalated: escalate
+    contacted --> resolved: resolve
+    promised --> resolved: resolve
+    escalated --> resolved: resolve
+    resolved --> [*]
+```
+
+## 12. Normative process diagram
+
+```mermaid
+flowchart TD
+    A["SalesOrder(submitted)"] --> B{Credit available?}
+    B -- no --> C["credit_hold"]
+    C -->|credit released| D["ordered"]
+    B -- yes --> D
+    D --> E{Fulfillment capacity?}
+    E -- no --> D
+    E -- yes --> F["fulfilling"]
+    F -->|partial| G["partial_fulfillment"]
+    G --> H["fulfilled"]
+    F -->|full| H
+    H --> I["shipped"]
+    I --> J["invoiced"]
+    J --> K["Receivable(open)"]
+    K -->|durable due schedule| L["due"]
+    L -->|collect| M["collected"]
+    L -->|durable overdue schedule| N["overdue"]
+    N --> O["CollectionCase(opened)"]
+    O --> P["assigned"]
+    P --> Q["contacted"]
+    Q -->|promise| R["promised"]
+    Q -->|escalate| S["escalated"]
+    R -->|follow-up escalation| S
+    N -->|collect| M
+    M -->|resolve existing case| T["CollectionCase(resolved)"]
+```
+
+The diagram describes business causality. Scheduled deadlines and finite resources are
+durable prerequisites; they are not represented as hidden backend timers or direct state
+assignment.
+
+## 13. KPI contract
+
+`order_to_cash_kpis()` exposes read-only KPIs derived from persisted entities and
+immutable correlated transition events.
+
+| KPI | Type | Definition |
+|---|---|---|
+| `cash_collection` | boolean | true only when the correlated Receivable is `collected` |
+| `order_to_cash_seconds` | float or null | SalesOrder creation to Receivable collection; null before collection |
+| `amount` | float | durable SalesOrder commercial amount |
+| `transition_count` | integer | correlated immutable transition-event count |
+| `credit_hold_count` | integer | transitions entering `credit_hold` |
+| `partial_fulfillment_count` | integer | transitions entering `partial_fulfillment` |
+| `overdue_count` | integer | Receivable transitions entering `overdue` |
+| `collection_case_count` | integer | 1 when the deterministic CollectionCase exists, otherwise 0 |
+| `collection_escalation_count` | integer | CollectionCase transitions entering `escalated` |
+
+The KPIs are observations, not operational truth and not automatically valid exogenous
+experiment coordinates.
+
+## 14. Projection contract
+
+`order_to_cash_projection()` is the canonical observable projection of the reference
+process.
+
+| Field | Source |
+|---|---|
+| `order_id` | persisted SalesOrder identity |
+| `receivable_id` | deterministic/persisted Receivable identity when created |
+| `collection_case_id` | deterministic/persisted CollectionCase identity when created |
+| `order_state` | persisted SalesOrder state |
+| `receivable_state` | persisted Receivable state or null before creation |
+| `collection_case_state` | persisted CollectionCase state or null before creation |
+| `amount` | persisted SalesOrder amount |
+| `currency` | persisted SalesOrder currency |
+| `collected` | derived from Receivable state |
+| `overdue` | derived from Receivable state |
+| `collection_open` | true when a CollectionCase exists and is not resolved |
+| `order_to_cash_seconds` | terminal collection timestamps; null before collection |
+
+Projection rules:
+
+1. projection is read-only and idempotent;
+2. missing SalesOrder is an error;
+3. absence of a Receivable/CollectionCase before its causal creation is represented as
+   null, not as an invented entity;
+4. terminal cash-cycle duration remains null until collection is durable;
+5. historical overdue/collection evidence is never rewritten by a later collection;
+6. consumers cannot mutate process state through the projection.
+
+## 15. Configuration contract
+
+The persistent Order-to-Cash job uses `OrderToCashConfig`.
+
+| Field | Default | Constraint / meaning | Runtime mutable |
+|---|---|---|---|
+| `start_at` | reference origin | logical process start | no |
+| `tick_step` | 1 hour | recurring logical step | yes |
+| `random_seed` | 336 | deterministic stochastic root seed | yes |
+| `amount` | 250.0 | commercial amount, strictly positive | no |
+| `currency` | USD | commercial currency code/value for the reference order | no |
+| `partial_fulfillment` | false | choose explicit partial-fulfillment path | yes |
+| `due_delay` | 2 hours | durable delay to Receivable due state; positive | yes |
+| `overdue_delay` | 2 hours | durable delay from due to overdue; positive | yes |
+| `auto_collect` | true | collect due/overdue Receivable automatically when reconciled | yes |
+| `collection_promise` | false | use promise-to-pay/follow-up branch for collection | yes |
+
+The runtime-mutable fields are exactly those declared by the domain definition:
+`tick_step`, `random_seed`, `partial_fulfillment`, `due_delay`,
+`overdue_delay`, `auto_collect`, and `collection_promise`.
+
+Configuration never bypasses StateCharts, causal entity creation, durable ScheduledWork,
+or finite resource ownership.
