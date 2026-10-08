@@ -20,18 +20,18 @@ def process_manifest() -> ProcessManifest:
         ProcessMaturity.PC4_DURABLE,
     ):
         evidence.update(PROCESS_MATURITY_REQUIREMENTS[level])
-    evidence.update(
-        {
-            ProcessEvidence.ERD,
-            ProcessEvidence.PROCESS_DIAGRAM,
-        }
-    )
+    evidence.update(PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC5_OBSERVABLE])
 
     simulation = "src/sose/examples/p2p/simulation.py"
     entities = "src/sose/examples/p2p/entities.py"
     statecharts = "src/sose/examples/p2p/statecharts.py"
     definition = "src/sose/examples/p2p/definition.py"
     specification = "docs/examples/procure-to-pay/specification.md"
+    observability = "src/sose/examples/p2p/observability.py"
+    config = "src/sose/examples/p2p/config.py"
+    observability_test = (
+        "tests/unit/sose/examples/p2p/test_p2p_observability.py"
+    )
     happy_path = "tests/integration/sose/examples/p2p/test_p2p_happy_path.py"
     receiving = "tests/integration/sose/examples/p2p/test_p2p_receiving_resources.py"
     exceptions = "tests/integration/sose/examples/p2p/test_p2p_receipt_exceptions.py"
@@ -59,8 +59,25 @@ def process_manifest() -> ProcessManifest:
         ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, replay),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
         ProcessEvidence.FAULT_RECOVERY: (happy_path, exception_restart, restart),
+        ProcessEvidence.KPIS: (observability, observability_test, specification),
         ProcessEvidence.ERD: (specification,),
+        ProcessEvidence.STATECHART_DOCUMENTATION: (
+            statecharts,
+            observability_test,
+            specification,
+        ),
         ProcessEvidence.PROCESS_DIAGRAM: (specification,),
+        ProcessEvidence.PROJECTION_CONTRACT: (
+            observability,
+            observability_test,
+            specification,
+        ),
+        ProcessEvidence.CONFIGURATION_DOCUMENTATION: (
+            config,
+            definition,
+            observability_test,
+            specification,
+        ),
     }
 
     return ProcessManifest(
@@ -75,6 +92,18 @@ def process_manifest() -> ProcessManifest:
                 "shortage_backorder",
                 "partial_receipt",
                 "rejected_receipt",
+            }
+        ),
+        kpis=frozenset(
+            {
+                "procure_to_consumption_seconds",
+                "quantity",
+                "transition_count",
+                "supplier_delay_count",
+                "partial_receipt_count",
+                "rejected_receipt_count",
+                "backorder_count",
+                "consumed",
             }
         ),
         specification_path=specification,
