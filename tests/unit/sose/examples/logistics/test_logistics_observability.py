@@ -7,7 +7,12 @@ from sose.examples.logistics.config import LogisticsConfig
 from sose.examples.logistics.definition import definition
 from sose.examples.logistics.observability import logistics_kpis, logistics_projection
 from sose.examples.logistics.process_audit import process_manifest
+from sose.backends.simpy import SimPyBackend
 from sose.examples.logistics.simulation import (
+    ORIGIN,
+    PICKUP_DUE,
+    build_runtime,
+    reconcile_pickup,
     run_failed_retry_path,
     run_happy_path,
     seed_reference,
@@ -91,6 +96,34 @@ def test_logistics_kpis_preserve_failed_attempt_history_after_retry_success() ->
     assert kpis.failed_attempt_count == 1
     assert kpis.delivered_attempt_count == 1
     assert kpis.delay_count == 1
+
+
+
+def test_logistics_kpis_include_uncorrelated_terminal_exception() -> None:
+    persistence = MemoryPersistence()
+    entities = seed_reference(persistence)
+    context, engine = build_runtime(persistence)
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+
+    backend.run_until(PICKUP_DUE)
+    assert reconcile_pickup(persistence, engine, backend, entities=entities)
+
+    shipment = persistence.entity("shipment", entities.shipment_id)
+    assert shipment is not None and shipment.state == "picked_up"
+    command = context.commands.create(
+        "mark_lost",
+        target=shipment,
+        key=("logistics-manual-loss", shipment.id),
+    )
+    engine.dispatch(command)
+
+    projection = logistics_projection(persistence, entities=entities)
+    kpis = logistics_kpis(persistence, entities=entities)
+    assert projection.terminal_outcome == "lost"
+    assert projection.delivered is False
+    assert projection.shipment_lead_time_seconds is not None
+    assert kpis.transition_count >= 3
 
 
 def test_logistics_pc5_observability_evidence_is_complete() -> None:
