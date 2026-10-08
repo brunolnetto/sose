@@ -54,9 +54,9 @@ Primary use cases:
 
 - **FR-1:** Manufacturing v1 shall run through the generic DomainReference experiment framework.
 - **FR-2:** v1 shall support A0 only.
-- **FR-3:** configurable experiment inputs shall be limited to fields/mechanisms supported by the Manufacturing domain at freeze time.
+- **FR-3:** the v1 DOE shall use only numeric exogenous parameters supported by both Manufacturing and the generic framework; the initial axis is `quantity`.
 - **FR-4:** nominal, machine-downtime, and yield-degradation arms shall be supported if their executable semantics pass preflight tests.
-- **FR-5:** demand-surge shall be excluded from scientific effect claims unless preflight proves it changes durable workload/pressure in the current reference slice.
+- **FR-5:** demand-surge is excluded from v1 because the current single-order reference does not convert its scenario context into demonstrated durable additional workload/pressure.
 - **FR-6:** experiment outputs shall include Manufacturing projection/KPIs plus canonical worlds/runs/metrics/regimes/ground-truth/provenance.
 - **FR-7:** restart/rebuild execution shall reproduce the same semantic experiment result.
 - **FR-8:** scientific claims shall use only typed ground truth from ADR-0003.
@@ -125,7 +125,7 @@ flowchart LR
 - [ ] Manufacturing adapter passes DomainReferenceConformance.
 - [ ] official worlds use only supported exogenous inputs.
 - [ ] nominal/downtime/yield arms pass preflight semantic checks.
-- [ ] demand-surge is either proven meaningful before freeze or excluded.
+- [ ] demand-surge remains excluded from v1.
 - [ ] restart-equivalence test passes for official experiment execution.
 - [ ] report separates INVARIANT and MECHANISTIC claims.
 - [ ] canonical experiment evidence is persisted with hashes and provenance.
