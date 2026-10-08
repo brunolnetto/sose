@@ -134,12 +134,13 @@ flowchart LR
 ## 10. Rollout expectations
 
 1. accept PRD/TRD;
-2. freeze preregistration;
-3. implement Manufacturing DomainReference adapter and preflight checks;
-4. run conformance;
-5. execute official v1;
-6. persist report/evidence;
-7. only then plan Manufacturing A1.
+2. implement the Manufacturing DomainReference adapter;
+3. run semantic preflight and generic conformance;
+4. generate the real framework `ExperimentProtocol` payload from the accepted adapter/default ModelSpec;
+5. finalize and hash-freeze preregistration + protocol + code/document provenance;
+6. execute official v1;
+7. persist report/evidence;
+8. only then plan Manufacturing A1.
 
 ## 11. Risks and open questions
 
