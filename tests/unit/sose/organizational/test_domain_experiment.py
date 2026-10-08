@@ -11,7 +11,7 @@ from sose.organizational.domain_experiment import (
     build_domain_experiment_worlds,
     run_domain_experiment,
 )
-from sose.organizational.experiment import ReplicationPlan
+from sose.organizational.experiment import ParameterRange, ReplicationPlan
 from sose.organizational.synthetic_queue_reference import (
     QueueReferenceDomain,
     build_queue_reference_plan_v1,
@@ -78,9 +78,10 @@ def test_world_identity_contains_configuration_not_realized_outputs() -> None:
 def test_framework_rejects_parameter_range_outside_domain_capability() -> None:
     reference, plan = _small_plan()
     payload = plan.protocol.model_dump(mode="python")
-    ranges = dict(payload["parameter_ranges"])
-    ranges["arrival_rate"] = ranges["arrival_rate"].model_copy(
-        update={"high": 99.0}
+    ranges = dict(plan.protocol.parameter_ranges)
+    ranges["arrival_rate"] = ParameterRange(
+        low=ranges["arrival_rate"].low,
+        high=99.0,
     )
     payload["parameter_ranges"] = ranges
     protocol = plan.protocol.__class__.model_validate(payload)
