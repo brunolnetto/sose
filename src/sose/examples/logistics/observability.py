@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from sose.persistence.base import Persistence
 
-from .simulation import LogisticsEntities
+if TYPE_CHECKING:
+    from .simulation import LogisticsEntities
 
 
 _TERMINAL_OUTCOMES = frozenset({"delivered", "lost", "damaged", "returned"})
