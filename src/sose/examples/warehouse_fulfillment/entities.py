@@ -28,3 +28,8 @@ class InventoryOccurrence(Entity):
 @dataclass(slots=True)
 class FulfillmentServiceTask(Entity):
     entity_type: str = "warehouse_fulfillment_service_task"
+
+
+@dataclass(slots=True)
+class FulfillmentServiceTask(Entity):
+    entity_type: str = "warehouse_fulfillment_service_task"
