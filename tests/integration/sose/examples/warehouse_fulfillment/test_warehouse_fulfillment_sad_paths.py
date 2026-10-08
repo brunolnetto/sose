@@ -1,12 +1,13 @@
 import pytest
 
+from sose.backends.simpy import SimPyBackend
+from sose.examples.warehouse_fulfillment.scenarios import ORIGIN
 from sose.examples.warehouse_fulfillment.simulation import (
     allocate_order,
     build_runtime,
     correct_lot_balance,
     occurrence_id,
     pack_order,
-    pick_allocation,
     seed_reference,
 )
 from sose.persistence.memory import MemoryPersistence
@@ -16,11 +17,13 @@ def _runtime():
     persistence = MemoryPersistence()
     entities = seed_reference(persistence)
     _, engine = build_runtime(persistence)
-    return persistence, entities, engine
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
+    return persistence, entities, engine, backend
 
 
 def test_insufficient_inventory_does_not_commit_partial_allocation():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     for lot_id in entities.lot_ids:
         lot = persistence.entity("warehouse_inventory_lot", lot_id)
         assert lot is not None
@@ -38,23 +41,31 @@ def test_insufficient_inventory_does_not_commit_partial_allocation():
 
 
 def test_pack_requires_every_committed_allocation_to_be_picked():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     assert allocate_order(persistence, engine, entities=entities)
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None
-    pick_allocation(
+    assert pick_order(
         persistence,
         engine,
+        backend,
         entities=entities,
-        allocation_id_value=order.attributes["allocation_ids"][0],
-    )
+    ) is False
+    first_due = min(work.due_at for work in persistence.scheduled_work())
+    backend.run_until(first_due)
+    assert pick_order(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ) is False
 
     with pytest.raises(RuntimeError, match="all allocations"):
-        pack_order(persistence, engine, entities=entities)
+        pack_order(persistence, engine, backend, entities=entities)
 
 
 def test_inventory_correction_changes_projection_without_rewriting_evidence():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     lot_id = entities.lot_ids[0]
 
     first = correct_lot_balance(
@@ -97,7 +108,7 @@ def test_inventory_correction_changes_projection_without_rewriting_evidence():
 
 
 def test_correction_cannot_erase_committed_allocation_capacity():
-    persistence, entities, engine = _runtime()
+    persistence, entities, engine, backend = _runtime()
     assert allocate_order(persistence, engine, entities=entities)
 
     with pytest.raises(ValueError, match="below allocated"):
