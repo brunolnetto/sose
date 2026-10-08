@@ -1,0 +1,612 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+
+from sose.backends.simpy import SimPyBackend
+from sose.core.events import Command
+from sose.core.identity import deterministic_id
+from sose.persistence.memory import MemoryPersistence
+
+from sose.examples.order_to_cash import simulation as o2c
+from sose.examples.warehouse_fulfillment import simulation as fulfillment
+from sose.examples.logistics import simulation as logistics
+from sose.examples.cards_payments import simulation as payments
+from sose.examples.record_to_report import simulation as r2r
+
+from .boundary import BoundaryConsumerRegistry, BoundaryService
+from .model import BoundaryMessage
+
+
+@dataclass(frozen=True, slots=True)
+class CustomerDemandPathResult:
+    persistence: MemoryPersistence
+    correlation_id: str
+    o2c_order_id: str
+    fulfillment_order_id: str
+    shipment_id: str
+    payment_id: str
+    journal_id: str
+    message_ids: tuple[str, ...]
+    effect_ids: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _CustomerFixtures:
+    o2c: o2c.O2CEntities
+    fulfillment: fulfillment.WarehouseEntities
+    logistics: logistics.LogisticsEntities
+    payments: payments.PaymentEntities
+    r2r: r2r.R2REntities
+
+
+def _intent_handler(
+    *,
+    intent_name: str,
+    entity_type: str,
+    entity_id: str,
+):
+    def handle(message: BoundaryMessage, uow) -> str:
+        command_id = deterministic_id(
+            "composition-domain-intent",
+            message.message_id,
+            intent_name,
+            entity_type,
+            entity_id,
+        )
+        command = Command(
+            command_id=command_id,
+            name=intent_name,
+            entity_type=entity_type,
+            entity_id=entity_id,
+            due_at=message.produced_at,
+            issued_at=message.produced_at,
+            payload={
+                **message.payload(),
+                "boundary_message_id": message.message_id,
+                "boundary_contract": message.contract_key,
+            },
+            causation_id=message.message_id,
+            correlation_id=message.correlation_id,
+        )
+        existing = uow.get_command(command_id)
+        if existing is not None and existing != command:
+            raise ValueError(f"composition intent identity conflict: {command_id}")
+        if existing is None:
+            uow.save_command(command)
+        return command_id
+
+    return handle
+
+
+def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
+    registry = BoundaryConsumerRegistry()
+    registry.register(
+        destination_domain="warehouse_fulfillment",
+        contract_name="o2c.fulfillment_requested",
+        contract_version=1,
+        handler=_intent_handler(
+            intent_name="composition.fulfill_customer_order",
+            entity_type="warehouse_fulfillment_order",
+            entity_id=fixtures.fulfillment.order_id,
+        ),
+    )
+    registry.register(
+        destination_domain="logistics",
+        contract_name="warehouse.dispatch_ready",
+        contract_version=1,
+        handler=_intent_handler(
+            intent_name="composition.deliver_shipment",
+            entity_type="shipment",
+            entity_id=fixtures.logistics.shipment_id,
+        ),
+    )
+    registry.register(
+        destination_domain="order_to_cash",
+        contract_name="logistics.delivery_completed",
+        contract_version=1,
+        handler=_intent_handler(
+            intent_name="composition.complete_external_fulfillment",
+            entity_type="sales_order",
+            entity_id=fixtures.o2c.order_id,
+        ),
+    )
+    registry.register(
+        destination_domain="cards_payments",
+        contract_name="o2c.payment_requested",
+        contract_version=1,
+        handler=_intent_handler(
+            intent_name="composition.settle_customer_payment",
+            entity_type="payment",
+            entity_id=fixtures.payments.payment_id,
+        ),
+    )
+    registry.register(
+        destination_domain="record_to_report",
+        contract_name="accounting.entry_requested",
+        contract_version=1,
+        handler=_intent_handler(
+            intent_name="composition.post_customer_journal",
+            entity_type="journal_entry",
+            entity_id=fixtures.r2r.journal_id,
+        ),
+    )
+    return registry
+
+
+def _publish(
+    service: BoundaryService,
+    *,
+    contract_name: str,
+    source_domain: str,
+    source_identity: str,
+    destination_domain: str,
+    occurrence_key: str,
+    correlation_id: str,
+    causation_id: str | None,
+    produced_at: datetime,
+    payload: dict[str, object],
+) -> BoundaryMessage:
+    message = BoundaryMessage.create(
+        contract_name=contract_name,
+        contract_version=1,
+        source_domain=source_domain,
+        source_identity=source_identity,
+        destination_domain=destination_domain,
+        occurrence_key=occurrence_key,
+        correlation_id=correlation_id,
+        causation_id=causation_id,
+        produced_at=produced_at,
+        payload=payload,
+    )
+    service.publish(message)
+    return message
+
+
+def _consume_next(
+    service: BoundaryService,
+    registry: BoundaryConsumerRegistry,
+    *,
+    owner_id: str,
+    now: datetime,
+) -> str:
+    lease = service.claim_next(
+        owner_id=owner_id,
+        now=now,
+        lease_duration=timedelta(hours=1),
+    )
+    if lease is None:
+        raise RuntimeError("expected one pending composition delivery")
+    consumption = service.consume(
+        lease=lease,
+        registry=registry,
+        now=now,
+    )
+    return consumption.consumer_effect_id
+
+
+def _dispatch_o2c_event(
+    persistence: MemoryPersistence,
+    engine,
+    *,
+    order_id: str,
+    event: str,
+    correlation_id: str,
+    causation_id: str,
+) -> None:
+    order = persistence.entity("sales_order", order_id)
+    if order is None:
+        raise RuntimeError(f"missing sales order: {order_id}")
+    command = engine.context.commands.create(
+        event,
+        target=order,
+        correlation_id=correlation_id,
+        key=("trading-company", order.id, event, causation_id),
+    )
+    command = Command(
+        command_id=command.command_id,
+        name=command.name,
+        entity_type=command.entity_type,
+        entity_id=command.entity_id,
+        due_at=command.due_at,
+        issued_at=command.issued_at,
+        tick=command.tick,
+        payload=command.payload,
+        causation_id=causation_id,
+        correlation_id=correlation_id,
+    )
+    engine.dispatch(command)
+
+
+def _execute_intent(
+    persistence: MemoryPersistence,
+    *,
+    effect_id: str,
+    fixtures: _CustomerFixtures,
+    correlation_id: str,
+) -> None:
+    intent = persistence.command(effect_id)
+    if intent is None:
+        return
+
+    if intent.name == "composition.fulfill_customer_order":
+        _, engine = fulfillment.build_runtime(persistence, now=intent.due_at)
+        if not fulfillment.allocate_order(
+            persistence,
+            engine,
+            entities=fixtures.fulfillment,
+        ):
+            raise RuntimeError("warehouse fulfillment allocation failed")
+        fulfillment.pick_order(persistence, engine, entities=fixtures.fulfillment)
+        fulfillment.pack_order(persistence, engine, entities=fixtures.fulfillment)
+        fulfillment.ship_order(persistence, engine, entities=fixtures.fulfillment)
+
+    elif intent.name == "composition.deliver_shipment":
+        _, engine = logistics.build_runtime(persistence, now=logistics.ORIGIN)
+        backend = SimPyBackend(origin=logistics.ORIGIN)
+        engine.rebuild_backend(backend)
+        pending = tuple(
+            work
+            for work in persistence.scheduled_work()
+            if persistence.command(work.command_id) is not None
+            and persistence.command(work.command_id).entity_type == "shipment"
+            and persistence.command(work.command_id).entity_id == fixtures.logistics.shipment_id
+        )
+        if not pending:
+            raise RuntimeError("logistics pickup work was not persisted")
+        backend.run_until(min(work.due_at for work in pending))
+        if not logistics.reconcile_pickup(
+            persistence,
+            engine,
+            backend,
+            entities=fixtures.logistics,
+        ):
+            raise RuntimeError("logistics pickup failed")
+        if not logistics.reconcile_origin_hub(
+            persistence,
+            engine,
+            backend,
+            entities=fixtures.logistics,
+        ):
+            raise RuntimeError("logistics origin-hub handling failed")
+        if not logistics.reconcile_transfer(
+            persistence,
+            engine,
+            backend,
+            entities=fixtures.logistics,
+        ):
+            raise RuntimeError("logistics transfer failed")
+        if not logistics.reconcile_delivery_dispatch(
+            persistence,
+            engine,
+            backend,
+            entities=fixtures.logistics,
+            ordinal=1,
+        ):
+            raise RuntimeError("logistics delivery dispatch failed")
+        logistics.reconcile_delivery_success(
+            persistence,
+            engine,
+            backend,
+            entities=fixtures.logistics,
+            ordinal=1,
+        )
+
+    elif intent.name == "composition.complete_external_fulfillment":
+        _, engine = o2c.build_runtime(persistence, now=intent.due_at)
+        order = persistence.entity("sales_order", fixtures.o2c.order_id)
+        if order is None:
+            raise RuntimeError("sales order disappeared")
+        if order.state == "ordered":
+            _dispatch_o2c_event(
+                persistence,
+                engine,
+                order_id=order.id,
+                event="start_fulfillment",
+                correlation_id=correlation_id,
+                causation_id=intent.command_id,
+            )
+            order = persistence.entity("sales_order", order.id)
+        if order is not None and order.state in {"fulfilling", "partial_fulfillment"}:
+            _dispatch_o2c_event(
+                persistence,
+                engine,
+                order_id=order.id,
+                event="fulfill",
+                correlation_id=correlation_id,
+                causation_id=intent.command_id,
+            )
+            order = persistence.entity("sales_order", order.id)
+        if order is not None and order.state == "fulfilled":
+            _dispatch_o2c_event(
+                persistence,
+                engine,
+                order_id=order.id,
+                event="ship",
+                correlation_id=correlation_id,
+                causation_id=intent.command_id,
+            )
+            order = persistence.entity("sales_order", order.id)
+        if order is not None and order.state == "shipped":
+            _dispatch_o2c_event(
+                persistence,
+                engine,
+                order_id=order.id,
+                event="invoice",
+                correlation_id=correlation_id,
+                causation_id=intent.command_id,
+            )
+        o2c.ensure_receivable(persistence, engine, entities=fixtures.o2c)
+
+    elif intent.name == "composition.settle_customer_payment":
+        _, engine = payments.build_runtime(persistence, now=payments.ORIGIN)
+        backend = SimPyBackend(origin=payments.ORIGIN)
+        engine.rebuild_backend(backend)
+        if not payments.reconcile_authorization(
+            persistence,
+            engine,
+            backend,
+            entities=fixtures.payments,
+            outcome="authorize",
+        ):
+            raise RuntimeError("payment authorization failed")
+        settlement_at = payments.reconcile_capture_and_schedule_settlement(
+            persistence,
+            engine,
+            backend,
+            entities=fixtures.payments,
+        )
+        backend.run_until(settlement_at)
+        payments.reconcile_settlement(
+            persistence,
+            engine,
+            backend,
+            entities=fixtures.payments,
+            outcome="success",
+        )
+
+    elif intent.name == "composition.post_customer_journal":
+        _, engine = r2r.build_runtime(persistence, now=r2r.ORIGIN)
+        backend = SimPyBackend(origin=r2r.ORIGIN)
+        engine.rebuild_backend(backend)
+        if not r2r.submit_and_post_journal(
+            persistence,
+            engine,
+            backend,
+            entities=fixtures.r2r,
+        ):
+            raise RuntimeError("R2R journal posting failed")
+
+    else:
+        raise ValueError(f"unsupported Trading Company customer intent: {intent.name}")
+
+    with persistence.transaction() as uow:
+        current = uow.get_command(effect_id)
+        if current == intent:
+            uow.delete_command(effect_id)
+
+
+def run_customer_demand_path() -> CustomerDemandPathResult:
+    """Execute the first durable Trading Company PC6 customer-demand composition path."""
+
+    persistence = MemoryPersistence()
+    origin = o2c.ORIGIN
+    amount = 250.0
+    currency = "USD"
+
+    fixtures = _CustomerFixtures(
+        o2c=o2c.seed_reference(
+            persistence,
+            now=origin,
+            amount=amount,
+            currency=currency,
+        ),
+        fulfillment=fulfillment.seed_reference(
+            persistence,
+            now=origin,
+            requested_quantity=10.0,
+        ),
+        logistics=logistics.seed_reference(
+            persistence,
+            now=origin,
+        ),
+        payments=payments.seed_reference(
+            persistence,
+            now=origin,
+            amount=amount,
+            currency=currency,
+        ),
+        r2r=r2r.seed_reference(
+            persistence,
+            now=origin,
+            amount=amount,
+            currency=currency,
+        ),
+    )
+
+    _, o2c_engine = o2c.build_runtime(persistence, now=origin)
+    if not o2c.reconcile_credit(
+        persistence,
+        o2c_engine,
+        entities=fixtures.o2c,
+    ):
+        raise RuntimeError("O2C credit approval failed")
+
+    correlation_id = deterministic_id(
+        "trading-company-customer-demand",
+        fixtures.o2c.order_id,
+    )
+    service = BoundaryService(persistence)
+    registry = _registry(fixtures)
+    messages: list[BoundaryMessage] = []
+    effects: list[str] = []
+
+    message = _publish(
+        service,
+        contract_name="o2c.fulfillment_requested",
+        source_domain="order_to_cash",
+        source_identity=fixtures.o2c.order_id,
+        destination_domain="warehouse_fulfillment",
+        occurrence_key="fulfillment-requested",
+        correlation_id=correlation_id,
+        causation_id=None,
+        produced_at=origin,
+        payload={
+            "order_id": fixtures.o2c.order_id,
+            "fulfillment_order_id": fixtures.fulfillment.order_id,
+            "requested_quantity": 10.0,
+        },
+    )
+    messages.append(message)
+    effect = _consume_next(
+        service,
+        registry,
+        owner_id="warehouse-fulfillment-worker",
+        now=message.produced_at,
+    )
+    effects.append(effect)
+    _execute_intent(
+        persistence,
+        effect_id=effect,
+        fixtures=fixtures,
+        correlation_id=correlation_id,
+    )
+
+    message = _publish(
+        service,
+        contract_name="warehouse.dispatch_ready",
+        source_domain="warehouse_fulfillment",
+        source_identity=fixtures.fulfillment.order_id,
+        destination_domain="logistics",
+        occurrence_key="dispatch-ready",
+        correlation_id=correlation_id,
+        causation_id=messages[-1].message_id,
+        produced_at=origin + timedelta(minutes=1),
+        payload={
+            "fulfillment_order_id": fixtures.fulfillment.order_id,
+            "shipment_id": fixtures.logistics.shipment_id,
+        },
+    )
+    messages.append(message)
+    effect = _consume_next(
+        service,
+        registry,
+        owner_id="logistics-worker",
+        now=message.produced_at,
+    )
+    effects.append(effect)
+    _execute_intent(
+        persistence,
+        effect_id=effect,
+        fixtures=fixtures,
+        correlation_id=correlation_id,
+    )
+
+    message = _publish(
+        service,
+        contract_name="logistics.delivery_completed",
+        source_domain="logistics",
+        source_identity=fixtures.logistics.shipment_id,
+        destination_domain="order_to_cash",
+        occurrence_key="delivery-completed",
+        correlation_id=correlation_id,
+        causation_id=messages[-1].message_id,
+        produced_at=origin + timedelta(minutes=2),
+        payload={
+            "shipment_id": fixtures.logistics.shipment_id,
+            "order_id": fixtures.o2c.order_id,
+        },
+    )
+    messages.append(message)
+    effect = _consume_next(
+        service,
+        registry,
+        owner_id="o2c-worker",
+        now=message.produced_at,
+    )
+    effects.append(effect)
+    _execute_intent(
+        persistence,
+        effect_id=effect,
+        fixtures=fixtures,
+        correlation_id=correlation_id,
+    )
+
+    message = _publish(
+        service,
+        contract_name="o2c.payment_requested",
+        source_domain="order_to_cash",
+        source_identity=fixtures.o2c.order_id,
+        destination_domain="cards_payments",
+        occurrence_key="payment-requested",
+        correlation_id=correlation_id,
+        causation_id=messages[-1].message_id,
+        produced_at=origin + timedelta(minutes=3),
+        payload={
+            "order_id": fixtures.o2c.order_id,
+            "payment_id": fixtures.payments.payment_id,
+            "amount": amount,
+            "currency": currency,
+        },
+    )
+    messages.append(message)
+    effect = _consume_next(
+        service,
+        registry,
+        owner_id="payments-worker",
+        now=message.produced_at,
+    )
+    effects.append(effect)
+    _execute_intent(
+        persistence,
+        effect_id=effect,
+        fixtures=fixtures,
+        correlation_id=correlation_id,
+    )
+
+    message = _publish(
+        service,
+        contract_name="accounting.entry_requested",
+        source_domain="cards_payments",
+        source_identity=fixtures.payments.payment_id,
+        destination_domain="record_to_report",
+        occurrence_key="customer-settlement-entry",
+        correlation_id=correlation_id,
+        causation_id=messages[-1].message_id,
+        produced_at=origin + timedelta(minutes=4),
+        payload={
+            "payment_id": fixtures.payments.payment_id,
+            "journal_id": fixtures.r2r.journal_id,
+            "amount": amount,
+            "currency": currency,
+        },
+    )
+    messages.append(message)
+    effect = _consume_next(
+        service,
+        registry,
+        owner_id="r2r-worker",
+        now=message.produced_at,
+    )
+    effects.append(effect)
+    _execute_intent(
+        persistence,
+        effect_id=effect,
+        fixtures=fixtures,
+        correlation_id=correlation_id,
+    )
+
+    return CustomerDemandPathResult(
+        persistence=persistence,
+        correlation_id=correlation_id,
+        o2c_order_id=fixtures.o2c.order_id,
+        fulfillment_order_id=fixtures.fulfillment.order_id,
+        shipment_id=fixtures.logistics.shipment_id,
+        payment_id=fixtures.payments.payment_id,
+        journal_id=fixtures.r2r.journal_id,
+        message_ids=tuple(message.message_id for message in messages),
+        effect_ids=tuple(effects),
+    )
+
+
+__all__ = ["CustomerDemandPathResult", "run_customer_demand_path"]
