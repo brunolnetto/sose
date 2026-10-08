@@ -586,25 +586,29 @@ Exit: resource/availability-rich workflow passes the same suite under its prereg
 22. remove accidental domain-specific assumptions;
 23. promote the contract from provisional organizational code to its stable/public location only if all three pilots pass.
 
-### Gate F — A2
+### Gate F — productization and 1.0 release
 
-24. dedicated child TRD for observation/action controller semantics;
-25. generic observation/action controller contract;
-26. noise/delay/cooldown/transition-cost semantics;
-27. preregister A2 scientific experiments before official execution;
-28. A2 execution across the three qualified reference domains.
+24. child TRDs for standard data product, persistent/distributed experiment jobs, and configuration/CLI/API;
+25. define/version the canonical data-product contract and implement physical materialization in persistence/output adapters;
+26. persistent distributed experiment job using the authoritative operational + durable-outbox sink boundary;
+27. configuration schema;
+28. CLI/API;
+29. SQLite/PostgreSQL conformance;
+30. 1.0 documentation/release gate.
 
-### Gate G — productization
+Exit: PRD-0001 acceptance criteria for the 1.0 product are satisfied without requiring A2 execution.
 
-29. child TRDs for standard data product, persistent/distributed experiment jobs, and configuration/CLI/API;
-30. standard data product;
-31. persistent distributed experiment job using the authoritative operational + durable-outbox sink boundary;
-32. configuration schema;
-33. CLI/API;
-34. SQLite/PostgreSQL conformance;
-35. 1.0 documentation/release gate.
+### Gate G — A2 extension (post-1.0 / non-blocking for 1.0)
 
-PR boundaries may be refined, but dependency/gate ordering is normative.
+31. dedicated child TRD for observation/action controller semantics;
+32. generic observation/action controller contract;
+33. noise/delay/cooldown/transition-cost semantics;
+34. preregister A2 scientific experiments before official execution;
+35. A2 execution across qualified reference domains according to their own accepted plans.
+
+Gate G is an explicit extension path. It does not block the SOSE 1.0 release defined by PRD-0001.
+
+PR boundaries may be refined, but dependency/gate ordering through Gate F is normative for 1.0.
 
 ## 15. Risks and open questions
 
@@ -645,7 +649,7 @@ Before implementation of the corresponding gates, dedicated child TRDs are requi
 
 - each pilot domain experiment (domain-specific scientific question, permissible claims, DOE/replication/seed/CRN/metrics/falsification and provenance), paired with its domain-specific PRD and frozen preregistration protocol;
 - A2 observation/action controller semantics and persistence;
-- standard analytical data-product schemas/materialization;
+- standard canonical data-product schemas plus persistence/output-adapter materialization;
 - persistent/distributed experiment-job coordination if existing job contracts require extension;
 - configuration schema and CLI/API product surfaces;
 - additional authoritative persistence adapters beyond the stabilized SQLite/PostgreSQL boundary.
@@ -657,3 +661,4 @@ Child TRDs must satisfy PRD-0001, preserve ADR-0002/0003/0004, and map their own
 | Date | Change | Rationale |
 |---|---|---|
 | 2026-10-07 | Initial draft | Define the technical path from the verified A0/A1 reference to a domain-neutral 1.0 platform. |
+| 2026-10-08 | Align accepted ownership and release scope | Keep physical data-product materialization adapter-owned per ADR-0005 and move A2 execution outside the 1.0 critical path. |
