@@ -25,6 +25,9 @@ def process_manifest() -> ProcessManifest:
             ProcessEvidence.ERD,
             ProcessEvidence.STATECHART_DOCUMENTATION,
             ProcessEvidence.PROCESS_DIAGRAM,
+            ProcessEvidence.KPIS,
+            ProcessEvidence.PROJECTION_CONTRACT,
+            ProcessEvidence.CONFIGURATION_DOCUMENTATION,
         }
     )
 
@@ -64,6 +67,11 @@ def process_manifest() -> ProcessManifest:
     recurring = (
         "tests/unit/sose/examples/mro/"
         "test_mro_declarative_recurring_e2e.py"
+    )
+    observability = "src/sose/examples/mro/observability.py"
+    config = "src/sose/examples/mro/config.py"
+    observability_test = (
+        "tests/unit/sose/examples/mro/test_mro_observability.py"
     )
 
     evidence_sources: dict[ProcessEvidence, tuple[str, ...]] = {
@@ -123,6 +131,17 @@ def process_manifest() -> ProcessManifest:
             specification,
         ),
         ProcessEvidence.PROCESS_DIAGRAM: (specification,),
+        ProcessEvidence.KPIS: (observability, observability_test, specification),
+        ProcessEvidence.PROJECTION_CONTRACT: (
+            observability,
+            observability_test,
+            specification,
+        ),
+        ProcessEvidence.CONFIGURATION_DOCUMENTATION: (
+            config,
+            definition,
+            specification,
+        ),
     }
 
     return ProcessManifest(
@@ -140,6 +159,18 @@ def process_manifest() -> ProcessManifest:
                 "maintenance_bay_contention",
                 "emergency_preemption",
                 "cancellation",
+            }
+        ),
+        kpis=frozenset(
+            {
+                "closure",
+                "lead_time_seconds",
+                "parts_consumed",
+                "remaining_spare_parts",
+                "transition_count",
+                "material_wait_count",
+                "resource_wait_count",
+                "interruption_count",
             }
         ),
         specification_path=specification,
