@@ -48,6 +48,8 @@ def test_o2c_pc5_gap_is_explicit_after_existing_audit() -> None:
     assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset(
         {
             ProcessEvidence.KPIS,
+            ProcessEvidence.ERD,
+            ProcessEvidence.STATECHART_DOCUMENTATION,
             ProcessEvidence.PROCESS_DIAGRAM,
             ProcessEvidence.PROJECTION_CONTRACT,
             ProcessEvidence.CONFIGURATION_DOCUMENTATION,
