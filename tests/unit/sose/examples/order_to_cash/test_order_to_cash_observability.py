@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from pathlib import Path
 
 import pytest
 
 from sose.backends.simpy import SimPyBackend
+from sose.examples.order_to_cash.config import OrderToCashConfig
+from sose.examples.order_to_cash.definition import definition
 from sose.examples.order_to_cash.observability import (
     order_to_cash_kpis,
     order_to_cash_projection,
@@ -207,3 +210,19 @@ def test_o2c_pc5_observability_evidence_is_complete() -> None:
     ):
         assert evidence in manifest.evidence
         assert manifest.evidence_sources[evidence]
+
+
+def test_o2c_normative_pc5_documentation_is_explicit_and_complete() -> None:
+    specification = Path("docs/examples/order-to-cash/specification.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "```mermaid\nerDiagram" in specification
+    assert specification.count("stateDiagram-v2") >= 3
+    assert "```mermaid\nflowchart TD" in specification
+
+    for field_name in OrderToCashConfig.model_fields:
+        assert f"`{field_name}`" in specification
+
+    for field_name in definition.runtime_mutable_fields:
+        assert f"`{field_name}`" in specification
