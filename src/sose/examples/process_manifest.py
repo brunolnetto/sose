@@ -373,19 +373,16 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
 
 
 def _warehouse_management_manifest() -> ProcessManifest:
-    # Audit evidence is intentionally explicit rather than using
-    # _requirements_through(PC5). The domain demonstrates phase-marker recovery
-    # and replay-safe effects, but it does not yet contain a continuous-vs-rebuild
-    # restart-equivalence test. That missing PC4 requirement must keep maturity at
-    # PC3 even though PC5 documentation/KPIs already exist.
-    evidence = set(_requirements_through(ProcessMaturity.PC3_OPERATIONAL))
-    evidence.update(
-        PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC4_DURABLE]
-        - {ProcessEvidence.RESTART_EQUIVALENCE}
-    )
-    evidence.update(PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC5_OBSERVABLE])
+    # Audit evidence is intentionally explicit. Warehouse Management now has
+    # continuous-vs-rebuild restart equivalence in addition to its existing
+    # replay/fault-recovery evidence and PC5 observability contracts.
+    evidence = set(_requirements_through(ProcessMaturity.PC5_OBSERVABLE))
 
     behavior_test = "tests/unit/sose/examples/test_warehouse_management_domain.py"
+    restart_test = (
+        "tests/e2e/sose/examples/warehouse_management/"
+        "test_warehouse_management_restart_equivalence.py"
+    )
     definition = "src/sose/examples/warehouse_management/definition.py"
     simulation = "src/sose/examples/warehouse_management/simulation.py"
     entities = "src/sose/examples/warehouse_management/entities.py"
@@ -402,8 +399,9 @@ def _warehouse_management_manifest() -> ProcessManifest:
         ProcessEvidence.FINITE_RESOURCES: (simulation, behavior_test),
         ProcessEvidence.CAPACITY_CONTENTION: (behavior_test,),
         ProcessEvidence.TIME_SEMANTICS: (simulation, specification),
-        ProcessEvidence.DURABLE_STATE: (simulation, behavior_test),
-        ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, behavior_test),
+        ProcessEvidence.DURABLE_STATE: (simulation, behavior_test, restart_test),
+        ProcessEvidence.RESTART_EQUIVALENCE: (restart_test,),
+        ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, behavior_test, restart_test),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, behavior_test),
         ProcessEvidence.FAULT_RECOVERY: (behavior_test,),
         ProcessEvidence.KPIS: (simulation, behavior_test, specification),

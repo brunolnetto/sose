@@ -78,19 +78,20 @@ def test_warehouse_fulfillment_audit_stops_at_pc2_and_preserves_audited_higher_e
     assert ProcessEvidence.CONFIGURATION_DOCUMENTATION not in manifest.evidence
 
 
-def test_warehouse_management_audit_exposes_restart_equivalence_as_pc4_gap() -> None:
+def test_warehouse_management_audit_reaches_pc5_after_restart_equivalence() -> None:
     manifest = builtin_process_manifests()["warehouse_management"]
 
     assert manifest.assessment_complete
-    assert manifest.maturity is ProcessMaturity.PC3_OPERATIONAL
-    assert not manifest.is_complete_process_canonical
+    assert manifest.maturity is ProcessMaturity.PC5_OBSERVABLE
+    assert manifest.is_complete_process_canonical
     assert not manifest.is_integrated_process_canonical
     assert "dock" in manifest.resources
     assert "stock" not in manifest.resources
     assert "on_time" in manifest.kpis
-    assert ProcessEvidence.RESTART_EQUIVALENCE not in manifest.evidence
+    assert ProcessEvidence.RESTART_EQUIVALENCE in manifest.evidence
     assert ProcessEvidence.FAULT_RECOVERY in manifest.evidence
     assert ProcessEvidence.KPIS in manifest.evidence
+    assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset()
 
 
 def test_every_audited_process_claim_has_provenance_and_existing_sources() -> None:
@@ -117,11 +118,11 @@ def test_audit_orders_domains_by_maturity_then_name_and_reports_next_gate() -> N
     assert audit[0].maturity >= audit[-1].maturity
 
     management = next(row for row in audit if row.domain == "warehouse_management")
-    assert management.next_maturity is ProcessMaturity.PC4_DURABLE
+    assert management.next_maturity is ProcessMaturity.PC6_COMPOSABLE
     assert not management.assessment_is_lower_bound
-    assert management.missing_for_next_gate == frozenset(
-        {ProcessEvidence.RESTART_EQUIVALENCE}
-    )
+    assert management.missing_for_next_gate == PROCESS_MATURITY_REQUIREMENTS[
+        ProcessMaturity.PC6_COMPOSABLE
+    ]
 
     fulfillment = next(row for row in audit if row.domain == "warehouse_fulfillment")
     assert fulfillment.next_maturity is ProcessMaturity.PC3_OPERATIONAL
