@@ -5,6 +5,10 @@ from functools import cached_property, lru_cache
 
 from .agency import A1Policy, A1PolicyName, AgencyLevel, AgencySpec
 from .domain_experiment import AgencyConfiguration, ExperimentWorld
+from .domain_experiment_analysis import (
+    ComparisonContext,
+    ComparisonEligibility,
+)
 from .domain_experiment_runtime import (
     DomainExecutionRequest,
     DomainExecutionResult,
@@ -141,6 +145,8 @@ class QueueReferenceDomain:
         if not isinstance(evidence, (SyntheticRunResult, A1AdaptiveRunResult)):
             raise TypeError("queue reference received unsupported execution evidence")
         metrics = {
+            "lead_time": evidence.mean_lead_time,
+            "operating_cost": evidence.total_operating_cost,
             "mean_lead_time": evidence.mean_lead_time,
             "median_lead_time": evidence.median_lead_time,
             "p90_lead_time": evidence.p90_lead_time,
@@ -158,6 +164,46 @@ class QueueReferenceDomain:
                 }
             )
         return ExperimentObservation(metrics=metrics)
+
+    def comparison_eligibility(
+        self,
+        context: ComparisonContext,
+    ) -> ComparisonEligibility:
+        """Declare scientific eligibility from configured mechanics only."""
+
+        if context.metric_name == "lead_time":
+            eligible = (
+                context.control_regime.stable is True
+                and context.treatment_regime.stable is True
+            )
+            return ComparisonEligibility(
+                eligible=eligible,
+                basis=(
+                    "control regime is stationary",
+                    "treatment regime is stationary",
+                    "eligibility uses configured mechanics only",
+                ),
+                reason=(
+                    None
+                    if eligible
+                    else "stationary lead-time comparison requires both configured regimes to be stable"
+                ),
+            )
+
+        if context.metric_name == "operating_cost":
+            return ComparisonEligibility(
+                eligible=True,
+                basis=(
+                    "configured cost accounting remains finite across regimes",
+                    "eligibility uses configured mechanics only",
+                ),
+            )
+
+        return ComparisonEligibility(
+            eligible=False,
+            basis=("metric has no queue-reference comparison contract",),
+            reason=f"unsupported comparison metric: {context.metric_name}",
+        )
 
     def ground_truth(self, world: ExperimentWorld) -> tuple[GroundTruthClaim, ...]:
         legacy = _legacy_world(world)
