@@ -74,11 +74,61 @@ def _validate_quantity(quantity: float) -> None:
         )
 
 
+def schedule_procurement_cycle(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    *,
+    entities: P2PEntities,
+    start_at: datetime,
+    correlation_id: str | None = None,
+    caused_by=None,
+) -> tuple[datetime, ...]:
+    """Schedule the canonical P2P procurement lifecycle with external causality.
+
+    Standalone callers use the same schedule with the native P2P correlation. Composed
+    callers may bind the first command to a durable cross-domain intent while all
+    subsequent commands retain the ordinary deterministic command chain.
+    """
+
+    requisition = persistence.entity("requisition", entities.requisition_id)
+    purchase_order = persistence.entity("purchase_order", entities.purchase_order_id)
+    if requisition is None or purchase_order is None:
+        raise RuntimeError("P2P procurement entities were not persisted")
+
+    correlation = correlation_id or flow_correlation_id()
+    schedule = (
+        (requisition, "approve", timedelta(hours=1)),
+        (requisition, "order", timedelta(hours=2)),
+        (purchase_order, "submit", timedelta(hours=2)),
+        (purchase_order, "confirm", timedelta(hours=3)),
+        (purchase_order, "dispatch", timedelta(hours=4)),
+        # The gap between dispatch and receive is the durable supplier lead time.
+        (purchase_order, "receive", timedelta(hours=10)),
+        (purchase_order, "close", timedelta(hours=11)),
+    )
+    previous = caused_by
+    due_times: list[datetime] = []
+    for entity, trigger, offset in schedule:
+        command = engine.context.commands.create(
+            trigger,
+            target=entity,
+            due_at=start_at + offset,
+            caused_by=previous,
+            correlation_id=correlation,
+            key=("p2p-happy", entity.entity_type, entity.id, trigger),
+        )
+        engine.context.schedules.at(command.due_at, command=command)
+        previous = command
+        due_times.append(command.due_at)
+    return tuple(due_times)
+
+
 def seed_happy_path(
     persistence: MemoryPersistence,
     *,
     now: datetime = ORIGIN,
     quantity: float = 10.0,
+    schedule: bool = True,
 ) -> P2PEntities:
     _validate_quantity(quantity)
     context, engine = build_runtime(persistence, now=now)
@@ -128,28 +178,20 @@ def seed_happy_path(
         )
     )
 
-    schedule = (
-        (requisition, "approve", timedelta(hours=1)),
-        (requisition, "order", timedelta(hours=2)),
-        (purchase_order, "submit", timedelta(hours=2)),
-        (purchase_order, "confirm", timedelta(hours=3)),
-        (purchase_order, "dispatch", timedelta(hours=4)),
-        # The gap between dispatch and receive is the durable supplier lead time.
-        (purchase_order, "receive", timedelta(hours=10)),
-        (purchase_order, "close", timedelta(hours=11)),
+    seeded = P2PEntities(
+        requisition_id=requisition.id,
+        purchase_order_id=purchase_order.id,
+        receipt_id=receipt.id,
+        material_demand_id=material_demand.id,
     )
-    previous = None
-    for entity, trigger, offset in schedule:
-        command = context.commands.create(
-            trigger,
-            target=entity,
-            due_at=now + offset,
-            caused_by=previous,
+    if schedule:
+        schedule_procurement_cycle(
+            persistence,
+            engine,
+            entities=seeded,
+            start_at=now,
             correlation_id=correlation_id,
-            key=("p2p-happy", entity.entity_type, entity.id, trigger),
         )
-        context.schedules.at(command.due_at, command=command)
-        previous = command
 
     return P2PEntities(
         requisition_id=requisition.id,
