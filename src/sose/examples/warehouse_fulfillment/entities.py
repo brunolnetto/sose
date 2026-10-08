@@ -23,3 +23,8 @@ class Allocation(Entity):
 @dataclass(slots=True)
 class InventoryOccurrence(Entity):
     entity_type: str = "warehouse_inventory_occurrence"
+
+
+@dataclass(slots=True)
+class FulfillmentServiceTask(Entity):
+    entity_type: str = "warehouse_fulfillment_service_task"

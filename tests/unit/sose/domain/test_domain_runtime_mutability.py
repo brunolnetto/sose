@@ -56,6 +56,16 @@ def test_warehouse_progression_can_be_enabled_between_ticks():
         state.bootstrap_state.order_id,
     )
     assert order is not None
+    assert order.state == "picking"
+
+    for index in range(3, 7):
+        job.run_tick(trigger_id=f"warehouse-{index}")
+
+    order = persistence.entity(
+        "warehouse_fulfillment_order",
+        state.bootstrap_state.order_id,
+    )
+    assert order is not None
     assert order.state == "shipped"
 
 

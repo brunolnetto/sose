@@ -40,3 +40,13 @@ class InventoryOccurrenceChart(StateChart):
     committed = State(final=True)
 
     commit = captured.to(committed)
+
+
+@probabilistic_transitions({}, excluded_events={"start", "complete"})
+class FulfillmentServiceTaskChart(StateChart):
+    queued = State(initial=True)
+    in_progress = State()
+    completed = State(final=True)
+
+    start = queued.to(in_progress)
+    complete = in_progress.to(completed)

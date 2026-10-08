@@ -93,17 +93,26 @@ def test_telecom_recurring_job_preserves_activation_delay_across_ticks():
     assert order.state == "completed"
 
 
-def test_warehouse_recurring_job_reconciles_available_inventory_to_shipment():
+def test_warehouse_recurring_job_preserves_finite_service_time_to_shipment():
     job = _job("warehouse_fulfillment", "warehouse-recurring")
     state = job.initialize()
 
-    result = job.run_tick(trigger_id="warehouse-1")
+    first = job.run_tick(trigger_id="warehouse-1")
     order = job.persistence.entity(
         "warehouse_fulfillment_order",
         state.bootstrap_state.order_id,
     )
+    assert first.logical_tick == 1
+    assert order.state == "picking"
 
-    assert result.logical_tick == 1
+    for index in range(2, 6):
+        result = job.run_tick(trigger_id=f"warehouse-{index}")
+
+    order = job.persistence.entity(
+        "warehouse_fulfillment_order",
+        state.bootstrap_state.order_id,
+    )
+    assert result.logical_tick == 5
     assert order.state == "shipped"
 
 
