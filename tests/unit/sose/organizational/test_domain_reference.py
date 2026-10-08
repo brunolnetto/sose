@@ -9,6 +9,8 @@ from sose.organizational.domain_reference import (
     DomainReferenceDescriptor,
     DomainReferenceIdentity,
     GroundTruthClaim,
+    GroundTruthComparisonKind,
+    GroundTruthComparisonRule,
     GroundTruthKind,
     GroundTruthTargetKind,
     ParameterDefinition,
@@ -159,6 +161,9 @@ def test_ground_truth_claim_requires_explicit_eligibility_and_provenance() -> No
         target_kind=GroundTruthTargetKind.REGIME,
         target_name="stability",
         expected={"class": "stable", "rho_upper_bound": 1.0},
+        comparison_rule=GroundTruthComparisonRule(
+            kind=GroundTruthComparisonKind.EXACT,
+        ),
         assumptions=("configured rates are exogenous",),
         eligibility_rule="configured offered load < 1",
         eligible=True,
@@ -170,6 +175,9 @@ def test_ground_truth_claim_requires_explicit_eligibility_and_provenance() -> No
         target_kind=GroundTruthTargetKind.REGIME,
         target_name="stability",
         expected={"rho_upper_bound": 1.0, "class": "stable"},
+        comparison_rule=GroundTruthComparisonRule(
+            kind=GroundTruthComparisonKind.EXACT,
+        ),
         assumptions=("configured rates are exogenous",),
         eligibility_rule="configured offered load < 1",
         eligible=True,
@@ -185,6 +193,10 @@ def test_ground_truth_claim_requires_explicit_eligibility_and_provenance() -> No
             target_kind=GroundTruthTargetKind.METRIC,
             target_name="mean_lead_time",
             expected=1.25,
+            comparison_rule=GroundTruthComparisonRule(
+                kind=GroundTruthComparisonKind.RELATIVE_TOLERANCE,
+                tolerance=0.05,
+            ),
             assumptions=("stationary queue",),
             eligibility_rule="rho < 1",
             eligible=False,
@@ -232,3 +244,48 @@ def test_domain_reference_descriptor_is_order_independent_and_rejects_duplicates
             agency_capabilities=(_a1(), _a1()),
             ground_truth_kinds=(GroundTruthKind.MECHANISTIC,),
         )
+
+
+
+def test_ground_truth_comparison_rule_is_explicit_and_typed() -> None:
+    rule = GroundTruthComparisonRule(
+        kind=GroundTruthComparisonKind.ABSOLUTE_TOLERANCE,
+        tolerance=0.1,
+    )
+    assert rule.tolerance == 0.1
+
+    with pytest.raises(ValidationError, match="requires a positive tolerance"):
+        GroundTruthComparisonRule(
+            kind=GroundTruthComparisonKind.RELATIVE_TOLERANCE,
+        )
+
+    with pytest.raises(ValidationError, match="does not accept tolerance"):
+        GroundTruthComparisonRule(
+            kind=GroundTruthComparisonKind.UPPER_BOUND,
+            tolerance=0.1,
+        )
+
+
+def test_frozen_contracts_remain_pydantic_json_serializable() -> None:
+    a0 = _a0()
+    a1 = _a1()
+    assert a0.model_dump(mode="json")["parameter_ranges"] == {}
+    assert a1.model_dump(mode="json")["defaults"]["service_multiplier"] == 0.7
+    assert '"backlog_trigger"' in a1.model_dump_json()
+
+    claim = GroundTruthClaim(
+        claim_id="stable-load",
+        kind=GroundTruthKind.MECHANISTIC,
+        target_kind=GroundTruthTargetKind.REGIME,
+        target_name="stability",
+        expected={"class": "stable", "rho_upper_bound": 1.0},
+        comparison_rule=GroundTruthComparisonRule(
+            kind=GroundTruthComparisonKind.EXACT,
+        ),
+        assumptions=("configured rates are exogenous",),
+        eligibility_rule="configured offered load < 1",
+        eligible=True,
+        provenance=("manufacturing/reference.py:classify_regime",),
+    )
+    assert claim.model_dump(mode="json")["expected"]["class"] == "stable"
+    assert '"rho_upper_bound":1.0' in claim.model_dump_json()
