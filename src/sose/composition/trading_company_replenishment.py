@@ -272,6 +272,7 @@ def _execute_warehouse_receipt(
         engine,
         stock_id=fixtures.warehouse.origin_stock_id,
         quantity=quantity,
+        sku=p2p.SKU,
         receipt_reference=fixtures.procurement.receipt_id,
         caused_by=intent,
         correlation_id=correlation_id,
@@ -348,6 +349,7 @@ def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
             now=origin,
             origin_on_hand=2.0,
             transfer_quantity=1.0,
+            sku=p2p.SKU,
         ),
         procurement=p2p.seed_happy_path(
             store,
@@ -463,8 +465,8 @@ def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
     message = _publish(
         service,
         contract_name="accounting.entry_requested",
-        source_domain="warehouse_management",
-        source_identity=fixtures.warehouse.origin_stock_id,
+        source_domain="procure_to_pay",
+        source_identity=fixtures.procurement.receipt_id,
         destination_domain="record_to_report",
         occurrence_key="replenishment-accounting-entry",
         correlation_id=correlation_id,
