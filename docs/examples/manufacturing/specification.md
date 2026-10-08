@@ -609,10 +609,10 @@ commands, alter inventory, or write entity state.
 
 | KPI | Type | Definition |
 |---|---|---|
-| `completion` | boolean | true only when `ProductionOrder.state == completed` |
+| `completed` | boolean | true only when `ProductionOrder.state == completed` |
 | `lead_time_seconds` | float or null | `ProductionOrder.updated_at - created_at` after completion; null before completion |
 | `output_quantity` | float | durable `finished_goods` Container level |
-| `yield_ratio` | float | durable finished-goods output divided by planned order quantity |
+| `yield_ratio` | float or null | durable finished-goods output divided by planned order quantity after completion; null while the order is incomplete |
 | `transition_count` | integer | immutable correlated `entity.state_transition` event count |
 | `rework_count` | integer | correlated transitions entering/triggering production rework |
 | `breakdown_count` | integer | correlated transitions entering/triggering `machine_down` |
