@@ -7,6 +7,7 @@ import pytest
 from sose.core.events import Command
 from sose.examples.p2p.simulation import (
     ORIGIN as P2P_ORIGIN,
+    SKU as P2P_SKU,
     build_runtime as build_p2p_runtime,
     schedule_procurement_cycle,
     seed_happy_path,
@@ -69,6 +70,7 @@ def test_warehouse_external_replenishment_is_idempotent_and_conflict_safe() -> N
         now=WM_ORIGIN,
         origin_on_hand=2.0,
         transfer_quantity=1.0,
+        sku=P2P_SKU,
     )
     _, engine = build_wm_runtime(store, now=WM_ORIGIN)
     cause = Command(
@@ -85,6 +87,7 @@ def test_warehouse_external_replenishment_is_idempotent_and_conflict_safe() -> N
         engine,
         stock_id=entities.origin_stock_id,
         quantity=5.0,
+        sku=P2P_SKU,
         receipt_reference="receipt-42",
         caused_by=cause,
         correlation_id="replenishment-flow",
@@ -94,6 +97,7 @@ def test_warehouse_external_replenishment_is_idempotent_and_conflict_safe() -> N
         engine,
         stock_id=entities.origin_stock_id,
         quantity=5.0,
+        sku=P2P_SKU,
         receipt_reference="receipt-42",
         caused_by=cause,
         correlation_id="replenishment-flow",
@@ -118,7 +122,34 @@ def test_warehouse_external_replenishment_is_idempotent_and_conflict_safe() -> N
             engine,
             stock_id=entities.origin_stock_id,
             quantity=6.0,
+            sku=P2P_SKU,
             receipt_reference="receipt-42",
             caused_by=cause,
             correlation_id="replenishment-flow",
         )
+
+
+def test_warehouse_replenishment_rejects_sku_mismatch() -> None:
+    store = MemoryPersistence()
+    entities = seed_reference(
+        store,
+        now=WM_ORIGIN,
+        origin_on_hand=2.0,
+        transfer_quantity=1.0,
+        sku=P2P_SKU,
+    )
+    _, engine = build_wm_runtime(store, now=WM_ORIGIN)
+
+    with pytest.raises(ValueError, match="replenishment SKU mismatch"):
+        receive_external_replenishment(
+            store,
+            engine,
+            stock_id=entities.origin_stock_id,
+            quantity=5.0,
+            sku="different-sku",
+            receipt_reference="receipt-mismatch",
+            correlation_id="replenishment-flow",
+        )
+
+    stock = store.entity("warehouse_management_stock", entities.origin_stock_id)
+    assert stock.attributes["on_hand"] == 2.0
