@@ -144,7 +144,16 @@ class DomainExperimentReport(BaseModel):
             "domain_reference_hash": self.domain_reference_hash,
             "effects": [
                 effect.canonical_payload()
-                for effect in self.effects
+                for effect in sorted(
+                    self.effects,
+                    key=lambda item: (
+                        item.comparison_kind.value,
+                        item.design_index,
+                        item.metric_name,
+                        item.control_world_hash,
+                        item.treatment_world_hash,
+                    ),
+                )
             ],
         }
 
@@ -188,7 +197,6 @@ def analyze_domain_experiment(
     if set(regimes) != {world.world_hash for world in result.worlds}:
         raise ValueError("every world requires exactly one regime reference")
 
-    outcome_by_name = {outcome.name: outcome for outcome in protocol.outcomes}
     effects: list[ExperimentEffect] = []
     arm_ids = ("baseline", *protocol.intervention_ids)
 
