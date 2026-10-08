@@ -14,6 +14,7 @@ def test_replenishment_path_keeps_warehouse_management_as_stock_owner() -> None:
 
     assert stock is not None
     assert stock.attributes["on_hand"] == 7.0
+    assert stock.attributes["sku"] == "bearing-6204"
     assert stock.attributes["external_receipts"] == {result.receipt_id: 5.0}
     assert receipt is not None and receipt.state == "stocked"
     assert journal is not None and journal.state == "posted"
@@ -54,6 +55,8 @@ def test_replenishment_path_keeps_warehouse_management_as_stock_owner() -> None:
     assert [message.produced_at for message in messages] == sorted(
         message.produced_at for message in messages
     )
+    assert messages[-1].source_domain == "procure_to_pay"
+    assert messages[-1].source_identity == result.receipt_id
 
 
 def test_replenishment_receipt_replay_does_not_duplicate_stock() -> None:
