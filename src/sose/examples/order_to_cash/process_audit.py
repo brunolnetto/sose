@@ -20,6 +20,12 @@ def process_manifest() -> ProcessManifest:
         ProcessMaturity.PC4_DURABLE,
     ):
         evidence.update(PROCESS_MATURITY_REQUIREMENTS[level])
+    evidence.update(
+        {
+            ProcessEvidence.ERD,
+            ProcessEvidence.STATECHART_DOCUMENTATION,
+        }
+    )
 
     simulation = "src/sose/examples/order_to_cash/simulation.py"
     entities = "src/sose/examples/order_to_cash/entities.py"
@@ -46,6 +52,7 @@ def process_manifest() -> ProcessManifest:
         "test_order_to_cash_process_equivalence.py"
     )
     recurring = "tests/e2e/sose/jobs/test_recurring_reference_complete.py"
+    specification = "docs/examples/order-to-cash/specification.md"
 
     evidence_sources: dict[ProcessEvidence, tuple[str, ...]] = {
         ProcessEvidence.ENTITIES: (entities, statechart_test),
@@ -62,6 +69,8 @@ def process_manifest() -> ProcessManifest:
         ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, runtime, process_equivalence),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
         ProcessEvidence.FAULT_RECOVERY: (runtime, restart),
+        ProcessEvidence.ERD: (specification,),
+        ProcessEvidence.STATECHART_DOCUMENTATION: (statecharts, specification),
     }
 
     return ProcessManifest(
@@ -79,6 +88,7 @@ def process_manifest() -> ProcessManifest:
                 "overdue_collection",
             }
         ),
+        specification_path=specification,
         evidence_sources=evidence_sources,
         assessment_complete=True,
     )
