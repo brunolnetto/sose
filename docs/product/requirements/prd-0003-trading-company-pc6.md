@@ -81,6 +81,12 @@ flowchart LR
   and acknowledgement boundaries.
 - **FR-10:** Process manifests shall only claim PC6 when explicit ingress, egress,
   cross-domain execution, restart, and provenance evidence exist.
+- **FR-11:** In composed mode, Warehouse Management shall remain the sole durable
+  owner of stock position/reservation truth. Warehouse Fulfillment shall not create
+  or mutate authoritative local InventoryLot stock; it shall consume WM availability/
+  reservation contracts and retain only immutable foreign reservation/stock references.
+- **FR-12:** Warehouse Fulfillment standalone mode shall retain its current local
+  InventoryLot behavior so PC6 composition does not break the standalone reference.
 
 ### Quality / operational
 
@@ -122,6 +128,9 @@ flowchart LR
 - [ ] Representative cross-domain crash/restart is continuous-equivalent.
 - [ ] Correlation and causation survive restart.
 - [ ] No domain mutates another domain's private state.
+- [ ] Composed Warehouse Fulfillment uses WM-owned availability/reservation/consumption
+  contracts and has no second authoritative stock projection.
+- [ ] Standalone Warehouse Fulfillment retains the existing local InventoryLot path.
 - [ ] PC6 evidence is provenance-bound in executable manifests.
 - [ ] At least one resulting process canonical reaches PC6.
 - [ ] Standalone domain execution remains supported.
