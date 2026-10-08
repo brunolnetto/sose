@@ -254,9 +254,13 @@ def build_experiment_worlds(
         raise ValueError("baseline is a reserved experiment arm identifier")
     if len(intervention_by_id) != len(interventions):
         raise ValueError("duplicate intervention ids are not allowed")
-    if set(intervention_by_id) != set(protocol.intervention_ids):
+    unknown_interventions = sorted(
+        set(protocol.intervention_ids) - set(intervention_by_id)
+    )
+    if unknown_interventions:
         raise ValueError(
-            "domain intervention ids must exactly match the experiment protocol"
+            "experiment protocol requests unknown intervention id(s): "
+            + ", ".join(unknown_interventions)
         )
 
     sampled_points = sample_parameter_space(
