@@ -205,6 +205,22 @@ class QueueReferenceDomain:
             reason=f"unsupported comparison metric: {context.metric_name}",
         )
 
+    def crn_signature(self, result: DomainExecutionResult) -> object:
+        """Return domain-owned latent evidence used to verify declared CRN pairing."""
+
+        evidence = result.evidence
+        if not isinstance(evidence, (SyntheticRunResult, A1AdaptiveRunResult)):
+            raise TypeError("queue reference received unsupported execution evidence")
+        return tuple(
+            (
+                item.arrival_at,
+                item.service_latent_normal,
+                item.rework_latent_uniform,
+            )
+            for item in evidence.items
+        )
+
+
     def ground_truth(self, world: ExperimentWorld) -> tuple[GroundTruthClaim, ...]:
         legacy = _legacy_world(world)
         if world.agency_configuration.level is AgencyLevel.A0:
