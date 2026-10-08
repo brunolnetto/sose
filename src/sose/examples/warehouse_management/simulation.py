@@ -417,7 +417,7 @@ def consume_external_reservation(
         reservation_reference=reservation_reference,
         consumption_reference=consumption_reference,
         sku=sku,
-        quantity=float(quantity),
+        quantity=normalized_quantity,
     )
     with persistence.transaction() as uow:
         uow.save_entity(stock)
