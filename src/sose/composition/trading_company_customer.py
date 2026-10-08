@@ -14,6 +14,7 @@ from sose.examples.warehouse_fulfillment import simulation as fulfillment
 from sose.examples.logistics import simulation as logistics
 from sose.examples.cards_payments import simulation as payments
 from sose.examples.record_to_report import simulation as r2r
+from sose.examples.warehouse_management import simulation as wm
 
 from .boundary import BoundaryConsumerRegistry, BoundaryService
 from .model import BoundaryMessage
@@ -28,6 +29,9 @@ class CustomerDemandPathResult:
     shipment_id: str
     payment_id: str
     journal_id: str
+    warehouse_stock_id: str
+    reservation_reference: str
+    consumption_reference: str
     message_ids: tuple[str, ...]
     effect_ids: tuple[str, ...]
 
@@ -36,6 +40,7 @@ class CustomerDemandPathResult:
 class _CustomerFixtures:
     o2c: o2c.O2CEntities
     fulfillment: fulfillment.WarehouseEntities
+    warehouse: wm.WarehouseManagementEntities
     logistics: logistics.LogisticsEntities
     payments: payments.PaymentEntities
     r2r: r2r.R2REntities
@@ -87,9 +92,39 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
         contract_name="o2c.fulfillment_requested",
         contract_version=1,
         handler=_intent_handler(
-            intent_name="composition.fulfill_customer_order",
+            intent_name="composition.request_fulfillment_inventory",
             entity_type="warehouse_fulfillment_order",
             entity_id=fixtures.fulfillment.order_id,
+        ),
+    )
+    registry.register(
+        destination_domain="warehouse_management",
+        contract_name="warehouse.inventory_reservation_requested",
+        contract_version=1,
+        handler=_intent_handler(
+            intent_name="composition.reserve_fulfillment_inventory",
+            entity_type="warehouse_management_stock",
+            entity_id=fixtures.warehouse.origin_stock_id,
+        ),
+    )
+    registry.register(
+        destination_domain="warehouse_fulfillment",
+        contract_name="warehouse.inventory_reserved",
+        contract_version=1,
+        handler=_intent_handler(
+            intent_name="composition.accept_inventory_reservation",
+            entity_type="warehouse_fulfillment_order",
+            entity_id=fixtures.fulfillment.order_id,
+        ),
+    )
+    registry.register(
+        destination_domain="warehouse_management",
+        contract_name="warehouse.inventory_consumption_requested",
+        contract_version=1,
+        handler=_intent_handler(
+            intent_name="composition.consume_fulfillment_inventory",
+            entity_type="warehouse_management_stock",
+            entity_id=fixtures.warehouse.origin_stock_id,
         ),
     )
     registry.register(
@@ -285,22 +320,79 @@ def _execute_intent(
     if intent is None:
         return
 
-    if intent.name == "composition.fulfill_customer_order":
+    if intent.name == "composition.request_fulfillment_inventory":
+        order = persistence.entity(
+            "warehouse_fulfillment_order",
+            fixtures.fulfillment.order_id,
+        )
+        if order is None:
+            raise RuntimeError("warehouse fulfillment order disappeared")
+        if order.state != "requested":
+            raise RuntimeError(
+                "inventory reservation request requires requested fulfillment order"
+            )
+
+    elif intent.name == "composition.reserve_fulfillment_inventory":
+        _, engine = wm.build_runtime(persistence, now=intent.due_at)
+        if not wm.reserve_external_stock(
+            persistence,
+            engine,
+            stock_id=str(intent.payload["stock_id"]),
+            quantity=float(intent.payload["quantity"]),
+            sku=str(intent.payload["sku"]),
+            reservation_reference=str(intent.payload["reservation_reference"]),
+            caused_by=intent,
+            correlation_id=correlation_id,
+        ):
+            raise RuntimeError("warehouse management inventory reservation failed")
+
+    elif intent.name == "composition.accept_inventory_reservation":
         _, engine = fulfillment.build_runtime(persistence, now=intent.due_at)
         with _causal_command_scope(
             engine,
             intent=intent,
             correlation_id=correlation_id,
         ):
-            if not fulfillment.allocate_order(
+            if not fulfillment.allocate_composed_order(
                 persistence,
                 engine,
                 entities=fixtures.fulfillment,
+                stock_reference=str(intent.payload["stock_id"]),
+                reservation_reference=str(intent.payload["reservation_reference"]),
+                supplied_sku=str(intent.payload["sku"]),
+                quantity=float(intent.payload["quantity"]),
             ):
-                raise RuntimeError("warehouse fulfillment allocation failed")
-            fulfillment.pick_order(persistence, engine, entities=fixtures.fulfillment)
-            fulfillment.pack_order(persistence, engine, entities=fixtures.fulfillment)
-            fulfillment.ship_order(persistence, engine, entities=fixtures.fulfillment)
+                raise RuntimeError("composed fulfillment allocation failed")
+            fulfillment.pick_composed_order(
+                persistence,
+                engine,
+                entities=fixtures.fulfillment,
+            )
+            fulfillment.pack_order(
+                persistence,
+                engine,
+                entities=fixtures.fulfillment,
+            )
+            fulfillment.ship_order(
+                persistence,
+                engine,
+                entities=fixtures.fulfillment,
+            )
+
+    elif intent.name == "composition.consume_fulfillment_inventory":
+        _, engine = wm.build_runtime(persistence, now=intent.due_at)
+        if not wm.consume_external_reservation(
+            persistence,
+            engine,
+            stock_id=str(intent.payload["stock_id"]),
+            quantity=float(intent.payload["quantity"]),
+            sku=str(intent.payload["sku"]),
+            reservation_reference=str(intent.payload["reservation_reference"]),
+            consumption_reference=str(intent.payload["consumption_reference"]),
+            caused_by=intent,
+            correlation_id=correlation_id,
+        ):
+            raise RuntimeError("warehouse management inventory consumption replayed")
 
     elif intent.name == "composition.deliver_shipment":
         for work in persistence.scheduled_work():
@@ -489,12 +581,17 @@ def _execute_intent(
 
 
 def run_customer_demand_path() -> CustomerDemandPathResult:
-    """Execute the first durable Trading Company PC6 customer-demand composition path."""
+    """Execute the durable Trading Company customer-demand composition path.
+
+    Composed fulfillment delegates stock reservation/consumption to Warehouse
+    Management and never creates authoritative Warehouse Fulfillment inventory lots.
+    """
 
     persistence = MemoryPersistence()
     origin = o2c.ORIGIN
     amount = 250.0
     currency = "USD"
+    requested_quantity = 10.0
 
     fixtures = _CustomerFixtures(
         o2c=o2c.seed_reference(
@@ -503,10 +600,17 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
             amount=amount,
             currency=currency,
         ),
-        fulfillment=fulfillment.seed_reference(
+        fulfillment=fulfillment.seed_composed_reference(
             persistence,
             now=origin,
-            requested_quantity=10.0,
+            requested_quantity=requested_quantity,
+        ),
+        warehouse=wm.seed_reference(
+            persistence,
+            now=origin,
+            origin_on_hand=20.0,
+            transfer_quantity=1.0,
+            sku=fulfillment.PRIMARY_SKU,
         ),
         logistics=logistics.seed_reference(
             persistence,
@@ -538,112 +642,155 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
         "trading-company-customer-demand",
         fixtures.o2c.order_id,
     )
+    reservation_reference = deterministic_id(
+        "trading-company-inventory-reservation",
+        fixtures.fulfillment.order_id,
+        fixtures.warehouse.origin_stock_id,
+    )
+    consumption_reference = deterministic_id(
+        "trading-company-inventory-consumption",
+        reservation_reference,
+    )
+
     service = BoundaryService(persistence)
     registry = _registry(fixtures)
     messages: list[BoundaryMessage] = []
     effects: list[str] = []
 
-    message = _publish(
-        service,
+    def publish_consume_execute(
+        *,
+        contract_name: str,
+        source_domain: str,
+        source_identity: str,
+        destination_domain: str,
+        occurrence_key: str,
+        owner_id: str,
+        payload: dict[str, object],
+    ) -> BoundaryMessage:
+        previous = messages[-1] if messages else None
+        message = _publish(
+            service,
+            contract_name=contract_name,
+            source_domain=source_domain,
+            source_identity=source_identity,
+            destination_domain=destination_domain,
+            occurrence_key=occurrence_key,
+            correlation_id=correlation_id,
+            causation_id=None if previous is None else previous.message_id,
+            produced_at=(
+                origin
+                if previous is None
+                else _next_logical_time(persistence, previous.produced_at)
+            ),
+            payload=payload,
+        )
+        messages.append(message)
+        effect = _consume_next(
+            service,
+            registry,
+            owner_id=owner_id,
+            now=message.produced_at,
+        )
+        effects.append(effect)
+        _execute_intent(
+            persistence,
+            effect_id=effect,
+            fixtures=fixtures,
+            correlation_id=correlation_id,
+        )
+        return message
+
+    publish_consume_execute(
         contract_name="o2c.fulfillment_requested",
         source_domain="order_to_cash",
         source_identity=fixtures.o2c.order_id,
         destination_domain="warehouse_fulfillment",
         occurrence_key="fulfillment-requested",
-        correlation_id=correlation_id,
-        causation_id=None,
-        produced_at=origin,
+        owner_id="warehouse-fulfillment-worker",
         payload={
             "order_id": fixtures.o2c.order_id,
             "fulfillment_order_id": fixtures.fulfillment.order_id,
-            "requested_quantity": 10.0,
+            "requested_quantity": requested_quantity,
+            "sku": fulfillment.PRIMARY_SKU,
         },
     )
-    messages.append(message)
-    effect = _consume_next(
-        service,
-        registry,
+    publish_consume_execute(
+        contract_name="warehouse.inventory_reservation_requested",
+        source_domain="warehouse_fulfillment",
+        source_identity=fixtures.fulfillment.order_id,
+        destination_domain="warehouse_management",
+        occurrence_key="inventory-reservation-requested",
+        owner_id="warehouse-management-worker",
+        payload={
+            "fulfillment_order_id": fixtures.fulfillment.order_id,
+            "stock_id": fixtures.warehouse.origin_stock_id,
+            "reservation_reference": reservation_reference,
+            "sku": fulfillment.PRIMARY_SKU,
+            "quantity": requested_quantity,
+        },
+    )
+    publish_consume_execute(
+        contract_name="warehouse.inventory_reserved",
+        source_domain="warehouse_management",
+        source_identity=fixtures.warehouse.origin_stock_id,
+        destination_domain="warehouse_fulfillment",
+        occurrence_key="inventory-reserved",
         owner_id="warehouse-fulfillment-worker",
-        now=message.produced_at,
+        payload={
+            "fulfillment_order_id": fixtures.fulfillment.order_id,
+            "stock_id": fixtures.warehouse.origin_stock_id,
+            "reservation_reference": reservation_reference,
+            "sku": fulfillment.PRIMARY_SKU,
+            "quantity": requested_quantity,
+        },
     )
-    effects.append(effect)
-    _execute_intent(
-        persistence,
-        effect_id=effect,
-        fixtures=fixtures,
-        correlation_id=correlation_id,
+    publish_consume_execute(
+        contract_name="warehouse.inventory_consumption_requested",
+        source_domain="warehouse_fulfillment",
+        source_identity=fixtures.fulfillment.order_id,
+        destination_domain="warehouse_management",
+        occurrence_key="inventory-consumption-requested",
+        owner_id="warehouse-management-worker",
+        payload={
+            "fulfillment_order_id": fixtures.fulfillment.order_id,
+            "stock_id": fixtures.warehouse.origin_stock_id,
+            "reservation_reference": reservation_reference,
+            "consumption_reference": consumption_reference,
+            "sku": fulfillment.PRIMARY_SKU,
+            "quantity": requested_quantity,
+        },
     )
-
-    message = _publish(
-        service,
+    publish_consume_execute(
         contract_name="warehouse.dispatch_ready",
         source_domain="warehouse_fulfillment",
         source_identity=fixtures.fulfillment.order_id,
         destination_domain="logistics",
         occurrence_key="dispatch-ready",
-        correlation_id=correlation_id,
-        causation_id=messages[-1].message_id,
-        produced_at=_next_logical_time(persistence, messages[-1].produced_at),
+        owner_id="logistics-worker",
         payload={
             "fulfillment_order_id": fixtures.fulfillment.order_id,
             "shipment_id": fixtures.logistics.shipment_id,
         },
     )
-    messages.append(message)
-    effect = _consume_next(
-        service,
-        registry,
-        owner_id="logistics-worker",
-        now=message.produced_at,
-    )
-    effects.append(effect)
-    _execute_intent(
-        persistence,
-        effect_id=effect,
-        fixtures=fixtures,
-        correlation_id=correlation_id,
-    )
-
-    message = _publish(
-        service,
+    publish_consume_execute(
         contract_name="logistics.delivery_completed",
         source_domain="logistics",
         source_identity=fixtures.logistics.shipment_id,
         destination_domain="order_to_cash",
         occurrence_key="delivery-completed",
-        correlation_id=correlation_id,
-        causation_id=messages[-1].message_id,
-        produced_at=_next_logical_time(persistence, messages[-1].produced_at),
+        owner_id="o2c-worker",
         payload={
             "shipment_id": fixtures.logistics.shipment_id,
             "order_id": fixtures.o2c.order_id,
         },
     )
-    messages.append(message)
-    effect = _consume_next(
-        service,
-        registry,
-        owner_id="o2c-worker",
-        now=message.produced_at,
-    )
-    effects.append(effect)
-    _execute_intent(
-        persistence,
-        effect_id=effect,
-        fixtures=fixtures,
-        correlation_id=correlation_id,
-    )
-
-    message = _publish(
-        service,
+    publish_consume_execute(
         contract_name="o2c.payment_requested",
         source_domain="order_to_cash",
         source_identity=fixtures.o2c.order_id,
         destination_domain="cards_payments",
         occurrence_key="payment-requested",
-        correlation_id=correlation_id,
-        causation_id=messages[-1].message_id,
-        produced_at=_next_logical_time(persistence, messages[-1].produced_at),
+        owner_id="payments-worker",
         payload={
             "order_id": fixtures.o2c.order_id,
             "payment_id": fixtures.payments.payment_id,
@@ -651,51 +798,19 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
             "currency": currency,
         },
     )
-    messages.append(message)
-    effect = _consume_next(
-        service,
-        registry,
-        owner_id="payments-worker",
-        now=message.produced_at,
-    )
-    effects.append(effect)
-    _execute_intent(
-        persistence,
-        effect_id=effect,
-        fixtures=fixtures,
-        correlation_id=correlation_id,
-    )
-
-    message = _publish(
-        service,
+    publish_consume_execute(
         contract_name="accounting.entry_requested",
         source_domain="cards_payments",
         source_identity=fixtures.payments.payment_id,
         destination_domain="record_to_report",
         occurrence_key="customer-settlement-entry",
-        correlation_id=correlation_id,
-        causation_id=messages[-1].message_id,
-        produced_at=_next_logical_time(persistence, messages[-1].produced_at),
+        owner_id="r2r-worker",
         payload={
             "payment_id": fixtures.payments.payment_id,
             "journal_id": fixtures.r2r.journal_id,
             "amount": amount,
             "currency": currency,
         },
-    )
-    messages.append(message)
-    effect = _consume_next(
-        service,
-        registry,
-        owner_id="r2r-worker",
-        now=message.produced_at,
-    )
-    effects.append(effect)
-    _execute_intent(
-        persistence,
-        effect_id=effect,
-        fixtures=fixtures,
-        correlation_id=correlation_id,
     )
 
     return CustomerDemandPathResult(
@@ -706,6 +821,9 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
         shipment_id=fixtures.logistics.shipment_id,
         payment_id=fixtures.payments.payment_id,
         journal_id=fixtures.r2r.journal_id,
+        warehouse_stock_id=fixtures.warehouse.origin_stock_id,
+        reservation_reference=reservation_reference,
+        consumption_reference=consumption_reference,
         message_ids=tuple(message.message_id for message in messages),
         effect_ids=tuple(effects),
     )
