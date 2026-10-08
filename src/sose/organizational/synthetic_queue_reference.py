@@ -196,9 +196,15 @@ class QueueReferenceDomain:
                     if reference.expected_mean_lead_time is not None
                     else 0.0
                 ),
-                comparison_rule=GroundTruthComparisonRule(
-                    kind=GroundTruthComparisonKind.RELATIVE_TOLERANCE,
-                    tolerance=0.20,
+                comparison_rule=(
+                    GroundTruthComparisonRule(
+                        kind=GroundTruthComparisonKind.RELATIVE_TOLERANCE,
+                        tolerance=0.20,
+                    )
+                    if reference.stable
+                    else GroundTruthComparisonRule(
+                        kind=GroundTruthComparisonKind.EXACT
+                    )
                 ),
                 assumptions=(
                     "stationary M/G/1 reference mechanics",
