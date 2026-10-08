@@ -144,7 +144,7 @@ def process_manifest() -> ProcessManifest:
         ),
         kpis=frozenset(
             {
-                "completed",
+                "completion",
                 "lead_time_seconds",
                 "output_quantity",
                 "yield_ratio",
