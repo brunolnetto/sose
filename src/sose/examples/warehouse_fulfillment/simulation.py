@@ -3,22 +3,43 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
+from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.identity import deterministic_id
 from sose.core.randomness import RandomSource
+from sose.core.runtime import ResourceDefinition
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.memory import MemoryPersistence
 
-from .entities import Allocation, FulfillmentOrder, InventoryLot, InventoryOccurrence
+from .entities import (
+    Allocation,
+    FulfillmentOrder,
+    FulfillmentServiceTask,
+    InventoryLot,
+    InventoryOccurrence,
+)
 from .scenarios import ORIGIN
-from .statecharts import AllocationChart, FulfillmentOrderChart, InventoryOccurrenceChart
+from .statecharts import (
+    AllocationChart,
+    FulfillmentOrderChart,
+    FulfillmentServiceTaskChart,
+    InventoryOccurrenceChart,
+)
 
 
 PRIMARY_SKU = "widget-a"
 SUBSTITUTE_SKU = "widget-b"
+
+PICKER_RESOURCE = "fulfillment_picker"
+PACKING_RESOURCE = "packing_station"
+SHIPPING_RESOURCE = "shipping_dock"
+
+DEFAULT_PICK_DURATION = timedelta(hours=2)
+DEFAULT_PACK_DURATION = timedelta(hours=1)
+DEFAULT_SHIP_DURATION = timedelta(hours=3)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +73,16 @@ def occurrence_id(kind: str, subject_id: str, sequence: int) -> str:
     )
 
 
+def service_task_id(stage: str, subject_id: str) -> str:
+    return deterministic_id(
+        "entity",
+        "warehouse_fulfillment_service_task",
+        "warehouse-reference",
+        stage,
+        subject_id,
+    )
+
+
 def build_runtime(
     persistence: MemoryPersistence,
     *,
@@ -74,6 +105,9 @@ def build_runtime(
     registry.register(
         EntityType("warehouse_inventory_occurrence", InventoryOccurrenceChart)
     )
+    registry.register(
+        EntityType("warehouse_fulfillment_service_task", FulfillmentServiceTaskChart)
+    )
     return context, Engine(
         context=context,
         registry=registry,
@@ -90,6 +124,9 @@ def seed_reference(
     primary_on_hand: float = 6.0,
     substitute_on_hand: float = 5.0,
     allow_substitute: bool = True,
+    picker_capacity: int = 1,
+    packing_station_capacity: int = 1,
+    shipping_dock_capacity: int = 1,
 ) -> WarehouseEntities:
     context, _ = build_runtime(persistence, now=now)
     order = context.entities.create(
@@ -135,6 +172,15 @@ def seed_reference(
     with persistence.transaction() as uow:
         for entity in (order, primary, substitute):
             uow.save_entity(entity)
+        uow.save_resource_definition(
+            ResourceDefinition(PICKER_RESOURCE, capacity=picker_capacity)
+        )
+        uow.save_resource_definition(
+            ResourceDefinition(PACKING_RESOURCE, capacity=packing_station_capacity)
+        )
+        uow.save_resource_definition(
+            ResourceDefinition(SHIPPING_RESOURCE, capacity=shipping_dock_capacity)
+        )
     return WarehouseEntities(
         order_id=order.id,
         lot_ids=(primary.id, substitute.id),
@@ -434,7 +480,194 @@ def _persist_occurrence_scope(
             uow.save_entity(lot)
 
 
-def pick_allocation(
+def _service_task(
+    persistence: MemoryPersistence,
+    *,
+    stage: str,
+    subject_id: str,
+) -> FulfillmentServiceTask | None:
+    return persistence.entity(
+        "warehouse_fulfillment_service_task",
+        service_task_id(stage, subject_id),
+    )
+
+
+def _ensure_service_task(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    stage: str,
+    subject_id: str,
+    order_id: str,
+    resource_name: str,
+    duration: timedelta,
+) -> FulfillmentServiceTask:
+    if duration <= timedelta(0):
+        raise ValueError("service duration must be positive")
+
+    existing = _service_task(
+        persistence,
+        stage=stage,
+        subject_id=subject_id,
+    )
+    seconds = duration.total_seconds()
+    if existing is not None:
+        expected = {
+            "stage": stage,
+            "subject_id": subject_id,
+            "order_id": order_id,
+            "resource_name": resource_name,
+            "service_duration_seconds": seconds,
+        }
+        for key, value in expected.items():
+            if existing.attributes.get(key) != value:
+                raise ValueError(
+                    "service task identity already exists with different semantics"
+                )
+        return existing
+
+    task = engine.context.entities.create(
+        FulfillmentServiceTask,
+        key=("warehouse-reference", "service-task", stage, subject_id),
+        state="queued",
+        attributes={
+            "stage": stage,
+            "subject_id": subject_id,
+            "order_id": order_id,
+            "resource_name": resource_name,
+            "requested_at": backend.now.isoformat(),
+            "acquired_at": None,
+            "service_duration_seconds": seconds,
+            "completion_due_at": None,
+        },
+    )
+    with persistence.transaction() as uow:
+        uow.save_entity(task)
+    return task
+
+
+def _service_request_id(task_id: str) -> str:
+    return f"warehouse-service:{task_id}"
+
+
+def _reconcile_service_task(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    stage: str,
+    subject_id: str,
+    order_id: str,
+    resource_name: str,
+    duration: timedelta,
+) -> FulfillmentServiceTask:
+    task = _ensure_service_task(
+        persistence,
+        engine,
+        backend,
+        stage=stage,
+        subject_id=subject_id,
+        order_id=order_id,
+        resource_name=resource_name,
+        duration=duration,
+    )
+    if task.state == "completed":
+        return task
+
+    requested_at = datetime.fromisoformat(str(task.attributes["requested_at"]))
+    reservation = engine.resources.ensure_requested(
+        backend,
+        resource_name=resource_name,
+        request_id=_service_request_id(task.id),
+        requested_at=requested_at,
+    )
+    if reservation is None:
+        return _service_task(
+            persistence,
+            stage=stage,
+            subject_id=subject_id,
+        )
+
+    task = _service_task(
+        persistence,
+        stage=stage,
+        subject_id=subject_id,
+    )
+    if task is None:
+        raise RuntimeError("service task disappeared after resource acquisition")
+
+    if task.attributes.get("acquired_at") is None:
+        task.attributes["acquired_at"] = reservation.acquired_at.isoformat()
+        task.attributes["completion_due_at"] = (
+            reservation.acquired_at + duration
+        ).isoformat()
+        with persistence.transaction() as uow:
+            uow.save_entity(task)
+
+    task = _service_task(
+        persistence,
+        stage=stage,
+        subject_id=subject_id,
+    )
+    if task is None:
+        raise RuntimeError("service task disappeared before start")
+
+    if task.state == "queued":
+        _dispatch(
+            engine,
+            task,
+            "start",
+            key=("warehouse-service-task", task.id, "start"),
+        )
+        task = _service_task(
+            persistence,
+            stage=stage,
+            subject_id=subject_id,
+        )
+
+    if task is None:
+        raise RuntimeError("service task disappeared after start")
+
+    if (
+        task.state == "in_progress"
+        and engine.scheduler.find_pending(
+            entity_type=task.entity_type,
+            entity_id=task.id,
+            name="complete",
+        )
+        is None
+    ):
+        due_at = datetime.fromisoformat(str(task.attributes["completion_due_at"]))
+        scheduled_at = max(due_at, backend.now)
+        command = engine.context.commands.create(
+            "complete",
+            target=task,
+            due_at=scheduled_at,
+            correlation_id=flow_correlation_id(order_id),
+            key=("warehouse-service-task", task.id, "complete"),
+        )
+        engine.context.schedules.at(scheduled_at, command=command)
+
+    refreshed = _service_task(
+        persistence,
+        stage=stage,
+        subject_id=subject_id,
+    )
+    if refreshed is None:
+        raise RuntimeError("service task disappeared after reconciliation")
+    return refreshed
+
+
+def _release_service_task(
+    engine: Engine,
+    backend: SimPyBackend,
+    task: FulfillmentServiceTask,
+) -> None:
+    engine.resources.withdraw(backend, _service_request_id(task.id))
+
+
+def _apply_pick_allocation_completion(
     persistence: MemoryPersistence,
     engine: Engine,
     *,
@@ -526,28 +759,64 @@ def pick_allocation(
     return _allocation_entity(persistence, allocation.id)
 
 
+
 def pick_order(
     persistence: MemoryPersistence,
     engine: Engine,
+    backend: SimPyBackend,
     *,
     entities: WarehouseEntities,
+    duration: timedelta = DEFAULT_PICK_DURATION,
 ) -> bool:
     order = _order_entity(persistence, entities)
     if order.state == "shipped":
         return True
     if order.state not in {"allocated", "picking"}:
         raise RuntimeError("pick requires allocated fulfillment order")
-    for allocation_id_value in order.attributes.get("allocation_ids", []):
-        pick_allocation(
+
+    if order.state == "allocated":
+        _dispatch(
+            engine,
+            order,
+            "start_pick",
+            key=("warehouse-order", order.id, "start-pick"),
+        )
+        order = _order_entity(persistence, entities)
+
+    allocation_ids = tuple(
+        str(value) for value in order.attributes.get("allocation_ids", [])
+    )
+    if not allocation_ids:
+        raise RuntimeError("pick requires committed allocations")
+
+    for allocation_id_value in allocation_ids:
+        allocation = _allocation_entity(persistence, allocation_id_value)
+        task = _reconcile_service_task(
             persistence,
             engine,
-            entities=entities,
-            allocation_id_value=str(allocation_id_value),
+            backend,
+            stage="pick",
+            subject_id=allocation.id,
+            order_id=order.id,
+            resource_name=PICKER_RESOURCE,
+            duration=duration,
         )
-    return True
+        if task.state == "completed":
+            _apply_pick_allocation_completion(
+                persistence,
+                engine,
+                entities=entities,
+                allocation_id_value=allocation.id,
+            )
+            _release_service_task(engine, backend, task)
 
+    return all(
+        _allocation_entity(persistence, allocation_id_value).state
+        in {"picked", "shipped"}
+        for allocation_id_value in allocation_ids
+    )
 
-def pack_order(
+def _apply_pack_completion(
     persistence: MemoryPersistence,
     engine: Engine,
     *,
@@ -587,7 +856,7 @@ def pack_order(
     return True
 
 
-def ship_order(
+def _apply_ship_completion(
     persistence: MemoryPersistence,
     engine: Engine,
     *,
@@ -632,6 +901,77 @@ def ship_order(
     )
     return True
 
+
+
+def pack_order(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: WarehouseEntities,
+    duration: timedelta = DEFAULT_PACK_DURATION,
+) -> bool:
+    order = _order_entity(persistence, entities)
+    if order.state in {"packed", "shipped"}:
+        return True
+    if order.state != "picking":
+        raise RuntimeError("pack requires picking fulfillment order")
+
+    allocations = [
+        _allocation_entity(persistence, str(aid))
+        for aid in order.attributes.get("allocation_ids", [])
+    ]
+    if not allocations or any(a.state != "picked" for a in allocations):
+        raise RuntimeError("pack requires all allocations to be picked")
+
+    task = _reconcile_service_task(
+        persistence,
+        engine,
+        backend,
+        stage="pack",
+        subject_id=order.id,
+        order_id=order.id,
+        resource_name=PACKING_RESOURCE,
+        duration=duration,
+    )
+    if task.state != "completed":
+        return False
+
+    _apply_pack_completion(persistence, engine, entities=entities)
+    _release_service_task(engine, backend, task)
+    return True
+
+
+def ship_order(
+    persistence: MemoryPersistence,
+    engine: Engine,
+    backend: SimPyBackend,
+    *,
+    entities: WarehouseEntities,
+    duration: timedelta = DEFAULT_SHIP_DURATION,
+) -> bool:
+    order = _order_entity(persistence, entities)
+    if order.state == "shipped":
+        return True
+    if order.state != "packed":
+        raise RuntimeError("ship requires packed fulfillment order")
+
+    task = _reconcile_service_task(
+        persistence,
+        engine,
+        backend,
+        stage="ship",
+        subject_id=order.id,
+        order_id=order.id,
+        resource_name=SHIPPING_RESOURCE,
+        duration=duration,
+    )
+    if task.state != "completed":
+        return False
+
+    _apply_ship_completion(persistence, engine, entities=entities)
+    _release_service_task(engine, backend, task)
+    return True
 
 def correct_lot_balance(
     persistence: MemoryPersistence,
@@ -705,14 +1045,48 @@ def correct_lot_balance(
     )
 
 
+def _run_until_next_service_completion(
+    persistence: MemoryPersistence,
+    backend: SimPyBackend,
+) -> None:
+    work = persistence.scheduled_work()
+    if not work:
+        raise RuntimeError("service reconciliation made no progress")
+    backend.run_until(min(item.due_at for item in work))
+
+
 def run_happy_path() -> tuple[MemoryPersistence, WarehouseEntities]:
     persistence = MemoryPersistence()
     entities = seed_reference(persistence)
     _, engine = build_runtime(persistence)
+    backend = SimPyBackend(origin=ORIGIN)
+    engine.rebuild_backend(backend)
 
     if not allocate_order(persistence, engine, entities=entities):
         raise RuntimeError("reference inventory could not satisfy order")
-    pick_order(persistence, engine, entities=entities)
-    pack_order(persistence, engine, entities=entities)
-    ship_order(persistence, engine, entities=entities)
+
+    while not pick_order(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ):
+        _run_until_next_service_completion(persistence, backend)
+
+    while not pack_order(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ):
+        _run_until_next_service_completion(persistence, backend)
+
+    while not ship_order(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ):
+        _run_until_next_service_completion(persistence, backend)
+
     return persistence, entities
