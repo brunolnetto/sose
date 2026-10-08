@@ -20,13 +20,19 @@ def process_manifest() -> ProcessManifest:
         ProcessMaturity.PC4_DURABLE,
     ):
         evidence.update(PROCESS_MATURITY_REQUIREMENTS[level])
-    evidence.add(ProcessEvidence.STATECHART_DOCUMENTATION)
+    evidence.update(PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC5_OBSERVABLE])
 
     simulation = "src/sose/examples/record_to_report/simulation.py"
     entities = "src/sose/examples/record_to_report/entities.py"
     statecharts = "src/sose/examples/record_to_report/statecharts.py"
     definition = "src/sose/examples/record_to_report/definition.py"
     specification = "docs/examples/record-to-report/specification.md"
+    observability = "src/sose/examples/record_to_report/observability.py"
+    config = "src/sose/examples/record_to_report/config.py"
+    observability_test = (
+        "tests/unit/sose/examples/record_to_report/"
+        "test_record_to_report_observability.py"
+    )
     happy_paths = (
         "tests/integration/sose/examples/record_to_report/"
         "test_record_to_report_happy_paths.py"
@@ -72,7 +78,25 @@ def process_manifest() -> ProcessManifest:
         ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, edges, restart),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
         ProcessEvidence.FAULT_RECOVERY: (restart, scenarios),
-        ProcessEvidence.STATECHART_DOCUMENTATION: (statecharts, specification),
+        ProcessEvidence.KPIS: (observability, observability_test, specification),
+        ProcessEvidence.ERD: (specification,),
+        ProcessEvidence.STATECHART_DOCUMENTATION: (
+            statecharts,
+            statechart_test,
+            specification,
+        ),
+        ProcessEvidence.PROCESS_DIAGRAM: (specification,),
+        ProcessEvidence.PROJECTION_CONTRACT: (
+            observability,
+            observability_test,
+            specification,
+        ),
+        ProcessEvidence.CONFIGURATION_DOCUMENTATION: (
+            config,
+            definition,
+            observability_test,
+            specification,
+        ),
     }
 
     return ProcessManifest(
@@ -91,6 +115,21 @@ def process_manifest() -> ProcessManifest:
                 "close_accountant_contention",
                 "close_team_shortage",
                 "controlled_reopen",
+            }
+        ),
+        kpis=frozenset(
+            {
+                "close_cycle_seconds",
+                "amount",
+                "transition_count",
+                "rejected_posting_count",
+                "unmatched_count",
+                "adjustment_count",
+                "adjustment_posted_count",
+                "close_count",
+                "reopen_count",
+                "close_task_completed_count",
+                "closed",
             }
         ),
         specification_path=specification,
