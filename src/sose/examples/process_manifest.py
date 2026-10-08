@@ -307,12 +307,11 @@ def _registered_only_manifest(domain: str) -> ProcessManifest:
 
 
 def _warehouse_fulfillment_manifest() -> ProcessManifest:
-    """Audit the current Warehouse Fulfillment reference without inferring PC3."""
+    """Audit Warehouse Fulfillment through executable PC3 operations."""
 
-    evidence = set(_requirements_through(ProcessMaturity.PC2_PROCESS))
+    evidence = set(_requirements_through(ProcessMaturity.PC3_OPERATIONAL))
     evidence.update(
         {
-            ProcessEvidence.SAD_PATHS,
             ProcessEvidence.DURABLE_STATE,
             ProcessEvidence.REPLAY_IDEMPOTENCE,
             ProcessEvidence.RECURRING_RECONCILIATION,
@@ -335,6 +334,10 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
         "tests/integration/sose/examples/warehouse_fulfillment/"
         "test_warehouse_fulfillment_sad_paths.py"
     )
+    operational = (
+        "tests/integration/sose/examples/warehouse_fulfillment/"
+        "test_warehouse_fulfillment_operational_capacity.py"
+    )
     restart = (
         "tests/e2e/sose/examples/warehouse_fulfillment/"
         "test_warehouse_fulfillment_restart_equivalence.py"
@@ -349,6 +352,9 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
         ProcessEvidence.HAPPY_PATH: (happy_path,),
         ProcessEvidence.E2E_TERMINAL_OUTCOME: (happy_path,),
         ProcessEvidence.SAD_PATHS: (sad_paths,),
+        ProcessEvidence.FINITE_RESOURCES: (simulation, operational),
+        ProcessEvidence.CAPACITY_CONTENTION: (operational,),
+        ProcessEvidence.TIME_SEMANTICS: (simulation, operational),
         ProcessEvidence.DURABLE_STATE: (simulation, restart),
         ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, sad_paths, restart),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
@@ -358,6 +364,9 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
         evidence=frozenset(evidence),
         trigger="fulfillment_order_requested",
         terminal_outcomes=frozenset({"shipped"}),
+        resources=frozenset(
+            {"fulfillment_picker", "packing_station", "shipping_dock"}
+        ),
         sad_paths=frozenset(
             {
                 "insufficient_inventory",
