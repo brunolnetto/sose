@@ -32,50 +32,34 @@ def test_process_audit_exclusions_are_explicit_catalog_domains() -> None:
     assert PROCESS_AUDIT_EXCLUDED_DOMAINS <= catalog_domains
 
 
-def test_warehouse_fulfillment_audit_stops_at_pc2_and_preserves_audited_higher_evidence() -> None:
+def test_warehouse_fulfillment_audit_reaches_pc5_observable() -> None:
     manifest = builtin_process_manifests()["warehouse_fulfillment"]
 
     assert manifest.assessment_complete
-    assert manifest.maturity is ProcessMaturity.PC2_PROCESS
+    assert manifest.maturity is ProcessMaturity.PC5_OBSERVABLE
+    assert manifest.is_complete_process_canonical
     assert not manifest.is_maturity_lower_bound
     assert manifest.trigger == "fulfillment_order_requested"
     assert manifest.terminal_outcomes == frozenset({"shipped"})
-    assert manifest.resources == frozenset()
-    assert manifest.kpis == frozenset()
-    assert manifest.sad_paths == frozenset(
+    assert manifest.resources == frozenset(
+        {"fulfillment_picker", "packing_station", "shipping_dock"}
+    )
+    assert manifest.kpis >= frozenset(
         {
-            "insufficient_inventory",
-            "pack_before_all_allocations_picked",
-            "conflicting_correction_replay",
-            "correction_below_allocated_quantity",
+            "completion",
+            "lead_time_seconds",
+            "fill_rate",
+            "transition_count",
+            "substitution_count",
+            "correction_count",
         }
     )
-
-    assert manifest.missing_for(ProcessMaturity.PC3_OPERATIONAL) == frozenset(
-        {
-            ProcessEvidence.FINITE_RESOURCES,
-            ProcessEvidence.CAPACITY_CONTENTION,
-            ProcessEvidence.TIME_SEMANTICS,
-        }
-    )
-
-    assert ProcessEvidence.DURABLE_STATE in manifest.evidence
-    assert ProcessEvidence.REPLAY_IDEMPOTENCE in manifest.evidence
-    assert ProcessEvidence.RECURRING_RECONCILIATION in manifest.evidence
-
-    # Recovery after rebuild is useful evidence, but the current test does not
-    # compare a continuous baseline with a rebuilt execution. Do not overclaim it.
-    assert ProcessEvidence.RESTART_EQUIVALENCE not in manifest.evidence
-    # The prose lifecycle summary omits real cancellation transitions, so it is
-    # not yet complete statechart documentation under the PC5 contract.
-    assert ProcessEvidence.STATECHART_DOCUMENTATION not in manifest.evidence
-
-    assert ProcessEvidence.FAULT_RECOVERY not in manifest.evidence
-    assert ProcessEvidence.KPIS not in manifest.evidence
-    assert ProcessEvidence.ERD not in manifest.evidence
-    assert ProcessEvidence.PROCESS_DIAGRAM not in manifest.evidence
-    assert ProcessEvidence.PROJECTION_CONTRACT not in manifest.evidence
-    assert ProcessEvidence.CONFIGURATION_DOCUMENTATION not in manifest.evidence
+    assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset()
+    assert ProcessEvidence.RESTART_EQUIVALENCE in manifest.evidence
+    assert ProcessEvidence.FAULT_RECOVERY in manifest.evidence
+    assert ProcessEvidence.STATECHART_DOCUMENTATION in manifest.evidence
+    assert ProcessEvidence.PROJECTION_CONTRACT in manifest.evidence
+    assert ProcessEvidence.CONFIGURATION_DOCUMENTATION in manifest.evidence
 
 
 def test_warehouse_management_audit_reaches_pc5_after_restart_equivalence() -> None:
@@ -125,12 +109,12 @@ def test_audit_orders_domains_by_maturity_then_name_and_reports_next_gate() -> N
     ]
 
     fulfillment = next(row for row in audit if row.domain == "warehouse_fulfillment")
-    assert fulfillment.next_maturity is ProcessMaturity.PC3_OPERATIONAL
+    assert fulfillment.next_maturity is ProcessMaturity.PC6_COMPOSABLE
     assert not fulfillment.assessment_is_lower_bound
     assert fulfillment.missing_for_next_gate == frozenset(
         {
-            ProcessEvidence.FINITE_RESOURCES,
-            ProcessEvidence.CAPACITY_CONTENTION,
-            ProcessEvidence.TIME_SEMANTICS,
+            ProcessEvidence.INGRESS_CONTRACTS,
+            ProcessEvidence.EGRESS_CONTRACTS,
+            ProcessEvidence.CROSS_DOMAIN_EXECUTION,
         }
     )
