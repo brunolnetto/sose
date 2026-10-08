@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -72,18 +73,22 @@ def _claim_after_worker_death(
     store = _reopen(store, path)
     service = BoundaryService(store)
     second = service.claim_next(
-        owner_id=f"{owner_id}-replacement",
+        owner_id=owner_id,
         now=now + timedelta(seconds=6),
         lease_duration=timedelta(hours=1),
     )
     assert second is not None
     assert second.delivery_id == first.delivery_id
+    assert second.owner_id == first.owner_id
     assert second.epoch == first.epoch + 1
 
     registry = registry_factory()
+    stale_epoch = replace(first, lease_expires_at=second.lease_expires_at)
+    assert stale_epoch.owner_id == second.owner_id
+    assert stale_epoch.lease_expires_at == second.lease_expires_at
     with pytest.raises(StaleBoundaryClaimError):
         service.consume(
-            lease=first,
+            lease=stale_epoch,
             registry=registry,
             now=now + timedelta(seconds=7),
         )
@@ -529,9 +534,11 @@ def test_composed_consumer_fault_rolls_back_intent_before_retry(tmp_path) -> Non
     real_registry = customer._registry(fixtures)
     real_handler = real_registry.resolve(message)
     failing_registry = BoundaryConsumerRegistry()
+    failed_effect_ids: list[str] = []
 
     def fail_after_intent(boundary_message, uow):
         effect_id = real_handler(boundary_message, uow)
+        failed_effect_ids.append(effect_id)
         assert uow.get_command(effect_id) is not None
         raise RuntimeError("injected consumer failure before acknowledgement")
 
@@ -549,11 +556,15 @@ def test_composed_consumer_fault_rolls_back_intent_before_retry(tmp_path) -> Non
             now=message.produced_at + timedelta(seconds=1),
         )
 
+    assert len(failed_effect_ids) == 1
+    failed_effect_id = failed_effect_ids[0]
+    assert store.command(failed_effect_id) is None
     assert service.consumption(lease.delivery_id) is None
     current = service.delivery(lease.delivery_id)
     assert current is not None and current.status is DeliveryStatus.CLAIMED
 
     store = _reopen(store, path)
+    assert store.command(failed_effect_id) is None
     service = BoundaryService(store)
     reclaimed = service.claim_next(
         owner_id="recovery-worker",
