@@ -342,3 +342,104 @@ contract.
 The next Logistics promotion work is therefore observability/documentation rather than
 kernel or durability work: define process KPIs, add the Mermaid E2E process diagram,
 formalize projection outputs, and document the supported configuration surface.
+
+
+## 15. Normative end-to-end process diagram
+
+```mermaid
+flowchart TD
+    A["Shipment(created)"] --> B["pickup_scheduled"]
+    B -->|pickup courier| C["picked_up"]
+    C -->|origin dock + durable hub queue| D["at_origin_hub"]
+    D -->|transfer vehicle| E["in_transfer"]
+    E -->|destination dock + durable hub queue| F["at_destination_hub"]
+    F -->|delivery courier| G["Shipment(out_for_delivery) + DeliveryAttempt#N"]
+    G -->|deliver| H["DeliveryAttempt(delivered)"]
+    H --> I["Shipment(delivered)"]
+    G -->|fail| J["DeliveryAttempt(failed terminal)"]
+    J --> K["Shipment(delayed_delivery)"]
+    K -->|durable retry schedule| F
+    C -->|loss/damage| X["lost / damaged"]
+    D -->|loss/damage| X
+    E -->|loss/damage| X
+    F -->|loss/damage| X
+    G -->|return| Y["returned"]
+```
+
+The diagram is a business-process contract. Resource requests, Store operations,
+ScheduledWork, and scenario context remain durable prerequisites rather than hidden
+state assignments.
+
+## 16. KPI contract
+
+`logistics_kpis()` exposes read-only KPIs derived from durable Shipment truth and
+immutable transition events under the reference shipment correlation.
+
+| KPI | Type | Definition |
+|---|---|---|
+| `shipment_lead_time_seconds` | float or null | Shipment creation to a durable terminal outcome; null before a terminal state |
+| `transition_count` | integer | correlated immutable state-transition event count |
+| `delay_count` | integer | Shipment transitions into any phase-specific `delayed_*` state |
+| `delivery_attempt_count` | integer | distinct DeliveryAttempt identities observed in correlated transition history |
+| `failed_attempt_count` | integer | DeliveryAttempt transitions entering `failed` |
+| `delivered_attempt_count` | integer | DeliveryAttempt transitions entering `delivered` |
+| `delivered` | boolean | true only when durable Shipment state is `delivered` |
+
+Failed-attempt history is preserved after eventual delivery; it is never reconstructed
+from final Shipment state.
+
+## 17. Projection contract
+
+`logistics_projection()` is the canonical read-only projection of Shipment-level
+durable truth.
+
+| Field | Durable source |
+|---|---|
+| `shipment_id` | persisted Shipment identity |
+| `shipment_state` | persisted Shipment state |
+| `service_level` | Shipment attributes |
+| `route` | Shipment attributes |
+| `delivered` | Shipment state |
+| `terminal_outcome` | one of `delivered`, `lost`, `damaged`, `returned`, otherwise null |
+| `shipment_lead_time_seconds` | terminal Shipment timestamps; null before terminal outcome |
+
+Projection rules:
+
+1. projection is read-only and idempotent;
+2. missing Shipment is an error rather than permission to fabricate one;
+3. terminal outcome is explicit lifecycle state, not disappearance from a queue;
+4. cycle time remains null until a durable terminal outcome exists;
+5. DeliveryAttempt history stays in immutable events/KPIs rather than being collapsed
+   into a mutable Shipment counter.
+
+## 18. Configuration contract
+
+The recurring Logistics reference uses `LogisticsConfig`.
+
+| Field | Default | Constraint / operational meaning | Runtime mutable |
+|---|---|---|---|
+| `start_at` | reference `ORIGIN` | logical process start | no |
+| `tick_step` | 1 hour | recurring logical step | yes |
+| `random_seed` | 126 | deterministic stochastic root seed | yes |
+| `service_level` | `standard` | Shipment service-level label | no |
+| `route` | `origin-a:destination-b` | reference route identity | no |
+| `resource_capacity` | 1 | capacity for reference courier/dock/vehicle resources, minimum 1 | no |
+| `hub_queue_capacity` | 10 | capacity of each durable hub Store queue, minimum 1 | no |
+| `pickup_delay` | 1 hour | positive delay before scheduled pickup | no |
+| `auto_progress_shipment` | true | allow recurring reconciliation to progress legal stages | yes |
+
+The runtime-mutable fields are exactly `tick_step`, `random_seed`, and
+`auto_progress_shipment`.
+
+Configuration does not bypass StateCharts, finite resource ownership, durable Store
+queues, retry ScheduledWork, or scenario semantics.
+
+## 19. PC5 promotion boundary
+
+The observable contract consists of executable KPIs/projection plus the existing
+persistent ERD and StateChart documentation, the normative Mermaid process diagram
+above, and the explicit configuration contract.
+
+This qualifies Logistics as **PC5 — Observable**. It does not make the domain
+PC6-composable: ingress/egress contracts and cross-domain execution remain separate
+evidence. It also does not authorize an official Organizational Dynamics experiment.
