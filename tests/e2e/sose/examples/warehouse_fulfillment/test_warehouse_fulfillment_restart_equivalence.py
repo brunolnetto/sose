@@ -4,7 +4,6 @@ from sose.examples.warehouse_fulfillment.simulation import (
     allocate_order,
     build_runtime,
     pack_order,
-    pick_allocation,
     pick_order,
     seed_reference,
     ship_order,
@@ -23,13 +22,22 @@ def test_committed_allocation_and_partial_pick_resume_after_restart():
     assert allocate_order(persistence, engine, entities=entities)
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None
-    first_allocation_id = order.attributes["allocation_ids"][0]
-    pick_allocation(
+    first_allocation_id = str(order.attributes["allocation_ids"][0])
+
+    assert pick_order(
         persistence,
         engine,
+        backend,
         entities=entities,
-        allocation_id_value=first_allocation_id,
-    )
+    ) is False
+    first_due = min(work.due_at for work in persistence.scheduled_work())
+    backend.run_until(first_due)
+    assert pick_order(
+        persistence,
+        engine,
+        backend,
+        entities=entities,
+    ) is False
 
     first = persistence.entity("warehouse_allocation", first_allocation_id)
     assert first is not None and first.state == "picked"
@@ -40,9 +48,32 @@ def test_committed_allocation_and_partial_pick_resume_after_restart():
         backend,
         backend_factory=SimPyBackend,
     )
-    pick_order(persistence, rebuilt.engine, entities=entities)
-    pack_order(persistence, rebuilt.engine, entities=entities)
-    ship_order(persistence, rebuilt.engine, entities=entities)
+    while not pick_order(
+        persistence,
+        rebuilt.engine,
+        rebuilt.backend,
+        entities=entities,
+    ):
+        due = min(work.due_at for work in persistence.scheduled_work())
+        rebuilt.backend.run_until(due)
+
+    while not pack_order(
+        persistence,
+        rebuilt.engine,
+        rebuilt.backend,
+        entities=entities,
+    ):
+        due = min(work.due_at for work in persistence.scheduled_work())
+        rebuilt.backend.run_until(due)
+
+    while not ship_order(
+        persistence,
+        rebuilt.engine,
+        rebuilt.backend,
+        entities=entities,
+    ):
+        due = min(work.due_at for work in persistence.scheduled_work())
+        rebuilt.backend.run_until(due)
 
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     assert order is not None and order.state == "shipped"
