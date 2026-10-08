@@ -17,7 +17,7 @@ def test_customer_demand_path_composes_domains_without_private_state_mutation() 
         == "shipped"
     )
     assert persistence.entity("shipment", result.shipment_id).state == "delivered"
-    assert persistence.entity("payment", result.payment_id).state == "settled"
+    assert persistence.entity("card_payment", result.payment_id).state == "settled"
     assert persistence.entity("journal_entry", result.journal_id).state == "posted"
 
     with persistence.transaction() as uow:
