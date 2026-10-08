@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+import subprocess
+import sys
 
 from sose.backends.simpy import SimPyBackend
 from sose.examples.process_manifest import ProcessEvidence, ProcessMaturity
@@ -181,3 +183,22 @@ def test_r2r_normative_pc5_documentation_covers_process_erd_and_config() -> None
 
     for field_name in definition.runtime_mutable_fields:
         assert f"`{field_name}`" in specification
+
+
+def test_r2r_observability_import_does_not_require_simpy() -> None:
+    completed = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            (
+                "import sys; "
+                "sys.modules['simpy'] = None; "
+                "import sose.examples.record_to_report.observability"
+            ),
+        ],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr
