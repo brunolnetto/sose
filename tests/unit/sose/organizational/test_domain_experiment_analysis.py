@@ -4,6 +4,7 @@ from sose.organizational.agency import AgencyLevel
 from sose.organizational.domain_experiment_analysis import (
     ComparisonKind,
     analyze_domain_experiment,
+    recompute_domain_experiment_result_hash,
 )
 from sose.organizational.domain_experiment_runtime import (
     DomainExperimentPlan,
@@ -155,3 +156,86 @@ def test_report_rejects_incomplete_paired_run_evidence() -> None:
         assert "paired run evidence" in str(exc)
     else:
         raise AssertionError("expected incomplete paired-run rejection")
+
+
+
+def test_analysis_rejects_result_payload_that_does_not_match_manifest_hash() -> None:
+    reference, result = _small_result()
+    run = result.runs[0]
+    observation = run.observation.model_copy(
+        update={
+            "metrics": {
+                **dict(run.observation.metrics),
+                "lead_time": run.observation.metrics["lead_time"] + 1.0,
+            }
+        }
+    )
+    forged_run = run.model_copy(update={"observation": observation})
+    runs = (forged_run, *result.runs[1:])
+    forged = result.model_copy(update={"runs": runs})
+
+    try:
+        analyze_domain_experiment(reference=reference, result=forged)
+    except ValueError as exc:
+        assert "result hash" in str(exc)
+    else:
+        raise AssertionError("expected stale result-hash rejection")
+
+
+def test_small_sample_confidence_interval_uses_student_t() -> None:
+    reference, result = _small_result()
+    report = analyze_domain_experiment(reference=reference, result=result)
+    effect = next(item for item in report.effects if item.paired_standard_error > 0.0)
+
+    critical = (
+        (effect.ci_high - effect.ci_low)
+        / 2.0
+        / effect.paired_standard_error
+    )
+    assert critical > 10.0
+
+
+def test_analysis_rejects_replication_seed_mismatch_before_claiming_pairing() -> None:
+    reference, result = _small_result()
+    run = result.runs[0]
+    forged_run = run.model_copy(update={"replication_seed": run.replication_seed + 1})
+    runs = (forged_run, *result.runs[1:])
+    forged = result.model_copy(update={"runs": runs})
+    forged = forged.model_copy(
+        update={
+            "manifest": forged.manifest.model_copy(
+                update={
+                    "result_hash": recompute_domain_experiment_result_hash(forged)
+                }
+            )
+        }
+    )
+
+    try:
+        analyze_domain_experiment(reference=reference, result=forged)
+    except ValueError as exc:
+        assert "replication seed" in str(exc)
+    else:
+        raise AssertionError("expected CRN seed mismatch rejection")
+
+
+def test_analysis_rejects_duplicate_regime_reference_before_mapping() -> None:
+    reference, result = _small_result()
+    references = (*result.references, result.references[0])
+    forged = result.model_copy(update={"references": references})
+    forged = forged.model_copy(
+        update={
+            "manifest": forged.manifest.model_copy(
+                update={
+                    "result_hash": recompute_domain_experiment_result_hash(forged)
+                }
+            )
+        }
+    )
+
+    try:
+        analyze_domain_experiment(reference=reference, result=forged)
+    except ValueError as exc:
+        assert "exactly one regime reference" in str(exc)
+    else:
+        raise AssertionError("expected duplicate regime-reference rejection")
