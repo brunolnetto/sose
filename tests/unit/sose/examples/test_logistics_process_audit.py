@@ -6,19 +6,24 @@ from sose.examples.process_manifest import (
     PROCESS_MATURITY_REQUIREMENTS,
     ProcessEvidence,
     ProcessMaturity,
+    audit_builtin_processes,
     builtin_process_manifests,
 )
 
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
+PC5_REQUIREMENTS = PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC5_OBSERVABLE]
+PC6_GAPS = PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC6_COMPOSABLE]
 
 
-def test_logistics_audit_reaches_pc4_without_overclaiming_pc5() -> None:
+def test_logistics_audit_reaches_pc5_with_explicit_observability() -> None:
     manifest = builtin_process_manifests()["logistics"]
 
     assert manifest.assessment_complete
-    assert manifest.maturity is ProcessMaturity.PC4_DURABLE
+    assert manifest.maturity is ProcessMaturity.PC5_OBSERVABLE
     assert not manifest.is_maturity_lower_bound
+    assert manifest.is_complete_process_canonical
+    assert not manifest.is_integrated_process_canonical
     assert manifest.trigger == "shipment_created"
     assert manifest.terminal_outcomes == frozenset(
         {"delivered", "lost", "damaged", "returned"}
@@ -41,37 +46,40 @@ def test_logistics_audit_reaches_pc4_without_overclaiming_pc5() -> None:
             "lost_damaged_returned",
         }
     )
-
-    assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset(
+    assert manifest.kpis == frozenset(
         {
-            ProcessEvidence.KPIS,
-            ProcessEvidence.PROCESS_DIAGRAM,
-            ProcessEvidence.PROJECTION_CONTRACT,
-            ProcessEvidence.CONFIGURATION_DOCUMENTATION,
+            "shipment_lead_time_seconds",
+            "transition_count",
+            "delay_count",
+            "delivery_attempt_count",
+            "failed_attempt_count",
+            "delivered_attempt_count",
+            "delivered",
         }
     )
-    assert ProcessEvidence.ERD in manifest.evidence
-    assert ProcessEvidence.STATECHART_DOCUMENTATION in manifest.evidence
+    assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset()
 
 
-def test_logistics_pc4_claims_have_direct_executable_provenance() -> None:
+def test_logistics_pc5_claims_have_direct_provenance() -> None:
     manifest = builtin_process_manifests()["logistics"]
-    pc4 = PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC4_DURABLE]
 
-    assert pc4 <= manifest.evidence
-    for evidence in pc4:
+    for evidence in PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC4_DURABLE]:
+        paths = manifest.evidence_sources[evidence]
+        assert paths
+        for relative in paths:
+            assert (REPO_ROOT / relative).is_file(), (evidence, relative)
+
+    for evidence in PC5_REQUIREMENTS:
+        assert evidence in manifest.evidence
         paths = manifest.evidence_sources[evidence]
         assert paths
         for relative in paths:
             assert (REPO_ROOT / relative).is_file(), (evidence, relative)
 
 
-def test_logistics_restart_and_replay_claims_are_not_inferred_from_docs_only() -> None:
-    manifest = builtin_process_manifests()["logistics"]
+def test_logistics_audit_reports_composition_as_next_gate() -> None:
+    row = next(row for row in audit_builtin_processes() if row.domain == "logistics")
 
-    restart_sources = manifest.evidence_sources[ProcessEvidence.RESTART_EQUIVALENCE]
-    replay_sources = manifest.evidence_sources[ProcessEvidence.REPLAY_IDEMPOTENCE]
-
-    assert any(path.startswith("tests/e2e/") for path in restart_sources)
-    assert any(path.startswith("tests/unit/") for path in replay_sources)
-    assert all(not path.endswith("specification.md") for path in replay_sources)
+    assert row.next_maturity is ProcessMaturity.PC6_COMPOSABLE
+    assert not row.assessment_is_lower_bound
+    assert row.missing_for_next_gate == PC6_GAPS
