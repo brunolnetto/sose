@@ -36,15 +36,11 @@
   "candidate_exogenous_axes": {
     "quantity": {
       "type": "continuous",
-      "bounds": "TBD by preflight against executable Manufacturing capacities"
-    },
-    "quality_outcome": {
-      "type": "categorical",
-      "levels": [
-        "pass",
-        "hold"
-      ],
-      "role": "environment/configuration condition, not realized outcome"
+      "domain_bounds": "(0, 1000]",
+      "preregistered_range": [
+        1,
+        1000
+      ]
     }
   },
   "candidate_interventions": [
@@ -52,9 +48,7 @@
     "machine_downtime",
     "yield_degradation"
   ],
-  "excluded_until_preflight": [
-    "demand_surge"
-  ],
+  "excluded_until_preflight": [],
   "agency_levels": [
     "A0"
   ],
@@ -72,12 +66,19 @@
     "breakdown_count"
   ],
   "doe": {
-    "design": "TBD after preflight",
-    "sample_size": "TBD after preflight"
+    "design": "LATIN_HYPERCUBE",
+    "sample_size": 6,
+    "parameter_ranges": {
+      "quantity": [
+        1,
+        1000
+      ]
+    }
   },
   "replication": {
-    "count": "TBD after preflight",
-    "root_seed": "TBD before freeze",
+    "count": 2,
+    "root_seed": 20261008,
+    "rationale": "Gate-A runtime requires at least two fixed replications; v1 mechanics are expected to be deterministic, so replicate equality is itself a reproducibility check.",
     "crn": "paired arms share framework-assigned comparison groups"
   },
   "eligibility_rules": [
@@ -98,5 +99,9 @@
     "seed policy",
     "world/run/evidence/report hashes"
   ],
-  "freeze_rule": "No official result execution or inspection before status becomes frozen and all TBD fields are resolved."
+  "freeze_rule": "Freeze after machine-downtime and yield-degradation preflight semantics pass and all protocol/document hashes are bound; no official result execution or inspection before freeze.",
+  "excluded_from_v1": [
+    "demand_surge: current single-order reference has no demonstrated durable workload/pressure effect",
+    "quality_outcome as DOE axis: categorical domain configuration is outside the generic numeric parameter-space contract"
+  ]
 }
