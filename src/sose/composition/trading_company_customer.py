@@ -196,6 +196,18 @@ def _consume_next(
     return consumption.consumer_effect_id
 
 
+def _recovery_time(
+    persistence: MemoryPersistence,
+    requested_at: datetime,
+) -> datetime:
+    position = persistence.simulation_position()
+    if position is None:
+        return requested_at
+    if requested_at < position.logical_time:
+        raise ValueError("composition intent cannot precede committed logical time")
+    return position.logical_time
+
+
 def _dispatch_o2c_event(
     persistence: MemoryPersistence,
     engine,
@@ -253,9 +265,12 @@ def _execute_intent(
         fulfillment.ship_order(persistence, engine, entities=fixtures.fulfillment)
 
     elif intent.name == "composition.deliver_shipment":
-        _, engine = logistics.build_runtime(persistence, now=intent.due_at)
-        backend = SimPyBackend(origin=intent.due_at)
+        recovery_time = _recovery_time(persistence, intent.due_at)
+        _, engine = logistics.build_runtime(persistence, now=recovery_time)
+        backend = SimPyBackend(origin=recovery_time)
         engine.rebuild_backend(backend)
+        if backend.now < intent.due_at:
+            backend.run_until(intent.due_at)
         pending = tuple(
             work
             for work in persistence.scheduled_work()
@@ -350,9 +365,12 @@ def _execute_intent(
         o2c.ensure_receivable(persistence, engine, entities=fixtures.o2c)
 
     elif intent.name == "composition.settle_customer_payment":
-        _, engine = payments.build_runtime(persistence, now=intent.due_at)
-        backend = SimPyBackend(origin=intent.due_at)
+        recovery_time = _recovery_time(persistence, intent.due_at)
+        _, engine = payments.build_runtime(persistence, now=recovery_time)
+        backend = SimPyBackend(origin=recovery_time)
         engine.rebuild_backend(backend)
+        if backend.now < intent.due_at:
+            backend.run_until(intent.due_at)
         if not payments.reconcile_authorization(
             persistence,
             engine,
@@ -377,9 +395,12 @@ def _execute_intent(
         )
 
     elif intent.name == "composition.post_customer_journal":
-        _, engine = r2r.build_runtime(persistence, now=intent.due_at)
-        backend = SimPyBackend(origin=intent.due_at)
+        recovery_time = _recovery_time(persistence, intent.due_at)
+        _, engine = r2r.build_runtime(persistence, now=recovery_time)
+        backend = SimPyBackend(origin=recovery_time)
         engine.rebuild_backend(backend)
+        if backend.now < intent.due_at:
+            backend.run_until(intent.due_at)
         if not r2r.submit_and_post_journal(
             persistence,
             engine,
