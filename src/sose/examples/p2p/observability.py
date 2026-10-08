@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sose.persistence.base import Persistence
 
-from .simulation import P2PEntities, flow_correlation_id
+from .simulation import P2PEntities
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,10 +121,16 @@ def p2p_kpis(
     """Return stable P2P KPIs from durable state and correlated event history."""
 
     projection = p2p_projection(persistence, entities=entities)
+    process_entity_ids = {
+        entities.requisition_id,
+        entities.purchase_order_id,
+        entities.receipt_id,
+        entities.material_demand_id,
+    }
     events = tuple(
         event
         for event in persistence.events()
-        if event.correlation_id == flow_correlation_id()
+        if event.entity_id in process_entity_ids
         and event.name == "entity.state_transition"
     )
 
