@@ -20,18 +20,19 @@ def process_manifest() -> ProcessManifest:
         ProcessMaturity.PC4_DURABLE,
     ):
         evidence.update(PROCESS_MATURITY_REQUIREMENTS[level])
-    evidence.update(
-        {
-            ProcessEvidence.ERD,
-            ProcessEvidence.STATECHART_DOCUMENTATION,
-        }
-    )
+    evidence.update(PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC5_OBSERVABLE])
 
     simulation = "src/sose/examples/cards_payments/simulation.py"
     entities = "src/sose/examples/cards_payments/entities.py"
     statecharts = "src/sose/examples/cards_payments/statecharts.py"
     definition = "src/sose/examples/cards_payments/definition.py"
     specification = "docs/examples/cards-payments/specification.md"
+    observability = "src/sose/examples/cards_payments/observability.py"
+    config = "src/sose/examples/cards_payments/config.py"
+    observability_test = (
+        "tests/unit/sose/examples/cards_payments/"
+        "test_cards_payments_observability.py"
+    )
     happy_paths = (
         "tests/integration/sose/examples/cards_payments/"
         "test_cards_payments_happy_paths.py"
@@ -73,8 +74,25 @@ def process_manifest() -> ProcessManifest:
         ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, edges),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
         ProcessEvidence.FAULT_RECOVERY: (restart, scenarios),
+        ProcessEvidence.KPIS: (observability, observability_test, specification),
         ProcessEvidence.ERD: (specification,),
-        ProcessEvidence.STATECHART_DOCUMENTATION: (statecharts, specification),
+        ProcessEvidence.STATECHART_DOCUMENTATION: (
+            statecharts,
+            statechart_test,
+            specification,
+        ),
+        ProcessEvidence.PROCESS_DIAGRAM: (specification,),
+        ProcessEvidence.PROJECTION_CONTRACT: (
+            observability,
+            observability_test,
+            specification,
+        ),
+        ProcessEvidence.CONFIGURATION_DOCUMENTATION: (
+            config,
+            definition,
+            observability_test,
+            specification,
+        ),
     }
 
     return ProcessManifest(
@@ -93,6 +111,19 @@ def process_manifest() -> ProcessManifest:
                 "processor_outage",
                 "post_settlement_refund",
                 "dispute_chargeback",
+            }
+        ),
+        kpis=frozenset(
+            {
+                "settlement_lead_time_seconds",
+                "amount",
+                "transition_count",
+                "authorization_decline_count",
+                "settlement_retry_count",
+                "refund_count",
+                "dispute_count",
+                "chargeback_count",
+                "settled",
             }
         ),
         specification_path=specification,

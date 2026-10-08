@@ -292,3 +292,107 @@ contract requires a normative Mermaid end-to-end process diagram. Likewise, the 
 runtime/configuration implementation is not automatically treated as documented
 configuration, and durable persistence is not automatically treated as a projection
 contract.
+
+
+## 15. Normative end-to-end process diagram
+
+```mermaid
+flowchart TD
+    A["Payment(authorization_requested)"] --> B{Authorization decision}
+    B -- decline --> X["Payment(declined)"]
+    B -- authorize --> C["Payment(authorized)"]
+    C -->|pre-capture reverse| Y["Payment(reversed)"]
+    C --> D["Payment(captured)"]
+    D -->|durable settlement schedule| E["settlement_pending"]
+    E -->|processor success| F["Payment(settled)"]
+    E -->|transient failure| G["settlement_retry_wait"]
+    G -->|durable retry schedule| E
+    F -->|refund| Z["Payment(refunded)"]
+    F --> H["Dispute(opened)"]
+    H --> I["evidence_requested"]
+    I -->|durable evidence schedule| J["under_review"]
+    J --> K["chargeback"]
+    K --> L["merchant_won / cardholder_won"]
+```
+
+The diagram preserves the irreversible boundaries: reversal is pre-capture, refund is
+post-settlement, and dispute history is independent from Payment settlement history.
+
+## 16. KPI contract
+
+`cards_payments_kpis()` exposes read-only KPIs derived from persisted entities and
+immutable transition events.
+
+| KPI | Type | Definition |
+|---|---|---|
+| `settlement_lead_time_seconds` | float or null | Payment creation to the first immutable transition into `settled`; null before settlement |
+| `amount` | float | persisted Payment amount |
+| `transition_count` | integer | immutable transitions for the Payment and its deterministic Dispute |
+| `authorization_decline_count` | integer | Payment transitions entering `declined` |
+| `settlement_retry_count` | integer | Payment transitions entering `settlement_retry_wait` |
+| `refund_count` | integer | Payment transitions entering `refunded` |
+| `dispute_count` | integer | 1 when the deterministic Dispute exists, otherwise 0 |
+| `chargeback_count` | integer | Dispute transitions entering `chargeback` |
+| `settled` | boolean | true when immutable event history contains a transition into `settled` |
+
+Settlement time is intentionally event-derived. A later refund or dispute may update
+entity state/timestamps but does not rewrite when settlement actually occurred.
+
+## 17. Projection contract
+
+`cards_payments_projection()` is the canonical read-only projection of durable
+payment/dispute truth.
+
+| Field | Durable source |
+|---|---|
+| `payment_id` | persisted Payment identity |
+| `dispute_id` | deterministic/persisted Dispute identity when created |
+| `payment_state` | persisted Payment state |
+| `dispute_state` | persisted Dispute state or null |
+| `amount` | persisted Payment amount |
+| `currency` | persisted Payment currency |
+| `settled` | immutable transition history |
+| `refunded` | Payment state |
+| `terminal_outcome` | `declined`, `reversed`, or `refunded`; otherwise null |
+| `dispute_open` | true when a Dispute exists and has not reached a terminal resolution |
+| `settlement_lead_time_seconds` | Payment creation to immutable settlement event |
+
+Projection rules:
+
+1. projection is read-only and idempotent;
+2. missing Payment is an error rather than permission to fabricate one;
+3. absence of a Dispute before causal creation is represented as null;
+4. settlement history remains observable after refund;
+5. dispute/chargeback state never rewrites Payment settlement history;
+6. consumers cannot mutate operational state through the projection.
+
+## 18. Configuration contract
+
+The recurring Cards & Payments reference uses `CardsPaymentsConfig`.
+
+| Field | Default | Constraint / operational meaning | Runtime mutable |
+|---|---|---|---|
+| `start_at` | reference `ORIGIN` | logical process start | no |
+| `tick_step` | 1 hour | recurring logical step | yes |
+| `random_seed` | 168 | deterministic stochastic root seed | yes |
+| `amount` | 125.0 | Payment amount, strictly positive | no |
+| `currency` | USD | Payment currency label | no |
+| `processor_capacity` | 1 | capacity of authorization/settlement/dispute resources, minimum 1 | no |
+| `settlement_delay` | 2 hours | positive durable delay before settlement eligibility | yes |
+
+The runtime-mutable fields are exactly `tick_step`, `random_seed`, and
+`settlement_delay`.
+
+Configuration never bypasses StateCharts, processor resources, durable ScheduledWork,
+or scenario semantics.
+
+## 19. PC5 promotion boundary
+
+The observable contract consists of executable KPIs/projection plus the existing
+persistent ERD and StateChart documentation, the normative process diagram, and the
+explicit configuration contract.
+
+This qualifies Cards & Payments as **PC5 — Observable**. It does not make the domain
+PC6-composable: cross-domain payment/accounting ingress/egress contracts and tested
+composition remain separate evidence. It also does not authorize an Organizational
+Dynamics experiment.
