@@ -113,8 +113,8 @@ def test_audit_orders_domains_by_maturity_then_name_and_reports_next_gate() -> N
     assert not fulfillment.assessment_is_lower_bound
     assert fulfillment.missing_for_next_gate == frozenset(
         {
-            ProcessEvidence.FINITE_RESOURCES,
-            ProcessEvidence.CAPACITY_CONTENTION,
-            ProcessEvidence.TIME_SEMANTICS,
+            ProcessEvidence.INGRESS_CONTRACTS,
+            ProcessEvidence.EGRESS_CONTRACTS,
+            ProcessEvidence.CROSS_DOMAIN_EXECUTION,
         }
     )
