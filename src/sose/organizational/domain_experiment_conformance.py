@@ -15,7 +15,11 @@ from .domain_experiment_runtime import (
     ExperimentObservation,
     RegimeReference,
 )
-from .domain_reference import (\n    DomainReferenceDescriptor,\n    GroundTruthClaim,\n    GroundTruthTargetKind,\n)
+from .domain_reference import (
+    DomainReferenceDescriptor,
+    GroundTruthClaim,
+    GroundTruthTargetKind,
+)
 
 
 class _ConformanceReference(Protocol):
