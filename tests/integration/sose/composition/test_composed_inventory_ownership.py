@@ -181,3 +181,42 @@ def test_standalone_fulfillment_retains_local_inventory_lots() -> None:
 
     assert len(entities.lot_ids) == 2
     assert len(_entities_of_type(store, "warehouse_inventory_lot")) == 2
+
+
+def test_external_reservation_normalizes_quantity_before_persist_and_consume() -> None:
+    store = MemoryPersistence()
+    entities = wm.seed_reference(
+        store,
+        origin_on_hand=4.0,
+        transfer_quantity=1.0,
+        sku=fulfillment.PRIMARY_SKU,
+    )
+    _, engine = wm.build_runtime(store)
+
+    raw_quantity = 1.0000004
+    assert wm.reserve_external_stock(
+        store,
+        engine,
+        stock_id=entities.origin_stock_id,
+        quantity=raw_quantity,
+        sku=fulfillment.PRIMARY_SKU,
+        reservation_reference="precision-reservation",
+    )
+
+    stock = store.entity("warehouse_management_stock", entities.origin_stock_id)
+    record = stock.attributes["external_reservations"]["precision-reservation"]
+    assert record["quantity"] == 1.0
+    assert stock.attributes["reserved"] == 1.0
+
+    assert wm.consume_external_reservation(
+        store,
+        engine,
+        stock_id=entities.origin_stock_id,
+        quantity=raw_quantity,
+        sku=fulfillment.PRIMARY_SKU,
+        reservation_reference="precision-reservation",
+        consumption_reference="precision-consumption",
+    )
+    stock = store.entity("warehouse_management_stock", entities.origin_stock_id)
+    assert stock.attributes["on_hand"] == 3.0
+    assert stock.attributes["reserved"] == 0.0
