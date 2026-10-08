@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from sose.persistence.base import Persistence
 
-from .simulation import LogisticsEntities, flow_correlation_id
+from .simulation import LogisticsEntities
 
 
 _TERMINAL_OUTCOMES = frozenset({"delivered", "lost", "damaged", "returned"})
@@ -80,11 +80,22 @@ def logistics_kpis(
     """Return stable Logistics KPIs from correlated immutable event history."""
 
     projection = logistics_projection(persistence, entities=entities)
+    def belongs_to_shipment(event) -> bool:
+        if event.entity_type == "shipment":
+            return event.entity_id == entities.shipment_id
+        if event.entity_type != "delivery_attempt":
+            return False
+        attempt = persistence.entity("delivery_attempt", event.entity_id)
+        return (
+            attempt is not None
+            and attempt.attributes.get("shipment_id") == entities.shipment_id
+        )
+
     events = tuple(
         event
         for event in persistence.events()
-        if event.correlation_id == flow_correlation_id()
-        and event.name == "entity.state_transition"
+        if event.name == "entity.state_transition"
+        and belongs_to_shipment(event)
     )
     attempts = {
         event.entity_id
