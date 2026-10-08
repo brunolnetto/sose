@@ -20,18 +20,18 @@ def process_manifest() -> ProcessManifest:
         ProcessMaturity.PC4_DURABLE,
     ):
         evidence.update(PROCESS_MATURITY_REQUIREMENTS[level])
-    evidence.update(
-        {
-            ProcessEvidence.ERD,
-            ProcessEvidence.STATECHART_DOCUMENTATION,
-        }
-    )
+    evidence.update(PROCESS_MATURITY_REQUIREMENTS[ProcessMaturity.PC5_OBSERVABLE])
 
     simulation = "src/sose/examples/logistics/simulation.py"
     entities = "src/sose/examples/logistics/entities.py"
     statecharts = "src/sose/examples/logistics/statecharts.py"
     definition = "src/sose/examples/logistics/definition.py"
     specification = "docs/examples/logistics/specification.md"
+    observability = "src/sose/examples/logistics/observability.py"
+    config = "src/sose/examples/logistics/config.py"
+    observability_test = (
+        "tests/unit/sose/examples/logistics/test_logistics_observability.py"
+    )
     happy_path = "tests/integration/sose/examples/logistics/test_logistics_happy_path.py"
     statechart_test = "tests/integration/sose/examples/logistics/test_logistics_statecharts.py"
     contention = "tests/integration/sose/examples/logistics/test_logistics_contention.py"
@@ -55,8 +55,21 @@ def process_manifest() -> ProcessManifest:
         ProcessEvidence.REPLAY_IDEMPOTENCE: (simulation, edge_tests),
         ProcessEvidence.RECURRING_RECONCILIATION: (definition, recurring),
         ProcessEvidence.FAULT_RECOVERY: (restart, scenarios),
+        ProcessEvidence.KPIS: (observability, observability_test, specification),
         ProcessEvidence.ERD: (specification,),
         ProcessEvidence.STATECHART_DOCUMENTATION: (statecharts, specification),
+        ProcessEvidence.PROCESS_DIAGRAM: (specification,),
+        ProcessEvidence.PROJECTION_CONTRACT: (
+            observability,
+            observability_test,
+            specification,
+        ),
+        ProcessEvidence.CONFIGURATION_DOCUMENTATION: (
+            config,
+            definition,
+            observability_test,
+            specification,
+        ),
     }
 
     return ProcessManifest(
@@ -80,6 +93,17 @@ def process_manifest() -> ProcessManifest:
                 "courier_capacity_loss",
                 "weather_delay",
                 "lost_damaged_returned",
+            }
+        ),
+        kpis=frozenset(
+            {
+                "shipment_lead_time_seconds",
+                "transition_count",
+                "delay_count",
+                "delivery_attempt_count",
+                "failed_attempt_count",
+                "delivered_attempt_count",
+                "delivered",
             }
         ),
         specification_path=specification,
