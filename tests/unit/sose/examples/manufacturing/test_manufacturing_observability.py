@@ -69,7 +69,7 @@ def test_manufacturing_kpis_are_derived_from_projection_and_events() -> None:
     assert kpis.breakdown_count == 0
 
     assert set(asdict(kpis)) == {
-        "completed",
+        "completion",
         "lead_time_seconds",
         "output_quantity",
         "yield_ratio",
