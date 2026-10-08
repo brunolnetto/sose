@@ -64,12 +64,15 @@ def seed_reference(
     now: datetime = ORIGIN,
     origin_on_hand: float = 20.0,
     transfer_quantity: float = 8.0,
+    sku: str = REFERENCE_SKU,
     dock_count: int = 2,
     forklift_count: int = 2,
     planned_completion_hours: float = 4.0,
 ) -> WarehouseManagementEntities:
     if origin_on_hand < 0:
         raise ValueError("origin_on_hand cannot be negative")
+    if not sku:
+        raise ValueError("sku cannot be empty")
     if transfer_quantity <= 0:
         raise ValueError("transfer_quantity must be positive")
     if dock_count < 1:
@@ -119,22 +122,22 @@ def seed_reference(
     )
     origin_stock = context.entities.create(
         StockPosition,
-        key=("warehouse-management", origin_site.id, REFERENCE_SKU),
+        key=("warehouse-management", origin_site.id, sku),
         state="available",
         attributes={
             "site_id": origin_site.id,
-            "sku": REFERENCE_SKU,
+            "sku": sku,
             "on_hand": float(origin_on_hand),
             "reserved": 0.0,
         },
     )
     destination_stock = context.entities.create(
         StockPosition,
-        key=("warehouse-management", destination_site.id, REFERENCE_SKU),
+        key=("warehouse-management", destination_site.id, sku),
         state="available",
         attributes={
             "site_id": destination_site.id,
-            "sku": REFERENCE_SKU,
+            "sku": sku,
             "on_hand": 0.0,
             "reserved": 0.0,
         },
@@ -147,7 +150,7 @@ def seed_reference(
             "origin_site_id": origin_site.id,
             "destination_site_id": destination_site.id,
             "truck_id": truck.id,
-            "sku": REFERENCE_SKU,
+            "sku": sku,
             "quantity": float(transfer_quantity),
             "planned_completion_at": (now + timedelta(hours=planned_completion_hours)).isoformat(),
             "departed_at": None,
@@ -206,6 +209,7 @@ def receive_external_replenishment(
     *,
     stock_id: str,
     quantity: float,
+    sku: str,
     receipt_reference: str,
     caused_by=None,
     correlation_id: str | None = None,
@@ -214,10 +218,17 @@ def receive_external_replenishment(
 
     if quantity <= 0:
         raise ValueError("replenishment quantity must be positive")
+    if not sku:
+        raise ValueError("replenishment sku cannot be empty")
     if not receipt_reference:
         raise ValueError("receipt_reference cannot be empty")
 
     stock = _entity(persistence, "warehouse_management_stock", stock_id)
+    stock_sku = str(stock.attributes.get("sku", ""))
+    if stock_sku != sku:
+        raise ValueError(
+            f"replenishment SKU mismatch: stock={stock_sku!r}, receipt={sku!r}"
+        )
     receipts = dict(stock.attributes.get("external_receipts", {}))
     existing = receipts.get(receipt_reference)
     if existing is not None:
@@ -238,6 +249,7 @@ def receive_external_replenishment(
         correlation_id=correlation_id,
         key=("warehouse-management", stock.id, "external-receipt", receipt_reference),
         receipt_reference=receipt_reference,
+        sku=sku,
         quantity=float(quantity),
     )
     with persistence.transaction() as uow:
