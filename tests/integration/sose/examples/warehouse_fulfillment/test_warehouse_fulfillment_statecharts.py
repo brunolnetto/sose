@@ -1,12 +1,14 @@
 from sose.examples.warehouse_fulfillment.entities import (
     Allocation,
     FulfillmentOrder,
+    FulfillmentServiceTask,
     InventoryLot,
     InventoryOccurrence,
 )
 from sose.examples.warehouse_fulfillment.statecharts import (
     AllocationChart,
     FulfillmentOrderChart,
+    FulfillmentServiceTaskChart,
     InventoryOccurrenceChart,
 )
 from sose.statecharts.topology import graph_from_statechart, policy_from_statechart
@@ -22,6 +24,10 @@ def test_warehouse_entities_have_stable_types():
     assert InventoryLot(id="l").entity_type == "warehouse_inventory_lot"
     assert Allocation(id="a").entity_type == "warehouse_allocation"
     assert InventoryOccurrence(id="e").entity_type == "warehouse_inventory_occurrence"
+    assert (
+        FulfillmentServiceTask(id="s").entity_type
+        == "warehouse_fulfillment_service_task"
+    )
 
 
 def test_allocation_projection_and_occurrence_history_are_separate():
@@ -30,6 +36,12 @@ def test_allocation_projection_and_occurrence_history_are_separate():
     assert ("committed", "pick", ("picked",)) in _edges(AllocationChart())
     assert ("picked", "ship", ("shipped",)) in _edges(AllocationChart())
     assert ("captured", "commit", ("committed",)) in _edges(InventoryOccurrenceChart())
+    assert ("queued", "start", ("in_progress",)) in _edges(FulfillmentServiceTaskChart())
+    assert (
+        "in_progress",
+        "complete",
+        ("completed",),
+    ) in _edges(FulfillmentServiceTaskChart())
 
 
 def test_warehouse_transitions_are_orchestration_gated():
@@ -37,5 +49,6 @@ def test_warehouse_transitions_are_orchestration_gated():
         FulfillmentOrderChart(),
         AllocationChart(),
         InventoryOccurrenceChart(),
+        FulfillmentServiceTaskChart(),
     ):
         assert policy_from_statechart(chart).events == ()
