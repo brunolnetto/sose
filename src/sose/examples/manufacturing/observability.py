@@ -27,7 +27,7 @@ class ManufacturingProjection:
 class ManufacturingKpis:
     """Canonical Manufacturing KPI projection derived from persisted facts."""
 
-    completed: bool
+    completion: bool
     lead_time_seconds: float | None
     output_quantity: float
     yield_ratio: float | None
@@ -98,7 +98,7 @@ def manufacturing_kpis(
     )
 
     return ManufacturingKpis(
-        completed=projection.completed,
+        completion=projection.completed,
         lead_time_seconds=projection.lead_time_seconds,
         output_quantity=output,
         yield_ratio=yield_ratio,
