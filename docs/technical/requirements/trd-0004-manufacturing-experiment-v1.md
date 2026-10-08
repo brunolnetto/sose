@@ -1,6 +1,6 @@
 # TRD-0004 — Manufacturing Experiment Adapter and Preregistered A0 Study
 
-- **Status:** Draft
+- **Status:** Accepted
 - **Owner:** SOSE maintainers
 - **Created:** 2026-10-08
 - **Last updated:** 2026-10-08
