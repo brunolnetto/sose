@@ -1,11 +1,10 @@
 from __future__ import annotations
 
-from sose.examples.process_manifest import ProcessMaturity
+from sose.examples.process_manifest import ProcessMaturity, builtin_process_manifests
 from sose.examples.warehouse_fulfillment.observability import (
     warehouse_fulfillment_kpis,
     warehouse_fulfillment_projection,
 )
-from sose.examples.warehouse_fulfillment.process_audit import process_manifest
 from sose.examples.warehouse_fulfillment.simulation import run_happy_path
 
 
@@ -47,7 +46,7 @@ def test_warehouse_fulfillment_projection_and_kpis_are_read_only_and_complete() 
 
 
 def test_warehouse_fulfillment_pc5_observability_evidence_is_complete() -> None:
-    manifest = process_manifest()
+    manifest = builtin_process_manifests()["warehouse_fulfillment"]
 
     assert manifest.maturity is ProcessMaturity.PC5_OBSERVABLE
     assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset()
