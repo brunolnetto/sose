@@ -149,6 +149,16 @@ def test_agency_comparison_uses_a0_as_control_without_rewriting_structure() -> N
 def test_report_rejects_incomplete_paired_run_evidence() -> None:
     reference, result = _small_result()
     malformed = result.model_copy(update={"runs": result.runs[:-1]})
+    malformed = malformed.model_copy(
+        update={
+            "manifest": malformed.manifest.model_copy(
+                update={
+                    "run_count": len(malformed.runs),
+                    "result_hash": recompute_domain_experiment_result_hash(malformed),
+                }
+            )
+        }
+    )
 
     try:
         analyze_domain_experiment(reference=reference, result=malformed)
