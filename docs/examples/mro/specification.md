@@ -711,3 +711,77 @@ Under the repository's current reference-domain standard, MRO is promoted to
 The promotion is based on executable evidence for the canonical happy path,
 resource and material constraints, cancellation, emergency preemption, scenarios,
 and restart equivalence across representative happy and sad paths.
+
+
+## 15. KPI contract
+
+MRO exposes a read-only KPI projection from durable operational truth through
+`mro_kpis()`. The KPI layer does not dispatch lifecycle commands, acquire/release
+resources, consume parts, or mutate process state.
+
+| KPI | Type | Definition |
+|---|---|---|
+| `closure` | boolean | true only when `WorkOrder.state == closed` |
+| `lead_time_seconds` | float or null | `WorkOrder.updated_at - created_at` after closure; null before closure |
+| `parts_consumed` | float | durable amount from terminal `consume-spare-part-1` Container result |
+| `remaining_spare_parts` | float | durable `spare_parts` Container level |
+| `transition_count` | integer | immutable correlated `entity.state_transition` event count |
+| `material_wait_count` | integer | transitions entering/triggering `waiting_material` |
+| `resource_wait_count` | integer | transitions entering/triggering `waiting_resource` |
+| `interruption_count` | integer | transitions entering/triggering `interrupted` |
+
+These are descriptive outputs. They do not become process authority and must not be
+reused as exogenous experiment axes merely because they are observable.
+
+## 16. Projection contract
+
+`mro_projection()` provides the canonical observable projection for the reference
+maintenance process.
+
+| Field | Source |
+|---|---|
+| `work_order_id` | persisted WorkOrder identity |
+| `part_demand_id` | persisted PartDemand identity |
+| `work_order_state` | persisted WorkOrder state |
+| `part_demand_state` | persisted PartDemand state |
+| `closed` | derived from WorkOrder state |
+| `cancelled` | derived from WorkOrder state |
+| `planned_quantity` | persisted WorkOrder quantity |
+| `remaining_spare_parts` | durable `spare_parts` Container level |
+| `spare_part_lot_count` | durable items currently in Store `spare_part_lots` |
+| `lead_time_seconds` | closed WorkOrder timestamps; null before closure |
+
+Projection rules:
+
+1. projection is read-only and idempotent;
+2. missing WorkOrder/PartDemand entities are an error rather than an invented empty row;
+3. absent durable `spare_parts` Container state projects as zero for this named
+   reference quantity;
+4. closure-only metrics remain null until closure exists durably;
+5. the projection never becomes source of business truth;
+6. analytical sinks, UIs, and experiment reports consume the projection without
+   obtaining a mutation path through it.
+
+## 17. Configuration contract
+
+The persistent MRO job uses `MROConfig`.
+
+| Field | Default | Constraint / meaning | Runtime mutable |
+|---|---|---|---|
+| `start_at` | reference origin | logical start time | no |
+| `tick_step` | 1 hour | recurring logical step | yes |
+| `random_seed` | 42 | deterministic stochastic root seed | yes |
+| `quantity` | 1.0 | required part quantity, positive and <= reference part capacity | no |
+| `technician_capacity` | 1 | initial technician capacity, integer >= 1 | no |
+| `maintenance_bay_capacity` | 1 | initial preemptive maintenance-bay capacity, integer >= 1 | no |
+| `spare_part_store_capacity` | 10 | discrete spare-part lot capacity, integer >= 1 | no |
+| `release_delay` | 1 hour | durable delay before WorkOrder release; strictly positive | no |
+| `auto_seed_spare_parts` | true | automatically replenish the reference part during recurring progression | yes |
+
+The runtime-mutable set is exactly the `DomainDefinition.runtime_mutable_fields`:
+`tick_step`, `random_seed`, and `auto_seed_spare_parts`.
+
+Capacity, quantity, release delay, and start time define the reference job/world
+configuration and are not rewritten in-place through the recurring configuration API.
+Configuration does not bypass WorkOrder/PartDemand StateCharts, durable resource
+ownership, preemption, Store/Container effects, or reconciliation.
