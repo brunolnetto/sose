@@ -178,6 +178,13 @@ class MemoryUnitOfWork:
         result = self._working.business_effects.get(effect_id)
         return deepcopy(result) if result else None
 
+    def business_effects(self) -> tuple[BusinessEffectApplied, ...]:
+        """Enumerate all authoritative certificates in this same UoW snapshot."""
+        return tuple(
+            deepcopy(self._working.business_effects[key])
+            for key in sorted(self._working.business_effects)
+        )
+
     def save_business_effect(self, effect: BusinessEffectApplied) -> None:
         previous = self._working.business_effects.get(effect.effect_id)
         if previous is not None and previous != effect:
