@@ -27,7 +27,7 @@ def build_o2c_protocol_v1(reference: O2CReferenceDomain | None = None) -> Experi
         agency_levels=(AgencyLevel.A0,),
         parameter_ranges={"due_delay_hours": ParameterRange(low=1.0, high=5.0)},
         sampling_design=SamplingDesign.LATIN_HYPERCUBE,
-        sample_size=6,
+        sample_size=4,
         outcomes=(
             OutcomeMetric(name="collected", direction=MetricDirection.MAXIMIZE, equivalence_margin=1e-9),
             OutcomeMetric(name="order_to_cash_seconds", direction=MetricDirection.MINIMIZE, equivalence_margin=1),
