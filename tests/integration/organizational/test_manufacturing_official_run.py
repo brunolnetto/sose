@@ -23,7 +23,7 @@ def test_freeze_rejects_mutated_dependency_without_executing(tmp_path: Path) -> 
     (tmp_path / FREEZE_MANIFEST).parent.mkdir(parents=True)
     original["files"]["adapter"]["sha256"] = "0" * 64
     (tmp_path / FREEZE_MANIFEST).write_text(json.dumps(original), encoding="utf-8")
-    with pytest.raises(ValueError, match="frozen dependency changed"):
+    with pytest.raises(ValueError, match="trusted PR #375 merge provenance"):
         verify_freeze(tmp_path)
 
 
