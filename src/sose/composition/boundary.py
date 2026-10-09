@@ -222,6 +222,14 @@ class BoundaryService:
                     f"boundary delivery missing message: {current.delivery_id}"
                 )
 
+            # A predecessor may have been published after this claim was
+            # acquired. Validate inside the ACK transaction as well, closing
+            # the claim/consume time-of-check vs time-of-use window.
+            if not self._causal_predecessor_applied(message, uow):
+                raise StaleBoundaryClaimError(
+                    f"causal predecessor not applied: {current.delivery_id}"
+                )
+
             handler = registry.resolve(message)
             effect_id = handler(message, uow)
             if not effect_id:
