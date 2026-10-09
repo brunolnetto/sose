@@ -25,6 +25,12 @@ class FencedEnginePersistence:
     def transaction(self):
         return self._persistence.transaction(owner_epoch=self.lease.epoch)
 
+    def boundary_transaction(self):
+        factory = getattr(self._persistence, "boundary_transaction", None)
+        if callable(factory):
+            return factory(owner_epoch=self.lease.epoch)
+        return self.transaction()
+
     def __getattr__(self, name: str):
         return getattr(self._persistence, name)
 
