@@ -18,13 +18,15 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 NOW = datetime(2026, 10, 9, 12)
 
 
-def message(name: str, cause: str | None = None, correlation: str = "order-1",
+def message(name: str, cause: CausalReference | str | None = None, correlation: str = "order-1",
             at: datetime = NOW) -> BoundaryMessage:
     return BoundaryMessage.create(
         contract_name="causal.test", contract_version=1, source_domain="warehouse",
         source_identity="order-1", destination_domain="logistics",
         occurrence_key=name, correlation_id=correlation,
-        causation_id=cause, produced_at=at, payload={"name": name},
+        causation_id=cause.identity if isinstance(cause, CausalReference) else cause,
+        causation_kind=cause.kind if isinstance(cause, CausalReference) else None,
+        produced_at=at, payload={"name": name},
     )
 
 
@@ -45,7 +47,7 @@ def test_missing_typed_boundary_parent_stays_blocked_across_restart(adapter, tmp
 
     store = factory()
     parent = message("parent")
-    child = message("child", CausalReference.boundary(parent.message_id).encode())
+    child = message("child", CausalReference.boundary(parent.message_id))
     service = BoundaryService(store)
     service.publish(child)
 
@@ -74,7 +76,7 @@ def test_typed_boundary_parent_cannot_change_correlation_or_reverse_clock():
     store = MemoryPersistence()
     service = BoundaryService(store)
     parent = message("parent")
-    child = message("child", CausalReference.boundary(parent.message_id).encode())
+    child = message("child", CausalReference.boundary(parent.message_id))
     service.publish(child)
     with pytest.raises(ValueError, match="correlation"):
         service.publish(message("parent", correlation="other"))
@@ -87,7 +89,7 @@ def test_typed_boundary_parent_cannot_change_correlation_or_reverse_clock():
 def test_typed_domain_event_must_exist_and_match_trace_and_time():
     store = MemoryPersistence()
     service = BoundaryService(store)
-    cause = CausalReference.event("event-1").encode()
+    cause = CausalReference.event("event-1")
     with pytest.raises(ValueError, match="missing.*event"):
         service.publish(message("child", cause))
 
@@ -116,13 +118,46 @@ def test_legacy_external_causation_remains_compatible():
     ) is not None
 
 
-def test_typed_causal_reference_rejects_empty_or_malformed_ids():
+def test_typed_causal_reference_rejects_invalid_kinds_and_ids():
     with pytest.raises(ValueError):
         CausalReference.boundary("")
     with pytest.raises(ValueError):
         CausalReference.event(" ")
     with pytest.raises(ValueError):
-        CausalReference.parse("boundary:")
-    with pytest.raises(ValueError):
-        CausalReference.parse("event:two:segments")
-    assert CausalReference.parse("legacy-uuid") is None
+        CausalReference("unsupported", "id")
+    assert CausalReference.boundary("event:legacy-id").as_message_fields() == {
+        "causation_id": "event:legacy-id", "causation_kind": "boundary",
+    }
+
+
+def test_legacy_prefixed_cause_survives_upgrade_without_reinterpretation():
+    from sose.persistence.codec import dumps, loads
+
+    service = BoundaryService(MemoryPersistence())
+    for cause in ("event:external-id", "boundary:external-id"):
+        legacy = message("legacy-" + cause, cause)
+        serialized = dumps(legacy)
+        assert '"causation_kind"' not in serialized
+        assert loads(serialized) == legacy
+        service.publish(legacy)
+        assert service.claim_next(
+            owner_id="legacy-worker", now=NOW,
+            lease_duration=timedelta(minutes=1),
+        ) is not None
+
+
+def test_typed_cause_is_persisted_separately_from_identifier(tmp_path):
+    from sose.persistence.codec import dumps, loads
+
+    child = message("typed", CausalReference.boundary("event:legacy-id"))
+    encoded = dumps(child)
+    assert '"causation_kind"' in encoded
+    assert loads(encoded) == child
+    path = tmp_path / "typed-restart.sqlite"
+    with SQLiteIncrementalPersistence(path) as store:
+        BoundaryService(store).publish(child)
+    with SQLiteIncrementalPersistence(path) as store:
+        assert BoundaryService(store).claim_next(
+            owner_id="blocked", now=NOW,
+            lease_duration=timedelta(minutes=1),
+        ) is None
