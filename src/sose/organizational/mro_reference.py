@@ -189,7 +189,10 @@ class MROReferenceDomain:
             state = persistence.entity("work_order", entities.work_order_id)
             if state is None or state.state != "waiting_material":
                 raise RuntimeError("MRO shortage was not persisted as a material wait")
-            backend.run_until(ORIGIN.replace(hour=10))
+            # Advance the authoritative logical clock as well as the SimPy backend.
+            # Backend-only time advancement would misstate persisted event timestamps.
+            engine.advance_tick()
+            backend.run_until(engine.context.clock.now)
             seed_spare_parts(engine, backend, quantity=quantity)
         else:
             seed_spare_parts(engine, backend, quantity=quantity)
@@ -297,7 +300,7 @@ class MROReferenceDomain:
         eligible = (
             context.kind.value == "intervention" and (
                 (context.treatment_world.arm_id == "spare_part_shortage"
-                 and context.metric_name == "material_wait_count")
+                 and context.metric_name in {"material_wait_count", "lead_time_seconds"})
                 or (context.treatment_world.arm_id == "emergency_preemption"
                     and context.metric_name in {"interruption_count", "preemption_count"})
             )
