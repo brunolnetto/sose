@@ -19,6 +19,7 @@ from sose.examples.warehouse_management import simulation as wm
 
 from .boundary import BoundaryConsumerRegistry, BoundaryService
 from .effects import BusinessEffectService, CERTIFIED_INTENTS
+from .bindings import CustomerSettlementBinding, SettlementBindingService
 from .model import BoundaryMessage, DeliveryStatus
 
 
@@ -1121,25 +1122,30 @@ def reconcile_invoiced_o2c_egress(
                 or receivable.attributes.get("currency") != currency
             ):
                 raise ValueError("receivable does not certify the invoiced sales order")
-            ready.append((message, order_id, amount, currency))
+            binding = uow.get_customer_settlement_binding("order", order_id)
+            if binding is None:
+                raise RuntimeError("O2C payment destination lacks explicit durable settlement binding")
+            if (
+                binding.correlation_id != message.correlation_id
+                or binding.amount != amount
+                or binding.currency != currency
+            ):
+                raise ValueError("O2C settlement binding contradicts the causally invoiced order")
+            bound_payment = uow.get_entity("card_payment", binding.payment_id)
+            if bound_payment is None:
+                raise RuntimeError("O2C bound card payment is missing")
+            if (
+                bound_payment.attributes.get("amount") != amount
+                or bound_payment.attributes.get("currency") != currency
+            ):
+                raise ValueError("O2C bound card payment conflicts with the invoiced order")
+            ready.append((message, order_id, amount, currency, binding.payment_id))
 
     service = BoundaryService(persistence)
     emitted: list[BoundaryMessage] = []
-    for upstream, order_id, amount, currency in sorted(
+    for upstream, order_id, amount, currency, payment_id in sorted(
         ready, key=lambda item: item[0].message_id
     ):
-        # A reference-domain example may have exactly one candidate card
-        # payment. A real catalog requires durable order-payment binding;
-        # reject ambiguity rather than accidentally settling another order.
-        candidates = [
-            item for item in persistence.entities()
-            if item.entity_type == "card_payment"
-            and item.attributes.get("amount") == amount
-            and item.attributes.get("currency") == currency
-        ]
-        if len(candidates) != 1:
-            raise RuntimeError("O2C payment destination requires one durable payment binding")
-        payment_id = candidates[0].id
         identity = deterministic_id(
             "boundary-message", "order_to_cash", order_id,
             "o2c.payment_requested", 1, "cards_payments", "payment-requested",
@@ -1208,22 +1214,34 @@ def reconcile_settled_payment_egress(
                 or payment.attributes.get("currency") != payload["currency"]
             ):
                 raise ValueError("settled card payment conflicts with committed request")
-            ready.append((upstream, payment_id, payload["amount"], payload["currency"]))
+            binding = uow.get_customer_settlement_binding("payment", payment_id)
+            if binding is None:
+                raise RuntimeError("settlement journal lacks explicit durable accounting binding")
+            if (
+                binding.order_id != payload["order_id"]
+                or binding.correlation_id != upstream.correlation_id
+                or binding.amount != payload["amount"]
+                or binding.currency != payload["currency"]
+            ):
+                raise ValueError("settled payment contradicts its immutable accounting binding")
+            bound_journal = uow.get_entity("journal_entry", binding.journal_id)
+            if bound_journal is None:
+                raise RuntimeError("settlement bound journal is missing")
+            if (
+                bound_journal.attributes.get("amount") != binding.amount
+                or bound_journal.attributes.get("currency") != binding.currency
+            ):
+                raise ValueError("settlement bound journal conflicts with original payment")
+            ready.append((
+                upstream, payment_id, payload["amount"], payload["currency"],
+                binding.journal_id,
+            ))
 
     service = BoundaryService(persistence)
     results: list[BoundaryMessage] = []
-    for upstream, payment_id, amount, currency in sorted(
+    for upstream, payment_id, amount, currency, journal_id in sorted(
         ready, key=lambda item: item[0].message_id
     ):
-        journals = [
-            item for item in persistence.entities()
-            if item.entity_type == "journal_entry"
-            and item.attributes.get("amount") == amount
-            and item.attributes.get("currency") == currency
-        ]
-        if len(journals) != 1:
-            raise RuntimeError("settlement journal requires one durable accounting binding")
-        journal_id = journals[0].id
         identity = deterministic_id(
             "boundary-message", "cards_payments", payment_id,
             "accounting.entry_requested", 1, "record_to_report",
@@ -1334,6 +1352,18 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
         "trading-company-inventory-consumption",
         reservation_reference,
     )
+
+    # Bind by durable business identity before publishing the first event.
+    # This makes independent orders with equal money amounts unambiguous
+    # even after a complete process restart.
+    SettlementBindingService(persistence).bind(CustomerSettlementBinding.create(
+        order_id=fixtures.o2c.order_id,
+        payment_id=fixtures.payments.payment_id,
+        journal_id=fixtures.r2r.journal_id,
+        amount=amount,
+        currency=currency,
+        correlation_id=correlation_id,
+    ))
 
     service = BoundaryService(persistence)
     registry = _registry(fixtures)
