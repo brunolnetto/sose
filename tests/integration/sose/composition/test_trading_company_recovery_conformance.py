@@ -104,13 +104,16 @@ def _claim_after_worker_death(
 
 def _customer_fixtures(store) -> customer._CustomerFixtures:
     origin = o2c.ORIGIN
+    sales_order = o2c.seed_reference(store, now=origin, amount=250.0, currency="USD")
+    expected_id = deterministic_id(
+        "entity", "warehouse_fulfillment_order",
+        "warehouse-reference", f"order:{sales_order.order_id}",
+    )
+    assert store.entity("warehouse_fulfillment_order", expected_id) is None
     return customer._CustomerFixtures(
-        o2c=o2c.seed_reference(store, now=origin, amount=250.0, currency="USD"),
-        fulfillment=fulfillment.seed_composed_reference(
-            store,
-            now=origin,
-            requested_quantity=10.0,
-        ),
+        o2c=sales_order,
+        # No WF fixture: ingress command owns order materialization after restart.
+        fulfillment=fulfillment.WarehouseEntities(order_id=expected_id, lot_ids=()),
         warehouse=wm.seed_reference(
             store,
             now=origin,
