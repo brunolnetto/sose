@@ -26,6 +26,13 @@ def test_mro_resource_inventory_and_emergency_mechanics_are_durable() -> None:
     assert result.manifest.world_count == 6
     assert result.manifest.run_count == 12
     assert all(isinstance(r.evidence, MROExperimentEvidence) for r in result.evidence)
+    baseline_time_by_design = {
+        run.design_index: run.observation.metrics["lead_time_seconds"]
+        for run in result.runs if run.arm_id == "baseline"
+    }
+    for run in result.runs:
+        if run.arm_id == "spare_part_shortage":
+            assert run.observation.metrics["lead_time_seconds"] > baseline_time_by_design[run.design_index]
     for record in result.evidence:
         evidence = record.evidence
         assert evidence.closed
@@ -56,6 +63,6 @@ def test_mro_same_generic_conformance_and_pairing_contract() -> None:
     report = analyze_domain_experiment(reference=reference, result=result)
     assert len(report.effects) == 20
     eligible = [effect for effect in report.effects if effect.eligible]
-    assert len(eligible) == 6
+    assert len(eligible) == 8
     assert all(effect.paired for effect in eligible)
     assert all(effect.mean_delta > 0 for effect in eligible)
