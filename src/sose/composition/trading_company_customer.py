@@ -645,6 +645,133 @@ def _execute_intent(
             uow.delete_command(effect_id)
 
 
+def reconcile_shipped_fulfillment_egress(
+    persistence: MemoryPersistence, *, correlation_id: str | None = None,
+) -> tuple[BoundaryMessage, ...]:
+    """Rebuild outbound WF contracts solely from durable inbound messages and state.
+
+    Safe after worker death between shipping and the next publish. This routine
+    never reads an in-memory stage sequence, and rerunning it cannot duplicate
+    immutable messages. WM consumption is required before dispatch is published.
+    """
+    with persistence.transaction() as uow:
+        inbound = tuple(
+            message
+            for delivery in uow.boundary_deliveries()
+            if (message := uow.get_boundary_message(delivery.message_id)) is not None
+        )
+    requests = [
+        message for message in inbound
+        if message.contract_key == "o2c.fulfillment_requested.v1"
+    ]
+    reservations = [
+        message for message in inbound
+        if message.contract_key == "warehouse.inventory_reserved.v1"
+        and (correlation_id is None or message.correlation_id == correlation_id)
+    ]
+    service = BoundaryService(persistence)
+    outgoing: list[BoundaryMessage] = []
+
+    def publish_or_verify(
+        *, contract_name: str, destination_domain: str, occurrence_key: str,
+        source_identity: str, correlation: str, causation: str, produced_at: datetime,
+        payload: dict[str, object],
+    ) -> BoundaryMessage:
+        message_id = deterministic_id(
+            "boundary-message", "warehouse_fulfillment", source_identity,
+            contract_name, 1, destination_domain, occurrence_key,
+        )
+        with persistence.transaction() as uow:
+            prior = uow.get_boundary_message(message_id)
+        if prior is not None:
+            expected = BoundaryMessage.create(
+                contract_name=contract_name, contract_version=1,
+                source_domain="warehouse_fulfillment", source_identity=source_identity,
+                destination_domain=destination_domain, occurrence_key=occurrence_key,
+                correlation_id=correlation, causation_id=causation,
+                produced_at=prior.produced_at, payload=payload,
+            )
+            if prior != expected:
+                raise ValueError("durable outbound contract conflicts with source facts")
+            return prior
+        return _publish(
+            service, contract_name=contract_name,
+            source_domain="warehouse_fulfillment", source_identity=source_identity,
+            destination_domain=destination_domain, occurrence_key=occurrence_key,
+            correlation_id=correlation, causation_id=causation,
+            produced_at=produced_at, payload=payload,
+        )
+
+    for reservation in sorted(reservations, key=lambda m: m.message_id):
+        details = reservation.payload()
+        order_id = str(details["fulfillment_order_id"])
+        order = persistence.entity("warehouse_fulfillment_order", order_id)
+        if order is None or order.state != "shipped":
+            continue
+        matching = [
+            request for request in requests
+            if request.correlation_id == reservation.correlation_id
+            and request.payload().get("fulfillment_order_id") == order_id
+        ]
+        if len(matching) != 1:
+            raise ValueError("shipped fulfillment lacks unique durable O2C request")
+        request_payload = matching[0].payload()
+        shipment_id = request_payload.get("shipment_id")
+        if not isinstance(shipment_id, str) or not shipment_id:
+            raise ValueError("shipment reference missing from durable O2C request")
+        if persistence.entity("shipment", shipment_id) is None:
+            raise ValueError("referenced logistics shipment is not durable")
+        stock_id = str(details["stock_id"])
+        reservation_reference = str(details["reservation_reference"])
+        sku = str(details["sku"])
+        quantity = float(details["quantity"])
+        if (
+            sku != order.attributes.get("requested_sku")
+            or quantity != float(order.attributes.get("requested_quantity", -1))
+        ):
+            raise ValueError("reservation does not reconcile to shipped fulfillment")
+        consumption_reference = deterministic_id(
+            "trading-company-inventory-consumption", reservation_reference,
+        )
+        consumption = publish_or_verify(
+            contract_name="warehouse.inventory_consumption_requested",
+            destination_domain="warehouse_management",
+            occurrence_key="inventory-consumption-requested",
+            source_identity=order_id,
+            correlation=reservation.correlation_id,
+            causation=reservation.message_id,
+            produced_at=_next_logical_time(persistence, reservation.produced_at),
+            payload={
+                "fulfillment_order_id": order_id,
+                "stock_id": stock_id,
+                "reservation_reference": reservation_reference,
+                "consumption_reference": consumption_reference,
+                "sku": sku,
+                "quantity": quantity,
+            },
+        )
+        outgoing.append(consumption)
+        stock = persistence.entity("warehouse_management_stock", stock_id)
+        stock_reservations = (
+            {} if stock is None else dict(stock.attributes.get("external_reservations", {}))
+        )
+        consumed = stock_reservations.get(reservation_reference, {}).get("consumed")
+        if consumed is not True:
+            continue
+
+        outgoing.append(publish_or_verify(
+            contract_name="warehouse.dispatch_ready",
+            destination_domain="logistics",
+            occurrence_key="dispatch-ready",
+            source_identity=order_id,
+            correlation=reservation.correlation_id,
+            causation=consumption.message_id,
+            produced_at=_next_logical_time(persistence, consumption.produced_at),
+            payload={"fulfillment_order_id": order_id, "shipment_id": shipment_id},
+        ))
+    return tuple(outgoing)
+
+
 def run_customer_demand_path() -> CustomerDemandPathResult:
     """Execute the durable Trading Company customer-demand composition path.
 
@@ -779,6 +906,7 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
             "fulfillment_order_id": fixtures.fulfillment.order_id,
             "requested_quantity": requested_quantity,
             "sku": fulfillment.PRIMARY_SKU,
+            "shipment_id": fixtures.logistics.shipment_id,
         },
     )
     publish_consume_execute(
