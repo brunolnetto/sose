@@ -57,12 +57,29 @@ class BusinessEffectApplied:
 # Restrict certification to transitions with a concrete reference-model
 # terminal outcome. Other legacy commands retain the v1 completion convention
 # until their own business-result semantics are specified.
+# name -> (target entity type, terminal state, inbound contract key,
+#          inbound source domain, inbound destination domain, payload identity key)
 _CERTIFIED_TERMINALS = {
-    "composition.deliver_shipment": ("shipment", "delivered"),
-    "composition.complete_external_fulfillment": ("sales_order", "invoiced"),
-    "composition.settle_customer_payment": ("card_payment", "settled"),
-    "composition.post_customer_journal": ("journal_entry", "posted"),
-    "composition.post_replenishment_journal": ("journal_entry", "posted"),
+    "composition.deliver_shipment": (
+        "shipment", "delivered", "warehouse.dispatch_ready.v1",
+        "warehouse_fulfillment", "logistics", "shipment_id",
+    ),
+    "composition.complete_external_fulfillment": (
+        "sales_order", "invoiced", "logistics.delivery_completed.v1",
+        "logistics", "order_to_cash", "order_id",
+    ),
+    "composition.settle_customer_payment": (
+        "card_payment", "settled", "o2c.payment_requested.v1",
+        "order_to_cash", "cards_payments", "payment_id",
+    ),
+    "composition.post_customer_journal": (
+        "journal_entry", "posted", "accounting.entry_requested.v1",
+        "cards_payments", "record_to_report", "journal_id",
+    ),
+    "composition.post_replenishment_journal": (
+        "journal_entry", "posted", "accounting.entry_requested.v1",
+        "procure_to_pay", "record_to_report", "journal_id",
+    ),
 }
 
 
@@ -101,7 +118,10 @@ class BusinessEffectService:
             expected = _CERTIFIED_TERMINALS.get(pending.name)
             if expected is None:
                 raise ValueError(f"business effect has no certified terminal: {pending.name}")
-            expected_type, expected_state = expected
+            (
+                expected_type, expected_state, expected_contract,
+                expected_source, expected_destination, payload_id_field,
+            ) = expected
             if pending.entity_type != expected_type:
                 raise ValueError("business effect target entity type conflicts with command")
             if not pending.causation_id or not pending.correlation_id:
@@ -125,6 +145,13 @@ class BusinessEffectService:
             message = uow.get_boundary_message(pending.causation_id)
             if message is None or message.correlation_id != pending.correlation_id:
                 raise ValueError("business effect causation contradicts durable source message")
+            if (
+                message.contract_key != expected_contract
+                or message.source_domain != expected_source
+                or message.destination_domain != expected_destination
+                or str(message.payload().get(payload_id_field, "")) != pending.entity_id
+            ):
+                raise ValueError("business effect target/contract contradicts causal boundary payload")
             entity = uow.get_entity(pending.entity_type, pending.entity_id)
             if entity is None or entity.state != expected_state:
                 raise ValueError(f"business effect lacks terminal state {expected_state}")
