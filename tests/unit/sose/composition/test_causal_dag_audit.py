@@ -204,3 +204,76 @@ def test_worker_death_and_restart_preserves_normalized_causal_dag(
             now=o2c.ORIGIN + timedelta(days=2, minutes=1),
         ).actions == 0
         assert audit_causal_history(store).semantic_digest == uninterrupted.semantic_digest
+
+
+def test_causal_audit_handles_deep_linear_chains_without_recursion_failure():
+    store = MemoryPersistence()
+    messages = []
+    parent = None
+    for i in range(1200):
+        record = msg(
+            f"node-{i:04}", at=T0 + timedelta(seconds=i),
+            cause=parent.message_id if parent else None,
+            kind="boundary" if parent else None,
+        )
+        messages.append(record)
+        parent = record
+    stage(store, *messages)
+    report = audit_causal_history(store)
+    assert report.message_count == 1200
+    assert len(report.typed_edges) == 1199
+
+
+def test_consumer_receipt_cannot_exist_without_consummed_delivery():
+    from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
+    from sose.composition.model import BoundaryConsumption
+
+    store = MemoryPersistence()
+    service = BoundaryService(store)
+    message = msg("unclaimed")
+    delivery = service.publish(message)
+    with store.transaction() as uow:
+        uow.save_boundary_consumption(
+            BoundaryConsumption.create(
+                delivery=delivery, consumer_effect_id="false-effect", consumed_at=T0,
+            )
+        )
+    with pytest.raises(CausalAuditError, match="unconsumed delivery"):
+        audit_causal_history(store)
+
+
+def test_consumed_message_with_invalid_receipt_is_not_causally_auditable():
+    from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
+
+    store = MemoryPersistence()
+    service = BoundaryService(store)
+    message = msg("approved")
+    service.publish(message)
+    lease = service.claim_next(owner_id="audit-worker", now=T0,
+                               lease_duration=timedelta(minutes=5))
+    registry = BoundaryConsumerRegistry()
+    registry.register(destination_domain="destination", contract_name="test.changed",
+                      contract_version=1, handler=lambda m, u: "audit-effect")
+    service.consume(lease=lease, registry=registry, now=T0)
+    first = audit_causal_history(store)
+    assert first.message_count == 1
+    with store.transaction() as uow:
+        delivery = next(iter(uow.boundary_deliveries()))
+        uow._working.boundary_consumptions.pop(delivery.delivery_id)
+    with pytest.raises(CausalAuditError, match="lacks durable ACK receipt"):
+        audit_causal_history(store)
+
+
+def test_certificate_cannot_be_reused_under_different_correlation():
+    result = run_customer_demand_path()
+    delivery = next(
+        d for d in result.persistence._state.boundary_deliveries.values()
+        if d.contract_name == "warehouse.dispatch_ready"
+    )
+    proof = result.persistence.business_effect(delivery.consumer_effect_id)
+    assert proof is not None
+    result.persistence._state.business_effects[proof.effect_id] = replace(
+        proof, correlation_id="different-customer"
+    )
+    with pytest.raises(CausalAuditError, match="certificate contradicts"):
+        audit_causal_history(result.persistence)
