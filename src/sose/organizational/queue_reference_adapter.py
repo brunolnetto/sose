@@ -5,19 +5,20 @@ from functools import cached_property
 from .agency import AgencyLevel
 from .domain_reference import (
     AgencyCapabilitySpec,
-    AgencyConfigurationSpec,
-    AgencyParameterSpec,
+    DomainReferenceDescriptor,
     DomainReferenceIdentity,
     ExperimentObservation,
     GroundTruthClaim,
+    GroundTruthComparisonKind,
+    GroundTruthComparisonRule,
     GroundTruthKind,
     GroundTruthTargetKind,
     ParameterDefinition,
     ParameterSpaceSpec,
 )
-from .experiment import ExperimentProtocol
+from .experiment import ExperimentProtocol, ParameterRange
 from .synthetic_a1 import A1AdaptiveRunResult, run_a1_reference_world
-from .synthetic_a1_experiment import classify_a1_regime
+from .synthetic_a1_experiment import A1RegimeReference, classify_a1_regime
 from .synthetic_analysis import AnalyticalWorldReference, analytical_world_reference
 from .synthetic_reference_experiment import build_reference_synthetic_experiment_v1
 from .synthetic_runner import SyntheticRunResult, run_a0_reference_world
@@ -25,76 +26,99 @@ from .synthetic_study import SyntheticWorldSpec
 
 
 class QueueReferenceAdapter:
-    """Compatibility adapter for the verified queue reference experiment.
+    """Compatibility adapter for the verified queue A0/A1 reference.
 
-    This is deliberately provisional and remains under the organizational layer until
-    the three-domain promotion gate in TRD-0001 is satisfied.
+    This remains a provisional organizational-layer reference. It is not a promoted
+    business-process canonical and does not bypass the PC5/PC6 gates in TRD-0001.
     """
 
     @cached_property
     def identity(self) -> DomainReferenceIdentity:
         return DomainReferenceIdentity(
-            domain_id="synthetic-queue-reference",
-            reference_version="v1",
-            process_reference="provisional-organizational-reference",
-            specification_path="docs/organizational/evidence/synthetic-reference-v1/RESULT.md",
+            domain="synthetic_queue_reference",
+            reference_id="synthetic-queue-reference",
+            reference_version="1",
+            process_manifest_domain="synthetic_queue_reference",
+            specification_path=(
+                "docs/organizational/evidence/synthetic-reference-v1/RESULT.md"
+            ),
         )
 
     def parameter_space(self) -> ParameterSpaceSpec:
         design = build_reference_synthetic_experiment_v1()
-        baseline = design.baseline.parameters
+        descriptions = {
+            "arrival_rate": "Exogenous item arrival intensity.",
+            "service_capacity": "Configured nominal service capacity.",
+            "service_cv": "Configured service-time coefficient of variation.",
+            "rework_probability": "Configured probability of one rework cycle.",
+            "transition_cost": "Configured intervention transition cost coordinate.",
+        }
+        units = {
+            "arrival_rate": "items/time",
+            "service_capacity": "items/time",
+            "service_cv": "ratio",
+            "rework_probability": "probability",
+            "transition_cost": "cost",
+        }
         return ParameterSpaceSpec(
-            parameters={
-                name: ParameterDefinition(
+            parameters=tuple(
+                ParameterDefinition(
                     name=name,
-                    low=bounds.low,
-                    high=bounds.high,
-                    default=float(baseline[name]),
+                    description=descriptions[name],
+                    units=units[name],
+                    default=float(design.baseline.parameters[name]),
+                    range=bounds,
+                    evidence_class=design.baseline.parameter_evidence[name],
                 )
-                for name, bounds in design.protocol.parameter_ranges.items()
-            }
+                for name, bounds in sorted(design.protocol.parameter_ranges.items())
+            )
         )
 
     def agency_capabilities(self) -> tuple[AgencyCapabilitySpec, ...]:
         return (
-            AgencyCapabilitySpec(level=AgencyLevel.A0),
+            AgencyCapabilitySpec(
+                level=AgencyLevel.A0,
+                capability_id="fixed-policy",
+            ),
             AgencyCapabilitySpec(
                 level=AgencyLevel.A1,
-                configurations=(
-                    AgencyConfigurationSpec(
-                        configuration_id="batching",
-                        parameters={
-                            "backlog_trigger": AgencyParameterSpec(
-                                name="backlog_trigger",
-                                minimum=0.0,
-                                default=2.0,
-                            ),
-                            "service_multiplier": AgencyParameterSpec(
-                                name="service_multiplier",
-                                minimum=0.0,
-                                maximum=1.0,
-                                default=0.70,
-                            ),
-                            "adaptation_time": AgencyParameterSpec(
-                                name="adaptation_time",
-                                minimum=0.0,
-                                default=0.05,
-                            ),
-                            "adaptation_cost_rate": AgencyParameterSpec(
-                                name="adaptation_cost_rate",
-                                minimum=0.0,
-                                default=0.15,
-                            ),
-                        },
-                    ),
+                capability_id="batching",
+                parameter_ranges={
+                    "backlog_trigger": ParameterRange(low=0.0, high=1_000_000.0),
+                    "service_multiplier": ParameterRange(low=0.000001, high=1.0),
+                    "adaptation_time": ParameterRange(low=0.0, high=1_000_000.0),
+                    "adaptation_cost_rate": ParameterRange(low=0.0, high=1_000_000.0),
+                },
+                defaults={
+                    "backlog_trigger": 2.0,
+                    "service_multiplier": 0.70,
+                    "adaptation_time": 0.05,
+                    "adaptation_cost_rate": 0.15,
+                },
+                compatibility_constraints=(
+                    "does not change nominal organizational structure",
+                    "does not change demand generation",
+                    "does not change authority topology",
                 ),
+            ),
+        )
+
+    def descriptor(self) -> DomainReferenceDescriptor:
+        space = self.parameter_space()
+        return DomainReferenceDescriptor(
+            identity=self.identity,
+            parameters=space.parameters,
+            agency_capabilities=self.agency_capabilities(),
+            ground_truth_kinds=(
+                GroundTruthKind.ANALYTICAL,
+                GroundTruthKind.MECHANISTIC,
             ),
         )
 
     def classify_regime(
         self,
         world: SyntheticWorldSpec,
-    ) -> AnalyticalWorldReference | object:
+    ) -> AnalyticalWorldReference | A1RegimeReference:
         if world.agency_level is AgencyLevel.A0:
             return analytical_world_reference(world)
         if world.agency_level is AgencyLevel.A1:
@@ -107,16 +131,25 @@ class QueueReferenceAdapter:
     ) -> tuple[GroundTruthClaim, ...]:
         if world.agency_level is AgencyLevel.A0:
             reference = analytical_world_reference(world)
+            equivalence_margin = next(
+                outcome.equivalence_margin
+                for outcome in build_reference_synthetic_experiment_v1().protocol.outcomes
+                if outcome.name == "lead_time"
+            )
             regime = GroundTruthClaim(
                 claim_id="queue.regime",
                 kind=GroundTruthKind.MECHANISTIC,
                 target_kind=GroundTruthTargetKind.REGIME,
-                target="stability",
+                target_name="stability",
                 expected="stable" if reference.stable else "saturated",
-                eligible=True,
-                assumptions=(
-                    "Regime is derived from configured arrival/service/rework mechanics only.",
+                comparison_rule=GroundTruthComparisonRule(
+                    kind=GroundTruthComparisonKind.EXACT,
                 ),
+                assumptions=(
+                    "Configured arrival, service, and rework mechanics are exogenous.",
+                ),
+                eligibility_rule="configured offered load determines regime",
+                eligible=True,
                 provenance=(
                     "src/sose/organizational/synthetic_analysis.py:analytical_world_reference",
                 ),
@@ -125,12 +158,28 @@ class QueueReferenceAdapter:
                 claim_id="queue.mean_lead_time",
                 kind=GroundTruthKind.ANALYTICAL,
                 target_kind=GroundTruthTargetKind.METRIC,
-                target="mean_lead_time",
+                target_name="mean_lead_time",
                 expected=reference.expected_mean_lead_time,
-                eligible=reference.expected_mean_lead_time is not None,
+                comparison_rule=(
+                    GroundTruthComparisonRule(
+                        kind=GroundTruthComparisonKind.RELATIVE_TOLERANCE,
+                        tolerance=equivalence_margin,
+                    )
+                    if reference.expected_mean_lead_time is not None
+                    else GroundTruthComparisonRule(
+                        kind=GroundTruthComparisonKind.EXACT,
+                    )
+                ),
                 assumptions=(
-                    "Stationary M/G/1 mean lead time is valid only when offered load is below one.",
-                    "Service and rework moments are implied by the configured synthetic queue mechanics.",
+                    "Stationary M/G/1 mean lead time is valid only for offered load below one.",
+                    "Service and rework moments follow the configured queue reference mechanics.",
+                ),
+                eligibility_rule="offered_load < 1",
+                eligible=reference.expected_mean_lead_time is not None,
+                ineligibility_reason=(
+                    None
+                    if reference.expected_mean_lead_time is not None
+                    else "stationary mean lead time is undefined for saturated worlds"
                 ),
                 provenance=(
                     "src/sose/organizational/synthetic_analysis.py:analytical_world_reference",
@@ -145,13 +194,17 @@ class QueueReferenceAdapter:
                     claim_id="queue.a1_regime",
                     kind=GroundTruthKind.MECHANISTIC,
                     target_kind=GroundTruthTargetKind.REGIME,
-                    target="a1_stability",
+                    target_name="a1_stability",
                     expected=reference.kind.value,
-                    eligible=True,
-                    assumptions=(
-                        "A1 regime is derived from configured nominal load, adaptation multiplier, and adaptation time.",
-                        "No realized WIP, lead time, throughput, or backlog metric defines the regime label.",
+                    comparison_rule=GroundTruthComparisonRule(
+                        kind=GroundTruthComparisonKind.EXACT,
                     ),
+                    assumptions=(
+                        "A1 regime is derived from configured nominal load and local adaptation mechanics.",
+                        "No realized WIP, lead time, throughput, or backlog outcome defines the regime.",
+                    ),
+                    eligibility_rule="configured A1 policy and load mechanics are valid",
+                    eligible=True,
                     provenance=(
                         "src/sose/organizational/synthetic_a1_experiment.py:classify_a1_regime",
                     ),
