@@ -1,8 +1,8 @@
-"""Opt-in typed causal identities without rewriting frozen v1 boundary payloads.
+"""Opt-in causal reference factory; v1 identifier strings stay opaque.
 
-The persisted causation_id remains a string. Only newly authored references
-use the explicit 'boundary:<id>' or 'event:<id>' form. Untyped v1 causation IDs
-keep their historical meaning and byte representation.
+Callers pass kind and identity separately to BoundaryMessage.create. The type
+discriminator is durably serialized with the message, never inferred from a
+reserved prefix that could collide with legacy event/command identifiers.
 """
 from __future__ import annotations
 
@@ -20,8 +20,8 @@ class CausalReference:
     def __post_init__(self) -> None:
         if self.kind not in ("boundary", "event"):
             raise ValueError("unsupported causal reference kind")
-        if not self.identity or self.identity.strip() != self.identity or ":" in self.identity:
-            raise ValueError("causal reference identity must be nonempty and unambiguous")
+        if not self.identity or self.identity.strip() != self.identity:
+            raise ValueError("causal reference identity must be nonempty")
 
     @classmethod
     def boundary(cls, message_id: str) -> "CausalReference":
@@ -31,14 +31,6 @@ class CausalReference:
     def event(cls, event_id: str) -> "CausalReference":
         return cls("event", event_id)
 
-    def encode(self) -> str:
-        return f"{self.kind}:{self.identity}"
-
-    @classmethod
-    def parse(cls, value: str | None) -> "CausalReference | None":
-        if value is None:
-            return None
-        prefix, separator, identity = value.partition(":")
-        if not separator or prefix not in ("boundary", "event"):
-            return None
-        return cls(prefix, identity)  # type: ignore[arg-type]
+    def as_message_fields(self) -> dict[str, str]:
+        """Use with BoundaryMessage.create(**ref.as_message_fields())."""
+        return {"causation_id": self.identity, "causation_kind": self.kind}
