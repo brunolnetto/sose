@@ -6,7 +6,6 @@ from typing import TYPE_CHECKING, Callable
 
 from sose.persistence.base import Persistence
 
-from .causality import CausalReference
 from .model import (
     BoundaryConsumption,
     BoundaryDelivery,
@@ -261,31 +260,29 @@ class BoundaryService:
 
     @staticmethod
     def _validate_causation(message: BoundaryMessage, uow: "UnitOfWork") -> None:
-        """Validate every known ancestor in the same transaction as publication.
+        """Follow durable typed/legacy ancestry inside the transaction.
 
-        Opt-in typed event references must resolve to a durable DomainEvent.
-        Opt-in boundary references may arrive later, but cannot become
-        claimable until the parent has committed and its effect was applied.
-        Legacy untyped references preserve the frozen v1 interpretation.
+        The optional discriminator lives in the message record, not an
+        overloaded identifier prefix. A legacy external ID like 'event:abc'
+        is never silently reinterpreted after a code upgrade.
         """
         visited = {message.message_id}
         cursor = message.causation_id
+        kind = message.causation_kind
         while cursor is not None:
-            typed = CausalReference.parse(cursor)
-            if typed is not None and typed.kind == "event":
-                event = uow.get_event(typed.identity)
+            if kind == "event":
+                event = uow.get_event(cursor)
                 if event is None:
-                    raise ValueError(f"missing durable domain event cause: {typed.identity}")
+                    raise ValueError(f"missing durable domain event cause: {cursor}")
                 if event.correlation_id != message.correlation_id:
                     raise ValueError("domain event causation correlation mismatch")
                 if event.occurred_at > message.produced_at:
                     raise ValueError("boundary causal logical time precedes domain event")
                 return
-            parent_id = typed.identity if typed is not None else cursor
-            if parent_id in visited:
+            if cursor in visited:
                 raise ValueError("boundary causal cycle detected")
-            visited.add(parent_id)
-            predecessor = uow.get_boundary_message(parent_id)
+            visited.add(cursor)
+            predecessor = uow.get_boundary_message(cursor)
             if predecessor is None:
                 break
             if predecessor.correlation_id != message.correlation_id:
@@ -293,19 +290,16 @@ class BoundaryService:
             if predecessor.produced_at > message.produced_at:
                 raise ValueError("boundary causal logical time precedes predecessor")
             cursor = predecessor.causation_id
+            kind = predecessor.causation_kind
 
     @staticmethod
     def _validate_existing_descendants(message: BoundaryMessage, uow: "UnitOfWork") -> None:
-        """A late parent must not contradict children already made durable."""
+        """A late parent must not contradict descendants already durable."""
         for delivery in uow.boundary_deliveries():
             child = uow.get_boundary_message(delivery.message_id)
-            if child is None:
+            if child is None or child.causation_kind == "event":
                 continue
-            typed = CausalReference.parse(child.causation_id)
-            if typed is not None and typed.kind != "boundary":
-                continue
-            parent_id = typed.identity if typed is not None else child.causation_id
-            if parent_id != message.message_id:
+            if child.causation_id != message.message_id:
                 continue
             if child.correlation_id != message.correlation_id:
                 raise ValueError("boundary causation correlation mismatch")
@@ -316,23 +310,21 @@ class BoundaryService:
 
     @staticmethod
     def _causal_predecessor_applied(message: BoundaryMessage, uow: "UnitOfWork") -> bool:
-        """Enforce a durable happens-before relation, not wall-clock ordering.
+        """Prevent causal overtaking when predecessors are known or explicitly typed.
 
-        A known boundary parent must be ACKed, and any recorded consumer
-        Command must have been executed (removed). A typed missing boundary
-        parent is *not* an external cause and remains blocked indefinitely
-        until it is persisted. Typed events are verified at publication/ACK.
+        Legacy IDs without indexed parents remain opaque external causes.
+        Typed boundary parents with missing records remain blocked; typed
+        domain-event causes must resolve to committed causal evidence.
         """
         BoundaryService._validate_causation(message, uow)
-        typed = CausalReference.parse(message.causation_id)
-        if typed is not None and typed.kind == "event":
+        if message.causation_kind == "event":
             return True
-        parent_id = typed.identity if typed is not None else message.causation_id
+        parent_id = message.causation_id
         predecessor = (
             uow.get_boundary_message(parent_id) if parent_id is not None else None
         )
         if predecessor is None:
-            return typed is None  # Legacy absent causes are external.
+            return message.causation_kind is None
         delivery = uow.get_boundary_delivery(
             BoundaryDelivery.pending(predecessor).delivery_id
         )
