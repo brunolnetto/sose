@@ -10,11 +10,11 @@ from sose.organizational.o2c_reference import (
 )
 
 
-def test_o2c_descriptor_exposes_only_exogenous_amount_and_fixed_agency() -> None:
+def test_o2c_descriptor_exposes_only_exogenous_due_delay_and_fixed_agency() -> None:
     reference = O2CReferenceDomain()
     descriptor = reference.descriptor
     assert descriptor.identity.domain == "order_to_cash"
-    assert tuple(item.name for item in descriptor.parameters) == ("amount",)
+    assert tuple(item.name for item in descriptor.parameters) == ("due_delay_hours",)
     assert tuple(item.capability_id for item in descriptor.agency_capabilities) == ("fixed",)
     assert tuple(item.intervention_id for item in reference.interventions()) == (
         "partial_fulfillment", "overdue_collection",
@@ -30,6 +30,12 @@ def test_o2c_three_arms_are_durable_and_observable_without_framework_special_cas
     assert all(isinstance(item.evidence, O2CExperimentEvidence) for item in result.evidence)
     assert all(item.evidence.collected for item in result.evidence)
     assert all(item.evidence.receivable_state == "collected" for item in result.evidence)
+
+    baseline_by_design = {
+        run.design_index: run.observation.metrics["order_to_cash_seconds"]
+        for run in result.runs if run.arm_id == "baseline"
+    }
+    assert len(set(baseline_by_design.values())) == 2, "DOE axis must alter executable timing"
 
     for record in result.evidence:
         e = record.evidence
