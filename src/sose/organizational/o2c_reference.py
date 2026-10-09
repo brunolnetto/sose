@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from functools import cached_property
 from typing import Final
 
@@ -58,9 +59,10 @@ from .experiment import (
 from .model_spec import EvidenceClass, InterventionClass, ModelIntervention, ModelSpec
 
 
-_AMOUNT_MIN: Final = 100.0
-_AMOUNT_MAX: Final = 1000.0
 _DEFAULT_AMOUNT: Final = 250.0
+_DUE_MIN: Final = 1.0
+_DUE_MAX: Final = 4.0
+_DEFAULT_DUE: Final = 2.0
 
 
 class O2CExperimentEvidence(BaseModel):
@@ -97,11 +99,11 @@ class O2CReferenceDomain:
             ),
             parameters=(
                 ParameterDefinition(
-                    name="amount",
-                    description="Configured monetary amount of the single sales order",
-                    units="USD",
-                    default=_DEFAULT_AMOUNT,
-                    range=ParameterRange(low=_AMOUNT_MIN, high=_AMOUNT_MAX),
+                    name="due_delay_hours",
+                    description="Configured finite time between invoice and receivable due event",
+                    units="hours",
+                    default=_DEFAULT_DUE,
+                    range=ParameterRange(low=_DUE_MIN, high=_DUE_MAX),
                     evidence_class=EvidenceClass.ASSUMED,
                 ),
             ),
@@ -112,11 +114,11 @@ class O2CReferenceDomain:
         )
 
     def build_model(self, point: dict[str, float]) -> ModelSpec:
-        if set(point) != {"amount"}:
-            raise ValueError("O2C preflight requires exactly one configured amount")
-        amount = float(point["amount"])
-        if not _AMOUNT_MIN <= amount <= _AMOUNT_MAX:
-            raise ValueError("O2C preflight amount is out of bounds")
+        if set(point) != {"due_delay_hours"}:
+            raise ValueError("O2C preflight requires exactly one due delay")
+        due_delay = float(point["due_delay_hours"])
+        if not _DUE_MIN <= due_delay <= _DUE_MAX:
+            raise ValueError("O2C preflight due delay is out of bounds")
         return ModelSpec(
             stations={"fulfillment": "fulfillment_team", "collections": "collection_agent"},
             actors={"credit": {"policy": "approve"}},
@@ -126,12 +128,14 @@ class O2CReferenceDomain:
             demand={"sales_orders": 1},
             agency=AgencySpec(level=AgencyLevel.A0),
             parameters={
-                "amount": amount,
+                "amount": _DEFAULT_AMOUNT,
+                "due_delay_hours": due_delay,
                 "partial_fulfillment": 0.0,
                 "overdue_collection": 0.0,
             },
             parameter_evidence={
                 "amount": EvidenceClass.ASSUMED,
+                "due_delay_hours": EvidenceClass.ASSUMED,
                 "partial_fulfillment": EvidenceClass.ASSUMED,
                 "overdue_collection": EvidenceClass.ASSUMED,
             },
@@ -159,10 +163,11 @@ class O2CReferenceDomain:
             raise ValueError("O2C preflight supports A0 only")
         if world.agency_configuration.capability_id != "fixed":
             raise ValueError("O2C preflight supports fixed policy only")
-        if request.protocol.warmup != 0 or request.protocol.horizon < 6:
+        if request.protocol.warmup != 0 or request.protocol.horizon < 8:
             raise ValueError("O2C preflight needs zero warmup and a six-hour horizon")
 
         amount = float(world.model_spec.parameters["amount"])
+        due_delay = float(world.model_spec.parameters["due_delay_hours"])
         partial = float(world.model_spec.parameters["partial_fulfillment"])
         overdue = float(world.model_spec.parameters["overdue_collection"])
         if partial not in {0.0, 1.0} or overdue not in {0.0, 1.0} or (partial and overdue):
@@ -188,7 +193,7 @@ class O2CReferenceDomain:
             raise RuntimeError("O2C fulfillment failed")
 
         ship_invoice_and_ensure_receivable(persistence, engine, entities=entities)
-        due_at = schedule_due(persistence, engine, backend, entities=entities)
+        due_at = schedule_due(persistence, engine, backend, entities=entities, delay=timedelta(hours=due_delay))
         backend.run_until(due_at)
         if overdue:
             overdue_at = schedule_overdue(persistence, engine, backend, entities=entities)
@@ -276,6 +281,7 @@ class O2CReferenceDomain:
             stable=None,
             metadata={
                 "amount": float(world.model_spec.parameters["amount"]),
+                "due_delay_hours": float(world.model_spec.parameters["due_delay_hours"]),
                 "partial_fulfillment": partial,
                 "overdue_collection": overdue,
             },
@@ -305,14 +311,14 @@ class O2CReferenceDomain:
 def build_o2c_preflight_plan_v1(reference: O2CReferenceDomain | None = None) -> DomainExperimentPlan:
     """Small characterization experiment only; never official/frozen results."""
     reference = reference or O2CReferenceDomain()
-    baseline = reference.build_model({"amount": _DEFAULT_AMOUNT})
+    baseline = reference.build_model({"due_delay_hours": _DEFAULT_DUE})
     protocol = ExperimentProtocol(
         protocol_version="1",
         research_question="O2C preflight of administrative handoff and collection decisions",
         baseline_model_spec_hash=baseline.model_spec_hash,
         intervention_ids=("partial_fulfillment", "overdue_collection"),
         agency_levels=(AgencyLevel.A0,),
-        parameter_ranges={"amount": ParameterRange(low=_AMOUNT_MIN, high=_AMOUNT_MAX)},
+        parameter_ranges={"due_delay_hours": ParameterRange(low=_DUE_MIN, high=_DUE_MAX)},
         sampling_design=SamplingDesign.LATIN_HYPERCUBE,
         sample_size=2,
         outcomes=(
