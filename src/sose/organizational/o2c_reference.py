@@ -193,17 +193,23 @@ class O2CReferenceDomain:
             raise RuntimeError("O2C fulfillment failed")
 
         ship_invoice_and_ensure_receivable(persistence, engine, entities=entities)
+        def advance_to(due_at):
+            # Logical time is authoritative: SimPy alone cannot timestamp durable transitions.
+            while engine.context.clock.now < due_at:
+                engine.advance_tick()
+                backend.run_until(engine.context.clock.now)
+
         due_at = schedule_due(persistence, engine, backend, entities=entities, delay=timedelta(hours=due_delay))
-        backend.run_until(due_at)
+        advance_to(due_at)
         if overdue:
             overdue_at = schedule_overdue(persistence, engine, backend, entities=entities)
-            backend.run_until(overdue_at)
+            advance_to(overdue_at)
             if not reconcile_collection(persistence, engine, backend, entities=entities, promise=True):
                 raise RuntimeError("O2C collection agent did not acquire finite capacity")
             scheduled = persistence.scheduled_work()
             if len(scheduled) != 1:
                 raise RuntimeError("O2C promised collection must have one follow-up")
-            backend.run_until(scheduled[0].due_at)
+            advance_to(scheduled[0].due_at)
 
         if not collect_receivable(persistence, engine, entities=entities):
             raise RuntimeError("O2C receivable was not collected")
