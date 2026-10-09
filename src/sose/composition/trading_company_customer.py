@@ -18,7 +18,7 @@ from sose.examples.record_to_report import simulation as r2r
 from sose.examples.warehouse_management import simulation as wm
 
 from .boundary import BoundaryConsumerRegistry, BoundaryService
-from .model import BoundaryMessage
+from .model import BoundaryMessage, DeliveryStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -656,17 +656,25 @@ def reconcile_shipped_fulfillment_egress(
     """
     with persistence.transaction() as uow:
         inbound = tuple(
-            message
+            (delivery, message)
             for delivery in uow.boundary_deliveries()
             if (message := uow.get_boundary_message(delivery.message_id)) is not None
         )
+        accepted = {
+            delivery.message_id
+            for delivery, message in inbound
+            if delivery.status is DeliveryStatus.CONSUMED
+            and uow.get_boundary_consumption(delivery.delivery_id) is not None
+        }
+    messages = tuple(message for _, message in inbound)
     requests = [
-        message for message in inbound
+        message for message in messages
         if message.contract_key == "o2c.fulfillment_requested.v1"
     ]
     reservations = [
-        message for message in inbound
+        message for message in messages
         if message.contract_key == "warehouse.inventory_reserved.v1"
+        and message.message_id in accepted
         and (correlation_id is None or message.correlation_id == correlation_id)
     ]
     service = BoundaryService(persistence)
@@ -715,14 +723,34 @@ def reconcile_shipped_fulfillment_egress(
         ]
         if len(matching) != 1:
             raise ValueError("shipped fulfillment lacks unique durable O2C request")
-        request_payload = matching[0].payload()
-        shipment_id = request_payload.get("shipment_id")
-        if not isinstance(shipment_id, str) or not shipment_id:
-            raise ValueError("shipment reference missing from durable O2C request")
-        if persistence.entity("shipment", shipment_id) is None:
-            raise ValueError("referenced logistics shipment is not durable")
+        # Existing v1 requests did not carry shipment_id. Never retroactively
+        # change their payload under the same immutable message identity.
+        # The single-shipment reference can recover only when that owner is
+        # unambiguous. Multiple shipments require a new versioned contract.
+        shipment_ids = [
+            entity.id for entity in persistence.entities()
+            if entity.entity_type == "shipment"
+        ]
+        if len(shipment_ids) != 1:
+            raise ValueError("legacy v1 shipment linkage is ambiguous")
+        shipment_id = shipment_ids[0]
         stock_id = str(details["stock_id"])
         reservation_reference = str(details["reservation_reference"])
+        allocation_ids = tuple(order.attributes.get("allocation_ids", ()))
+        if len(allocation_ids) != 1:
+            raise ValueError("shipped composed order needs one durable WM allocation")
+        allocation = persistence.entity("warehouse_allocation", str(allocation_ids[0]))
+        if allocation is None or any(
+            allocation.attributes.get(name) != value
+            for name, value in {
+                "inventory_owner": "warehouse_management",
+                "reservation_reference": reservation_reference,
+                "stock_reference": stock_id,
+            }.items()
+        ):
+            # A different reservation may have been delivered or even consumed;
+            # only the actual order-owned allocation can initiate egress.
+            continue
         sku = str(details["sku"])
         quantity = float(details["quantity"])
         if (
@@ -906,7 +934,6 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
             "fulfillment_order_id": fixtures.fulfillment.order_id,
             "requested_quantity": requested_quantity,
             "sku": fulfillment.PRIMARY_SKU,
-            "shipment_id": fixtures.logistics.shipment_id,
         },
     )
     publish_consume_execute(
