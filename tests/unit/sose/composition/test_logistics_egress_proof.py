@@ -6,7 +6,7 @@ import pytest
 
 from sose.composition import trading_company_customer as customer
 from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
-from sose.composition.model import BoundaryMessage, DeliveryStatus
+from sose.composition.model import BoundaryMessage
 from sose.domain.entity import Entity
 from sose.persistence.memory import MemoryPersistence
 
