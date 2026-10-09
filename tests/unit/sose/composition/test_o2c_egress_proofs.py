@@ -82,8 +82,13 @@ def test_payment_egress_does_not_guess_binding_across_entities(variant):
                 id="another-payment", entity_type="card_payment",
                 state=payment.state, attributes=dict(payment.attributes),
             ))
-    with pytest.raises(RuntimeError, match="one durable payment binding"):
-        customer.reconcile_invoiced_o2c_egress(store)
+    if variant == "missing_payment":
+        with pytest.raises(RuntimeError, match="bound card payment is missing"):
+            customer.reconcile_invoiced_o2c_egress(store)
+    else:
+        request = customer.reconcile_invoiced_o2c_egress(store)
+        assert len(request) == 1
+        assert request[0].payload()["payment_id"] == reference.payment_id
 
 
 def test_receipt_deleted_is_not_proof_of_applied_o2c():
