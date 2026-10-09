@@ -1000,6 +1000,107 @@ def reconcile_completed_logistics_egress(
     return tuple(outgoing)
 
 
+def reconcile_invoiced_o2c_egress(
+    persistence: MemoryPersistence, *, correlation_id: str | None = None,
+    max_new_messages: int | None = None,
+) -> tuple[BoundaryMessage, ...]:
+    """Derive payment requests from committed O2C invoicing and causal ACKs.
+
+    Do not mistake the Logistics receipt for applied O2C state, and do not
+    infer a payment ID when the durable cardinality is ambiguous. This is the
+    PC6 reference-domain contract, not a generic payment-routing heuristic.
+    """
+    if max_new_messages is not None and max_new_messages < 0:
+        raise ValueError("max_new_messages must be >= 0")
+
+    with persistence.transaction() as uow:
+        inbound = tuple(
+            (delivery, uow.get_boundary_message(delivery.message_id))
+            for delivery in uow.boundary_deliveries()
+        )
+        ready = []
+        for delivery, message in inbound:
+            if (
+                message is None
+                or message.contract_key != "logistics.delivery_completed.v1"
+                or (correlation_id is not None and message.correlation_id != correlation_id)
+                or delivery.status is not DeliveryStatus.CONSUMED
+            ):
+                continue
+            consumption = uow.get_boundary_consumption(delivery.delivery_id)
+            if consumption is None:
+                raise RuntimeError("ACKed O2C delivery is missing consumption evidence")
+            if uow.get_command(consumption.consumer_effect_id) is not None:
+                continue
+            order_id = str(message.payload()["order_id"])
+            order = uow.get_entity("sales_order", order_id)
+            if order is None or order.state != "invoiced":
+                continue
+            receivable = uow.get_entity("receivable", o2c.receivable_id(order_id))
+            if receivable is None or receivable.state != "open":
+                continue
+            amount = order.attributes["amount"]
+            currency = order.attributes["currency"]
+            if (
+                receivable.attributes.get("order_id") != order_id
+                or receivable.attributes.get("amount") != amount
+                or receivable.attributes.get("currency") != currency
+            ):
+                raise ValueError("receivable does not certify the invoiced sales order")
+            ready.append((message, order_id, amount, currency))
+
+    service = BoundaryService(persistence)
+    emitted: list[BoundaryMessage] = []
+    for upstream, order_id, amount, currency in sorted(
+        ready, key=lambda item: item[0].message_id
+    ):
+        # A reference-domain example may have exactly one candidate card
+        # payment. A real catalog requires durable order-payment binding;
+        # reject ambiguity rather than accidentally settling another order.
+        candidates = [
+            item for item in persistence.entities()
+            if item.entity_type == "card_payment"
+            and item.attributes.get("amount") == amount
+            and item.attributes.get("currency") == currency
+        ]
+        if len(candidates) != 1:
+            raise RuntimeError("O2C payment destination requires one durable payment binding")
+        payment_id = candidates[0].id
+        identity = deterministic_id(
+            "boundary-message", "order_to_cash", order_id,
+            "o2c.payment_requested", 1, "cards_payments", "payment-requested",
+        )
+        with persistence.transaction() as uow:
+            previous = uow.get_boundary_message(identity)
+        produced_at = (
+            previous.produced_at if previous is not None
+            else _next_logical_time(persistence, upstream.produced_at)
+        )
+        outgoing = BoundaryMessage.create(
+            contract_name="o2c.payment_requested", contract_version=1,
+            source_domain="order_to_cash", source_identity=order_id,
+            destination_domain="cards_payments", occurrence_key="payment-requested",
+            correlation_id=upstream.correlation_id,
+            causation_id=upstream.message_id, produced_at=produced_at,
+            payload={
+                "order_id": order_id, "payment_id": payment_id,
+                "amount": amount, "currency": currency,
+            },
+        )
+        if previous is not None:
+            if previous != outgoing:
+                raise ValueError("durable O2C payment request conflicts with source facts")
+            emitted.append(previous)
+            continue
+        if max_new_messages is not None and max_new_messages == 0:
+            break
+        service.publish(outgoing)
+        if max_new_messages is not None:
+            max_new_messages -= 1
+        emitted.append(outgoing)
+    return tuple(emitted)
+
+
 def run_customer_demand_path() -> CustomerDemandPathResult:
     """Execute the durable Trading Company customer-demand composition path.
 
