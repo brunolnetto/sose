@@ -152,7 +152,7 @@ def test_corrupted_receipt_or_command_identity_is_rejected():
         uow.save_entity(Entity(id="shipment-1", entity_type="shipment", state="delivered"))
         cmd = uow.get_command(receipt.consumer_effect_id)
         uow.save_command(replace(cmd, causation_id="wrong-cause"))
-    with pytest.raises(ValueError, match="causation"):
+    with pytest.raises(ValueError, match="accepted boundary receipt|causation"):
         BusinessEffectService(store).complete(
             effect_id=receipt.consumer_effect_id, completed_at=NOW,
         )
@@ -169,3 +169,38 @@ def test_conflicting_recertificate_is_rejected_even_after_command_deletion():
     with pytest.raises(ValueError, match="conflicts"):
         with store.transaction() as uow:
             uow.save_business_effect(replace(proof, terminal_state="cancelled"))
+
+
+def test_certificate_cannot_target_other_delivered_shipment_under_same_correlation():
+    store = MemoryPersistence()
+    source, consumed = accepted(store)
+    with store.transaction() as uow:
+        uow.save_entity(Entity(id="shipment-1", entity_type="shipment", state="created"))
+        uow.save_entity(Entity(id="shipment-2", entity_type="shipment", state="delivered"))
+        current = uow.get_command(consumed.consumer_effect_id)
+        uow.save_command(replace(current, entity_id="shipment-2"))
+    with pytest.raises(ValueError, match="target/contract contradicts causal boundary payload"):
+        BusinessEffectService(store).complete(
+            effect_id=consumed.consumer_effect_id, completed_at=NOW,
+        )
+    assert store.command(consumed.consumer_effect_id) is not None
+    assert BusinessEffectService(store).get(consumed.consumer_effect_id) is None
+
+
+@pytest.mark.parametrize("changes", [
+    {"source_domain": "untrusted_source"},
+    {"destination_domain": "untrusted_destination"},
+    {"contract_name": "unrelated.contract"},
+])
+def test_certificate_fails_closed_on_mismatched_source_contract(changes):
+    store = MemoryPersistence()
+    source, consumed = accepted(store)
+    with store.transaction() as uow:
+        uow.save_entity(Entity(id="shipment-1", entity_type="shipment", state="delivered"))
+    # Simulate a corrupted imported historical record bypassing immutable insert.
+    store._state.boundary_messages[source.message_id] = replace(source, **changes)
+    with pytest.raises(ValueError, match="target/contract contradicts causal boundary payload"):
+        BusinessEffectService(store).complete(
+            effect_id=consumed.consumer_effect_id, completed_at=NOW,
+        )
+    assert BusinessEffectService(store).get(consumed.consumer_effect_id) is None
