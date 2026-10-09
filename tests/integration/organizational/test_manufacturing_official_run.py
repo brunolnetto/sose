@@ -34,6 +34,18 @@ def test_official_execution_writes_complete_immutable_evidence(tmp_path: Path) -
     assert len(json.loads((output / "worlds.json").read_text())) == 18
     assert len(json.loads((output / "runs.json").read_text())) == 36
     assert len(json.loads((output / "effects.json").read_text())) == 84
+    evidence = json.loads((output / "evidence.json").read_text())
+    assert len(evidence) == 36
+    assert all("payload" in entry and "evidence_hash" in entry for entry in evidence)
     assert (output / "evidence-manifest.json").is_file()
     with pytest.raises(FileExistsError, match="refusing to overwrite"):
         execute_official(root=Path.cwd(), output_dir=output)
+
+
+def test_freeze_rejects_tampered_manifest_even_if_internal_hashes_are_updated(tmp_path: Path) -> None:
+    original = json.loads((Path.cwd() / FREEZE_MANIFEST).read_text(encoding="utf-8"))
+    (tmp_path / FREEZE_MANIFEST).parent.mkdir(parents=True)
+    original["source_head_sha"] = "0" * 40
+    (tmp_path / FREEZE_MANIFEST).write_text(json.dumps(original), encoding="utf-8")
+    with pytest.raises(ValueError, match="trusted PR #375 merge provenance"):
+        verify_freeze(tmp_path)
