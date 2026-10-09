@@ -6,8 +6,7 @@ from datetime import timedelta
 import pytest
 
 from sose.composition import trading_company_customer as customer
-from sose.composition.boundary import BoundaryService
-from sose.examples.warehouse_management import simulation as wm
+from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
 from sose.persistence.sqlite import SQLitePersistence
 
 
@@ -54,6 +53,58 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
     shipped = recovered.entity("warehouse_fulfillment_order", info["fulfillment_order_id"])
     assert shipped is not None and shipped.state == "shipped"
 
+    # First reconstruct from authoritative shipped state, then consume through
+    # the real BoundaryService with durable fencing/consumer-effect identity.
+    outgoing = customer.reconcile_shipped_fulfillment_egress(
+        recovered, correlation_id=reserved.correlation_id,
+    )
+    assert outgoing[0].contract_key == "warehouse.inventory_consumption_requested.v1"
+    assert outgoing[0].causation_id == reserved.message_id
+    assert outgoing[0].payload()["reservation_reference"] == info["reservation_reference"]
+    assert outgoing[0].payload()["stock_id"] == info["stock_id"]
+    consumption_info = outgoing[0].payload()
+    if crash_contract == "warehouse.inventory_consumption_requested":
+        assert len(outgoing) == 1
+        registry = BoundaryConsumerRegistry()
+        registry.register(
+            destination_domain="warehouse_management",
+            contract_name="warehouse.inventory_consumption_requested",
+            contract_version=1,
+            handler=customer._intent_handler(
+                intent_name="composition.consume_fulfillment_inventory",
+                entity_type="warehouse_management_stock",
+                entity_id=consumption_info["stock_id"],
+            ),
+        )
+        service = BoundaryService(recovered)
+        lease = service.claim_next(
+            owner_id="recovered-warehouse-worker",
+            now=outgoing[0].produced_at,
+            lease_duration=timedelta(hours=1),
+        )
+        assert lease is not None
+        boundary_consumption = service.consume(
+            lease=lease, registry=registry, now=outgoing[0].produced_at,
+        )
+        assert recovered.command(boundary_consumption.consumer_effect_id) is not None
+        with recovered.transaction() as uow:
+            assert uow.get_boundary_consumption(lease.delivery_id) == boundary_consumption
+        customer._execute_intent(
+            recovered,
+            effect_id=boundary_consumption.consumer_effect_id,
+            fixtures=customer._CustomerFixtures(
+                o2c=None, fulfillment=None, warehouse=None,
+                logistics=None, payments=None, r2r=None,
+            ),
+            correlation_id=reserved.correlation_id,
+        )
+        replayed = service.consume(
+            lease=lease,
+            registry=registry,
+            now=outgoing[0].produced_at + timedelta(minutes=1),
+        )
+        assert replayed.consumer_effect_id == boundary_consumption.consumer_effect_id
+
     # An alternate/pending reservation is not an accepted WF business fact.
     # It must not be used as a source for WM consumption after a crash.
     decoy = customer._publish(
@@ -74,38 +125,10 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
             "quantity": info["quantity"],
         },
     )
-    outgoing = customer.reconcile_shipped_fulfillment_egress(
-        recovered, correlation_id=reserved.correlation_id,
-    )
-    assert outgoing[0].contract_key == "warehouse.inventory_consumption_requested.v1"
-    assert outgoing[0].causation_id == reserved.message_id
-    assert outgoing[0].payload()["reservation_reference"] == info["reservation_reference"]
-    assert outgoing[0].payload()["stock_id"] == info["stock_id"]
     assert outgoing[0].causation_id != decoy.message_id
-    consumption_info = outgoing[0].payload()
-    if crash_contract == "warehouse.inventory_consumption_requested":
-        # Recovery publishes the first message, but cannot dispatch while
-        # Warehouse Management still owns an unconsumed stock reservation.
-        assert len(outgoing) == 1
-        _, engine = wm.build_runtime(recovered, now=outgoing[0].produced_at)
-        assert wm.consume_external_reservation(
-            recovered, engine,
-            stock_id=consumption_info["stock_id"],
-            quantity=consumption_info["quantity"],
-            sku=consumption_info["sku"],
-            reservation_reference=consumption_info["reservation_reference"],
-            consumption_reference=consumption_info["consumption_reference"],
-            correlation_id=reserved.correlation_id,
-        )
-        assert not wm.consume_external_reservation(
-            recovered, engine,
-            stock_id=consumption_info["stock_id"],
-            quantity=consumption_info["quantity"],
-            sku=consumption_info["sku"],
-            reservation_reference=consumption_info["reservation_reference"],
-            consumption_reference=consumption_info["consumption_reference"],
-            correlation_id=reserved.correlation_id,
-        )
+    assert customer.reconcile_shipped_fulfillment_egress(
+        recovered, correlation_id=reserved.correlation_id,
+    )[0].message_id == outgoing[0].message_id
 
     finished = customer.reconcile_shipped_fulfillment_egress(
         recovered, correlation_id=reserved.correlation_id,
