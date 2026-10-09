@@ -84,13 +84,13 @@ class BoundaryService:
         delivery = BoundaryDelivery.pending(message)
         with self.persistence.transaction() as uow:
             self._validate_causation(message, uow)
-            self._validate_existing_descendants(message, uow)
             existing_message = uow.get_boundary_message(message.message_id)
             if existing_message is not None and existing_message != message:
                 raise ValueError(
                     f"boundary message identity conflict: {message.message_id}"
                 )
             if existing_message is None:
+                self._validate_existing_descendants(message, uow)
                 uow.save_boundary_message(message)
 
             existing_delivery = uow.get_boundary_delivery(delivery.delivery_id)
