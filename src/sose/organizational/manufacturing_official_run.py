@@ -8,20 +8,24 @@ The output directory must not exist: official evidence is immutable once written
 from __future__ import annotations
 
 import argparse
-from hashlib import sha256
+from hashlib import sha1, sha256
 import json
 from pathlib import Path
 
 from pydantic import BaseModel
 
 from .domain_experiment_analysis import analyze_domain_experiment
-from .domain_experiment_runtime import run_domain_experiment
+from .domain_experiment_runtime import evidence_hash, run_domain_experiment
 from .manufacturing_protocol import build_manufacturing_official_plan_v1
 from .manufacturing_reference import ManufacturingReferenceDomain
 
 
 FREEZE_DIR = Path("docs/organizational/preregistration")
 FREEZE_MANIFEST = FREEZE_DIR / "manufacturing-experiment-v1-freeze-manifest.json"
+# Git blob identity from the immutable squash-merge commit of freeze PR #375.
+# Do not derive this value from the working tree or from the manifest itself.
+FROZEN_MANIFEST_GIT_BLOB_SHA = "18468f3d7e79e1402cb493e399d955e9af2d055e"
+FROZEN_MERGE_COMMIT = "8f6ef825a891b2d27ea77218c6fcb11147056eb4"
 
 
 def _digest(path: Path) -> str:
@@ -30,7 +34,11 @@ def _digest(path: Path) -> str:
 
 def verify_freeze(root: Path) -> dict[str, object]:
     """Reject changed or incomplete frozen inputs before executing any world."""
-    manifest = json.loads((root / FREEZE_MANIFEST).read_text(encoding="utf-8"))
+    manifest_bytes = (root / FREEZE_MANIFEST).read_bytes()
+    git_blob = sha1(b"blob " + str(len(manifest_bytes)).encode("ascii") + b"\\0" + manifest_bytes).hexdigest()
+    if git_blob != FROZEN_MANIFEST_GIT_BLOB_SHA:
+        raise ValueError("freeze manifest differs from trusted PR #375 merge provenance")
+    manifest = json.loads(manifest_bytes)
     files = manifest["files"]
     if set(files) != {
         "adapter", "prd", "preregistration", "process_manifest",
@@ -69,6 +77,8 @@ def execute_official(*, root: Path, output_dir: Path) -> dict[str, object]:
     for record in result.evidence:
         if not isinstance(record.evidence, BaseModel):
             raise TypeError("Manufacturing raw evidence must be a typed model")
+        if evidence_hash(record.evidence) != record.evidence_hash:
+            raise ValueError("raw evidence payload does not match its recorded hash")
         raw_evidence.append({
             "world_hash": record.world_hash,
             "replication": record.replication,
