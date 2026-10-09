@@ -68,6 +68,7 @@ def test_audit_accepts_truth_falsification_as_a_scientific_result(evidence_dir: 
     assert audit["assessments"]["eligible"] == 1
     assert audit["assessments"]["passed"] == 0
     assert audit["assessments"]["failed"] == 1
+    assert audit["assessments"]["unresolved"] == 0
     assert audit["contrasts"][0]["mean_delta"] == 2.0
 
 
@@ -101,3 +102,15 @@ def test_rejects_eligible_effect_count_mismatch(evidence_dir: Path):
     _write(evidence_dir, "final-provenance-manifest.json", final)
     with pytest.raises(ValueError, match="eligible effect"):
         audit_bundle(domain="reference", root=evidence_dir)
+
+
+def test_unresolved_truth_remains_visible_and_auditable(evidence_dir: Path):
+    assessments = json.loads((evidence_dir / "assessments.json").read_text())
+    assessments[0]["passed"] = None
+    assessments[0]["reason"] = "missing observation metric"
+    _write(evidence_dir, "assessments.json", assessments)
+    _seal(evidence_dir)
+    audit = audit_bundle(domain="reference", root=evidence_dir)
+    assert audit["assessments"] == {
+        "total": 1, "eligible": 1, "passed": 0, "failed": 0, "unresolved": 1,
+    }
