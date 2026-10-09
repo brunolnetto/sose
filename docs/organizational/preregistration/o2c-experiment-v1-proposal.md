@@ -13,7 +13,7 @@ The protocol fails if an eligible invariant fails, an eligible intervention mech
 - Numeric exogenous DOE coordinate: `due_delay_hours`, [1,5] hours.
 - Arms: baseline, partial_fulfillment, overdue_collection.
 - Fixed A0 agency, no adaptivity, no A1/A2 generalization.
-- Latin Hypercube sample of 6 exogenous settings, 3 arms, 2 deterministic replications = **18 worlds, 36 runs** expected.
+- Latin Hypercube sample of **4 distinct one-hour quantized timing strata**, 3 arms, 2 deterministic replications = **12 worlds, 24 runs** expected. The continuous sampling range [1,5] is resolved into four durable timing outcomes (2–5 hours after ceiling to logical ticks). A six-point DOE would contain duplicate executable timing configurations and is prohibited in v1.
 - Design seed = root seed = 20261008; CRN enabled; warmup = 0; horizon = 24 logical hours.
 - Outcomes and equivalence margins defined in executable `o2c_protocol.py`.
 - Statistical metadata: Holm, nominal 95% CI; repeated deterministic outcomes must not be interpreted as empirical uncertainty estimates.
