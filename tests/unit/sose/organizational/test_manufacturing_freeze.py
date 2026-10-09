@@ -51,3 +51,32 @@ def test_manufacturing_v1_freeze_preserves_no_execution_boundary() -> None:
 
     assert manifest["official_execution_performed"] is False
     assert manifest["official_result_inspected"] is False
+
+
+def test_manufacturing_v1_manifest_covers_every_frozen_dependency() -> None:
+    """Detect changes in any preregistered artifact, not just the protocol JSON.
+
+    The source head is provenance metadata, not a substitute for verifying the
+    files that the frozen experiment actually depends on.
+    """
+
+    manifest = json.loads(MANIFEST_PATH.read_text(encoding="utf-8"))
+    artifacts = manifest["files"]
+    assert set(artifacts) == {
+        "adapter",
+        "prd",
+        "preregistration",
+        "process_manifest",
+        "protocol",
+        "specification",
+        "trd",
+    }
+
+    paths = [entry["path"] for entry in artifacts.values()]
+    assert len(paths) == len(set(paths)), "freeze dependencies must be unique"
+    for kind, entry in artifacts.items():
+        artifact_path = Path(entry["path"])
+        assert artifact_path.is_file(), f"missing frozen {kind}: {artifact_path}"
+        assert _sha256(artifact_path) == entry["sha256"], (
+            f"frozen {kind} has drifted: {artifact_path}"
+        )
