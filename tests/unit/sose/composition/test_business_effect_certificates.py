@@ -204,3 +204,22 @@ def test_certificate_fails_closed_on_mismatched_source_contract(changes):
             effect_id=consumed.consumer_effect_id, completed_at=NOW,
         )
     assert BusinessEffectService(store).get(consumed.consumer_effect_id) is None
+
+
+def test_independent_sqlite_reader_refreshes_committed_certificate(tmp_path):
+    path = tmp_path / "business-effect-cross-instance.sqlite"
+    with SQLiteIncrementalPersistence(path) as publisher, \\
+         SQLiteIncrementalPersistence(path) as observer:
+        _, consumption = accepted(publisher)
+        assert observer.business_effect(consumption.consumer_effect_id) is None
+        assert observer.business_effects() == ()
+        with publisher.transaction() as uow:
+            uow.save_entity(Entity(
+                id="shipment-1", entity_type="shipment",
+                state="delivered", version=4,
+            ))
+        proof = BusinessEffectService(publisher).complete(
+            effect_id=consumption.consumer_effect_id, completed_at=NOW,
+        )
+        assert observer.business_effect(consumption.consumer_effect_id) == proof
+        assert observer.business_effects() == (proof,)
