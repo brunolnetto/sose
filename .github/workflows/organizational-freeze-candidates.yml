@@ -7,6 +7,19 @@ on:
       - "src/sose/organizational/freeze_candidate.py"
       - "src/sose/organizational/o2c_protocol.py"
       - "src/sose/organizational/mro_protocol.py"
+      - "src/sose/organizational/o2c_reference.py"
+      - "src/sose/organizational/mro_reference.py"
+      - "src/sose/examples/order_to_cash/process_audit.py"
+      - "src/sose/examples/mro/process_audit.py"
+      - "docs/examples/order-to-cash/specification.md"
+      - "docs/examples/mro/specification.md"
+      - "docs/product/requirements/prd-0005-o2c-experiment-v1.md"
+      - "docs/product/requirements/prd-0006-mro-experiment-v1.md"
+      - "docs/technical/requirements/trd-0005-o2c-experiment-v1.md"
+      - "docs/technical/requirements/trd-0006-mro-experiment-v1.md"
+      - "docs/organizational/preregistration/o2c-experiment-v1-proposal.md"
+      - "docs/organizational/preregistration/mro-experiment-v1-proposal.md"
+      - "uv.lock"
   workflow_dispatch:
 
 permissions:
