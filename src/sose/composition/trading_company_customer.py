@@ -532,6 +532,10 @@ def _execute_intent(
                 )
                 engine.context.schedules.at(pickup_due, command=pickup)
             engine.rebuild_backend(backend)
+            # SimPy restores resource leases through zero-time acquisition
+            # callbacks. Materialize them before completing a partially
+            # committed delivery, otherwise release() sees no live lease.
+            backend.run_until(backend.now)
 
             def current_state() -> str:
                 current = persistence.entity("shipment", shipment_id)
