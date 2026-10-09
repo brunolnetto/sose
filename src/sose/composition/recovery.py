@@ -17,6 +17,7 @@ from sose.examples.warehouse_fulfillment import simulation as fulfillment
 from sose.examples.logistics import simulation as logistics
 from sose.examples.order_to_cash import simulation as o2c
 from sose.examples.cards_payments import simulation as payments
+from sose.examples.record_to_report import simulation as r2r
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.persistence.base import Persistence
 from sose.persistence.ownership import FencedEnginePersistence
@@ -26,12 +27,15 @@ _WM_CONTRACT = ("warehouse.inventory_consumption_requested", 1)
 _LOGISTICS_CONTRACT = ("warehouse.dispatch_ready", 1)
 _O2C_CONTRACT = ("logistics.delivery_completed", 1)
 _PAYMENTS_CONTRACT = ("o2c.payment_requested", 1)
+_R2R_CONTRACT = ("accounting.entry_requested", 1)
 _RECOVERABLE = frozenset({
     "composition.accept_inventory_reservation",
     "composition.consume_fulfillment_inventory",
     "composition.deliver_shipment",
     "composition.complete_external_fulfillment",
     "composition.settle_customer_payment",
+    "composition.post_customer_journal",
+    "composition.post_replenishment_journal",
 })
 
 
@@ -97,6 +101,10 @@ class TradingCustomerRecoveryRunner:
         order_id = str(details.get("fulfillment_order_id", ""))
         sales_order_id = str(details.get("order_id", ""))
         payment_id = str(details.get("payment_id", ""))
+        journal_id = str(details.get("journal_id", ""))
+        with store.transaction() as uow:
+            journal = uow.get_entity("journal_entry", journal_id) if journal_id else None
+        period_id = str(journal.attributes["period_id"]) if journal is not None else ""
         shipment_id = str(details.get("shipment_id", ""))
         fixture = customer._CustomerFixtures(
             o2c=o2c.O2CEntities(order_id=sales_order_id),
@@ -104,7 +112,10 @@ class TradingCustomerRecoveryRunner:
             warehouse=None,
             logistics=logistics.LogisticsEntities(shipment_id=shipment_id),
             payments=payments.PaymentEntities(payment_id=payment_id),
-            r2r=None,
+            r2r=r2r.R2REntities(
+                period_id=period_id, journal_id=journal_id,
+                reconciliation_id="", close_task_id="",
+            ),
         )
         customer._execute_intent(
             store,
@@ -159,6 +170,23 @@ class TradingCustomerRecoveryRunner:
                     intent_name="composition.settle_customer_payment",
                     entity_type="card_payment",
                     entity_id=str(details["payment_id"]),
+                ),
+            )
+        elif message.contract_key == "accounting.entry_requested.v1":
+            if message.source_domain == "cards_payments":
+                intent_name = "composition.post_customer_journal"
+            elif message.source_domain == "procure_to_pay":
+                intent_name = "composition.post_replenishment_journal"
+            else:
+                raise ValueError("unsupported accounting source domain for PC6 recovery")
+            registry.register(
+                destination_domain="record_to_report",
+                contract_name=_R2R_CONTRACT[0],
+                contract_version=_R2R_CONTRACT[1],
+                handler=customer._intent_handler(
+                    intent_name=intent_name,
+                    entity_type="journal_entry",
+                    entity_id=str(details["journal_id"]),
                 ),
             )
         else:
@@ -267,6 +295,14 @@ class TradingCustomerRecoveryRunner:
                     lease_duration=self.lease_duration,
                     destination_domain="cards_payments",
                     accepted_contracts=frozenset({_PAYMENTS_CONTRACT}),
+                )
+            if lease is None:
+                lease = service.claim_next(
+                    owner_id=self.owner_id,
+                    now=now,
+                    lease_duration=self.lease_duration,
+                    destination_domain="record_to_report",
+                    accepted_contracts=frozenset({_R2R_CONTRACT}),
                 )
             if lease is None:
                 if not emitted and not emitted_logistics and not emitted_o2c and not emitted_payment:
