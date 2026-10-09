@@ -5,9 +5,10 @@
 **Frozen plan SHA-256:** `4b972a4d0b86560718bc7f2d50ebf89b5f729c892681768fe89bd72a181a8911`  
 **Frozen protocol SHA-256:** `8983bef05b5a2803f0f32be510790aa6f7ea9c453333e4a79449b186b1281d0d`  
 **Result SHA-256:** `f79bd89fc50ca5fadc0788c657cc752d1291dd464fbf1643e660a67667c4338b`  
-**Execution:** [GitHub Actions run 37866978379](https://github.com/brunolnetto/sose/actions/runs/37866978379)  
-**Immutable evidence artifact:** `manufacturing-v1-official-evidence` (artifact ID `11588497098`; GitHub retention 90 days).  
-**Executed checkout SHA:** `51f2fdcfa120187a8f9ba7bf69ffe32ebc770b2f`. This is the PR merge-ref checkout, not the original preregistration commit.
+**Execution:** [GitHub Actions run 37869182046](https://github.com/brunolnetto/sose/actions/runs/37869182046)  
+**Permanent scientific evidence:** [Manufacturing v1 release (run 37869182046)](https://github.com/brunolnetto/sose/releases/tag/manufacturing-v1-evidence-37869182046), with `manufacturing-v1-official-evidence.tar.gz` and its SHA-256 sidecar. **Secondary CI artifact:** `manufacturing-v1-official-evidence` (artifact ID `11589413244`; 90-day retention).  
+**Locked dependency manifest SHA-256:** `b024c9b3a7cc7fba2e5aa756dee96849c0b5b05e11be0d98f9f8a0fa73615625` (`uv.lock`).  
+**Executed checkout SHA:** `125fb707e5cbed05ac19e6d43bcd0736bd4b14f6`. This is the PR merge-ref checkout, not the original preregistration commit.
 
 ## Frozen design and observed cardinalities
 
@@ -17,7 +18,7 @@
 - A0 fixed agency, two replications per world; 18 worlds, 36 runs.
 - 84 paired intervention metric contrasts, **24 eligible** and **60 explicitly ineligible**.
 - 216 eligible typed ground-truth assessments, **216 passed**.
-- 36 raw evidence records exported. All seven canonical evidence files match the SHA-256 hashes in the evidence manifest.
+- 36 raw evidence records exported. All seven canonical evidence files match the SHA-256 hashes in the evidence manifest. The final provenance envelope also passes strict JSON parsing and verifies all 12 packaged files against their SHA-256 entries.
 
 The 24 eligible effect contrasts correspond to six design points for each of the four preregistered metric/arm combinations. Ineligible contrasts remain in the record; they cannot be used as claims about effects.
 
@@ -58,7 +59,7 @@ Paired standard error is **0 for all 24 eligible contrasts**. The two determinis
 
 ## Reproducibility and provenance
 
-The runner rejects any changes to the frozen manifest Git blob or its named dependencies and verifies the exact executable protocol and plan hashes before running a world. Each exported raw-evidence hash is verified before publication; outputs are staged and never overwrite an existing destination. The artifact contains `worlds.json`, `runs.json`, `evidence.json`, `references.json`, `assessments.json`, `effects.json`, `result-manifest.json`, `evidence-manifest.json`, Python version, installed packages, and executed checkout SHA.
+The runner rejects any changes to the frozen manifest Git blob or its named dependencies and verifies the exact executable protocol and plan hashes before running a world. Each exported raw-evidence hash is verified before publication; outputs are staged and never overwrite an existing destination. The permanent release archive contains `worlds.json`, `runs.json`, `evidence.json`, `references.json`, `assessments.json`, `effects.json`, `result-manifest.json`, `evidence-manifest.json`, Python version, installed packages, and executed checkout SHA.
 
 To regenerate from an eligible checkout:
 
