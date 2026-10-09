@@ -18,3 +18,4 @@ The adapter may wrap the existing O2C simulation/reconciliation; it must not imp
 ## Tests
 TDD: protocol validation, expected cardinality, CRN sharing, stable identities, deterministic replay, no hidden-state observations, typed truth integrity, eligibility defined from configuration, conformance report and restart equivalence.
 Do not expand generic framework interfaces until a demonstrated conflict is documented; record each actual duplication for later transversal refactor.
+The v1 preflight uses a one-hour logical simulation tick. The numeric due-delay axis spans 1–5 hours so that the two Latin Hypercube strata are separated even after discrete-hour timestamp quantization. The experiment must assert distinct durable lead times across sampled baseline worlds.
