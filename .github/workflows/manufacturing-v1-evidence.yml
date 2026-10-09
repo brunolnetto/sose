@@ -75,9 +75,25 @@ jobs:
               if path.is_file() and path.name != "final-provenance-manifest.json"
           }
           (bundle / "final-provenance-manifest.json").write_text(
-              json.dumps({"files": files}, indent=2, sort_keys=True) + "\\n",
+              json.dumps({"files": files}, indent=2, sort_keys=True) + chr(10),
               encoding="utf-8",
           )
+          PY
+
+      - name: Validate final audit manifest and every referenced digest
+        if: success()
+        run: |
+          uv run --frozen python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          root = Path("manufacturing-v1-official-evidence")
+          manifest = json.loads((root / "final-provenance-manifest.json").read_text(encoding="utf-8"))
+          files = manifest["files"]
+          assert files, "final provenance must list audit artifacts"
+          assert set(files) == {p.name for p in root.iterdir() if p.is_file() and p.name != "final-provenance-manifest.json"}
+          for name, expected in files.items():
+              assert hashlib.sha256((root / name).read_bytes()).hexdigest() == expected, name
           PY
 
       - name: Publish permanent verified release bundle
