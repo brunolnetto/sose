@@ -164,7 +164,7 @@ class O2CReferenceDomain:
         if world.agency_configuration.capability_id != "fixed":
             raise ValueError("O2C preflight supports fixed policy only")
         if request.protocol.warmup != 0 or request.protocol.horizon < 8:
-            raise ValueError("O2C preflight needs zero warmup and a six-hour horizon")
+            raise ValueError("O2C preflight needs zero warmup and an eight-hour horizon")
 
         amount = float(world.model_spec.parameters["amount"])
         due_delay = float(world.model_spec.parameters["due_delay_hours"])
@@ -298,7 +298,7 @@ class O2CReferenceDomain:
         )
         return ComparisonEligibility(
             eligible=eligible,
-            basis=("configured O2C policy and paired exogenous amount",),
+            basis=("configured O2C policy and paired exogenous due delay",),
             reason=None if eligible else "no preregistered O2C preflight claim for metric/arm",
         )
 
