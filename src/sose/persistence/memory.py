@@ -33,6 +33,7 @@ from sose.domain.entity import Entity
 from sose.domain.delivery import DomainDelivery
 from sose.composition.model import BoundaryConsumption, BoundaryDelivery, BoundaryMessage
 from sose.composition.effects import BusinessEffectApplied
+from sose.composition.bindings import CustomerSettlementBinding
 from sose.scenarios.model import ScenarioRuntimeState
 from sose.jobs.model import SimulationJobState
 from sose.sinks.model import SinkCheckpoint, SinkDelivery
@@ -71,6 +72,7 @@ class _State:
     boundary_deliveries: dict[str, BoundaryDelivery] = field(default_factory=dict)
     boundary_consumptions: dict[str, BoundaryConsumption] = field(default_factory=dict)
     business_effects: dict[str, BusinessEffectApplied] = field(default_factory=dict)
+    customer_settlement_bindings: dict[tuple[str, str], CustomerSettlementBinding] = field(default_factory=dict)
     domain_deliveries: dict[str, DomainDelivery] = field(default_factory=dict)
     committed_tick: int = -1
 
@@ -173,6 +175,50 @@ class MemoryUnitOfWork:
             consumption
         )
         self._mark_dirty("boundary_consumptions", consumption.delivery_id)
+
+    def get_customer_settlement_binding(
+        self, kind: str, entity_id: str,
+    ) -> CustomerSettlementBinding | None:
+        if kind not in {"order", "payment", "journal"}:
+            raise ValueError("unknown settlement binding identity kind")
+        value = self._working.customer_settlement_bindings.get((kind, entity_id))
+        if value is None:
+            return None
+        expected = (
+            ("order", value.order_id),
+            ("payment", value.payment_id),
+            ("journal", value.journal_id),
+        )
+        if any(
+            self._working.customer_settlement_bindings.get(key) != value
+            for key in expected
+        ):
+            raise RuntimeError("incomplete settlement binding identity indices")
+        return deepcopy(value)
+
+    def save_customer_settlement_binding(self, binding: CustomerSettlementBinding) -> None:
+        # Three independent lookup keys are committed together in one UoW.
+        # Assignment of any order, payment or journal ID is immutable. The
+        # public service also takes the shared PostgreSQL boundary lock.
+        indices = (
+            ("order", binding.order_id),
+            ("payment", binding.payment_id),
+            ("journal", binding.journal_id),
+        )
+        previously = [
+            self._working.customer_settlement_bindings.get(key)
+            for key in indices
+        ]
+        for key, existing in zip(indices, previously):
+            if existing is not None and existing != binding:
+                raise ValueError(f"settlement identity already bound: {key}")
+        if any(existing is not None for existing in previously) and not all(
+            existing is not None for existing in previously
+        ):
+            raise RuntimeError("incomplete settlement binding identity indices")
+        for key in indices:
+            self._working.customer_settlement_bindings[key] = deepcopy(binding)
+            self._mark_dirty("customer_settlement_bindings", key)
 
     def get_business_effect(self, effect_id: str) -> BusinessEffectApplied | None:
         result = self._working.business_effects.get(effect_id)

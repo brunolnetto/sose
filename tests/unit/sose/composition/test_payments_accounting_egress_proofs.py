@@ -65,8 +65,13 @@ def test_accounting_egress_requires_unique_persisted_journal_binding(mode):
                 id="other-journal", entity_type="journal_entry", state="drafted",
                 attributes=dict(journal.attributes),
             ))
-    with pytest.raises(RuntimeError, match="one durable accounting binding"):
-        customer.reconcile_settled_payment_egress(store)
+    if mode == "missing":
+        with pytest.raises(RuntimeError, match="bound journal is missing"):
+            customer.reconcile_settled_payment_egress(store)
+    else:
+        request = customer.reconcile_settled_payment_egress(store)
+        assert len(request) == 1
+        assert request[0].payload()["journal_id"] == result.journal_id
 
 
 def test_accounting_egress_rejects_ack_without_receipt():
