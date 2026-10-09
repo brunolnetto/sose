@@ -84,6 +84,7 @@ class BoundaryService:
         delivery = BoundaryDelivery.pending(message)
         with self.persistence.transaction() as uow:
             self._validate_causation(message, uow)
+            self._validate_existing_descendants(message, uow)
             existing_message = uow.get_boundary_message(message.message_id)
             if existing_message is not None and existing_message != message:
                 raise ValueError(
@@ -278,6 +279,24 @@ class BoundaryService:
             if predecessor.produced_at > message.produced_at:
                 raise ValueError("boundary causal logical time precedes predecessor")
             cursor = predecessor.causation_id
+
+    @staticmethod
+    def _validate_existing_descendants(message: BoundaryMessage, uow: "UnitOfWork") -> None:
+        """A late parent must not contradict or retroactively follow its children.
+
+        If an older child has already been ACKed with an unknown cause, its
+        observed history cannot be amended by publishing a newly known parent.
+        """
+        for delivery in uow.boundary_deliveries():
+            child = uow.get_boundary_message(delivery.message_id)
+            if child is None or child.causation_id != message.message_id:
+                continue
+            if child.correlation_id != message.correlation_id:
+                raise ValueError("boundary causation correlation mismatch")
+            if child.produced_at < message.produced_at:
+                raise ValueError("boundary causal logical time precedes predecessor")
+            if delivery.status is DeliveryStatus.CONSUMED:
+                raise ValueError("causal descendant already consumed before predecessor")
 
     @staticmethod
     def _causal_predecessor_applied(message: BoundaryMessage, uow: "UnitOfWork") -> bool:
