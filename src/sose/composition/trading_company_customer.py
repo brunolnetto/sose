@@ -441,21 +441,41 @@ def _execute_intent(
                 quantity=float(intent.payload["quantity"]),
             ):
                 raise RuntimeError("composed fulfillment allocation failed")
-            fulfillment.pick_composed_order(
-                persistence,
-                engine,
-                entities=fixtures.fulfillment,
+            order = persistence.entity(
+                "warehouse_fulfillment_order", fixtures.fulfillment.order_id,
             )
-            fulfillment.pack_order(
-                persistence,
-                engine,
-                entities=fixtures.fulfillment,
+            if order is None:
+                raise RuntimeError("composed fulfillment order disappeared")
+            if order.state in {"allocated", "picking"}:
+                fulfillment.pick_composed_order(
+                    persistence, engine, entities=fixtures.fulfillment,
+                )
+            # From picking, packed or shipped, the same durable pick occurrence
+            # proves the WM request. On a replay it may also reconstruct an
+            # already-durable dispatch message after WM has consumed stock.
+            picked_messages = reconcile_shipped_fulfillment_egress(
+                persistence, correlation_id=correlation_id,
             )
-            fulfillment.ship_order(
-                persistence,
-                engine,
-                entities=fixtures.fulfillment,
+            if not picked_messages or picked_messages[0].contract_key != (
+                "warehouse.inventory_consumption_requested.v1"
+            ):
+                raise RuntimeError("durable composed picking must emit WM consumption")
+            order = persistence.entity(
+                "warehouse_fulfillment_order", fixtures.fulfillment.order_id,
             )
+            if order is not None and order.state == "picking":
+                fulfillment.pack_order(
+                    persistence, engine, entities=fixtures.fulfillment,
+                )
+                order = persistence.entity(
+                    "warehouse_fulfillment_order", fixtures.fulfillment.order_id,
+                )
+            if order is not None and order.state == "packed":
+                fulfillment.ship_order(
+                    persistence, engine, entities=fixtures.fulfillment,
+                )
+            elif order is None or order.state != "shipped":
+                raise RuntimeError("composed fulfillment cannot resume terminal shipment")
 
     elif intent.name == "composition.consume_fulfillment_inventory":
         _, engine = wm.build_runtime(persistence, now=intent.due_at)
@@ -728,7 +748,10 @@ def reconcile_shipped_fulfillment_egress(
         details = reservation.payload()
         order_id = str(details["fulfillment_order_id"])
         order = persistence.entity("warehouse_fulfillment_order", order_id)
-        if order is None or order.state != "shipped":
+        # Consumption is a durable *pick-completion* effect, not a shipment
+        # effect. WF remains in "picking" until packed but its allocation and
+        # committed pick occurrence prove actual completion.
+        if order is None or order.state not in {"picking", "packed", "shipped"}:
             continue
         matching = [
             request for request in requests
@@ -762,8 +785,26 @@ def reconcile_shipped_fulfillment_egress(
                 "stock_reference": stock_id,
             }.items()
         ):
-            # A different reservation may have been delivered or even consumed;
-            # only the actual order-owned allocation can initiate egress.
+            # Only the order-owned allocation can cause stock consumption.
+            continue
+        all_allocations = [
+            persistence.entity("warehouse_allocation", str(aid))
+            for aid in allocation_ids
+        ]
+        if not all_allocations or any(
+            a is None or a.state not in {"picked", "shipped"}
+            for a in all_allocations
+        ):
+            continue
+        pick_occurrence = persistence.entity(
+            "warehouse_inventory_occurrence",
+            fulfillment.occurrence_id("pick", allocation.id, 1),
+        )
+        if (
+            pick_occurrence is None
+            or pick_occurrence.state != "committed"
+            or pick_occurrence.attributes.get("reservation_reference") != reservation_reference
+        ):
             continue
         sku = str(details["sku"])
         quantity = float(details["quantity"])
@@ -793,6 +834,11 @@ def reconcile_shipped_fulfillment_egress(
             },
         )
         outgoing.append(consumption)
+        # Durable pick completion authorizes consumption, but Logistics
+        # dispatch is *separately* gated on terminal shipment and WM-owned
+        # consumed reservation truth.
+        if order.state != "shipped":
+            continue
         stock = persistence.entity("warehouse_management_stock", stock_id)
         stock_reservations = (
             {} if stock is None else dict(stock.attributes.get("external_reservations", {}))
