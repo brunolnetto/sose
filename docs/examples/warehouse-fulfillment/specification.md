@@ -297,6 +297,20 @@ Configuration is an input contract and cannot bypass StateCharts, durable occurr
 
 ## 19. Promotion decision
 
-Warehouse Fulfillment is promoted to **PC5 — Observable**.
+Warehouse Fulfillment is promoted to **PC6 — Composable** when this version of the process manifest is accepted and merged. All previously audited **PC5 — Observable** guarantees remain intact.
 
-PC6 remains intentionally unclaimed. Promotion to PC6 requires stable cross-domain ingress/egress contracts and tested execution as part of the Trading Company composition.
+The Trading Company composition uses durable, versioned boundary messages. Ingress is `o2c.fulfillment_requested.v1` and `warehouse.inventory_reserved.v1`. Egress is `warehouse.inventory_reservation_requested.v1`, `warehouse.inventory_consumption_requested.v1`, and `warehouse.dispatch_ready.v1`.
+
+The O2C ingress consumer materializes the fulfillment order from the immutable payload and validates its producer identity; it does not rely on a pre-seeded local order or a mutable O2C-owned database row. A completed order references WM-owned stock rather than maintaining a second authoritative inventory.
+
+At committed pick completion, the reconciliation procedure reconstructs `warehouse.inventory_consumption_requested.v1` from durable accepted boundary messages, the order-owned allocation, and an immutable committed pick occurrence. Packing and shipment are independently resumable after worker death. Only after terminal shipment and WM-owned inventory consumption does the reconciler publish `warehouse.dispatch_ready.v1` for Logistics. Repeated execution preserves the same message and business-effect identities, rejects conflicting facts, and does not require an in-memory stage list. Crash/restart tests cover failures after picking and at both outbound publication boundaries.
+
+**Evidence sources:**
+- `src/sose/composition/trading_company_customer.py` and `src/sose/composition/boundary.py`
+- `tests/integration/sose/composition/test_trading_company_payload_driven_ingress.py`
+- `tests/integration/sose/composition/test_trading_company_shipped_egress_recovery.py`
+- `tests/integration/sose/composition/test_trading_company_recovery_conformance.py`
+- `tests/integration/sose/composition/test_composed_inventory_ownership.py`
+- `tests/integration/sose/composition/test_trading_company_pc6_contract_matrix.py`
+
+**Limits:** The legacy v1 reference assumes exactly one Logistics shipment; multiple shipments require a versioned correlation contract. PC6 is a process-composition claim, not proof of real-world organizational performance. Manufacturing, O2C and MRO scientific v1 releases remain immutable at their original commits; the separate historical replay workflow verifies them after current code evolves.
