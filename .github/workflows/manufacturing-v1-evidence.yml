@@ -1,0 +1,106 @@
+name: Manufacturing v1 frozen evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/manufacturing-v1-evidence.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/manufacturing-v1-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  manufacturing-v1-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout immutable source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install exact locked experiment dependencies
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Synchronize frozen environment
+        run: |
+          uv sync --frozen --extra dev
+          uv pip check --python .venv/bin/python
+
+      - name: Verify frozen scientific configuration
+        run: |
+          uv run --frozen python - <<'PY'
+          from pathlib import Path
+          from sose.organizational.manufacturing_official_run import verify_freeze
+          frozen = verify_freeze(Path.cwd())
+          print(f"Frozen protocol: {frozen['protocol_hash']}")
+          print(f"Frozen plan: {frozen['plan_hash']}")
+          PY
+
+      - name: Execute preregistered experiment
+        run: |
+          uv run --frozen python -m sose.organizational.manufacturing_official_run \
+            --root . \
+            --output-dir manufacturing-v1-official-evidence
+
+      - name: Record execution environment
+        run: |
+          uv run --frozen python --version > manufacturing-v1-official-evidence/python-version.txt
+          uv pip freeze --python .venv/bin/python > manufacturing-v1-official-evidence/installed-packages.txt
+          git rev-parse HEAD > manufacturing-v1-official-evidence/execution-source-head.txt
+          sha256sum uv.lock > manufacturing-v1-official-evidence/uv-lock-sha256.txt
+
+      - name: Seal final provenance envelope
+        if: success()
+        run: |
+          uv run --frozen python - <<'PY'
+          import hashlib
+          import json
+          from pathlib import Path
+          bundle = Path("manufacturing-v1-official-evidence")
+          files = {
+              path.name: hashlib.sha256(path.read_bytes()).hexdigest()
+              for path in sorted(bundle.iterdir())
+              if path.is_file() and path.name != "final-provenance-manifest.json"
+          }
+          (bundle / "final-provenance-manifest.json").write_text(
+              json.dumps({"files": files}, indent=2, sort_keys=True) + "\\n",
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Publish permanent verified release bundle
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -czf manufacturing-v1-official-evidence.tar.gz manufacturing-v1-official-evidence/
+          sha256sum manufacturing-v1-official-evidence.tar.gz > manufacturing-v1-official-evidence.tar.gz.sha256
+          gh release create "manufacturing-v1-evidence-${GITHUB_RUN_ID}" \
+            manufacturing-v1-official-evidence.tar.gz \
+            manufacturing-v1-official-evidence.tar.gz.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "Manufacturing v1 frozen evidence (run ${GITHUB_RUN_ID})" \
+            --notes "Frozen protocol, locked Python environment, raw evidence, results, checksums, and execution provenance. Synthetic verification only."
+
+      - name: Upload official or failed staging evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: manufacturing-v1-official-evidence
+          path: |
+            manufacturing-v1-official-evidence/
+            manufacturing-v1-official-evidence.staging/
+          if-no-files-found: error
+          retention-days: 90
