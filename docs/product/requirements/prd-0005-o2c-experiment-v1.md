@@ -1,5 +1,5 @@
 # PRD-0005 — Order-to-Cash reference experiment v1
-**Status:** Draft — requires acceptance before official preregistration/freeze.
+**Status:** Accepted — implementation scope approved; official preregistration and freeze remain separate gates.
 **Parent:** PRD-0001, TRD-0001; ADR-0002/0003/0004/0005.
 
 ## User problem
