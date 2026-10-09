@@ -198,7 +198,6 @@ def test_customer_path_is_continuous_equivalent_across_worker_death_and_restart(
                 "fulfillment_order_id": fixtures.fulfillment.order_id,
                 "requested_quantity": 10.0,
                 "sku": fulfillment.PRIMARY_SKU,
-                "shipment_id": fixtures.logistics.shipment_id,
             },
         },
         {
