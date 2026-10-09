@@ -874,6 +874,91 @@ def reconcile_shipped_fulfillment_egress(
     return tuple(outgoing)
 
 
+def reconcile_completed_logistics_egress(
+    persistence: MemoryPersistence, *, correlation_id: str | None = None,
+    max_new_messages: int | None = None,
+) -> tuple[BoundaryMessage, ...]:
+    """Recover Logistics delivery completion solely from committed domain truth.
+
+    The dispatch ACK alone is not a delivered shipment. Publish downstream
+    only after the accepted Logistics Command has been executed/removed and
+    the persisted shipment is actually in the delivered state.
+    """
+    if max_new_messages is not None and max_new_messages < 0:
+        raise ValueError("max_new_messages must be >= 0")
+
+    with persistence.transaction() as uow:
+        inbound = tuple(
+            (delivery, uow.get_boundary_message(delivery.message_id))
+            for delivery in uow.boundary_deliveries()
+        )
+        requests = [
+            msg for _, msg in inbound
+            if msg is not None and msg.contract_key == "o2c.fulfillment_requested.v1"
+        ]
+        ready = []
+        for delivery, dispatch in inbound:
+            if (
+                dispatch is None
+                or dispatch.contract_key != "warehouse.dispatch_ready.v1"
+                or (correlation_id is not None and dispatch.correlation_id != correlation_id)
+                or delivery.status is not DeliveryStatus.CONSUMED
+            ):
+                continue
+            consumed = uow.get_boundary_consumption(delivery.delivery_id)
+            if consumed is None:
+                raise RuntimeError("ACKed logistics dispatch is missing consumption evidence")
+            if uow.get_command(consumed.consumer_effect_id) is not None:
+                continue
+            payload = dispatch.payload()
+            shipment_id = str(payload["shipment_id"])
+            shipment = uow.get_entity("shipment", shipment_id)
+            if shipment is None or shipment.state != "delivered":
+                continue
+            order_matches = [
+                msg for msg in requests
+                if msg.correlation_id == dispatch.correlation_id
+                and msg.payload()["fulfillment_order_id"] == payload["fulfillment_order_id"]
+            ]
+            if len(order_matches) != 1:
+                raise RuntimeError("delivered shipment lacks a unique durable sales order cause")
+            ready.append((dispatch, shipment_id, str(order_matches[0].payload()["order_id"])))
+
+    service = BoundaryService(persistence)
+    outgoing: list[BoundaryMessage] = []
+    for dispatch, shipment_id, sales_order_id in sorted(ready, key=lambda item: item[0].message_id):
+        identity = deterministic_id(
+            "boundary-message", "logistics", shipment_id,
+            "logistics.delivery_completed", 1, "order_to_cash", "delivery-completed",
+        )
+        with persistence.transaction() as uow:
+            prior = uow.get_boundary_message(identity)
+        produced_at = (
+            prior.produced_at if prior is not None
+            else _next_logical_time(persistence, dispatch.produced_at)
+        )
+        message = BoundaryMessage.create(
+            contract_name="logistics.delivery_completed", contract_version=1,
+            source_domain="logistics", source_identity=shipment_id,
+            destination_domain="order_to_cash", occurrence_key="delivery-completed",
+            correlation_id=dispatch.correlation_id, causation_id=dispatch.message_id,
+            produced_at=produced_at,
+            payload={"shipment_id": shipment_id, "order_id": sales_order_id},
+        )
+        if prior is not None:
+            if prior != message:
+                raise ValueError("durable Logistics egress conflicts with source facts")
+            outgoing.append(prior)
+            continue
+        if max_new_messages is not None and max_new_messages == 0:
+            break
+        if max_new_messages is not None:
+            max_new_messages -= 1
+        service.publish(message)
+        outgoing.append(message)
+    return tuple(outgoing)
+
+
 def run_customer_demand_path() -> CustomerDemandPathResult:
     """Execute the durable Trading Company customer-demand composition path.
 
