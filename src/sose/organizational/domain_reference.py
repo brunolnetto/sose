@@ -7,7 +7,7 @@ import json
 from math import isfinite
 from pathlib import PurePosixPath
 from types import MappingProxyType
-from typing import Annotated
+from typing import Annotated, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, InstanceOf, StringConstraints, field_serializer, model_validator
 
@@ -352,6 +352,90 @@ class DomainReferenceDescriptor(BaseModel):
     def descriptor_hash(self) -> str:
         return _canonical_hash(self.canonical_payload())
 
+
+
+class ParameterSpaceSpec(BaseModel):
+    """Hash-stable exogenous parameter space declared by one domain reference."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    parameters: tuple[InstanceOf[ParameterDefinition], ...] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_uniqueness(self) -> "ParameterSpaceSpec":
+        names = [item.name for item in self.parameters]
+        if len(set(names)) != len(names):
+            raise ValueError("duplicate parameter names are not allowed")
+        return self
+
+    def canonical_payload(self) -> dict[str, object]:
+        return {
+            "parameters": [
+                item.canonical_payload()
+                for item in sorted(self.parameters, key=lambda value: value.name)
+            ]
+        }
+
+    @property
+    def parameter_space_hash(self) -> str:
+        return _canonical_hash(self.canonical_payload())
+
+
+class ExperimentObservation(BaseModel):
+    """Domain-neutral projection consumed by generic experiment analysis/reporting."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
+
+    world_hash: NonBlankString
+    replication: int = Field(ge=0)
+    metrics: dict[str, float] = Field(min_length=1)
+
+    @model_validator(mode="after")
+    def validate_and_freeze(self) -> "ExperimentObservation":
+        for name, value in self.metrics.items():
+            if not name.strip():
+                raise ValueError("observation metric names must be non-blank")
+            if not isfinite(value):
+                raise ValueError(f"observation metric {name} must be finite")
+        object.__setattr__(
+            self,
+            "metrics",
+            MappingProxyType(dict(sorted(self.metrics.items()))),
+        )
+        return self
+
+    @field_serializer("metrics")
+    def serialize_metrics(self, value: Mapping[str, float]) -> dict[str, float]:
+        return dict(value)
+
+
+@runtime_checkable
+class DomainReference(Protocol):
+    """Provisional domain extension boundary from ADR-0002/TRD-0001."""
+
+    @property
+    def identity(self) -> DomainReferenceIdentity: ...
+
+    def descriptor(self) -> DomainReferenceDescriptor: ...
+
+    def parameter_space(self) -> ParameterSpaceSpec: ...
+
+    def agency_capabilities(self) -> tuple[AgencyCapabilitySpec, ...]: ...
+
+    def ground_truth(self, world: object) -> tuple[GroundTruthClaim, ...]: ...
+
+    def classify_regime(self, world: object) -> object: ...
+
+    def execute(
+        self,
+        *,
+        protocol: object,
+        world: object,
+        root_seed: int,
+        replication: int,
+    ) -> object: ...
+
+    def observation(self, result: object) -> ExperimentObservation: ...
 
 def _is_repository_relative(path: str) -> bool:
     if not path or "\\" in path:
