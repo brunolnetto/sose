@@ -112,15 +112,27 @@ class BoundaryService:
         owner_id: str,
         now: datetime,
         lease_duration: timedelta,
+        destination_domain: str | None = None,
     ) -> BoundaryLease | None:
+        """Lease only a worker-owned destination when requested.
+
+        The default None preserves the existing global deterministic claim
+        order for old single-worker composition references.
+        """
         if not owner_id:
             raise ValueError("owner_id cannot be empty")
+        if destination_domain is not None and not destination_domain:
+            raise ValueError("destination_domain must be nonempty when specified")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
 
         with self.persistence.transaction() as uow:
             candidates: list[tuple[datetime, str, BoundaryDelivery]] = []
             for delivery in uow.boundary_deliveries():
+                if destination_domain is not None and (
+                    delivery.destination_domain != destination_domain
+                ):
+                    continue
                 if delivery.status is DeliveryStatus.CONSUMED:
                     continue
                 if (
