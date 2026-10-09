@@ -115,3 +115,45 @@ def test_reject_indirect_cycle_after_out_of_order_publication():
         service.publish(replace(parent, causation_id=child.message_id))
     # External event causes are intentionally not looked up as boundary messages.
     assert service.publish(msg("external-event", cause="domain-event-123"))
+
+
+def test_late_parent_conflict_must_not_poison_the_durable_queue():
+    from dataclasses import replace
+    store = MemoryPersistence()
+    service = BoundaryService(store)
+    parent = msg("late-parent")
+    child = msg("early-child", cause=parent.message_id)
+    service.publish(child)
+    # The child arrived first, but a contradictory ancestor cannot become
+    # immutable durable truth and poison all future claim attempts.
+    with pytest.raises(ValueError, match="correlation"):
+        service.publish(replace(parent, correlation_id="other-flow"))
+    with pytest.raises(ValueError, match="logical time"):
+        service.publish(replace(parent, produced_at=NOW + timedelta(minutes=1)))
+    with store.transaction() as uow:
+        assert uow.get_boundary_message(parent.message_id) is None
+    service.publish(parent)
+    lease = service.claim_next(owner_id="parent-worker", now=NOW,
+        lease_duration=timedelta(hours=1))
+    assert lease is not None and lease.message_id == parent.message_id
+
+
+def test_cannot_publish_ancestor_after_descendant_was_already_acknowledged():
+    store = MemoryPersistence()
+    service = BoundaryService(store)
+    parent = msg("missing-parent")
+    child = msg("consumed-as-external", cause=parent.message_id)
+    service.publish(child)
+    registry = BoundaryConsumerRegistry()
+    registry.register(destination_domain="logistics", contract_name="test.flow",
+        contract_version=1, handler=lambda message, uow: "effect-external")
+    lease = service.claim_next(owner_id="early-worker", now=NOW,
+        lease_duration=timedelta(hours=1))
+    assert lease is not None
+    service.consume(lease=lease, registry=registry, now=NOW)
+    # The sequence is irreparable: accepting a new boundary predecessor would
+    # retroactively assert an untrue causal order.
+    with pytest.raises(ValueError, match="already consumed"):
+        service.publish(parent)
+    with store.transaction() as uow:
+        assert uow.get_boundary_message(parent.message_id) is None
