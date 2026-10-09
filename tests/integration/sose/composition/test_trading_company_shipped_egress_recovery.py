@@ -58,10 +58,27 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
         else "shipped"
     )
 
-    # First reconstruct from authoritative shipped state, then consume through
-    # the real BoundaryService with durable fencing/consumer-effect identity.
+    # Bounded reconciliation must not publish a single message when the
+    # remaining scheduler budget is exhausted, even after a crash.
+    with recovered.transaction() as uow:
+        before_messages = {d.message_id for d in uow.boundary_deliveries()}
+    customer.reconcile_shipped_fulfillment_egress(
+        recovered, correlation_id=reserved.correlation_id,
+        max_new_messages=0,
+    )
+    with recovered.transaction() as uow:
+        assert {d.message_id for d in uow.boundary_deliveries()} == before_messages
+    with pytest.raises(ValueError, match="max_new_messages"):
+        customer.reconcile_shipped_fulfillment_egress(
+            recovered, correlation_id=reserved.correlation_id,
+            max_new_messages=-1,
+        )
+
+    # First reconstruct from authoritative state, then consume through the
+    # real BoundaryService with durable fencing/consumer-effect identity.
     outgoing = customer.reconcile_shipped_fulfillment_egress(
         recovered, correlation_id=reserved.correlation_id,
+        max_new_messages=1,
     )
     assert outgoing[0].contract_key == "warehouse.inventory_consumption_requested.v1"
     assert outgoing[0].causation_id == reserved.message_id
