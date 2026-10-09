@@ -1,0 +1,23 @@
+{
+  "domain": "o2c",
+  "files": {
+    "docs/examples/order-to-cash/specification.md": "deb5d28a859c23444c2317b0b8196e95ec8df1fae56d6c5078cb7175c34aeab3",
+    "docs/organizational/preregistration/o2c-experiment-v1-proposal.md": "baae7c7dbb5dbba3305baf3b1978c4a4ff026be1b0001793577a07f14a0c4910",
+    "docs/product/requirements/prd-0005-o2c-experiment-v1.md": "37beda0a11c9335419bd95896e46f6b1ddc185a8f24c46b396fbed67d4f7117a",
+    "docs/technical/requirements/trd-0005-o2c-experiment-v1.md": "3adbd7e816b4ac7b540d3e13a13afdacd8fcaad64fba7892e576457131b6f2bb",
+    "src/sose/examples/order_to_cash/process_audit.py": "00c33c0ec4e2075a229aeb07f3e75b42fd89131e533192c2c5ef4a30d019f091",
+    "src/sose/organizational/o2c_protocol.py": "73abd2f9ab5c4b3e076012e484cff795102904f88620c27b3123c40594b5c47e",
+    "src/sose/organizational/o2c_reference.py": "0cdfc618d5158b3aee16a88d0805576c41d868d74f70974962dc1f5928a69119"
+  },
+  "official_execution_performed": false,
+  "plan_hash": "25303b47c6a2a0d6643ccedf4244411e44ec63a159a4b176c2a961d45032d39a",
+  "protocol_hash": "6480fe461e4e02981e6c6f3fc4144029901991231178852e4e07b9754a7a9c78",
+  "scientific_claims_authorized": false,
+  "status": "frozen",
+  "freeze_source_artifact": "GitHub Actions run 37874764092 artifact 11591197830",
+  "evidence_policy": "No official world before this freeze PR is merged; any changes to dependencies require versioned refreeze",
+  "runtime_tree_sha": "eeae0590f0ab84230a2cabfecd5225111d777592",
+  "uv_lock_git_blob_sha": "5902ec2400ba5998f154831d080b1e5773da7413",
+  "runtime_tree_scope": "src/sose",
+  "runtime_execution_rule": "The entire executable src/sose Git tree and uv.lock blob must exactly equal the frozen Git identities prior to any official world"
+}

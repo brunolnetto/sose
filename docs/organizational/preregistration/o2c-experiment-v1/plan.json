@@ -1,0 +1,12 @@
+{
+  "agency_configurations": [
+    {
+      "capability_id": "fixed",
+      "level": "A0",
+      "parameters": {}
+    }
+  ],
+  "design_seed": 20261008,
+  "protocol_hash": "6480fe461e4e02981e6c6f3fc4144029901991231178852e4e07b9754a7a9c78",
+  "root_seed": 20261008
+}
