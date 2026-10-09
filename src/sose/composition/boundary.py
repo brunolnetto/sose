@@ -83,6 +83,7 @@ class BoundaryService:
     def publish(self, message: BoundaryMessage) -> BoundaryDelivery:
         delivery = BoundaryDelivery.pending(message)
         with self.persistence.transaction() as uow:
+            self._validate_causation(message, uow)
             existing_message = uow.get_boundary_message(message.message_id)
             if existing_message is not None and existing_message != message:
                 raise ValueError(
@@ -165,6 +166,8 @@ class BoundaryService:
                     raise RuntimeError(
                         f"boundary delivery missing message: {delivery.delivery_id}"
                     )
+                if not self._causal_predecessor_applied(message, uow):
+                    continue
                 candidates.append((message.produced_at, delivery.delivery_id, delivery))
 
             if not candidates:
@@ -245,6 +248,55 @@ class BoundaryService:
                 )
             )
             return consumption
+
+    @staticmethod
+    def _validate_causation(message: BoundaryMessage, uow: "UnitOfWork") -> None:
+        """Reject known causal cycles, cross-correlation links and clock reversals.
+
+        Causation may also reference an external DomainEvent/Command; such IDs
+        are intentionally not required to exist in the boundary-message index.
+        """
+        visited = {message.message_id}
+        cursor = message.causation_id
+        while cursor is not None:
+            if cursor in visited:
+                raise ValueError("boundary causal cycle detected")
+            visited.add(cursor)
+            predecessor = uow.get_boundary_message(cursor)
+            if predecessor is None:
+                break
+            if predecessor.correlation_id != message.correlation_id:
+                raise ValueError("boundary causation correlation mismatch")
+            if predecessor.produced_at > message.produced_at:
+                raise ValueError("boundary causal logical time precedes predecessor")
+            cursor = predecessor.causation_id
+
+    @staticmethod
+    def _causal_predecessor_applied(message: BoundaryMessage, uow: "UnitOfWork") -> bool:
+        """Prevent causal overtaking when a predecessor is known and not applied.
+
+        Transport consumption records only that an effect was *accepted*.
+        An outstanding Command with the recorded consumer effect ID still
+        represents work not yet applied. No wall-clock sorting can override it.
+        """
+        BoundaryService._validate_causation(message, uow)
+        predecessor = (
+            uow.get_boundary_message(message.causation_id)
+            if message.causation_id is not None else None
+        )
+        if predecessor is None:
+            return True
+        delivery = uow.get_boundary_delivery(
+            BoundaryDelivery.pending(predecessor).delivery_id
+        )
+        if delivery is None or delivery.status is not DeliveryStatus.CONSUMED:
+            return False
+        consumption = uow.get_boundary_consumption(delivery.delivery_id)
+        if consumption is None:
+            raise RuntimeError(
+                f"consumed causal predecessor lacks consumption: {delivery.delivery_id}"
+            )
+        return uow.get_command(consumption.consumer_effect_id) is None
 
     @staticmethod
     def _assert_current_claim(
