@@ -45,10 +45,10 @@ def test_warehouse_fulfillment_projection_and_kpis_are_read_only_and_complete() 
     assert kpis.correction_count == 0
 
 
-def test_warehouse_fulfillment_pc5_observability_evidence_is_complete() -> None:
+def test_warehouse_fulfillment_retains_pc5_observability_under_pc6_composition() -> None:
     manifest = builtin_process_manifests()["warehouse_fulfillment"]
 
-    assert manifest.maturity is ProcessMaturity.PC5_OBSERVABLE
+    assert manifest.maturity is ProcessMaturity.PC6_COMPOSABLE
     assert manifest.missing_for(ProcessMaturity.PC5_OBSERVABLE) == frozenset()
     assert manifest.assessment_complete is True
     assert manifest.kpis >= {
