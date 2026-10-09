@@ -307,9 +307,9 @@ def _registered_only_manifest(domain: str) -> ProcessManifest:
 
 
 def _warehouse_fulfillment_manifest() -> ProcessManifest:
-    """Warehouse Fulfillment is a complete PC5 observable process canonical."""
+    """Warehouse Fulfillment is PC6 composable with durable ingress and egress evidence."""
 
-    evidence = set(_requirements_through(ProcessMaturity.PC5_OBSERVABLE))
+    evidence = set(_requirements_through(ProcessMaturity.PC6_COMPOSABLE))
 
     simulation = "src/sose/examples/warehouse_fulfillment/simulation.py"
     entities = "src/sose/examples/warehouse_fulfillment/entities.py"
@@ -370,6 +370,40 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
         ),
         ProcessEvidence.CONFIGURATION_DOCUMENTATION: (config, specification),
     }
+    ingress_test = (
+        "tests/integration/sose/composition/"
+        "test_trading_company_payload_driven_ingress.py"
+    )
+    egress_test = (
+        "tests/integration/sose/composition/"
+        "test_trading_company_shipped_egress_recovery.py"
+    )
+    composed_contract_test = (
+        "tests/integration/sose/composition/"
+        "test_trading_company_pc6_contract_matrix.py"
+    )
+    replay_test = (
+        "tests/integration/sose/composition/"
+        "test_trading_company_recovery_conformance.py"
+    )
+    ownership_test = (
+        "tests/integration/sose/composition/"
+        "test_composed_inventory_ownership.py"
+    )
+    composed_path = "src/sose/composition/trading_company_customer.py"
+    durable_boundary = "src/sose/composition/boundary.py"
+    evidence_sources.update({
+        ProcessEvidence.INGRESS_CONTRACTS: (
+            composed_path, ingress_test, composed_contract_test,
+        ),
+        ProcessEvidence.EGRESS_CONTRACTS: (
+            composed_path, egress_test, composed_contract_test,
+        ),
+        ProcessEvidence.CROSS_DOMAIN_EXECUTION: (
+            durable_boundary, composed_path, egress_test,
+            replay_test, ownership_test,
+        ),
+    })
     return ProcessManifest(
         domain="warehouse_fulfillment",
         evidence=frozenset(evidence),
@@ -399,6 +433,15 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
             }
         ),
         specification_path=specification,
+        ingress_contracts=frozenset({
+            "o2c.fulfillment_requested.v1",
+            "warehouse.inventory_reserved.v1",
+        }),
+        egress_contracts=frozenset({
+            "warehouse.inventory_reservation_requested.v1",
+            "warehouse.inventory_consumption_requested.v1",
+            "warehouse.dispatch_ready.v1",
+        }),
         evidence_sources=evidence_sources,
         assessment_complete=True,
     )
