@@ -16,6 +16,7 @@ from sose.composition.model import BoundaryMessage, DeliveryStatus
 from sose.examples.warehouse_fulfillment import simulation as fulfillment
 from sose.examples.logistics import simulation as logistics
 from sose.examples.order_to_cash import simulation as o2c
+from sose.examples.cards_payments import simulation as payments
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.persistence.base import Persistence
 from sose.persistence.ownership import FencedEnginePersistence
@@ -24,11 +25,13 @@ from sose.persistence.ownership import FencedEnginePersistence
 _WM_CONTRACT = ("warehouse.inventory_consumption_requested", 1)
 _LOGISTICS_CONTRACT = ("warehouse.dispatch_ready", 1)
 _O2C_CONTRACT = ("logistics.delivery_completed", 1)
+_PAYMENTS_CONTRACT = ("o2c.payment_requested", 1)
 _RECOVERABLE = frozenset({
     "composition.accept_inventory_reservation",
     "composition.consume_fulfillment_inventory",
     "composition.deliver_shipment",
     "composition.complete_external_fulfillment",
+    "composition.settle_customer_payment",
 })
 
 
@@ -93,13 +96,14 @@ class TradingCustomerRecoveryRunner:
         details = source.payload()
         order_id = str(details.get("fulfillment_order_id", ""))
         sales_order_id = str(details.get("order_id", ""))
+        payment_id = str(details.get("payment_id", ""))
         shipment_id = str(details.get("shipment_id", ""))
         fixture = customer._CustomerFixtures(
             o2c=o2c.O2CEntities(order_id=sales_order_id),
             fulfillment=fulfillment.WarehouseEntities(order_id=order_id, lot_ids=()),
             warehouse=None,
             logistics=logistics.LogisticsEntities(shipment_id=shipment_id),
-            payments=None,
+            payments=payments.PaymentEntities(payment_id=payment_id),
             r2r=None,
         )
         customer._execute_intent(
@@ -144,6 +148,17 @@ class TradingCustomerRecoveryRunner:
                     intent_name="composition.complete_external_fulfillment",
                     entity_type="sales_order",
                     entity_id=str(details["order_id"]),
+                ),
+            )
+        elif message.contract_key == "o2c.payment_requested.v1":
+            registry.register(
+                destination_domain="cards_payments",
+                contract_name=_PAYMENTS_CONTRACT[0],
+                contract_version=_PAYMENTS_CONTRACT[1],
+                handler=customer._intent_handler(
+                    intent_name="composition.settle_customer_payment",
+                    entity_type="card_payment",
+                    entity_id=str(details["payment_id"]),
                 ),
             )
         else:
@@ -207,6 +222,21 @@ class TradingCustomerRecoveryRunner:
             if actions >= self.max_actions:
                 break
 
+            with store.transaction() as uow:
+                payment_before_ids = {
+                    delivery.message_id for delivery in uow.boundary_deliveries()
+                }
+            reconstructed_payment = customer.reconcile_settled_payment_egress(
+                store, max_new_messages=self.max_actions - actions,
+            )
+            emitted_payment = sum(
+                message.message_id not in payment_before_ids
+                for message in reconstructed_payment
+            )
+            actions += emitted_payment
+            if actions >= self.max_actions:
+                break
+
             lease = service.claim_next(
                 owner_id=self.owner_id,
                 now=now,
@@ -231,7 +261,15 @@ class TradingCustomerRecoveryRunner:
                     accepted_contracts=frozenset({_O2C_CONTRACT}),
                 )
             if lease is None:
-                if not emitted and not emitted_logistics and not emitted_o2c:
+                lease = service.claim_next(
+                    owner_id=self.owner_id,
+                    now=now,
+                    lease_duration=self.lease_duration,
+                    destination_domain="cards_payments",
+                    accepted_contracts=frozenset({_PAYMENTS_CONTRACT}),
+                )
+            if lease is None:
+                if not emitted and not emitted_logistics and not emitted_o2c and not emitted_payment:
                     break
                 continue
 

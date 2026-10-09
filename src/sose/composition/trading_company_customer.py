@@ -657,39 +657,86 @@ def _execute_intent(
         o2c.ensure_receivable(persistence, engine, entities=fixtures.o2c)
 
     elif intent.name == "composition.settle_customer_payment":
-        recovery_time = _recovery_time(persistence, intent.due_at)
-        _, engine = payments.build_runtime(persistence, now=recovery_time)
-        backend = SimPyBackend(origin=recovery_time)
+        # Each transition commits independently, so a worker may restart at
+        # authorized, captured, settlement_pending or already settled. Never
+        # replay an already-committed capture or rewind the logical position.
+        position = persistence.simulation_position()
+        restore_at = position.logical_time if position is not None else intent.due_at
+        target_at = max(restore_at, intent.due_at)
+        _, engine = payments.build_runtime(persistence, now=restore_at)
+        backend = SimPyBackend(origin=restore_at)
         engine.rebuild_backend(backend)
-        if backend.now < intent.due_at:
-            backend.run_until(intent.due_at)
+        # Reattach durable resource reservations before any release operation.
+        backend.run_until(backend.now)
+        if target_at > backend.now:
+            backend.run_until(target_at)
+        engine.context.clock.now = target_at
+        payment_id = fixtures.payments.payment_id
+
+        def payment_state() -> str:
+            current = persistence.entity("card_payment", payment_id)
+            if current is None:
+                raise RuntimeError("composed card payment disappeared")
+            return current.state
+
         with _causal_command_scope(
             engine,
             intent=intent,
             correlation_id=correlation_id,
         ):
-            if not payments.reconcile_authorization(
-                persistence,
-                engine,
-                backend,
-                entities=fixtures.payments,
-                outcome="authorize",
-            ):
-                raise RuntimeError("payment authorization failed")
-            settlement_at = payments.reconcile_capture_and_schedule_settlement(
-                persistence,
-                engine,
-                backend,
-                entities=fixtures.payments,
-            )
-            backend.run_until(settlement_at)
-            payments.reconcile_settlement(
-                persistence,
-                engine,
-                backend,
-                entities=fixtures.payments,
-                outcome="success",
-            )
+            if payment_state() == "authorization_requested":
+                if not payments.reconcile_authorization(
+                    persistence, engine, backend,
+                    entities=fixtures.payments, outcome="authorize",
+                ):
+                    raise RuntimeError("composed payment authorization failed")
+            if payment_state() == "authorized":
+                settlement_at = payments.reconcile_capture_and_schedule_settlement(
+                    persistence, engine, backend, entities=fixtures.payments,
+                )
+                backend.run_until(settlement_at)
+
+            if payment_state() == "captured":
+                # Recovery may occur after capture committed but before its
+                # durable settlement_due schedule was inserted.
+                pending = [
+                    scheduled.due_at
+                    for work in persistence.scheduled_work()
+                    if (scheduled := persistence.command(work.command_id)) is not None
+                    and scheduled.entity_type == "card_payment"
+                    and scheduled.entity_id == payment_id
+                    and scheduled.name == "settlement_due"
+                ]
+                if len(pending) > 1:
+                    raise RuntimeError("card payment has ambiguous durable settlement schedules")
+                if pending:
+                    due_at = pending[0]
+                else:
+                    current = persistence.entity("card_payment", payment_id)
+                    due_at = max(
+                        backend.now,
+                        (current.updated_at or backend.now) + payments.SETTLEMENT_DELAY,
+                    )
+                    command = engine.context.commands.create(
+                        "settlement_due", target=current, due_at=due_at,
+                        correlation_id=payments.flow_correlation_id(),
+                        key=("cards-settlement", payment_id, "due"),
+                    )
+                    engine.context.schedules.at(due_at, command=command)
+                backend.run_until(max(backend.now, due_at))
+
+            if payment_state() == "settlement_pending":
+                payments.reconcile_settlement(
+                    persistence, engine, backend,
+                    entities=fixtures.payments, outcome="success",
+                )
+
+            if payment_state() != "settled":
+                raise RuntimeError("composed card payment did not settle")
+            # An interruption after the terminal state transition but before
+            # withdraw leaves a durable reservation that must still be freed.
+            engine.resources.withdraw(backend, f"authorization-processor:{payment_id}")
+            engine.resources.withdraw(backend, f"settlement-processor:{payment_id}")
 
     elif intent.name == "composition.post_customer_journal":
         recovery_time = _recovery_time(persistence, intent.due_at)
@@ -1099,6 +1146,92 @@ def reconcile_invoiced_o2c_egress(
             max_new_messages -= 1
         emitted.append(outgoing)
     return tuple(emitted)
+
+
+def reconcile_settled_payment_egress(
+    persistence: MemoryPersistence, *, correlation_id: str | None = None,
+    max_new_messages: int | None = None,
+) -> tuple[BoundaryMessage, ...]:
+    """Emit R2R work only after committed payment settlement business truth."""
+    if max_new_messages is not None and max_new_messages < 0:
+        raise ValueError("max_new_messages must be >= 0")
+    with persistence.transaction() as uow:
+        ready = []
+        for delivery in uow.boundary_deliveries():
+            upstream = uow.get_boundary_message(delivery.message_id)
+            if (
+                upstream is None
+                or upstream.contract_key != "o2c.payment_requested.v1"
+                or (correlation_id is not None and upstream.correlation_id != correlation_id)
+                or delivery.status is not DeliveryStatus.CONSUMED
+            ):
+                continue
+            receipt = uow.get_boundary_consumption(delivery.delivery_id)
+            if receipt is None:
+                raise RuntimeError("settlement egress requires durable payment ACK receipt")
+            if uow.get_command(receipt.consumer_effect_id) is not None:
+                continue
+            payload = upstream.payload()
+            payment_id = str(payload["payment_id"])
+            payment = uow.get_entity("card_payment", payment_id)
+            if payment is None or payment.state != "settled":
+                continue
+            if (
+                payment.attributes.get("amount") != payload["amount"]
+                or payment.attributes.get("currency") != payload["currency"]
+            ):
+                raise ValueError("settled card payment conflicts with committed request")
+            ready.append((upstream, payment_id, payload["amount"], payload["currency"]))
+
+    service = BoundaryService(persistence)
+    results: list[BoundaryMessage] = []
+    for upstream, payment_id, amount, currency in sorted(
+        ready, key=lambda item: item[0].message_id
+    ):
+        journals = [
+            item for item in persistence.entities()
+            if item.entity_type == "journal_entry"
+            and item.attributes.get("amount") == amount
+            and item.attributes.get("currency") == currency
+        ]
+        if len(journals) != 1:
+            raise RuntimeError("settlement journal requires one durable accounting binding")
+        journal_id = journals[0].id
+        identity = deterministic_id(
+            "boundary-message", "cards_payments", payment_id,
+            "accounting.entry_requested", 1, "record_to_report",
+            "customer-settlement-entry",
+        )
+        with persistence.transaction() as uow:
+            existing = uow.get_boundary_message(identity)
+        produced_at = (
+            existing.produced_at if existing is not None
+            else _next_logical_time(persistence, upstream.produced_at)
+        )
+        message = BoundaryMessage.create(
+            contract_name="accounting.entry_requested", contract_version=1,
+            source_domain="cards_payments", source_identity=payment_id,
+            destination_domain="record_to_report",
+            occurrence_key="customer-settlement-entry",
+            correlation_id=upstream.correlation_id,
+            causation_id=upstream.message_id, produced_at=produced_at,
+            payload={
+                "payment_id": payment_id, "journal_id": journal_id,
+                "amount": amount, "currency": currency,
+            },
+        )
+        if existing is not None:
+            if existing != message:
+                raise ValueError("durable settled-payment egress conflicts with source facts")
+            results.append(existing)
+            continue
+        if max_new_messages is not None and max_new_messages == 0:
+            break
+        service.publish(message)
+        if max_new_messages is not None:
+            max_new_messages -= 1
+        results.append(message)
+    return tuple(results)
 
 
 def run_customer_demand_path() -> CustomerDemandPathResult:
