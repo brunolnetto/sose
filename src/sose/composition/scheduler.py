@@ -57,6 +57,6 @@ class RecoverySchedule:
         for _ in range(self.max_slots):
             if slot > now:
                 break
-            results.append(self.runner.run_scheduled_trigger(scheduled_for=slot))
+            results.append(self.runner.run_scheduled_trigger(scheduled_for=slot, observed_at=now))
             slot = self._next_slot()
         return tuple(results)
