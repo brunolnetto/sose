@@ -251,6 +251,26 @@ class PostgresPersistence(MemoryPersistence):
             return WriterLease(owner_id=owner_id, epoch=int(row[0]))
 
     @contextmanager
+    def boundary_transaction(
+        self, *, owner_epoch: int | None = None,
+    ) -> Iterator[MemoryUnitOfWork]:
+        """Serialize semantic boundary writes without serializing disjoint domain writes.
+
+        Generic OLTP transactions intentionally permit concurrent independent
+        dirty records. Claim/ACK/publication are different: reading and
+        committing a causal boundary history must happen in one serial order.
+        Acquire the boundary advisory lock *before* opening the nested UoW
+        transaction so a second worker cannot snapshot an uncommitted parent.
+        """
+        with self._connection.transaction():
+            self._connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"{self.namespace}:causal-boundary",),
+            )
+            with self.transaction(owner_epoch=owner_epoch) as uow:
+                yield uow
+
+    @contextmanager
     def transaction(
         self,
         *,
