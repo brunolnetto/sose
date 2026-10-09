@@ -18,7 +18,7 @@ from sose.examples.record_to_report import simulation as r2r
 from sose.examples.warehouse_management import simulation as wm
 
 from .boundary import BoundaryConsumerRegistry, BoundaryService
-from .model import BoundaryMessage
+from .model import BoundaryMessage, DeliveryStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -321,9 +321,8 @@ def _materialize_fulfillment_from_request(
     sales_order_id = payload.get("order_id")
     if not isinstance(sales_order_id, str) or sales_order_id != expected_sales_order_id:
         raise ValueError("fulfillment request source sales order mismatch")
-    # Consume only immutable producer identity carried by the boundary envelope.
-    # The WF persistence may be physically separate from O2C; it must never
-    # depend on a mutable/archived producer-side sales_order entity.
+    # Boundary payload and immutable producer provenance are sufficient even
+    # when O2C state lives in a separate authoritative store.
     if intent.causation_id is not None:
         with persistence.transaction() as uow:
             source = uow.get_boundary_message(intent.causation_id)
@@ -660,6 +659,161 @@ def _execute_intent(
             uow.delete_command(effect_id)
 
 
+def reconcile_shipped_fulfillment_egress(
+    persistence: MemoryPersistence, *, correlation_id: str | None = None,
+) -> tuple[BoundaryMessage, ...]:
+    """Rebuild outbound WF contracts solely from durable inbound messages and state.
+
+    Safe after worker death between shipping and the next publish. This routine
+    never reads an in-memory stage sequence, and rerunning it cannot duplicate
+    immutable messages. WM consumption is required before dispatch is published.
+    """
+    with persistence.transaction() as uow:
+        inbound = tuple(
+            (delivery, message)
+            for delivery in uow.boundary_deliveries()
+            if (message := uow.get_boundary_message(delivery.message_id)) is not None
+        )
+        accepted = {
+            delivery.message_id
+            for delivery, message in inbound
+            if delivery.status is DeliveryStatus.CONSUMED
+            and uow.get_boundary_consumption(delivery.delivery_id) is not None
+        }
+    messages = tuple(message for _, message in inbound)
+    requests = [
+        message for message in messages
+        if message.contract_key == "o2c.fulfillment_requested.v1"
+    ]
+    reservations = [
+        message for message in messages
+        if message.contract_key == "warehouse.inventory_reserved.v1"
+        and message.message_id in accepted
+        and (correlation_id is None or message.correlation_id == correlation_id)
+    ]
+    service = BoundaryService(persistence)
+    outgoing: list[BoundaryMessage] = []
+
+    def publish_or_verify(
+        *, contract_name: str, destination_domain: str, occurrence_key: str,
+        source_identity: str, correlation: str, causation: str, produced_at: datetime,
+        payload: dict[str, object],
+    ) -> BoundaryMessage:
+        message_id = deterministic_id(
+            "boundary-message", "warehouse_fulfillment", source_identity,
+            contract_name, 1, destination_domain, occurrence_key,
+        )
+        with persistence.transaction() as uow:
+            prior = uow.get_boundary_message(message_id)
+        if prior is not None:
+            expected = BoundaryMessage.create(
+                contract_name=contract_name, contract_version=1,
+                source_domain="warehouse_fulfillment", source_identity=source_identity,
+                destination_domain=destination_domain, occurrence_key=occurrence_key,
+                correlation_id=correlation, causation_id=causation,
+                produced_at=prior.produced_at, payload=payload,
+            )
+            if prior != expected:
+                raise ValueError("durable outbound contract conflicts with source facts")
+            return prior
+        return _publish(
+            service, contract_name=contract_name,
+            source_domain="warehouse_fulfillment", source_identity=source_identity,
+            destination_domain=destination_domain, occurrence_key=occurrence_key,
+            correlation_id=correlation, causation_id=causation,
+            produced_at=produced_at, payload=payload,
+        )
+
+    for reservation in sorted(reservations, key=lambda m: m.message_id):
+        details = reservation.payload()
+        order_id = str(details["fulfillment_order_id"])
+        order = persistence.entity("warehouse_fulfillment_order", order_id)
+        if order is None or order.state != "shipped":
+            continue
+        matching = [
+            request for request in requests
+            if request.correlation_id == reservation.correlation_id
+            and request.payload().get("fulfillment_order_id") == order_id
+        ]
+        if len(matching) != 1:
+            raise ValueError("shipped fulfillment lacks unique durable O2C request")
+        # Existing v1 requests did not carry shipment_id. Never retroactively
+        # change their payload under the same immutable message identity.
+        # The single-shipment reference can recover only when that owner is
+        # unambiguous. Multiple shipments require a new versioned contract.
+        shipment_ids = [
+            entity.id for entity in persistence.entities()
+            if entity.entity_type == "shipment"
+        ]
+        if len(shipment_ids) != 1:
+            raise ValueError("legacy v1 shipment linkage is ambiguous")
+        shipment_id = shipment_ids[0]
+        stock_id = str(details["stock_id"])
+        reservation_reference = str(details["reservation_reference"])
+        allocation_ids = tuple(order.attributes.get("allocation_ids", ()))
+        if len(allocation_ids) != 1:
+            raise ValueError("shipped composed order needs one durable WM allocation")
+        allocation = persistence.entity("warehouse_allocation", str(allocation_ids[0]))
+        if allocation is None or any(
+            allocation.attributes.get(name) != value
+            for name, value in {
+                "inventory_owner": "warehouse_management",
+                "reservation_reference": reservation_reference,
+                "stock_reference": stock_id,
+            }.items()
+        ):
+            # A different reservation may have been delivered or even consumed;
+            # only the actual order-owned allocation can initiate egress.
+            continue
+        sku = str(details["sku"])
+        quantity = float(details["quantity"])
+        if (
+            sku != order.attributes.get("requested_sku")
+            or quantity != float(order.attributes.get("requested_quantity", -1))
+        ):
+            raise ValueError("reservation does not reconcile to shipped fulfillment")
+        consumption_reference = deterministic_id(
+            "trading-company-inventory-consumption", reservation_reference,
+        )
+        consumption = publish_or_verify(
+            contract_name="warehouse.inventory_consumption_requested",
+            destination_domain="warehouse_management",
+            occurrence_key="inventory-consumption-requested",
+            source_identity=order_id,
+            correlation=reservation.correlation_id,
+            causation=reservation.message_id,
+            produced_at=_next_logical_time(persistence, reservation.produced_at),
+            payload={
+                "fulfillment_order_id": order_id,
+                "stock_id": stock_id,
+                "reservation_reference": reservation_reference,
+                "consumption_reference": consumption_reference,
+                "sku": sku,
+                "quantity": quantity,
+            },
+        )
+        outgoing.append(consumption)
+        stock = persistence.entity("warehouse_management_stock", stock_id)
+        stock_reservations = (
+            {} if stock is None else dict(stock.attributes.get("external_reservations", {}))
+        )
+        consumed = stock_reservations.get(reservation_reference, {}).get("consumed")
+        if consumed is not True:
+            continue
+
+        outgoing.append(publish_or_verify(
+            contract_name="warehouse.dispatch_ready",
+            destination_domain="logistics",
+            occurrence_key="dispatch-ready",
+            source_identity=order_id,
+            correlation=reservation.correlation_id,
+            causation=consumption.message_id,
+            produced_at=_next_logical_time(persistence, consumption.produced_at),
+            payload={"fulfillment_order_id": order_id, "shipment_id": shipment_id},
+        ))
+    return tuple(outgoing)
+
+
 def run_customer_demand_path() -> CustomerDemandPathResult:
     """Execute the durable Trading Company customer-demand composition path.
 
@@ -739,6 +893,23 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
     messages: list[BoundaryMessage] = []
     effects: list[str] = []
 
+    def consume_published_boundary(message: BoundaryMessage, *, owner_id: str) -> None:
+        """Apply already-durable boundary effects with the normal leased consumer."""
+        messages.append(message)
+        effect = _consume_next(
+            service,
+            registry,
+            owner_id=owner_id,
+            now=message.produced_at,
+        )
+        effects.append(effect)
+        _execute_intent(
+            persistence,
+            effect_id=effect,
+            fixtures=fixtures,
+            correlation_id=correlation_id,
+        )
+
     def publish_consume_execute(
         *,
         contract_name: str,
@@ -766,20 +937,7 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
             ),
             payload=payload,
         )
-        messages.append(message)
-        effect = _consume_next(
-            service,
-            registry,
-            owner_id=owner_id,
-            now=message.produced_at,
-        )
-        effects.append(effect)
-        _execute_intent(
-            persistence,
-            effect_id=effect,
-            fixtures=fixtures,
-            correlation_id=correlation_id,
-        )
+        consume_published_boundary(message, owner_id=owner_id)
         return message
 
     publish_consume_execute(
@@ -826,34 +984,26 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
             "quantity": requested_quantity,
         },
     )
-    publish_consume_execute(
-        contract_name="warehouse.inventory_consumption_requested",
-        source_domain="warehouse_fulfillment",
-        source_identity=fixtures.fulfillment.order_id,
-        destination_domain="warehouse_management",
-        occurrence_key="inventory-consumption-requested",
-        owner_id="warehouse-management-worker",
-        payload={
-            "fulfillment_order_id": fixtures.fulfillment.order_id,
-            "stock_id": fixtures.warehouse.origin_stock_id,
-            "reservation_reference": reservation_reference,
-            "consumption_reference": consumption_reference,
-            "sku": fulfillment.PRIMARY_SKU,
-            "quantity": requested_quantity,
-        },
+    # The shipped order and accepted WM allocation, not a caller stage list,
+    # are the authoritative source for outbound consumption and dispatch.
+    reconstructed = reconcile_shipped_fulfillment_egress(
+        persistence, correlation_id=correlation_id,
     )
-    publish_consume_execute(
-        contract_name="warehouse.dispatch_ready",
-        source_domain="warehouse_fulfillment",
-        source_identity=fixtures.fulfillment.order_id,
-        destination_domain="logistics",
-        occurrence_key="dispatch-ready",
-        owner_id="logistics-worker",
-        payload={
-            "fulfillment_order_id": fixtures.fulfillment.order_id,
-            "shipment_id": fixtures.logistics.shipment_id,
-        },
+    if len(reconstructed) != 1 or reconstructed[0].contract_key != (
+        "warehouse.inventory_consumption_requested.v1"
+    ):
+        raise RuntimeError("shipped fulfillment must durably request WM consumption")
+    consume_published_boundary(
+        reconstructed[0], owner_id="warehouse-management-worker",
     )
+    reconstructed = reconcile_shipped_fulfillment_egress(
+        persistence, correlation_id=correlation_id,
+    )
+    if len(reconstructed) != 2 or reconstructed[1].contract_key != (
+        "warehouse.dispatch_ready.v1"
+    ):
+        raise RuntimeError("WM consumption must precede durable dispatch")
+    consume_published_boundary(reconstructed[1], owner_id="logistics-worker")
     publish_consume_execute(
         contract_name="logistics.delivery_completed",
         source_domain="logistics",
