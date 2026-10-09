@@ -74,7 +74,7 @@ def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
     assert first.actions >= 1
     assert recovered.job_state("trading-pc6-recovery-test").next_tick == 1
 
-    with recovered.transaction() as uow:
+    with recovered.transaction(owner_epoch=recovered.writer_epoch()) as uow:
         messages = [
             uow.get_boundary_message(d.message_id)
             for d in uow.boundary_deliveries()
