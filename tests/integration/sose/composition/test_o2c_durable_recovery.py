@@ -1,5 +1,4 @@
 """PC6 v1 falsification: O2C consumer recovers after Logistics committed delivery."""
-from dataclasses import replace
 from datetime import timedelta
 
 import pytest
@@ -171,7 +170,10 @@ def test_payment_egress_rejects_tampered_durable_existing_output(tmp_path, monke
     customer.run_customer_demand_path()
     opened[-1].close()
 
-    with SQLiteIncrementalPersistence(path) as store:
+    from sose.persistence.memory import MemoryPersistence
+    with SQLiteIncrementalPersistence(path) as recovered:
+        store = MemoryPersistence()
+        store._state = recovered._state
         with store.transaction() as uow:
             payment = next(
                 uow.get_boundary_message(d.message_id)
@@ -189,5 +191,8 @@ def test_payment_egress_rejects_tampered_durable_existing_output(tmp_path, monke
             causation_id=payment.causation_id, produced_at=payment.produced_at,
             payload={**payment.payload(), "payment_id": "wrong"},
         )
-        with store.transaction() as uow:
-            uow.save_boundary_message(corrupt)
+        # An adversarial mismatch is injected below the normal immutable-write
+        # contract, representing corrupted warehouse recovery state.
+        store._state.boundary_messages[corrupt.message_id] = corrupt
+        with pytest.raises(ValueError, match="conflicts"):
+            customer.reconcile_invoiced_o2c_egress(store)
