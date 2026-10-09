@@ -3,6 +3,19 @@ name: Historical organizational v1 replay gate
 on:
   pull_request:
     paths:
+      - "src/sose/**"
+      - "scripts/**"
+      - "uv.lock"
+      - "docs/organizational/preregistration/**"
+      - ".github/workflows/historical-organizational-v1-replay.yml"
+      - ".github/organizational-v1-published-digests.json"
+  push:
+    branches: [main]
+    paths:
+      - "src/sose/**"
+      - "scripts/**"
+      - "uv.lock"
+      - "docs/organizational/preregistration/**"
       - ".github/workflows/historical-organizational-v1-replay.yml"
       - ".github/organizational-v1-published-digests.json"
   workflow_dispatch:
