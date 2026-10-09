@@ -174,3 +174,68 @@ def test_idempotent_parent_republication_after_completed_descendant():
         assert lease is not None and lease.message_id == expected.message_id
         service.consume(lease=lease, registry=registry, now=NOW)
     assert service.publish(parent) == service.delivery(original_delivery.delivery_id)
+
+
+def test_two_independent_sqlite_workers_cannot_race_causal_ancestry(tmp_path):
+    from sose.composition.boundary import StaleBoundaryClaimError
+    path = tmp_path / "two-workers.sqlite3"
+    left = SQLiteIncrementalPersistence(path)
+    right = SQLiteIncrementalPersistence(path)
+    try:
+        consumer_a = BoundaryService(left)
+        consumer_b = BoundaryService(right)
+        parent = msg("worker-parent")
+        child = next(
+            candidate for i in range(200)
+            if (candidate := msg(f"worker-child-{i}", cause=parent.message_id)).message_id
+            < parent.message_id
+        )
+        consumer_a.publish(child)
+        consumer_a.publish(parent)
+        first = consumer_a.claim_next(
+            owner_id="left", now=NOW, lease_duration=timedelta(seconds=2),
+        )
+        assert first is not None and first.message_id == parent.message_id
+        # The competing worker must not steal a leased ancestor or execute a
+        # descendant with an earlier UUID at the same logical time.
+        assert consumer_b.claim_next(
+            owner_id="right", now=NOW + timedelta(seconds=1),
+            lease_duration=timedelta(seconds=2),
+        ) is None
+        recovered = consumer_b.claim_next(
+            owner_id="right", now=NOW + timedelta(seconds=3),
+            lease_duration=timedelta(minutes=1),
+        )
+        assert recovered is not None
+        assert recovered.message_id == parent.message_id
+        assert recovered.epoch == first.epoch + 1
+        registry = BoundaryConsumerRegistry()
+        def parent_intent(message, uow):
+            uow.save_command(Command(
+                command_id="causal-worker-effect", name="apply_parent",
+                entity_type="shipment", entity_id="s1", due_at=NOW,
+            ))
+            return "causal-worker-effect"
+        registry.register(destination_domain="logistics", contract_name="test.flow",
+            contract_version=1, handler=parent_intent)
+        with pytest.raises(StaleBoundaryClaimError):
+            consumer_a.consume(
+                lease=first, registry=registry, now=NOW + timedelta(seconds=3),
+            )
+        consumer_b.consume(
+            lease=recovered, registry=registry, now=NOW + timedelta(seconds=3),
+        )
+        assert consumer_a.claim_next(
+            owner_id="left", now=NOW + timedelta(seconds=4),
+            lease_duration=timedelta(minutes=1),
+        ) is None
+        with right.transaction() as uow:
+            uow.delete_command("causal-worker-effect")
+        child_lease = consumer_a.claim_next(
+            owner_id="left", now=NOW + timedelta(seconds=5),
+            lease_duration=timedelta(minutes=1),
+        )
+        assert child_lease is not None and child_lease.message_id == child.message_id
+    finally:
+        right.close()
+        left.close()
