@@ -44,21 +44,17 @@ _CERTIFIED_BOUNDARY_CONTRACTS = frozenset({
 def _detect_cycle(parents: dict[str, str]) -> None:
     # A typed boundary message has zero or one direct boundary ancestor.
     visited: set[str] = set()
-    active: set[str] = set()
-
-    def visit(identity: str) -> None:
-        if identity in active:
-            raise CausalAuditError(f"causal cycle detected at {identity}")
-        if identity in visited:
-            return
-        active.add(identity)
-        if identity in parents:
-            visit(parents[identity])
-        active.remove(identity)
-        visited.add(identity)
-
     for identity in sorted(parents):
-        visit(identity)
+        if identity in visited:
+            continue
+        path: set[str] = set()
+        current = identity
+        while current in parents and current not in visited:
+            if current in path:
+                raise CausalAuditError(f"causal cycle detected at {current}")
+            path.add(current)
+            current = parents[current]
+        visited.update(path)
 
 
 def audit_causal_history(persistence: Persistence) -> CausalAuditReport:
