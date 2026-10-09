@@ -1,9 +1,13 @@
 """PC6 ingress must create durable fulfillment from the received contract, not fixtures."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from sose.composition import trading_company_customer as customer
+from sose.composition.boundary import BoundaryService
+from sose.composition.model import BoundaryMessage
 from sose.core.events import Command
 from sose.core.identity import deterministic_id
 from sose.examples.order_to_cash import simulation as o2c
@@ -119,3 +123,40 @@ def test_customer_path_does_not_preseed_fulfillment_before_ingress(monkeypatch):
     )
     assert persistence_order is not None
     assert persistence_order.state == "shipped"
+
+
+def test_payload_ingress_needs_no_producer_private_sales_order_record():
+    persistence = MemoryPersistence()
+    source_id = "external-o2c-order-0001"
+    intent = _request(persistence, source_id)
+    corr = deterministic_id("external-flow", source_id)
+    envelope = BoundaryMessage.create(
+        contract_name="o2c.fulfillment_requested",
+        contract_version=1, source_domain="order_to_cash",
+        source_identity=source_id, destination_domain="warehouse_fulfillment",
+        occurrence_key="request-0001", correlation_id=corr,
+        causation_id=None, produced_at=o2c.ORIGIN, payload=dict(intent.payload),
+    )
+    BoundaryService(persistence).publish(envelope)
+    intent = replace(
+        intent,
+        causation_id=envelope.message_id,
+        correlation_id=corr,
+        payload={**intent.payload, "boundary_message_id": envelope.message_id},
+    )
+    assert persistence.entity("sales_order", source_id) is None
+    created = customer._materialize_fulfillment_from_request(
+        persistence, intent=intent, expected_sales_order_id=source_id,
+    )
+    assert persistence.entity("warehouse_fulfillment_order", created.order_id)
+
+    forged = replace(intent, payload={**intent.payload, "order_id": "foreign"})
+    with pytest.raises(ValueError, match="source sales order mismatch"):
+        customer._materialize_fulfillment_from_request(
+            persistence, intent=forged, expected_sales_order_id=source_id,
+        )
+    wrong_source = replace(intent, causation_id="unregistered-message")
+    with pytest.raises(ValueError, match="boundary source identity mismatch"):
+        customer._materialize_fulfillment_from_request(
+            persistence, intent=wrong_source, expected_sales_order_id=source_id,
+        )
