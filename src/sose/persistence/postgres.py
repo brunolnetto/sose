@@ -382,6 +382,14 @@ class PostgresPersistence(MemoryPersistence):
         self._fresh()
         return super().sink_checkpoints(job_id=job_id)
 
+    def business_effect(self, effect_id: str):
+        self._fresh()
+        return super().business_effect(effect_id)
+
+    def business_effects(self):
+        self._fresh()
+        return super().business_effects()
+
     def job_states(self):
         self._fresh()
         return super().job_states()
