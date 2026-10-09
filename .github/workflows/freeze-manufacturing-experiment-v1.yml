@@ -1,0 +1,147 @@
+name: Freeze Manufacturing Experiment v1
+
+on:
+  push:
+    branches:
+      - automation/manufacturing-experiment-v1-freeze
+
+permissions:
+  contents: write
+
+jobs:
+  freeze:
+    if: ${{ !contains(github.event.head_commit.message, '[manufacturing-freeze]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: automation/manufacturing-experiment-v1-freeze
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+
+      - name: Install
+        run: python -m pip install -e .
+
+      - name: Materialize frozen protocol and provenance
+        run: |
+          python - <<'PY'
+          from __future__ import annotations
+
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          from sose.organizational.manufacturing_protocol import (
+              build_manufacturing_official_plan_v1,
+              build_manufacturing_protocol_v1,
+          )
+
+          root = Path(".")
+          prereg_dir = root / "docs/organizational/preregistration"
+          protocol_path = prereg_dir / "manufacturing-experiment-v1-protocol.json"
+          prereg_path = prereg_dir / "manufacturing-experiment-v1.json"
+          prereg_md_path = prereg_dir / "manufacturing-experiment-v1.md"
+          manifest_path = prereg_dir / "manufacturing-experiment-v1-freeze-manifest.json"
+
+          prd_path = root / "docs/product/requirements/prd-0004-manufacturing-experiment-v1.md"
+          trd_path = root / "docs/technical/requirements/trd-0004-manufacturing-experiment-v1.md"
+          adapter_path = root / "src/sose/organizational/manufacturing_reference.py"
+          process_manifest_path = root / "src/sose/examples/process_manifest.py"
+          specification_path = root / "docs/examples/manufacturing/specification.md"
+
+          protocol = build_manufacturing_protocol_v1()
+          plan = build_manufacturing_official_plan_v1()
+
+          protocol_path.write_text(protocol.canonical_json() + "\n", encoding="utf-8")
+
+          prereg = json.loads(prereg_path.read_text(encoding="utf-8"))
+          prereg["preregistration_version"] = "manufacturing-organizational-experiment/v1"
+          prereg["status"] = "frozen"
+          prereg["protocol_artifact"]["status"] = "frozen"
+          prereg["protocol_artifact"]["protocol_hash"] = protocol.protocol_hash
+          prereg["protocol_artifact"]["plan_hash"] = plan.plan_hash
+          prereg["freeze"] = {
+              "design_seed": plan.design_seed,
+              "root_seed": plan.root_seed,
+              "agency_configurations": [
+                  item.canonical_payload() for item in plan.agency_configurations
+              ],
+              "official_execution_performed": False,
+              "official_result_inspected": False,
+          }
+          prereg_path.write_text(
+              json.dumps(prereg, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
+          md = prereg_md_path.read_text(encoding="utf-8")
+          md = md.replace("- **Status:** Draft", "- **Status:** Frozen")
+          md = md.replace(
+              "manufacturing-experiment-v1-protocol.json (ExperimentProtocol schema; not yet materialized)",
+              "manufacturing-experiment-v1-protocol.json (ExperimentProtocol schema; frozen)",
+          )
+          md = md.replace(
+              "This preregistration is **not yet frozen**.",
+              "This preregistration is **frozen**. The executable protocol and freeze manifest are committed beside this document. No official result has been executed or inspected at freeze.",
+          )
+          prereg_md_path.write_text(md, encoding="utf-8")
+
+          def sha(path: Path) -> str:
+              return hashlib.sha256(path.read_bytes()).hexdigest()
+
+          manifest = {
+              "manifest_version": "manufacturing-experiment-freeze/v1",
+              "domain": "manufacturing",
+              "source_head_sha": os.environ["GITHUB_SHA"],
+              "protocol_hash": protocol.protocol_hash,
+              "plan_hash": plan.plan_hash,
+              "design_seed": plan.design_seed,
+              "root_seed": plan.root_seed,
+              "official_execution_performed": False,
+              "official_result_inspected": False,
+              "files": {
+                  "protocol": {"path": str(protocol_path), "sha256": sha(protocol_path)},
+                  "preregistration": {"path": str(prereg_path), "sha256": sha(prereg_path)},
+                  "prd": {"path": str(prd_path), "sha256": sha(prd_path)},
+                  "trd": {"path": str(trd_path), "sha256": sha(trd_path)},
+                  "adapter": {"path": str(adapter_path), "sha256": sha(adapter_path)},
+                  "process_manifest": {"path": str(process_manifest_path), "sha256": sha(process_manifest_path)},
+                  "specification": {"path": str(specification_path), "sha256": sha(specification_path)},
+              },
+          }
+          manifest_path.write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n",
+              encoding="utf-8",
+          )
+
+          assert json.loads(protocol_path.read_text()) == protocol.canonical_payload()
+          assert prereg["status"] == "frozen"
+          assert manifest["protocol_hash"] == protocol.protocol_hash
+          assert manifest["plan_hash"] == plan.plan_hash
+
+          print(json.dumps({
+              "protocol_hash": protocol.protocol_hash,
+              "plan_hash": plan.plan_hash,
+              "preregistration_sha256": sha(prereg_path),
+              "protocol_file_sha256": sha(protocol_path),
+          }, indent=2, sort_keys=True))
+          PY
+
+      - name: Run freeze integrity tests
+        run: python -m pytest -q tests/unit/sose/organizational/test_manufacturing_protocol.py tests/unit/sose/organizational/test_manufacturing_freeze.py
+
+      - name: Commit frozen artifacts
+        run: |
+          git config user.name github-actions[bot]
+          git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+          git add docs/organizational/preregistration/manufacturing-experiment-v1.json
+          git add docs/organizational/preregistration/manufacturing-experiment-v1.md
+          git add docs/organizational/preregistration/manufacturing-experiment-v1-protocol.json
+          git add docs/organizational/preregistration/manufacturing-experiment-v1-freeze-manifest.json
+          git commit -m "docs: freeze Manufacturing experiment v1 [manufacturing-freeze]"
+          git push origin HEAD:automation/manufacturing-experiment-v1-freeze
