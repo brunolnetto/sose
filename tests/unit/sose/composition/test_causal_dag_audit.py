@@ -144,3 +144,63 @@ def test_audit_snapshot_is_stable_after_sqlite_restart(tmp_path, monkeypatch):
         rebuilt = audit_causal_history(restored)
     assert rebuilt.semantic_digest == original.semantic_digest
     assert rebuilt.applied_effects == original.applied_effects
+
+
+@pytest.mark.parametrize(
+    "cut",
+    [
+        "composition.deliver_shipment",
+        "composition.complete_external_fulfillment",
+        "composition.settle_customer_payment",
+        "composition.post_customer_journal",
+    ],
+)
+def test_worker_death_and_restart_preserves_normalized_causal_dag(
+    tmp_path, monkeypatch, cut,
+):
+    import sose.composition.trading_company_customer as customer
+    from sose.composition.effects import BusinessEffectService
+    from sose.composition.recovery import TradingCustomerRecoveryRunner
+    from sose.examples.order_to_cash import simulation as o2c
+
+    uninterrupted = audit_causal_history(customer.run_customer_demand_path().persistence)
+    path = tmp_path / "independent-replay.sqlite"
+    opened = []
+
+    def storage():
+        store = SQLiteIncrementalPersistence(path)
+        opened.append(store)
+        return store
+
+    monkeypatch.setattr(customer, "MemoryPersistence", storage)
+    original = BusinessEffectService.complete
+
+    def interrupt(self, *, effect_id, completed_at):
+        command = self.persistence.command(effect_id)
+        if command is not None and command.name == cut:
+            raise RuntimeError("injected worker death")
+        return original(self, effect_id=effect_id, completed_at=completed_at)
+
+    monkeypatch.setattr(BusinessEffectService, "complete", interrupt)
+    with pytest.raises(RuntimeError, match="injected worker death"):
+        customer.run_customer_demand_path()
+    monkeypatch.setattr(BusinessEffectService, "complete", original)
+    opened[-1].close()
+    with SQLiteIncrementalPersistence(path) as store:
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store,
+            owner_id="causal-dag-restart",
+            job_id="causal-equivalence",
+            max_actions=32,
+        )
+        resumed = runner.run_trigger(
+            trigger_id="resume-after-crash",
+            now=o2c.ORIGIN + timedelta(days=2),
+        )
+        assert resumed.actions > 0
+        assert audit_causal_history(store).semantic_digest == uninterrupted.semantic_digest
+        assert runner.run_trigger(
+            trigger_id="second-check",
+            now=o2c.ORIGIN + timedelta(days=2, minutes=1),
+        ).actions == 0
+        assert audit_causal_history(store).semantic_digest == uninterrupted.semantic_digest
