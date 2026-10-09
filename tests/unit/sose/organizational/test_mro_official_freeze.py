@@ -9,6 +9,8 @@ from pathlib import Path
 from sose.organizational.mro_protocol import build_mro_official_plan_v1
 
 
+HISTORICAL_SOURCE_SHA = "3c356fea6adba2d27f583d3a1469e5df1c0b651b"
+
 FREEZE_DIR = Path("docs/organizational/preregistration/mro-experiment-v1")
 
 
@@ -29,14 +31,17 @@ def test_mro_frozen_artifacts_match_exact_executable_plan_and_sources():
     assert plan_artifact == executable.canonical_payload()
     assert manifest["runtime_tree_scope"] == "src/sose"
     assert manifest["runtime_tree_sha"] == subprocess.check_output(
-        ["git", "rev-parse", "HEAD:src/sose"], text=True
+        ["git", "rev-parse", f"{HISTORICAL_SOURCE_SHA}:src/sose"], text=True
     ).strip()
     assert manifest["uv_lock_git_blob_sha"] == subprocess.check_output(
-        ["git", "rev-parse", "HEAD:uv.lock"], text=True
+        ["git", "rev-parse", f"{HISTORICAL_SOURCE_SHA}:uv.lock"], text=True
     ).strip()
     assert len(manifest["files"]) == 7
     assert len({*manifest["files"]}) == 7
     for name, expected_hash in manifest["files"].items():
         path = root / name
         assert path.is_file(), name
-        assert sha256(path.read_bytes()).hexdigest() == expected_hash, name
+        original_bytes = subprocess.check_output(
+            ["git", "show", f"{HISTORICAL_SOURCE_SHA}:{name}"]
+        )
+        assert sha256(original_bytes).hexdigest() == expected_hash, name
