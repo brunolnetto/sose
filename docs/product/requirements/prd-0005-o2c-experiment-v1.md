@@ -9,7 +9,7 @@ Test whether a framework proved with finite Manufacturing mechanics generalizes 
 - Reuse the generic DomainReference descriptor, framework-owned DOE/worlds/CRN, typed ground truth, conformance and report contracts unchanged.
 - Reuse the audited O2C process canonical; preserve its credit, fulfillment, receivable and collection ownership boundaries.
 - Preflight only executable mechanisms already proven by O2C integration/restart tests: credit hold, partial fulfillment, overdue collection, finite fulfillment contention.
-- Select a **numeric exogenous axis** only after confirming it changes the executable mechanism; candidate: configured receivable `due_delay_hours` (finite scheduled transition), not the order amount. Never use realized throughput, WIP or delay as DOE inputs.
+- Select a **numeric exogenous axis** only after confirming it changes the executable mechanism; candidate: configured receivable `due_delay_hours ∈ [1,5]` (finite scheduled transition), not the order amount. Never use realized throughput, WIP or delay as DOE inputs.
 - Start with A0; no fictitious A1/A2 controller. No empirical/stationary claims.
 - Separate eligible mechanistic/invariant claims from ineligible comparisons; never tune the official experiment after observing outcomes.
 - A frozen domain preregistration shall specify arms, sample size, replication policy, metrics, falsification criteria, eligibility and provenance before official execution.
