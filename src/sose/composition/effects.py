@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 from sose.core.identity import deterministic_id
-from sose.persistence.base import Persistence
+
+if TYPE_CHECKING:
+    from sose.persistence.base import Persistence
 
 
 @dataclass(frozen=True, slots=True)
