@@ -1,0 +1,60 @@
+name: Manufacturing v1 frozen evidence
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/manufacturing-v1-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  manufacturing-v1-evidence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout immutable source
+        uses: actions/checkout@v7
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install locked experiment code
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip check
+
+      - name: Verify frozen scientific configuration
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from sose.organizational.manufacturing_official_run import verify_freeze
+          frozen = verify_freeze(Path.cwd())
+          print(f"Frozen protocol: {frozen['protocol_hash']}")
+          print(f"Frozen plan: {frozen['plan_hash']}")
+          PY
+
+      - name: Execute preregistered experiment
+        run: |
+          python -m sose.organizational.manufacturing_official_run \
+            --root . \
+            --output-dir manufacturing-v1-official-evidence
+
+      - name: Record execution environment
+        run: |
+          python --version > manufacturing-v1-official-evidence/python-version.txt
+          python -m pip freeze > manufacturing-v1-official-evidence/installed-packages.txt
+          git rev-parse HEAD > manufacturing-v1-official-evidence/execution-source-head.txt
+
+      - name: Upload immutable evidence bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: manufacturing-v1-official-evidence
+          path: manufacturing-v1-official-evidence/
+          if-no-files-found: error
+          retention-days: 90
