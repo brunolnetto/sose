@@ -1,0 +1,66 @@
+name: Scientific freeze candidates (non-official)
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/organizational-freeze-candidates.yml"
+      - "src/sose/organizational/freeze_candidate.py"
+      - "src/sose/organizational/o2c_protocol.py"
+      - "src/sose/organizational/mro_protocol.py"
+      - "src/sose/organizational/o2c_reference.py"
+      - "src/sose/organizational/mro_reference.py"
+      - "src/sose/examples/order_to_cash/process_audit.py"
+      - "src/sose/examples/mro/process_audit.py"
+      - "docs/examples/order-to-cash/specification.md"
+      - "docs/examples/mro/specification.md"
+      - "docs/product/requirements/prd-0005-o2c-experiment-v1.md"
+      - "docs/product/requirements/prd-0006-mro-experiment-v1.md"
+      - "docs/technical/requirements/trd-0005-o2c-experiment-v1.md"
+      - "docs/technical/requirements/trd-0006-mro-experiment-v1.md"
+      - "docs/organizational/preregistration/o2c-experiment-v1-proposal.md"
+      - "docs/organizational/preregistration/mro-experiment-v1-proposal.md"
+      - "uv.lock"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  candidate-only:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Verify frozen dependency environment
+        run: uv sync --frozen --extra dev
+      - name: Generate both configuration-only candidates
+        run: |
+          uv run --frozen python -m sose.organizational.freeze_candidate --domain o2c --root . --destination freeze-candidates/o2c
+          uv run --frozen python -m sose.organizational.freeze_candidate --domain mro --root . --destination freeze-candidates/mro
+      - name: Strictly validate candidate artifacts
+        run: |
+          uv run --frozen python - <<'PY'
+          import json
+          from pathlib import Path
+          from sose.organizational.freeze_candidate import BUILDERS
+          for name, build in BUILDERS.items():
+              path = Path("freeze-candidates") / name
+              protocol = json.loads((path / "protocol.json").read_text())
+              plan = json.loads((path / "plan.json").read_text())
+              manifest = json.loads((path / "freeze-candidate-manifest.json").read_text())
+              assert manifest["status"] == "candidate-not-frozen"
+              assert manifest["official_execution_performed"] is False
+              assert manifest["scientific_claims_authorized"] is False
+              assert manifest["protocol_hash"] == build().protocol.protocol_hash
+              assert manifest["plan_hash"] == build().plan_hash
+              assert protocol == build().protocol.canonical_payload()
+              assert plan == build().canonical_payload()
+          PY
+      - name: Preserve non-official candidates for separate review
+        uses: actions/upload-artifact@v7
+        with:
+          name: o2c-mro-freeze-candidates
+          path: freeze-candidates/
+          retention-days: 30
+          if-no-files-found: error
