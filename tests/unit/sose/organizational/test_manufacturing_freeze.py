@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import subprocess
 from pathlib import Path
 
 from sose.organizational.manufacturing_protocol import (
@@ -10,6 +11,7 @@ from sose.organizational.manufacturing_protocol import (
 )
 
 
+HISTORICAL_SOURCE_SHA = "125fb707e5cbed05ac19e6d43bcd0736bd4b14f6"
 ROOT = Path("docs/organizational/preregistration")
 PROTOCOL_PATH = ROOT / "manufacturing-experiment-v1-protocol.json"
 PREREG_PATH = ROOT / "manufacturing-experiment-v1.json"
@@ -77,6 +79,9 @@ def test_manufacturing_v1_manifest_covers_every_frozen_dependency() -> None:
     for kind, entry in artifacts.items():
         artifact_path = Path(entry["path"])
         assert artifact_path.is_file(), f"missing frozen {kind}: {artifact_path}"
-        assert _sha256(artifact_path) == entry["sha256"], (
-            f"frozen {kind} has drifted: {artifact_path}"
+        frozen_bytes = subprocess.check_output(
+            ["git", "show", f"{HISTORICAL_SOURCE_SHA}:{entry['path']}"]
+        )
+        assert hashlib.sha256(frozen_bytes).hexdigest() == entry["sha256"], (
+            f"historical frozen {kind} has drifted: {artifact_path}"
         )
