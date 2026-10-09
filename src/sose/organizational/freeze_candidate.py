@@ -65,10 +65,14 @@ def export_candidate(*, domain: str, root: Path, destination: Path) -> dict[str,
         "official_execution_performed": False,
         "scientific_claims_authorized": False,
     }
-    destination.mkdir(parents=True, exist_ok=False)
-    _write_json(destination / "protocol.json", plan.protocol.canonical_payload())
-    _write_json(destination / "plan.json", plan.canonical_payload())
-    _write_json(destination / "freeze-candidate-manifest.json", manifest)
+    staging = destination.with_name(destination.name + ".staging")
+    if staging.exists():
+        raise FileExistsError(f"unresolved candidate staging directory: {staging}")
+    staging.mkdir(parents=True, exist_ok=False)
+    _write_json(staging / "protocol.json", plan.protocol.canonical_payload())
+    _write_json(staging / "plan.json", plan.canonical_payload())
+    _write_json(staging / "freeze-candidate-manifest.json", manifest)
+    staging.rename(destination)
     return manifest
 
 
