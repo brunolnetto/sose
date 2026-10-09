@@ -18,6 +18,7 @@ from sose.examples.record_to_report import simulation as r2r
 from sose.examples.warehouse_management import simulation as wm
 
 from .boundary import BoundaryConsumerRegistry, BoundaryService
+from .effects import BusinessEffectService, CERTIFIED_INTENTS
 from .model import BoundaryMessage, DeliveryStatus
 
 
@@ -773,10 +774,24 @@ def _execute_intent(
     else:
         raise ValueError(f"unsupported Trading Company customer intent: {intent.name}")
 
-    with persistence.transaction() as uow:
-        current = uow.get_command(effect_id)
-        if current == intent:
-            uow.delete_command(effect_id)
+    if intent.name in CERTIFIED_INTENTS:
+        # Completion requires authoritative terminal state and a durable ACK
+        # receipt; proof insert and staged Command deletion share one UoW.
+        # A crash after business transition but before this commit retries
+        # idempotently instead of silently asserting an ACK is an effect.
+        position = persistence.simulation_position()
+        completed_at = max(
+            intent.due_at,
+            position.logical_time if position is not None else intent.due_at,
+        )
+        BusinessEffectService(persistence).complete(
+            effect_id=effect_id, completed_at=completed_at,
+        )
+    else:
+        with persistence.transaction() as uow:
+            current = uow.get_command(effect_id)
+            if current == intent:
+                uow.delete_command(effect_id)
 
 
 def reconcile_shipped_fulfillment_egress(
