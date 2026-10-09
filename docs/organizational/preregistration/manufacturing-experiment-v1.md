@@ -1,11 +1,11 @@
 # Manufacturing Organizational Experiment v1 — Preregistration
 
-- **Status:** Draft
+- **Status:** Frozen
 - **Domain:** Manufacturing
 - **Related PRD:** PRD-0004
 - **Related TRD:** TRD-0004
-- **Scientific preregistration draft:** `manufacturing-experiment-v1.json`
-- **Canonical executable protocol at freeze:** `manufacturing-experiment-v1-protocol.json` (`ExperimentProtocol` schema; not yet materialized)
+- **Frozen scientific preregistration:** `manufacturing-experiment-v1.json`
+- **Canonical executable protocol at freeze:** `manufacturing-experiment-v1-protocol.json` (`ExperimentProtocol` schema; frozen)
 
 ## Scientific question
 
@@ -27,7 +27,7 @@ Can the SOSE Manufacturing PC5 canonical preserve preregistered durable invarian
 
 ## Candidate axes and arms
 
-The draft allows only executable Manufacturing inputs:
+The frozen v1 protocol uses only executable Manufacturing inputs:
 
 - `quantity` only as a DOE axis, with range `[1, 1000]`;
 - Latin Hypercube sampling with 6 design points;
@@ -42,7 +42,7 @@ The draft allows only executable Manufacturing inputs:
 
 ## Freeze gate
 
-This preregistration is **not yet frozen**.
+This preregistration is **frozen**. The executable protocol and freeze manifest are committed beside this document. No official result has been executed or inspected at freeze.
 
 Before official execution:
 
