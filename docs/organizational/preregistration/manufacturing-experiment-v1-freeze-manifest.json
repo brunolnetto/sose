@@ -1,0 +1,41 @@
+{
+  "design_seed": 20261008,
+  "domain": "manufacturing",
+  "files": {
+    "adapter": {
+      "path": "src/sose/organizational/manufacturing_reference.py",
+      "sha256": "1d85e33ad2120a60cbab0fc1242c2072a4f28e46e26f9cf3c8ab42dceb8f850a"
+    },
+    "prd": {
+      "path": "docs/product/requirements/prd-0004-manufacturing-experiment-v1.md",
+      "sha256": "fb75ec23c63eb29faa9ca627b61b2fb8b46090ffba4aa75cf6c5bc1a4390ec71"
+    },
+    "preregistration": {
+      "path": "docs/organizational/preregistration/manufacturing-experiment-v1.json",
+      "sha256": "1787790fc98feb0dd9f6ad57deae0f191708921707c76e9228d2f09ed1cdedc9"
+    },
+    "process_manifest": {
+      "path": "src/sose/examples/process_manifest.py",
+      "sha256": "6a608ee4ec6577fa5639322483a92cb3e460b3264a050bb8088a1fcea6f2c169"
+    },
+    "protocol": {
+      "path": "docs/organizational/preregistration/manufacturing-experiment-v1-protocol.json",
+      "sha256": "fd055c7701e845a6773cd5afea655c7b37d057f3117d101fd3ee9a29d9350975"
+    },
+    "specification": {
+      "path": "docs/examples/manufacturing/specification.md",
+      "sha256": "0e593a3d52a8a96c07de8d6831fa1526dddbd0c7a8a765aa1943e018c49f044b"
+    },
+    "trd": {
+      "path": "docs/technical/requirements/trd-0004-manufacturing-experiment-v1.md",
+      "sha256": "665ebd50bf5f0fcab24dedde9eae7aff10014fbb706e0ac9f35fe089a4e0e375"
+    }
+  },
+  "manifest_version": "manufacturing-experiment-freeze/v1",
+  "official_execution_performed": false,
+  "official_result_inspected": false,
+  "plan_hash": "4b972a4d0b86560718bc7f2d50ebf89b5f729c892681768fe89bd72a181a8911",
+  "protocol_hash": "8983bef05b5a2803f0f32be510790aa6f7ea9c453333e4a79449b186b1281d0d",
+  "root_seed": 20261008,
+  "source_head_sha": "65f6f29aee826965911ebf9d671c213e6b0213c2"
+}

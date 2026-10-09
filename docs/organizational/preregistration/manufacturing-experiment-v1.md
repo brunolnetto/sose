@@ -1,6 +1,6 @@
 # Manufacturing Organizational Experiment v1 — Preregistration
 
-- **Status:** Draft
+- **Status:** Frozen
 - **Domain:** Manufacturing
 - **Related PRD:** PRD-0004
 - **Related TRD:** TRD-0004
@@ -42,7 +42,7 @@ The draft allows only executable Manufacturing inputs:
 
 ## Freeze gate
 
-This preregistration is **not yet frozen**.
+This preregistration is **frozen**. The executable protocol and freeze manifest are committed beside this document. No official result has been executed or inspected at freeze.
 
 Before official execution:
 
