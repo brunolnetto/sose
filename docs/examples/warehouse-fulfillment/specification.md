@@ -297,6 +297,27 @@ Configuration is an input contract and cannot bypass StateCharts, durable occurr
 
 ## 19. Promotion decision
 
-Warehouse Fulfillment is promoted to **PC5 — Observable**.
+Warehouse Fulfillment retains all **PC5 — Observable** evidence and is promoted to **PC6 — Composable** under the Trading Company reference.
 
-PC6 remains intentionally unclaimed. Promotion to PC6 requires stable cross-domain ingress/egress contracts and tested execution as part of the Trading Company composition.
+### Named PC6 boundary contracts
+
+Ingress:
+- `o2c.fulfillment_requested.v1` — O2C requests fulfillment with immutable order/correlation metadata.
+- `warehouse.inventory_reserved.v1` — Warehouse Management confirms the foreign stock reservation.
+
+Egress:
+- `warehouse.inventory_reservation_requested.v1` — WF requests stock ownership action from WM.
+- `warehouse.inventory_consumption_requested.v1` — WM receives the exactly-once consumption reference.
+- `warehouse.dispatch_ready.v1` — Logistics consumes the ready-to-dispatch contract.
+
+In composed mode, Warehouse Management **alone** owns authoritative inventory and reservation state. WF does not duplicate local InventoryLot truth and uses only immutable foreign stock/reservation references. Standalone WF continues to own its local InventoryLot model.
+
+### Executable provenance and scope
+
+- `src/sose/composition/trading_company_customer.py`: concrete cross-domain customer-demand execution.
+- `src/sose/composition/boundary.py`: durable message delivery, consumption, leases and fencing.
+- `tests/integration/sose/composition/test_trading_company_pc6_contract_matrix.py`: both Trading Company composed paths and identity checks.
+- `tests/integration/sose/composition/test_trading_company_recovery_conformance.py`: restart/rebuild and fencing equivalence.
+- `tests/integration/sose/composition/test_composed_inventory_ownership.py`: stock ownership and idempotency.
+
+PC6 promotion is a business-process integration claim, **not** an official Organizational Dynamics experiment or empirical validation. The independent Manufacturing, O2C and MRO v1 experimental freezes remain historically reproducible at their respective evidence release source SHAs. Promotion modifies the current `src/sose` Git tree; to rerun frozen O2C/MRO v1, checkout their recorded source revision instead of using today's `main` (or issue a versioned refreeze).
