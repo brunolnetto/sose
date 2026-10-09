@@ -681,6 +681,7 @@ def _execute_intent(
 
 def reconcile_shipped_fulfillment_egress(
     persistence: MemoryPersistence, *, correlation_id: str | None = None,
+    max_new_messages: int | None = None,
 ) -> tuple[BoundaryMessage, ...]:
     """Rebuild outbound WF contracts solely from durable inbound messages and state.
 
@@ -688,6 +689,9 @@ def reconcile_shipped_fulfillment_egress(
     never reads an in-memory stage sequence, and rerunning it cannot duplicate
     immutable messages. WM consumption is required before dispatch is published.
     """
+    if max_new_messages is not None and max_new_messages < 0:
+        raise ValueError("max_new_messages must be >= 0")
+    remaining = max_new_messages
     with persistence.transaction() as uow:
         inbound = tuple(
             (delivery, message)
@@ -718,7 +722,8 @@ def reconcile_shipped_fulfillment_egress(
         *, contract_name: str, destination_domain: str, occurrence_key: str,
         source_identity: str, correlation: str, causation: str, produced_at: datetime,
         payload: dict[str, object],
-    ) -> BoundaryMessage:
+    ) -> BoundaryMessage | None:
+        nonlocal remaining
         message_id = deterministic_id(
             "boundary-message", "warehouse_fulfillment", source_identity,
             contract_name, 1, destination_domain, occurrence_key,
@@ -736,6 +741,10 @@ def reconcile_shipped_fulfillment_egress(
             if prior != expected:
                 raise ValueError("durable outbound contract conflicts with source facts")
             return prior
+        if remaining is not None:
+            if remaining == 0:
+                return None
+            remaining -= 1
         return _publish(
             service, contract_name=contract_name,
             source_domain="warehouse_fulfillment", source_identity=source_identity,
@@ -833,6 +842,8 @@ def reconcile_shipped_fulfillment_egress(
                 "quantity": quantity,
             },
         )
+        if consumption is None:
+            break
         outgoing.append(consumption)
         # Durable pick completion authorizes consumption, but Logistics
         # dispatch is *separately* gated on terminal shipment and WM-owned
@@ -847,7 +858,7 @@ def reconcile_shipped_fulfillment_egress(
         if consumed is not True:
             continue
 
-        outgoing.append(publish_or_verify(
+        dispatch = publish_or_verify(
             contract_name="warehouse.dispatch_ready",
             destination_domain="logistics",
             occurrence_key="dispatch-ready",
@@ -856,7 +867,10 @@ def reconcile_shipped_fulfillment_egress(
             causation=consumption.message_id,
             produced_at=_next_logical_time(persistence, consumption.produced_at),
             payload={"fulfillment_order_id": order_id, "shipment_id": shipment_id},
-        ))
+        )
+        if dispatch is None:
+            break
+        outgoing.append(dispatch)
     return tuple(outgoing)
 
 
