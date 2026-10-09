@@ -190,6 +190,7 @@ def seed_composed_reference(
     now: datetime = ORIGIN,
     requested_quantity: float = 10.0,
     requested_sku: str = PRIMARY_SKU,
+    request_key: str = "order-1",
     picker_capacity: int = 1,
     packing_station_capacity: int = 1,
     shipping_dock_capacity: int = 1,
@@ -205,6 +206,8 @@ def seed_composed_reference(
         raise ValueError("requested_quantity must be positive")
     if not requested_sku:
         raise ValueError("requested_sku cannot be empty")
+    if not request_key:
+        raise ValueError("composed request_key must be nonempty")
     for value, name in (
         (picker_capacity, "picker_capacity"),
         (packing_station_capacity, "packing_station_capacity"),
@@ -216,7 +219,7 @@ def seed_composed_reference(
     context, _ = build_runtime(persistence, now=now)
     order = context.entities.create(
         FulfillmentOrder,
-        key=("warehouse-reference", "order-1"),
+        key=("warehouse-reference", request_key),
         state="requested",
         attributes={
             "requested_sku": requested_sku,
