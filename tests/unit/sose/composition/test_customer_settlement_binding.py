@@ -115,3 +115,17 @@ def test_two_open_adapters_observe_immutable_binding_without_stale_snapshot(tmp_
         assert receiver.for_payment("p1") is None
         written = SettlementBindingService(publisher).bind(binding("o1", "p1", "j1"))
         assert receiver.for_payment("p1") == written
+
+
+@pytest.mark.parametrize("alias", ["order", "payment", "journal"])
+def test_torn_binding_indices_fail_closed_and_are_not_silently_repaired(alias):
+    store = MemoryPersistence()
+    entities(store, order="o1", payment="p1", journal="j1")
+    service = SettlementBindingService(store)
+    proof = service.bind(binding("o1", "p1", "j1"))
+    key = {"order": "o1", "payment": "p1", "journal": "j1"}[alias]
+    store._state.customer_settlement_bindings.pop((alias, key))
+    with pytest.raises(RuntimeError, match="incomplete settlement binding"):
+        service.for_payment("p1") if alias != "payment" else service.for_order("o1")
+    with pytest.raises(RuntimeError, match="incomplete settlement binding"):
+        service.bind(proof)
