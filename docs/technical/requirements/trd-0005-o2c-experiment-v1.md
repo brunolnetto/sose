@@ -8,7 +8,7 @@ Place O2C adapter in `sose.organizational`. Implement the same DomainReference m
 The adapter may wrap the existing O2C simulation/reconciliation; it must not implement its own DOE, comparison pairing, world hashing or report.
 
 ## Required preflight
-- Confirm `amount` binding is exogenous and durable.
+- Confirm `due_delay_hours` binds to the existing due-event schedule and changes durable collection timing; keep order amount fixed in v1, since varying amount merely echoes a value and does not change executable mechanics.
 - Verify at least one policy/decision mechanism (credit hold or collection outcome) and one handoff mechanism (fulfillment/collection) produces distinct *durable* arm evidence; otherwise exclude that arm.
 - Verify terminal and sad paths, including restart and exactly-once effects.
 - Output typed numerical observations plus original evidence. Reject claims not exposed by observations.
