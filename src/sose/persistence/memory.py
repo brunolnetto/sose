@@ -182,7 +182,19 @@ class MemoryUnitOfWork:
         if kind not in {"order", "payment", "journal"}:
             raise ValueError("unknown settlement binding identity kind")
         value = self._working.customer_settlement_bindings.get((kind, entity_id))
-        return deepcopy(value) if value is not None else None
+        if value is None:
+            return None
+        expected = (
+            ("order", value.order_id),
+            ("payment", value.payment_id),
+            ("journal", value.journal_id),
+        )
+        if any(
+            self._working.customer_settlement_bindings.get(key) != value
+            for key in expected
+        ):
+            raise RuntimeError("incomplete settlement binding identity indices")
+        return deepcopy(value)
 
     def save_customer_settlement_binding(self, binding: CustomerSettlementBinding) -> None:
         # Three independent lookup keys are committed together in one UoW.
@@ -193,10 +205,17 @@ class MemoryUnitOfWork:
             ("payment", binding.payment_id),
             ("journal", binding.journal_id),
         )
-        for key in indices:
-            existing = self._working.customer_settlement_bindings.get(key)
+        previously = [
+            self._working.customer_settlement_bindings.get(key)
+            for key in indices
+        ]
+        for key, existing in zip(indices, previously):
             if existing is not None and existing != binding:
                 raise ValueError(f"settlement identity already bound: {key}")
+        if any(existing is not None for existing in previously) and not all(
+            existing is not None for existing in previously
+        ):
+            raise RuntimeError("incomplete settlement binding identity indices")
         for key in indices:
             self._working.customer_settlement_bindings[key] = deepcopy(binding)
             self._mark_dirty("customer_settlement_bindings", key)
