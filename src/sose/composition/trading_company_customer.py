@@ -738,13 +738,23 @@ def _execute_intent(
             engine.resources.withdraw(backend, f"authorization-processor:{payment_id}")
             engine.resources.withdraw(backend, f"settlement-processor:{payment_id}")
 
-    elif intent.name == "composition.post_customer_journal":
-        recovery_time = _recovery_time(persistence, intent.due_at)
-        _, engine = r2r.build_runtime(persistence, now=recovery_time)
-        backend = SimPyBackend(origin=recovery_time)
+    elif intent.name in {
+        "composition.post_customer_journal",
+        "composition.post_replenishment_journal",
+    }:
+        # Journal submission and posting are separate committed transitions.
+        # Restore the backend at the authoritative position before advancing
+        # to the intent due time; rebuilding at a later origin is invalid.
+        position = persistence.simulation_position()
+        restore_at = position.logical_time if position is not None else intent.due_at
+        target_at = max(restore_at, intent.due_at)
+        _, engine = r2r.build_runtime(persistence, now=restore_at)
+        backend = SimPyBackend(origin=restore_at)
         engine.rebuild_backend(backend)
-        if backend.now < intent.due_at:
-            backend.run_until(intent.due_at)
+        backend.run_until(backend.now)
+        if target_at > backend.now:
+            backend.run_until(target_at)
+        engine.context.clock.now = target_at
         with _causal_command_scope(
             engine,
             intent=intent,
@@ -757,7 +767,9 @@ def _execute_intent(
                 entities=fixtures.r2r,
             ):
                 raise RuntimeError("R2R journal posting failed")
-
+            posted = persistence.entity("journal_entry", fixtures.r2r.journal_id)
+            if posted is None or posted.state != "posted":
+                raise RuntimeError("R2R journal effect lacks durable posted state")
     else:
         raise ValueError(f"unsupported Trading Company customer intent: {intent.name}")
 
