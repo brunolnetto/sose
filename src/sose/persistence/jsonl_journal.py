@@ -202,6 +202,14 @@ class JSONLJournalPersistence(MemoryPersistence):
         self._refresh_from_journal()
         return super().sink_checkpoints(job_id=job_id)
 
+    def business_effect(self, effect_id: str):
+        self._refresh_from_journal()
+        return super().business_effect(effect_id)
+
+    def business_effects(self):
+        self._refresh_from_journal()
+        return super().business_effects()
+
     def job_states(self):
         self._refresh_from_journal()
         return super().job_states()
