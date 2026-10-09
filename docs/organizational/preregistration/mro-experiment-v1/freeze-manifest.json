@@ -15,5 +15,9 @@
   "scientific_claims_authorized": false,
   "status": "frozen",
   "freeze_source_artifact": "GitHub Actions run 37874764092 artifact 11591197830",
-  "evidence_policy": "No official world before this freeze PR is merged; any changes to dependencies require versioned refreeze"
+  "evidence_policy": "No official world before this freeze PR is merged; any changes to dependencies require versioned refreeze",
+  "runtime_tree_sha": "eeae0590f0ab84230a2cabfecd5225111d777592",
+  "uv_lock_git_blob_sha": "5902ec2400ba5998f154831d080b1e5773da7413",
+  "runtime_tree_scope": "src/sose",
+  "runtime_execution_rule": "The entire executable src/sose Git tree and uv.lock blob must exactly equal the frozen Git identities prior to any official world"
 }
