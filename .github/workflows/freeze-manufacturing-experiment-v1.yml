@@ -24,7 +24,7 @@ jobs:
           python-version: "3.14"
 
       - name: Install
-        run: python -m pip install -e '.[simpy]'
+        run: python -m pip install -e '.[dev]'
 
       - name: Materialize frozen protocol and provenance
         run: |
