@@ -124,7 +124,10 @@ def test_stale_composition_writer_cannot_commit_after_recovery_trigger(tmp_path)
     worker = TradingCustomerRecoveryRunner(
         persistence=persistence, owner_id="worker-new", job_id="empty-composition",
     )
-    assert worker.run_trigger(trigger_id="scheduled-1", now=o2c.ORIGIN).actions == 0
+    first = worker.run_scheduled_trigger(scheduled_for=o2c.ORIGIN)
+    assert first.actions == 0
+    assert first.trigger_id.startswith("empty-composition:scheduled:")
+    assert worker.run_scheduled_trigger(scheduled_for=o2c.ORIGIN).actions == 0
     with pytest.raises(StaleWriterError):
         with FencedEnginePersistence(persistence, old).transaction() as uow:
             uow.save_job_state(persistence.job_state("empty-composition"))
