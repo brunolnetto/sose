@@ -1,0 +1,84 @@
+{
+  "agency_levels": [
+    "A0"
+  ],
+  "baseline_model_spec_hash": "29d341771f9684580e25b8859b2c6e78bd520b014c380b422ffcaab5fded2c0f",
+  "crn_enabled": true,
+  "falsification": {
+    "primary_metric": "lead_time_seconds",
+    "theta_fraction": 0.5
+  },
+  "horizon": 24,
+  "intervention_ids": [
+    "spare_part_shortage",
+    "emergency_preemption"
+  ],
+  "outcomes": [
+    {
+      "direction": "maximize",
+      "equivalence_margin": 1e-9,
+      "name": "closed"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1,
+      "name": "lead_time_seconds"
+    },
+    {
+      "direction": "maximize",
+      "equivalence_margin": 1e-9,
+      "name": "parts_consumed"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1e-9,
+      "name": "remaining_spare_parts"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1e-9,
+      "name": "spare_part_issue_count"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1e-9,
+      "name": "material_wait_count"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1e-9,
+      "name": "resource_wait_count"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1e-9,
+      "name": "interruption_count"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1e-9,
+      "name": "preemption_count"
+    }
+  ],
+  "parameter_ranges": {
+    "quantity": {
+      "high": 20,
+      "low": 1
+    }
+  },
+  "protocol_version": "1",
+  "replication_plan": {
+    "max_replications": 2,
+    "min_replications": 2,
+    "target_ci_half_width": 0.01
+  },
+  "report_null_regions": true,
+  "research_question": "Do finite spare-part shortages and emergency preemption preserve MRO resource and inventory invariants and recover configured mechanistic effects in durable A0 synthetic runs?",
+  "sample_size": 6,
+  "sampling_design": "latin_hypercube",
+  "statistical_plan": {
+    "confidence_level": 0.95,
+    "multiple_comparison": "holm"
+  },
+  "warmup": 0
+}
