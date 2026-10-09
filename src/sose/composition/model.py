@@ -47,6 +47,7 @@ class BoundaryMessage:
     produced_at: datetime
     payload_json: str
     payload_hash: str
+    causation_kind: str | None = None  # None preserves opaque frozen v1 IDs.
 
     @classmethod
     def create(
@@ -61,6 +62,7 @@ class BoundaryMessage:
         correlation_id: str,
         causation_id: str | None,
         produced_at: datetime,
+        causation_kind: str | None = None,
         payload: Mapping[str, Any],
     ) -> "BoundaryMessage":
         payload_json, payload_hash = _canonical_payload(payload)
@@ -84,6 +86,7 @@ class BoundaryMessage:
             correlation_id=correlation_id,
             causation_id=causation_id,
             produced_at=produced_at,
+            causation_kind=causation_kind,
             payload_json=payload_json,
             payload_hash=payload_hash,
         )
@@ -104,6 +107,10 @@ class BoundaryMessage:
                 raise ValueError(f"{field_name} cannot be empty")
         if self.contract_version <= 0:
             raise ValueError("contract_version must be positive")
+        if self.causation_kind not in (None, "boundary", "event"):
+            raise ValueError("unsupported causal reference kind")
+        if self.causation_kind is not None and not self.causation_id:
+            raise ValueError("typed causation requires a nonempty causation_id")
         try:
             decoded = json.loads(self.payload_json)
         except json.JSONDecodeError as exc:
