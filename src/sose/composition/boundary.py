@@ -51,6 +51,14 @@ class BoundaryConsumerRegistry:
             )
         self._handlers[key] = handler
 
+    def contracts_for(self, destination_domain: str) -> frozenset[tuple[str, int]]:
+        """Return the registered contract names and versions owned by one domain."""
+        return frozenset(
+            (contract_name, version)
+            for domain, contract_name, version in self._handlers
+            if domain == destination_domain
+        )
+
     def resolve(self, message: BoundaryMessage) -> BoundaryHandler:
         key = (
             message.destination_domain,
@@ -113,6 +121,7 @@ class BoundaryService:
         now: datetime,
         lease_duration: timedelta,
         destination_domain: str | None = None,
+        accepted_contracts: frozenset[tuple[str, int]] | None = None,
     ) -> BoundaryLease | None:
         """Lease only a worker-owned destination when requested.
 
@@ -125,6 +134,12 @@ class BoundaryService:
             raise ValueError("destination_domain must be nonempty when specified")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
+        if accepted_contracts is not None and any(
+            not isinstance(name, str) or not name or not isinstance(version, int)
+            or version <= 0
+            for name, version in accepted_contracts
+        ):
+            raise ValueError("accepted_contracts requires nonempty names and positive versions")
 
         with self.persistence.transaction() as uow:
             candidates: list[tuple[datetime, str, BoundaryDelivery]] = []
@@ -132,6 +147,10 @@ class BoundaryService:
                 if destination_domain is not None and (
                     delivery.destination_domain != destination_domain
                 ):
+                    continue
+                if accepted_contracts is not None and (
+                    delivery.contract_name, delivery.contract_version
+                ) not in accepted_contracts:
                     continue
                 if delivery.status is DeliveryStatus.CONSUMED:
                     continue
