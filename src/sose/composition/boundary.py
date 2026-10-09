@@ -346,7 +346,32 @@ class BoundaryService:
             raise RuntimeError(
                 f"consumed causal predecessor lacks consumption: {delivery.delivery_id}"
             )
-        return uow.get_command(consumption.consumer_effect_id) is None
+        if uow.get_command(consumption.consumer_effect_id) is not None:
+            return False
+        # Opt-in causal contract upgrade: for typed PC6 links, a missing
+        # pending Command is not evidence that business application committed.
+        # Legacy untyped v1 links preserve their original completion semantics.
+        from .effects import _CERTIFIED_TERMINALS
+        if message.causation_kind == "boundary" and predecessor.contract_key in {
+            expected[2] for expected in _CERTIFIED_TERMINALS.values()
+        }:
+            proof = uow.get_business_effect(consumption.consumer_effect_id)
+            if proof is None:
+                return False
+            if (
+                proof.effect_id != consumption.consumer_effect_id
+                or proof.boundary_message_id != predecessor.message_id
+                or proof.correlation_id != predecessor.correlation_id
+            ):
+                raise RuntimeError("typed causal predecessor certificate contradicts ACK")
+            entity = uow.get_entity(proof.entity_type, proof.entity_id)
+            if (
+                entity is None
+                or entity.version < proof.entity_version
+                or entity.state != proof.terminal_state
+            ):
+                raise RuntimeError("typed causal predecessor certificate lacks durable terminal state")
+        return True
 
     @staticmethod
     def _assert_current_claim(
