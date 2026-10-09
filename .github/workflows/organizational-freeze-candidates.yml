@@ -31,7 +31,7 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.2.0
       - name: Verify frozen dependency environment
         run: uv sync --frozen --extra dev
       - name: Generate both configuration-only candidates

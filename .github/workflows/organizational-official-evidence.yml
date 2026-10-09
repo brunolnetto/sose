@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.2.0
       - name: Check official runner syntax only; never run worlds on a PR
         run: |
           uv sync --frozen --extra dev
@@ -40,7 +40,7 @@ jobs:
         domain: [o2c, mro]
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@v10.2.0
       - name: Install exact locked dependencies
         run: uv sync --frozen --extra dev
       - name: Verify separate scientific freeze without executing any world
