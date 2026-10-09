@@ -153,7 +153,13 @@ def test_pg_applied_business_certificate_serializes_descendant_claim(monkeypatch
     namespace = "effect_" + uuid4().hex[:16]
     with PostgresPersistence(DSN, namespace=namespace) as writer, \
          PostgresPersistence(DSN, namespace=namespace) as contender:
-        root = message("business-root")
+        root = BoundaryMessage.create(
+            contract_name="warehouse.dispatch_ready", contract_version=1,
+            source_domain="warehouse_fulfillment", source_identity="order-1",
+            destination_domain="logistics", occurrence_key="business-root",
+            correlation_id="causal-order-1", causation_id=None,
+            produced_at=NOW, payload={"shipment_id": "shipment-1"},
+        )
         dependent = message("business-dependent", root.message_id)
         service = BoundaryService(writer)
         service.publish(dependent)
