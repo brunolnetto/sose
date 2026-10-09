@@ -162,6 +162,8 @@ def test_worker_death_and_restart_preserves_normalized_causal_dag(
     from sose.composition.effects import BusinessEffectService
     from sose.composition.recovery import TradingCustomerRecoveryRunner
     from sose.examples.order_to_cash import simulation as o2c
+    from sose.persistence.ownership import FencedEnginePersistence
+    from sose.persistence.sqlite_incremental import WriterLease
 
     uninterrupted = audit_causal_history(customer.run_customer_demand_path().persistence)
     path = tmp_path / "independent-replay.sqlite"
@@ -198,12 +200,18 @@ def test_worker_death_and_restart_preserves_normalized_causal_dag(
             now=o2c.ORIGIN + timedelta(days=2),
         )
         assert resumed.actions > 0
-        assert audit_causal_history(store).semantic_digest == uninterrupted.semantic_digest
+
+        def authorized_view():
+            return FencedEnginePersistence(store, WriterLease(
+                owner_id=runner.owner_id, epoch=store.writer_epoch(),
+            ))
+
+        assert audit_causal_history(authorized_view()).semantic_digest == uninterrupted.semantic_digest
         assert runner.run_trigger(
             trigger_id="second-check",
             now=o2c.ORIGIN + timedelta(days=2, minutes=1),
         ).actions == 0
-        assert audit_causal_history(store).semantic_digest == uninterrupted.semantic_digest
+        assert audit_causal_history(authorized_view()).semantic_digest == uninterrupted.semantic_digest
 
 
 def test_causal_audit_handles_deep_linear_chains_without_recursion_failure():
