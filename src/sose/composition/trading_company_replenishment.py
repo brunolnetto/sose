@@ -14,6 +14,7 @@ from sose.examples.warehouse_management import simulation as wm
 from sose.examples.record_to_report import simulation as r2r
 
 from .boundary import BoundaryConsumerRegistry, BoundaryService
+from .effects import BusinessEffectService
 from .model import BoundaryMessage
 
 
@@ -332,7 +333,17 @@ def _execute_accounting(
             entities=fixtures.accounting,
         ):
             raise RuntimeError("replenishment accounting journal failed")
-    _delete_intent(store, intent.command_id, intent)
+    # The same R2R contract is used by customer settlements and replenishment.
+    # Both must produce an immutable business-completion receipt, distinct
+    # from a boundary transport ACK.
+    position = store.simulation_position()
+    completed_at = max(
+        intent.due_at,
+        position.logical_time if position is not None else intent.due_at,
+    )
+    BusinessEffectService(store).complete(
+        effect_id=intent.command_id, completed_at=completed_at,
+    )
 
 
 def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:

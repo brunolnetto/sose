@@ -32,6 +32,7 @@ from sose.core.runtime import (
 from sose.domain.entity import Entity
 from sose.domain.delivery import DomainDelivery
 from sose.composition.model import BoundaryConsumption, BoundaryDelivery, BoundaryMessage
+from sose.composition.effects import BusinessEffectApplied
 from sose.scenarios.model import ScenarioRuntimeState
 from sose.jobs.model import SimulationJobState
 from sose.sinks.model import SinkCheckpoint, SinkDelivery
@@ -69,6 +70,7 @@ class _State:
     boundary_messages: dict[str, BoundaryMessage] = field(default_factory=dict)
     boundary_deliveries: dict[str, BoundaryDelivery] = field(default_factory=dict)
     boundary_consumptions: dict[str, BoundaryConsumption] = field(default_factory=dict)
+    business_effects: dict[str, BusinessEffectApplied] = field(default_factory=dict)
     domain_deliveries: dict[str, DomainDelivery] = field(default_factory=dict)
     committed_tick: int = -1
 
@@ -171,6 +173,17 @@ class MemoryUnitOfWork:
             consumption
         )
         self._mark_dirty("boundary_consumptions", consumption.delivery_id)
+
+    def get_business_effect(self, effect_id: str) -> BusinessEffectApplied | None:
+        result = self._working.business_effects.get(effect_id)
+        return deepcopy(result) if result else None
+
+    def save_business_effect(self, effect: BusinessEffectApplied) -> None:
+        previous = self._working.business_effects.get(effect.effect_id)
+        if previous is not None and previous != effect:
+            raise ValueError(f"business-effect certificate identity conflicts: {effect.effect_id}")
+        self._working.business_effects[effect.effect_id] = deepcopy(effect)
+        self._mark_dirty("business_effects", effect.effect_id)
 
     def get_domain_delivery(self, mutation_id: str) -> DomainDelivery | None:
         value = self._working.domain_deliveries.get(mutation_id)
@@ -663,6 +676,16 @@ class MemoryPersistence:
         return tuple(
             deepcopy(self._state.job_states[job_id])
             for job_id in sorted(self._state.job_states)
+        )
+
+    def business_effect(self, effect_id: str) -> BusinessEffectApplied | None:
+        value = self._state.business_effects.get(effect_id)
+        return deepcopy(value) if value else None
+
+    def business_effects(self) -> tuple[BusinessEffectApplied, ...]:
+        return tuple(
+            deepcopy(self._state.business_effects[key])
+            for key in sorted(self._state.business_effects)
         )
 
     def domain_delivery(self, mutation_id: str) -> DomainDelivery | None:
