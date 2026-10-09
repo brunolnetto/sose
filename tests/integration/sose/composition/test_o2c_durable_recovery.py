@@ -6,7 +6,8 @@ import pytest
 from sose.composition import trading_company_customer as customer
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.examples.order_to_cash import simulation as o2c
-from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence, WriterLease
+from sose.persistence.ownership import FencedEnginePersistence
 
 
 @pytest.mark.parametrize(
@@ -148,13 +149,16 @@ def test_payment_egress_requires_ack_and_completed_o2c_effect(tmp_path, monkeypa
         worker.run_trigger(
             trigger_id="apply-o2c", now=o2c.ORIGIN + timedelta(days=1),
         )
-        assert len(customer.reconcile_invoiced_o2c_egress(store)) == 1
-        assert customer.reconcile_invoiced_o2c_egress(store, max_new_messages=0)
+        fenced = FencedEnginePersistence(
+            store, WriterLease(owner_id="o2c", epoch=store.writer_epoch()),
+        )
+        assert len(customer.reconcile_invoiced_o2c_egress(fenced)) == 1
+        assert customer.reconcile_invoiced_o2c_egress(fenced, max_new_messages=0)
         assert not customer.reconcile_invoiced_o2c_egress(
-            store, correlation_id="unrelated-order",
+            fenced, correlation_id="unrelated-order",
         )
         with pytest.raises(ValueError, match="max_new_messages"):
-            customer.reconcile_invoiced_o2c_egress(store, max_new_messages=-1)
+            customer.reconcile_invoiced_o2c_egress(fenced, max_new_messages=-1)
 
 
 def test_payment_egress_rejects_tampered_durable_existing_output(tmp_path, monkeypatch):
