@@ -114,12 +114,18 @@ def audit_causal_history(persistence: Persistence) -> CausalAuditReport:
                     raise CausalAuditError(
                         f"missing typed domain event: {message.causation_id}"
                     )
-                if event.correlation_id is not None and event.correlation_id != message.correlation_id:
+                if event.correlation_id != message.correlation_id:
                     raise CausalAuditError("typed domain event correlation mismatch")
                 if event.occurred_at > message.produced_at:
                     raise CausalAuditError("typed domain event temporal inversion")
 
+        # The audit must enumerate independently persisted certificates.
+        # Traversing only ACK deliveries would silently miss orphaned effects.
+        all_certificates = {
+            proof.effect_id: proof for proof in uow.business_effects()
+        }
         applied = []
+        reached_certificates: set[str] = set()
         pending_count = 0
         for delivery in deliveries:
             message = messages[delivery.message_id]
@@ -154,6 +160,19 @@ def audit_causal_history(persistence: Persistence) -> CausalAuditReport:
                 entity = uow.get_entity(certificate.entity_type, certificate.entity_id)
                 if entity is None or entity.version < certificate.entity_version:
                     raise CausalAuditError("business certificate lacks compatible durable entity version")
+                target_field = {
+                    "warehouse.dispatch_ready.v1": ("shipment", "shipment_id"),
+                    "logistics.delivery_completed.v1": ("sales_order", "order_id"),
+                    "o2c.payment_requested.v1": ("card_payment", "payment_id"),
+                    "accounting.entry_requested.v1": ("journal_entry", "journal_id"),
+                }.get(message.contract_key)
+                if (
+                    target_field is None
+                    or certificate.entity_type != target_field[0]
+                    or certificate.entity_id != str(message.payload().get(target_field[1], ""))
+                ):
+                    raise CausalAuditError("business certificate contradicts causal target identity")
+                reached_certificates.add(effect_id)
                 applied.append((
                     effect_id, certificate.receipt_id, certificate.boundary_message_id,
                     certificate.entity_type, certificate.entity_id,
@@ -165,6 +184,12 @@ def audit_causal_history(persistence: Persistence) -> CausalAuditReport:
                 raise CausalAuditError(
                     f"missing applied business certificate for {message.contract_key}"
                 )
+
+        if set(all_certificates) != reached_certificates:
+            orphaned = sorted(set(all_certificates) - reached_certificates)
+            raise CausalAuditError(
+                f"orphaned business certificate: {orphaned[0]}"
+            )
 
         material = {
             "messages": sorted((
