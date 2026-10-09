@@ -3,7 +3,7 @@
 **Implements:** PRD-0005; inherits ADR-0002/0003/0004/0005.
 
 ## Adapter boundary
-Place O2C adapter in `sose.organizational`. Implement the same DomainReference methods used by Manufacturing: descriptor, parameter_space, build_model, interventions, execute, observation, ground_truth, classify_regime, comparison_eligibility and CRN signature.
+Place O2C adapter in `sose.organizational`. Implement the same DomainReference methods used by Manufacturing: descriptor (including descriptor.parameters), build_model, interventions, execute, observation, ground_truth, classify_regime, comparison_eligibility and CRN signature.
 
 The adapter may wrap the existing O2C simulation/reconciliation; it must not implement its own DOE, comparison pairing, world hashing or report.
 
