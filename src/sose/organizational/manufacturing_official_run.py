@@ -35,7 +35,7 @@ def _digest(path: Path) -> str:
 def verify_freeze(root: Path) -> dict[str, object]:
     """Reject changed or incomplete frozen inputs before executing any world."""
     manifest_bytes = (root / FREEZE_MANIFEST).read_bytes()
-    git_blob = sha1(b"blob " + str(len(manifest_bytes)).encode("ascii") + b"\\0" + manifest_bytes).hexdigest()
+    git_blob = sha1(b"blob " + str(len(manifest_bytes)).encode("ascii") + bytes([0]) + manifest_bytes).hexdigest()
     if git_blob != FROZEN_MANIFEST_GIT_BLOB_SHA:
         raise ValueError("freeze manifest differs from trusted PR #375 merge provenance")
     manifest = json.loads(manifest_bytes)
