@@ -1,0 +1,109 @@
+name: Official frozen O2C and MRO synthetic evidence
+
+on:
+  pull_request:
+    paths:
+      - "scripts/organizational_official_run.py"
+      - ".github/workflows/organizational-official-evidence.yml"
+  push:
+    branches: [main]
+    paths:
+      - "scripts/organizational_official_run.py"
+      - ".github/workflows/organizational-official-evidence.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Check official runner syntax only; never run worlds on a PR
+        run: |
+          uv sync --frozen --extra dev
+          uv run --frozen python -m py_compile scripts/organizational_official_run.py
+          uv run --frozen python scripts/organizational_official_run.py --help
+
+  official-frozen-experiment:
+    if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main'
+    needs: [preflight]
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        domain: [o2c, mro]
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v7
+      - name: Install exact locked dependencies
+        run: uv sync --frozen --extra dev
+      - name: Verify separate scientific freeze without executing any world
+        run: |
+          uv run --frozen python - <<'PY'
+          from pathlib import Path
+          from scripts.organizational_official_run import verify_freeze
+          import os
+          domain = os.environ["DOMAIN"]
+          manifest = verify_freeze(root=Path.cwd(), domain=domain)
+          print(f"Freeze valid: {domain}; protocol={manifest['protocol_hash']}")
+          PY
+        env:
+          DOMAIN: ${{ matrix.domain }}
+      - name: Execute exactly the frozen configuration
+        run: |
+          uv run --frozen python scripts/organizational_official_run.py \
+            --domain "${{ matrix.domain }}" --root . \
+            --output-dir "official-${{ matrix.domain }}-v1"
+      - name: Record actual execution environment and source provenance
+        run: |
+          uv run --frozen python --version > "official-${{ matrix.domain }}-v1/python-version.txt"
+          uv pip freeze --python .venv/bin/python > "official-${{ matrix.domain }}-v1/installed-packages.txt"
+          git rev-parse HEAD > "official-${{ matrix.domain }}-v1/execution-source-head.txt"
+          git rev-parse HEAD:src/sose > "official-${{ matrix.domain }}-v1/execution-runtime-tree.txt"
+          sha256sum uv.lock > "official-${{ matrix.domain }}-v1/uv-lock-sha256.txt"
+          sha256sum scripts/organizational_official_run.py > "official-${{ matrix.domain }}-v1/runner-sha256.txt"
+      - name: Seal and validate every published artifact
+        run: |
+          uv run --frozen python - <<'PY'
+          from pathlib import Path
+          import hashlib, json, os
+          bundle = Path("official-" + os.environ["DOMAIN"] + "-v1")
+          files = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                   for p in sorted(bundle.iterdir()) if p.is_file()}
+          final = bundle / "final-provenance-manifest.json"
+          final.write_text(json.dumps({"files": files}, indent=2, sort_keys=True) + chr(10))
+          loaded = json.loads(final.read_text())
+          assert set(loaded["files"]) == {p.name for p in bundle.iterdir()
+                                           if p.is_file() and p.name != final.name}
+          for name, digest in loaded["files"].items():
+              assert hashlib.sha256((bundle / name).read_bytes()).hexdigest() == digest
+          PY
+        env:
+          DOMAIN: ${{ matrix.domain }}
+      - name: Publish permanent official scientific release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DOMAIN: ${{ matrix.domain }}
+        run: |
+          tar -czf "${DOMAIN}-v1-evidence.tar.gz" "official-${DOMAIN}-v1/"
+          sha256sum "${DOMAIN}-v1-evidence.tar.gz" > "${DOMAIN}-v1-evidence.tar.gz.sha256"
+          gh release create "${DOMAIN}-v1-evidence-${GITHUB_RUN_ID}-attempt-${GITHUB_RUN_ATTEMPT}" \
+            "${DOMAIN}-v1-evidence.tar.gz" "${DOMAIN}-v1-evidence.tar.gz.sha256" \
+            --target "$GITHUB_SHA" --title "${DOMAIN} frozen synthetic v1 evidence" \
+            --notes "Audited A0 synthetic intervention execution only. Separate immutable protocol and full src/sose tree/uv.lock verified before any world. No empirical validity claim."
+      - name: Preserve complete or interrupted run evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: official-${{ matrix.domain }}-v1-evidence
+          path: |
+            official-${{ matrix.domain }}-v1/
+            official-${{ matrix.domain }}-v1.staging/
+          retention-days: 90
+          if-no-files-found: warn
