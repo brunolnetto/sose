@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from sose.organizational.agency import AgencyLevel
 from sose.organizational.domain_reference import (
+    DomainReference,
     GroundTruthKind,
     GroundTruthTargetKind,
 )
@@ -15,16 +16,18 @@ def test_queue_reference_declares_exogenous_parameter_space_without_world_owners
     design = build_reference_synthetic_experiment_v1()
 
     space = adapter.parameter_space()
+    definitions = {item.name: item for item in space.parameters}
 
-    assert set(space.parameters) == set(design.protocol.parameter_ranges)
+    assert set(definitions) == set(design.protocol.parameter_ranges)
     assert {
-        name: (definition.low, definition.high)
-        for name, definition in space.parameters.items()
+        name: (definition.range.low, definition.range.high)
+        for name, definition in definitions.items()
     } == {
         name: (bounds.low, bounds.high)
         for name, bounds in design.protocol.parameter_ranges.items()
     }
     assert not hasattr(adapter, "build_worlds")
+    assert isinstance(adapter, DomainReference)
 
 
 def test_queue_reference_declares_typed_a0_a1_capabilities() -> None:
@@ -33,37 +36,54 @@ def test_queue_reference_declares_typed_a0_a1_capabilities() -> None:
     capabilities = {item.level: item for item in adapter.agency_capabilities()}
 
     assert set(capabilities) == {AgencyLevel.A0, AgencyLevel.A1}
-    assert capabilities[AgencyLevel.A0].configurations == ()
+    assert capabilities[AgencyLevel.A0].capability_id == "fixed-policy"
+    assert dict(capabilities[AgencyLevel.A0].parameter_ranges) == {}
+
     a1 = capabilities[AgencyLevel.A1]
-    assert len(a1.configurations) == 1
-    batching = a1.configurations[0]
-    assert batching.configuration_id == "batching"
-    assert set(batching.parameters) == {
+    assert a1.capability_id == "batching"
+    assert set(a1.parameter_ranges) == {
         "backlog_trigger",
         "service_multiplier",
         "adaptation_time",
         "adaptation_cost_rate",
     }
-    assert batching.parameters["service_multiplier"].minimum == 0.0
-    assert batching.parameters["service_multiplier"].maximum == 1.0
+    assert a1.parameter_ranges["service_multiplier"].low > 0.0
+    assert a1.parameter_ranges["service_multiplier"].high == 1.0
+    assert a1.defaults["service_multiplier"] == 0.70
+
+
+def test_queue_reference_descriptor_is_hash_stable_and_matches_capabilities() -> None:
+    left = QueueReferenceAdapter()
+    right = QueueReferenceAdapter()
+
+    assert left.identity == right.identity
+    assert left.identity.reference_hash == right.identity.reference_hash
+    assert left.descriptor().descriptor_hash == right.descriptor().descriptor_hash
+    assert left.descriptor().identity == left.identity
+    assert {item.level for item in left.descriptor().agency_capabilities} == {
+        AgencyLevel.A0,
+        AgencyLevel.A1,
+    }
 
 
 def test_a0_ground_truth_separates_mechanistic_regime_from_analytical_metric() -> None:
     adapter = QueueReferenceAdapter()
     design = build_reference_synthetic_experiment_v1()
     stable = next(
-        world for world in design.worlds
-        if world.arm_id == "baseline"
-        and adapter.classify_regime(world).stable
+        world
+        for world in design.worlds
+        if world.arm_id == "baseline" and adapter.classify_regime(world).stable
     )
     saturated = next(
-        world for world in design.worlds
-        if world.arm_id == "baseline"
-        and not adapter.classify_regime(world).stable
+        world
+        for world in design.worlds
+        if world.arm_id == "baseline" and not adapter.classify_regime(world).stable
     )
 
     stable_claims = {claim.claim_id: claim for claim in adapter.ground_truth(stable)}
-    saturated_claims = {claim.claim_id: claim for claim in adapter.ground_truth(saturated)}
+    saturated_claims = {
+        claim.claim_id: claim for claim in adapter.ground_truth(saturated)
+    }
 
     regime = stable_claims["queue.regime"]
     assert regime.kind is GroundTruthKind.MECHANISTIC
@@ -80,14 +100,16 @@ def test_a0_ground_truth_separates_mechanistic_regime_from_analytical_metric() -
     assert saturated_lead.kind is GroundTruthKind.ANALYTICAL
     assert saturated_lead.eligible is False
     assert saturated_lead.expected is None
-    assert "stationary" in " ".join(saturated_lead.assumptions).lower()
+    assert saturated_lead.ineligibility_reason is not None
+    assert "stationary" in saturated_lead.ineligibility_reason.lower()
 
 
 def test_a1_ground_truth_uses_mechanistic_policy_regime_without_fake_analytical_truth() -> None:
     adapter = QueueReferenceAdapter()
     design = build_a0_a1_reference_design_v1()
     world = next(
-        item for item in design.worlds
+        item
+        for item in design.worlds
         if item.agency_level is AgencyLevel.A1 and item.arm_id == "baseline"
     )
 
@@ -102,13 +124,15 @@ def test_adapter_execution_preserves_existing_a0_a1_runners_and_standard_observa
     adapter = QueueReferenceAdapter()
     design = build_a0_a1_reference_design_v1()
     a0 = next(
-        world for world in design.worlds
+        world
+        for world in design.worlds
         if world.design_index == 0
         and world.arm_id == "baseline"
         and world.agency_level is AgencyLevel.A0
     )
     a1 = next(
-        world for world in design.worlds
+        world
+        for world in design.worlds
         if world.design_index == 0
         and world.arm_id == "baseline"
         and world.agency_level is AgencyLevel.A1
@@ -143,13 +167,16 @@ def test_adapter_execution_preserves_existing_a0_a1_runners_and_standard_observa
     )
 
 
-def test_adapter_identity_and_ground_truth_are_hash_stable() -> None:
+def test_queue_adapter_ground_truth_is_hash_stable() -> None:
     left = QueueReferenceAdapter()
     right = QueueReferenceAdapter()
-
-    assert left.identity == right.identity
-    assert left.identity.reference_hash == right.identity.reference_hash
-
     design = build_reference_synthetic_experiment_v1()
     world = design.worlds[0]
-    assert left.ground_truth(world) == right.ground_truth(world)
+
+    left_claims = left.ground_truth(world)
+    right_claims = right.ground_truth(world)
+
+    assert left_claims == right_claims
+    assert [claim.claim_hash for claim in left_claims] == [
+        claim.claim_hash for claim in right_claims
+    ]
