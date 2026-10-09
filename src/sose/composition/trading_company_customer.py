@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from math import isfinite
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.events import Command
@@ -309,6 +310,60 @@ def _dispatch_o2c_event(
     engine.dispatch(command)
 
 
+def _materialize_fulfillment_from_request(
+    persistence: MemoryPersistence,
+    *,
+    intent: Command,
+    expected_sales_order_id: str,
+) -> fulfillment.WarehouseEntities:
+    """Derive composed WF business state from immutable O2C payload, never a fixture."""
+    payload = intent.payload
+    sales_order_id = payload.get("order_id")
+    if not isinstance(sales_order_id, str) or sales_order_id != expected_sales_order_id:
+        raise ValueError("fulfillment request source sales order mismatch")
+    if persistence.entity("sales_order", sales_order_id) is None:
+        raise ValueError("fulfillment request has no durable source sales order")
+    request_key = f"order:{sales_order_id}"
+    derived_id = deterministic_id(
+        "entity", "warehouse_fulfillment_order", "warehouse-reference", request_key
+    )
+    if payload.get("fulfillment_order_id") != derived_id or intent.entity_id != derived_id:
+        raise ValueError("fulfillment request identity mismatch")
+    quantity = payload.get("requested_quantity")
+    if (
+        isinstance(quantity, bool)
+        or not isinstance(quantity, (int, float))
+        or not isfinite(float(quantity))
+        or float(quantity) <= 0
+    ):
+        raise ValueError("fulfillment request has invalid requested_quantity")
+    sku = payload.get("sku")
+    if not isinstance(sku, str) or not sku.strip():
+        raise ValueError("fulfillment request has invalid sku")
+
+    existing = persistence.entity("warehouse_fulfillment_order", derived_id)
+    if existing is not None:
+        attributes = existing.attributes
+        if (
+            attributes.get("inventory_owner") != "warehouse_management"
+            or attributes.get("requested_sku") != sku
+            or float(attributes.get("requested_quantity", -1)) != float(quantity)
+        ):
+            raise ValueError("replayed fulfillment request conflicts with durable order")
+        return fulfillment.WarehouseEntities(order_id=derived_id, lot_ids=())
+
+    created = fulfillment.seed_composed_reference(
+        persistence,
+        now=intent.due_at,
+        requested_quantity=float(quantity),
+        requested_sku=sku,
+        request_key=request_key,
+    )
+    if created.order_id != derived_id:
+        raise RuntimeError("payload-derived fulfillment identity is not deterministic")
+    return created
+
+
 def _execute_intent(
     persistence: MemoryPersistence,
     *,
@@ -321,16 +376,14 @@ def _execute_intent(
         return
 
     if intent.name == "composition.request_fulfillment_inventory":
-        order = persistence.entity(
-            "warehouse_fulfillment_order",
-            fixtures.fulfillment.order_id,
+        order_ref = _materialize_fulfillment_from_request(
+            persistence, intent=intent, expected_sales_order_id=fixtures.o2c.order_id
         )
-        if order is None:
-            raise RuntimeError("warehouse fulfillment order disappeared")
-        if order.state != "requested":
-            raise RuntimeError(
-                "inventory reservation request requires requested fulfillment order"
-            )
+        if order_ref.order_id != fixtures.fulfillment.order_id:
+            raise ValueError("composed fulfillment request differs from current workflow")
+        order = persistence.entity("warehouse_fulfillment_order", order_ref.order_id)
+        if order is None or order.state != "requested":
+            raise RuntimeError("inventory reservation requires requested fulfillment order")
 
     elif intent.name == "composition.reserve_fulfillment_inventory":
         _, engine = wm.build_runtime(persistence, now=intent.due_at)
@@ -605,17 +658,19 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
     currency = "USD"
     requested_quantity = 10.0
 
+    sales_order = o2c.seed_reference(
+        persistence, now=origin, amount=amount, currency=currency,
+    )
+    fulfillment_order_id = deterministic_id(
+        "entity", "warehouse_fulfillment_order",
+        "warehouse-reference", f"order:{sales_order.order_id}",
+    )
     fixtures = _CustomerFixtures(
-        o2c=o2c.seed_reference(
-            persistence,
-            now=origin,
-            amount=amount,
-            currency=currency,
-        ),
-        fulfillment=fulfillment.seed_composed_reference(
-            persistence,
-            now=origin,
-            requested_quantity=requested_quantity,
+        o2c=sales_order,
+        # A reference only: the actual order is created by the durable ingress
+        # intent from the O2C boundary payload.
+        fulfillment=fulfillment.WarehouseEntities(
+            order_id=fulfillment_order_id, lot_ids=(),
         ),
         warehouse=wm.seed_reference(
             persistence,
