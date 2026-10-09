@@ -307,9 +307,9 @@ def _registered_only_manifest(domain: str) -> ProcessManifest:
 
 
 def _warehouse_fulfillment_manifest() -> ProcessManifest:
-    """Warehouse Fulfillment is a complete PC5 observable process canonical."""
+    """Warehouse Fulfillment qualifies for PC6 through the Trading Company boundary."""
 
-    evidence = set(_requirements_through(ProcessMaturity.PC5_OBSERVABLE))
+    evidence = set(_requirements_through(ProcessMaturity.PC6_COMPOSABLE))
 
     simulation = "src/sose/examples/warehouse_fulfillment/simulation.py"
     entities = "src/sose/examples/warehouse_fulfillment/entities.py"
@@ -370,6 +370,28 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
         ),
         ProcessEvidence.CONFIGURATION_DOCUMENTATION: (config, specification),
     }
+    customer_composition = "src/sose/composition/trading_company_customer.py"
+    boundary = "src/sose/composition/boundary.py"
+    pc6_matrix = (
+        "tests/integration/sose/composition/"
+        "test_trading_company_pc6_contract_matrix.py"
+    )
+    pc6_recovery = (
+        "tests/integration/sose/composition/"
+        "test_trading_company_recovery_conformance.py"
+    )
+    stock_ownership = (
+        "tests/integration/sose/composition/"
+        "test_composed_inventory_ownership.py"
+    )
+    evidence_sources.update({
+        ProcessEvidence.INGRESS_CONTRACTS: (customer_composition, pc6_matrix),
+        ProcessEvidence.EGRESS_CONTRACTS: (customer_composition, pc6_matrix),
+        ProcessEvidence.CROSS_DOMAIN_EXECUTION: (
+            boundary, customer_composition, pc6_matrix, pc6_recovery,
+            stock_ownership,
+        ),
+    })
     return ProcessManifest(
         domain="warehouse_fulfillment",
         evidence=frozenset(evidence),
@@ -399,6 +421,15 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
             }
         ),
         specification_path=specification,
+        ingress_contracts=frozenset({
+            "o2c.fulfillment_requested.v1",
+            "warehouse.inventory_reserved.v1",
+        }),
+        egress_contracts=frozenset({
+            "warehouse.inventory_reservation_requested.v1",
+            "warehouse.inventory_consumption_requested.v1",
+            "warehouse.dispatch_ready.v1",
+        }),
         evidence_sources=evidence_sources,
         assessment_complete=True,
     )
