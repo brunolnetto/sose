@@ -93,6 +93,7 @@ def audit_bundle(*, domain: str, root: Path) -> dict[str, Any]:
     eligible_assessments = [a for a in assessments if a["eligible"]]
     passed = sum(a["passed"] is True for a in eligible_assessments)
     failed = sum(a["passed"] is False for a in eligible_assessments)
+    unresolved = len(eligible_assessments) - passed - failed
     if "eligible_assessment_count" in evidence_manifest:
         if evidence_manifest["eligible_assessment_count"] != len(eligible_assessments):
             raise ValueError("eligible assessment count does not reconcile")
@@ -128,7 +129,7 @@ def audit_bundle(*, domain: str, root: Path) -> dict[str, Any]:
         "assessments": {
             "total": len(assessments),
             "eligible": len(eligible_assessments),
-            "passed": passed, "failed": failed,
+            "passed": passed, "failed": failed, "unresolved": unresolved,
         },
         "effects": {
             "total": len(effects), "eligible": len(eligible_effects),
@@ -157,6 +158,7 @@ def main() -> None:
         "total_runs": sum(x["runs"] for x in summary),
         "total_eligible_assessments": sum(x["assessments"]["eligible"] for x in summary),
         "total_passed_assessments": sum(x["assessments"]["passed"] for x in summary),
+        "total_unresolved_assessments": sum(x["assessments"]["unresolved"] for x in summary),
         "total_eligible_effects": sum(x["effects"]["eligible"] for x in summary),
     }
     text = json.dumps(output, indent=2, sort_keys=True, allow_nan=False) + "\n"
