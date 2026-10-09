@@ -1,5 +1,5 @@
 # TRD-0006 — MRO experiment adapter
-**Status:** Draft.
+**Status:** Accepted — adapter design gate; no official protocol frozen.
 **Implements:** PRD-0006; ADR-0002/0003/0004/0005.
 
 ## Ownership
