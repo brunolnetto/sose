@@ -208,8 +208,10 @@ def test_certificate_fails_closed_on_mismatched_source_contract(changes):
 
 def test_independent_sqlite_reader_refreshes_committed_certificate(tmp_path):
     path = tmp_path / "business-effect-cross-instance.sqlite"
-    with SQLiteIncrementalPersistence(path) as publisher, \\
-         SQLiteIncrementalPersistence(path) as observer:
+    with (
+        SQLiteIncrementalPersistence(path) as publisher,
+        SQLiteIncrementalPersistence(path) as observer,
+    ):
         _, consumption = accepted(publisher)
         assert observer.business_effect(consumption.consumer_effect_id) is None
         assert observer.business_effects() == ()
