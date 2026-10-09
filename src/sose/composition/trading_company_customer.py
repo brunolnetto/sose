@@ -893,6 +893,23 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
     messages: list[BoundaryMessage] = []
     effects: list[str] = []
 
+    def consume_published_boundary(message: BoundaryMessage, *, owner_id: str) -> None:
+        """Apply already-durable boundary effects with the normal leased consumer."""
+        messages.append(message)
+        effect = _consume_next(
+            service,
+            registry,
+            owner_id=owner_id,
+            now=message.produced_at,
+        )
+        effects.append(effect)
+        _execute_intent(
+            persistence,
+            effect_id=effect,
+            fixtures=fixtures,
+            correlation_id=correlation_id,
+        )
+
     def publish_consume_execute(
         *,
         contract_name: str,
@@ -920,20 +937,7 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
             ),
             payload=payload,
         )
-        messages.append(message)
-        effect = _consume_next(
-            service,
-            registry,
-            owner_id=owner_id,
-            now=message.produced_at,
-        )
-        effects.append(effect)
-        _execute_intent(
-            persistence,
-            effect_id=effect,
-            fixtures=fixtures,
-            correlation_id=correlation_id,
-        )
+        consume_published_boundary(message, owner_id=owner_id)
         return message
 
     publish_consume_execute(
@@ -980,34 +984,26 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
             "quantity": requested_quantity,
         },
     )
-    publish_consume_execute(
-        contract_name="warehouse.inventory_consumption_requested",
-        source_domain="warehouse_fulfillment",
-        source_identity=fixtures.fulfillment.order_id,
-        destination_domain="warehouse_management",
-        occurrence_key="inventory-consumption-requested",
-        owner_id="warehouse-management-worker",
-        payload={
-            "fulfillment_order_id": fixtures.fulfillment.order_id,
-            "stock_id": fixtures.warehouse.origin_stock_id,
-            "reservation_reference": reservation_reference,
-            "consumption_reference": consumption_reference,
-            "sku": fulfillment.PRIMARY_SKU,
-            "quantity": requested_quantity,
-        },
+    # The shipped order and accepted WM allocation, not a caller stage list,
+    # are the authoritative source for outbound consumption and dispatch.
+    reconstructed = reconcile_shipped_fulfillment_egress(
+        persistence, correlation_id=correlation_id,
     )
-    publish_consume_execute(
-        contract_name="warehouse.dispatch_ready",
-        source_domain="warehouse_fulfillment",
-        source_identity=fixtures.fulfillment.order_id,
-        destination_domain="logistics",
-        occurrence_key="dispatch-ready",
-        owner_id="logistics-worker",
-        payload={
-            "fulfillment_order_id": fixtures.fulfillment.order_id,
-            "shipment_id": fixtures.logistics.shipment_id,
-        },
+    if len(reconstructed) != 1 or reconstructed[0].contract_key != (
+        "warehouse.inventory_consumption_requested.v1"
+    ):
+        raise RuntimeError("shipped fulfillment must durably request WM consumption")
+    consume_published_boundary(
+        reconstructed[0], owner_id="warehouse-management-worker",
     )
+    reconstructed = reconcile_shipped_fulfillment_egress(
+        persistence, correlation_id=correlation_id,
+    )
+    if len(reconstructed) != 2 or reconstructed[1].contract_key != (
+        "warehouse.dispatch_ready.v1"
+    ):
+        raise RuntimeError("WM consumption must precede durable dispatch")
+    consume_published_boundary(reconstructed[1], owner_id="logistics-worker")
     publish_consume_execute(
         contract_name="logistics.delivery_completed",
         source_domain="logistics",
