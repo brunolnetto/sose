@@ -70,7 +70,7 @@ def test_cannot_reassign_a_durable_settlement_identity(collision):
 def test_binding_fails_closed_for_unverified_materialized_endpoints(mutation):
     store = MemoryPersistence()
     entities(store, order="order-1", payment="card-1", journal="journal-1")
-    bad = replace(binding(), **mutation)
+    bad = binding(order="not-found") if "order_id" in mutation else replace(binding(), **mutation)
     with pytest.raises(ValueError, match="missing|amount|currency"):
         SettlementBindingService(store).bind(bad)
     assert SettlementBindingService(store).for_order("order-1") is None
