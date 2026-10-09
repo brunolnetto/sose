@@ -89,3 +89,70 @@ def test_typed_child_cannot_overtake_missing_business_certificate(adapter, tmp_p
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+def test_claimed_typed_child_rechecks_parent_certificate_before_ack():
+    """A leased child must not ACK if persisted ancestry becomes inconsistent."""
+    from sose.composition.effects import BusinessEffectApplied
+    store = MemoryPersistence()
+    bus = BoundaryService(store)
+    parent = BoundaryMessage.create(
+        contract_name="warehouse.dispatch_ready", contract_version=1,
+        source_domain="warehouse_fulfillment", source_identity="order-2",
+        destination_domain="logistics", occurrence_key="parent-race",
+        correlation_id="flow-race", causation_id=None, produced_at=NOW,
+        payload={"shipment_id": "shipment-2"},
+    )
+    child = BoundaryMessage.create(
+        contract_name="logistics.delivery_completed", contract_version=1,
+        source_domain="logistics", source_identity="shipment-2",
+        destination_domain="order_to_cash", occurrence_key="child-race",
+        correlation_id="flow-race", causation_kind="boundary",
+        causation_id=parent.message_id, produced_at=NOW + timedelta(seconds=1),
+        payload={"order_id": "order-2", "shipment_id": "shipment-2"},
+    )
+    bus.publish(parent)
+    bus.publish(child)
+    registry = BoundaryConsumerRegistry()
+
+    def accept(source, uow):
+        uow.save_command(Command(
+            command_id="effect-race", name="composition.deliver_shipment",
+            entity_type="shipment", entity_id="shipment-2", due_at=NOW,
+            causation_id=source.message_id, correlation_id=source.correlation_id,
+        ))
+        return "effect-race"
+
+    registry.register(
+        destination_domain="logistics", contract_name="warehouse.dispatch_ready",
+        contract_version=1, handler=accept,
+    )
+    parent_lease = bus.claim_next(
+        owner_id="parent-worker", now=NOW, lease_duration=timedelta(hours=1),
+        destination_domain="logistics",
+    )
+    bus.consume(lease=parent_lease, registry=registry, now=NOW)
+    with store.transaction() as uow:
+        uow.save_entity(Entity(
+            id="shipment-2", entity_type="shipment", state="delivered", version=3,
+        ))
+    proof = BusinessEffectService(store).complete(effect_id="effect-race", completed_at=NOW)
+    assert isinstance(proof, BusinessEffectApplied)
+    child_lease = bus.claim_next(
+        owner_id="child-worker", now=NOW, lease_duration=timedelta(hours=1),
+        destination_domain="order_to_cash",
+    )
+    assert child_lease is not None
+
+    # Model an out-of-band damaged store/import. An ACK cannot rely on the
+    # now-stale certificate check performed during claim.
+    store._state.business_effects.pop("effect-race")
+    child_registry = BoundaryConsumerRegistry()
+    child_registry.register(
+        destination_domain="order_to_cash",
+        contract_name="logistics.delivery_completed", contract_version=1,
+        handler=lambda message, uow: "child-effect",
+    )
+    with pytest.raises(StaleBoundaryClaimError, match="causal predecessor"):
+        bus.consume(lease=child_lease, registry=child_registry, now=NOW)
+    assert bus.consumption(child_lease.delivery_id) is None
