@@ -4,6 +4,11 @@ on:
   pull_request:
     paths:
       - ".github/workflows/manufacturing-v1-evidence.yml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/manufacturing-v1-evidence.yml"
   workflow_dispatch:
 
 permissions:
@@ -76,7 +81,7 @@ jobs:
           PY
 
       - name: Publish permanent verified release bundle
-        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && success()
+        if: (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && github.ref == 'refs/heads/main' && success()
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
