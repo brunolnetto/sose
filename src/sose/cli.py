@@ -383,12 +383,65 @@ def _cmd_sinks(args: argparse.Namespace) -> int:
     return 0
 
 
+def _cmd_composition_recovery(args: argparse.Namespace) -> int:
+    """Invoke durable catch-up once (cron) or run as a polling worker."""
+    from datetime import timedelta, timezone
+    from time import sleep
+
+    from sose.composition.recovery import TradingCustomerRecoveryRunner
+    from sose.composition.scheduler import RecoverySchedule
+    from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+
+    if args.serve and args.now is not None:
+        raise ValueError("--now is only supported for one-shot execution")
+    if args.serve and args.poll_seconds <= 0:
+        raise ValueError("--poll-seconds must be positive")
+    store = SQLiteIncrementalPersistence(args.sqlite)
+    try:
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store,
+            owner_id=args.owner_id,
+            max_actions=args.max_actions,
+        )
+        scheduler = RecoverySchedule(
+            runner=runner,
+            start_at=datetime.fromisoformat(args.start_at),
+            interval=timedelta(seconds=args.interval_seconds),
+            max_slots=args.max_slots,
+        )
+        while True:
+            now = datetime.fromisoformat(args.now) if args.now else datetime.now(timezone.utc)
+            for result in scheduler.run_due(now=now):
+                print(_json(asdict(result)), flush=True)
+            if not args.serve:
+                break
+            sleep(args.poll_seconds)
+    finally:
+        store.close()
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="sose",
         description="Synthetic Operational System Engine",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
+
+    recovery = subparsers.add_parser(
+        "composition-recovery",
+        help="Run deterministic PC6 catch-up once (cron) or as a recurring worker.",
+    )
+    recovery.add_argument("--sqlite", required=True, help="Authoritative SQLite DB path.")
+    recovery.add_argument("--owner-id", required=True)
+    recovery.add_argument("--start-at", required=True, help="ISO 8601 timezone-aware anchor.")
+    recovery.add_argument("--interval-seconds", type=int, required=True)
+    recovery.add_argument("--max-slots", type=int, default=16)
+    recovery.add_argument("--max-actions", type=int, default=16)
+    recovery.add_argument("--now", help="ISO 8601 test/replay time (one-shot only).")
+    recovery.add_argument("--serve", action="store_true", help="Poll continuously.")
+    recovery.add_argument("--poll-seconds", type=float, default=5.0)
+    recovery.set_defaults(handler=_cmd_composition_recovery)
 
     init = subparsers.add_parser(
         "init",

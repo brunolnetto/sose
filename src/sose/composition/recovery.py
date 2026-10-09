@@ -166,16 +166,20 @@ class TradingCustomerRecoveryRunner:
             actions += 1
         return actions
 
-    def run_scheduled_trigger(self, *, scheduled_for: datetime) -> RecoveryTriggerResult:
-        """Reuse SOSE's canonical durable identity for a scheduler occurrence."""
+    def run_scheduled_trigger(
+        self, *, scheduled_for: datetime, observed_at: datetime | None = None,
+    ) -> RecoveryTriggerResult:
+        """Slot time defines identity; observed time governs physical leases."""
         from sose.jobs.runner import scheduled_trigger_id
 
         return self.run_trigger(
             trigger_id=scheduled_trigger_id(self.job_id, scheduled_for),
-            now=scheduled_for,
+            now=scheduled_for, observed_at=observed_at,
         )
 
-    def run_trigger(self, *, trigger_id: str, now: datetime) -> RecoveryTriggerResult:
+    def run_trigger(
+        self, *, trigger_id: str, now: datetime, observed_at: datetime | None = None,
+    ) -> RecoveryTriggerResult:
         if not trigger_id:
             raise ValueError("trigger_id must be nonempty")
         lease = self.persistence.claim_writer(
@@ -211,7 +215,7 @@ class TradingCustomerRecoveryRunner:
                 last_triggered_at=now,
             ))
 
-        actions = self._run_bounded(store, now=now)
+        actions = self._run_bounded(store, now=observed_at if observed_at is not None else now)
         with store.transaction() as uow:
             current = uow.get_job_state(self.job_id)
             if current is None or current.active_trigger_id != trigger_id:
