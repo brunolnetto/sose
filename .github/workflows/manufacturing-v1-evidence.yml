@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   manufacturing-v1-evidence:
@@ -74,6 +74,20 @@ jobs:
               encoding="utf-8",
           )
           PY
+
+      - name: Publish permanent verified release bundle
+        if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tar -czf manufacturing-v1-official-evidence.tar.gz manufacturing-v1-official-evidence/
+          sha256sum manufacturing-v1-official-evidence.tar.gz > manufacturing-v1-official-evidence.tar.gz.sha256
+          gh release create "manufacturing-v1-evidence-${GITHUB_RUN_ID}" \
+            manufacturing-v1-official-evidence.tar.gz \
+            manufacturing-v1-official-evidence.tar.gz.sha256 \
+            --target "$GITHUB_SHA" \
+            --title "Manufacturing v1 frozen evidence (run ${GITHUB_RUN_ID})" \
+            --notes "Frozen protocol, locked Python environment, raw evidence, results, checksums, and execution provenance. Synthetic verification only."
 
       - name: Upload official or failed staging evidence
         if: always()
