@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/historical-organizational-v1-replay.yml"
+      - ".github/organizational-v1-published-digests.json"
   workflow_dispatch:
 
 permissions:
@@ -28,6 +29,12 @@ jobs:
             source_sha: "3c356fea6adba2d27f583d3a1469e5df1c0b651b"
             result_sha: "7e23c5f230034c3fb4cf79786110332e9b8c6da299a18bd3245a56fc13228740"
     steps:
+      - name: Checkout reviewed published-digest gate
+        uses: actions/checkout@v7
+        with:
+          path: gate-source
+          persist-credentials: false
+
       - name: Checkout exact historical scientific source
         uses: actions/checkout@v7
         with:
@@ -76,13 +83,18 @@ jobs:
           from pathlib import Path
           domain = os.environ["DOMAIN"]
           expected = os.environ["EXPECTED_RESULT_SHA"]
+          published = json.loads(Path("../gate-source/.github/organizational-v1-published-digests.json").read_text())[domain]
+          assert published["source_sha"] == os.environ["SOURCE_SHA"]
+          assert published["result_hash"] == expected
           root = Path(f"historical-replay-{domain}")
           evidence = json.loads((root / "evidence-manifest.json").read_text())
           result = json.loads((root / "result-manifest.json").read_text())
           assert evidence["result_hash"] == result["result_hash"] == expected
-          assert len(evidence["files"]) == 7
-          for name, digest in evidence["files"].items():
-              assert hashlib.sha256((root / name).read_bytes()).hexdigest() == digest, name
+          assert set(evidence["files"]) == set(published["canonical_files"])
+          for name, expected_digest in published["canonical_files"].items():
+              actual_digest = hashlib.sha256((root / name).read_bytes()).hexdigest()
+              assert actual_digest == expected_digest, f"published v1 drift: {name}"
+              assert evidence["files"][name] == expected_digest, f"manifest v1 drift: {name}"
           runs = json.loads((root / "runs.json").read_text())
           raw = json.loads((root / "evidence.json").read_text())
           assert len(runs) == len(raw) == result["run_count"]
@@ -92,7 +104,8 @@ jobs:
               "result_hash": expected,
               "world_count": result["world_count"],
               "run_count": result["run_count"],
-              "canonical_file_digests_verified": len(evidence["files"]),
+              "canonical_file_digests_verified": len(published["canonical_files"]),
+              "comparison_basis": "independent-reviewed-published-sha256",
               "status": "historical-replay-matches-published-v1",
           }
           (root / "historical-replay-audit.json").write_text(
