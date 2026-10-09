@@ -61,7 +61,7 @@ from .model_spec import EvidenceClass, InterventionClass, ModelIntervention, Mod
 
 _DEFAULT_AMOUNT: Final = 250.0
 _DUE_MIN: Final = 1.0
-_DUE_MAX: Final = 4.0
+_DUE_MAX: Final = 5.0
 _DEFAULT_DUE: Final = 2.0
 
 
