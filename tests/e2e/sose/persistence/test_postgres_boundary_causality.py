@@ -141,3 +141,105 @@ def test_pg_parent_business_effect_blocks_descendants_between_workers():
             owner_id="worker-b", now=NOW, lease_duration=timedelta(minutes=5),
         )
         assert child_lease is not None and child_lease.message_id == child.message_id
+
+
+def test_pg_applied_business_certificate_serializes_descendant_claim(monkeypatch):
+    """A child may not overtake an uncommitted certificate+Command deletion."""
+    from sose.composition.effects import BusinessEffectService
+    from sose.domain.entity import Entity
+    from sose.persistence.memory import MemoryUnitOfWork
+
+    assert DSN is not None
+    namespace = "effect_" + uuid4().hex[:16]
+    with PostgresPersistence(DSN, namespace=namespace) as writer, \
+         PostgresPersistence(DSN, namespace=namespace) as contender:
+        root = message("business-root")
+        dependent = message("business-dependent", root.message_id)
+        service = BoundaryService(writer)
+        service.publish(dependent)
+        service.publish(root)
+        lease = service.claim_next(
+            owner_id="business-writer", now=NOW,
+            lease_duration=timedelta(minutes=10),
+        )
+        assert lease is not None and lease.message_id == root.message_id
+
+        registry = BoundaryConsumerRegistry()
+        def handler(source, uow):
+            uow.save_command(Command(
+                command_id="business-effect-1",
+                name="composition.deliver_shipment",
+                entity_type="shipment", entity_id="shipment-1",
+                due_at=NOW, causation_id=source.message_id,
+                correlation_id=source.correlation_id,
+            ))
+            return "business-effect-1"
+        registry.register(
+            destination_domain="logistics",
+            contract_name="warehouse.dispatch_ready",
+            contract_version=1, handler=handler,
+        )
+        service.consume(lease=lease, registry=registry, now=NOW)
+        with writer.transaction() as uow:
+            uow.save_entity(Entity(
+                id="shipment-1", entity_type="shipment", state="delivered",
+                version=7,
+            ))
+
+        entered = Event()
+        release = Event()
+        started = Event()
+        finished = Event()
+        errors = []
+        claimed = []
+        original_save = MemoryUnitOfWork.save_business_effect
+
+        def pause_before_save(self, receipt):
+            if receipt.effect_id == "business-effect-1":
+                entered.set()
+                if not release.wait(10):
+                    raise TimeoutError("business certificate commit wasn't released")
+            return original_save(self, receipt)
+
+        monkeypatch.setattr(MemoryUnitOfWork, "save_business_effect", pause_before_save)
+
+        def certify():
+            try:
+                BusinessEffectService(writer).complete(
+                    effect_id="business-effect-1", completed_at=NOW,
+                )
+            except BaseException as error:
+                errors.append(error)
+
+        def claim_child():
+            started.set()
+            try:
+                claimed.append(BoundaryService(contender).claim_next(
+                    owner_id="contending-worker", now=NOW,
+                    lease_duration=timedelta(minutes=5),
+                ))
+            except BaseException as error:
+                errors.append(error)
+            finally:
+                finished.set()
+
+        certifier = Thread(target=certify)
+        claimant = Thread(target=claim_child)
+        certifier.start()
+        assert entered.wait(10)
+        claimant.start()
+        assert started.wait(10)
+        try:
+            assert not finished.wait(0.4)
+        finally:
+            release.set()
+        certifier.join(timeout=10)
+        claimant.join(timeout=10)
+        assert not certifier.is_alive() and not claimant.is_alive()
+        assert errors == []
+        assert len(claimed) == 1
+        assert claimed[0] is not None
+        assert claimed[0].message_id == dependent.message_id
+        proof = BusinessEffectService(writer).get("business-effect-1")
+        assert proof is not None and proof.entity_version == 7
+        assert writer.command("business-effect-1") is None
