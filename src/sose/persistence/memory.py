@@ -223,6 +223,12 @@ class MemoryUnitOfWork:
         self._working.entities[key] = deepcopy(entity)
         self._mark_dirty("entities", key)
 
+    def get_event(self, event_id: str) -> DomainEvent | None:
+        matches = [event for event in self._working.events if event.event_id == event_id]
+        if any(event != matches[0] for event in matches[1:]):
+            raise ValueError(f"conflicting durable event identity: {event_id}")
+        return deepcopy(matches[0]) if matches else None
+
     def append_event(self, event: DomainEvent) -> None:
         self._working.events.append(deepcopy(event))
         self._mark_dirty("events", len(self._working.events) - 1)
