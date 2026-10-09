@@ -260,14 +260,25 @@ class BoundaryService:
 
     @staticmethod
     def _validate_causation(message: BoundaryMessage, uow: "UnitOfWork") -> None:
-        """Reject known causal cycles, cross-correlation links and clock reversals.
+        """Follow durable typed/legacy ancestry inside the transaction.
 
-        Causation may also reference an external DomainEvent/Command; such IDs
-        are intentionally not required to exist in the boundary-message index.
+        The optional discriminator lives in the message record, not an
+        overloaded identifier prefix. A legacy external ID like 'event:abc'
+        is never silently reinterpreted after a code upgrade.
         """
         visited = {message.message_id}
         cursor = message.causation_id
+        kind = message.causation_kind
         while cursor is not None:
+            if kind == "event":
+                event = uow.get_event(cursor)
+                if event is None:
+                    raise ValueError(f"missing durable domain event cause: {cursor}")
+                if event.correlation_id != message.correlation_id:
+                    raise ValueError("domain event causation correlation mismatch")
+                if event.occurred_at > message.produced_at:
+                    raise ValueError("boundary causal logical time precedes domain event")
+                return
             if cursor in visited:
                 raise ValueError("boundary causal cycle detected")
             visited.add(cursor)
@@ -279,17 +290,16 @@ class BoundaryService:
             if predecessor.produced_at > message.produced_at:
                 raise ValueError("boundary causal logical time precedes predecessor")
             cursor = predecessor.causation_id
+            kind = predecessor.causation_kind
 
     @staticmethod
     def _validate_existing_descendants(message: BoundaryMessage, uow: "UnitOfWork") -> None:
-        """A late parent must not contradict or retroactively follow its children.
-
-        If an older child has already been ACKed with an unknown cause, its
-        observed history cannot be amended by publishing a newly known parent.
-        """
+        """A late parent must not contradict descendants already durable."""
         for delivery in uow.boundary_deliveries():
             child = uow.get_boundary_message(delivery.message_id)
-            if child is None or child.causation_id != message.message_id:
+            if child is None or child.causation_kind == "event":
+                continue
+            if child.causation_id != message.message_id:
                 continue
             if child.correlation_id != message.correlation_id:
                 raise ValueError("boundary causation correlation mismatch")
@@ -300,19 +310,21 @@ class BoundaryService:
 
     @staticmethod
     def _causal_predecessor_applied(message: BoundaryMessage, uow: "UnitOfWork") -> bool:
-        """Prevent causal overtaking when a predecessor is known and not applied.
+        """Prevent causal overtaking when predecessors are known or explicitly typed.
 
-        Transport consumption records only that an effect was *accepted*.
-        An outstanding Command with the recorded consumer effect ID still
-        represents work not yet applied. No wall-clock sorting can override it.
+        Legacy IDs without indexed parents remain opaque external causes.
+        Typed boundary parents with missing records remain blocked; typed
+        domain-event causes must resolve to committed causal evidence.
         """
         BoundaryService._validate_causation(message, uow)
+        if message.causation_kind == "event":
+            return True
+        parent_id = message.causation_id
         predecessor = (
-            uow.get_boundary_message(message.causation_id)
-            if message.causation_id is not None else None
+            uow.get_boundary_message(parent_id) if parent_id is not None else None
         )
         if predecessor is None:
-            return True
+            return message.causation_kind is None
         delivery = uow.get_boundary_delivery(
             BoundaryDelivery.pending(predecessor).delivery_id
         )
