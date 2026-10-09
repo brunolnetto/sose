@@ -90,3 +90,62 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
                 if d.contract_name == "logistics.delivery_completed"
             ]
             assert [(m.message_id, m.payload_hash) for m in delivered] == [initial_identity]
+
+
+@pytest.mark.parametrize(
+    "cut,expected_state",
+    [
+        ("origin_hub", "at_origin_hub"),
+        ("transfer", "at_destination_hub"),
+        ("complete", "delivered"),
+        ("attempt_only", "out_for_delivery"),
+    ],
+)
+def test_mid_transition_worker_death_resumes_from_durable_logistics_state(
+    tmp_path, monkeypatch, cut, expected_state,
+):
+    path = tmp_path / "partial-logistics.sqlite"
+    held = []
+
+    def store_factory():
+        store = SQLiteIncrementalPersistence(path)
+        held.append(store)
+        return store
+
+    monkeypatch.setattr(customer, "MemoryPersistence", store_factory)
+    stage = {
+        "origin_hub": "reconcile_origin_hub",
+        "transfer": "reconcile_transfer",
+        "complete": "reconcile_delivery_success",
+    }.get(cut, "_dispatch")
+    original = getattr(customer.logistics, stage)
+
+    def crash_after_stage(*args, **kwargs):
+        completed = original(*args, **kwargs)
+        if cut == "attempt_only":
+            entity = args[1]
+            if entity.entity_type != "delivery_attempt" or args[2] != "deliver":
+                return completed
+        raise RuntimeError("crash between durable Logistics phases")
+
+    monkeypatch.setattr(customer.logistics, stage, crash_after_stage)
+    with pytest.raises(RuntimeError, match="crash between durable Logistics phases"):
+        customer.run_customer_demand_path()
+    monkeypatch.setattr(customer.logistics, stage, original)
+    held[-1].close()
+
+    with SQLiteIncrementalPersistence(path) as store:
+        shipment = next(e for e in store.entities() if e.entity_type == "shipment")
+        assert shipment.state == expected_state
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store, owner_id="logistics-stage-restart",
+            job_id="recovery-after-midphase", max_actions=16,
+        )
+        result = runner.run_trigger(
+            trigger_id="resume-after-stage", now=o2c.ORIGIN + timedelta(days=1),
+        )
+        assert result.actions >= 1
+        assert store.entity("shipment", shipment.id).state == "delivered"
+        assert runner.run_trigger(
+            trigger_id="resume-next", now=o2c.ORIGIN + timedelta(days=1, minutes=1),
+        ).actions == 0
