@@ -31,7 +31,7 @@ jobs:
       - name: Synchronize frozen environment
         run: |
           uv sync --frozen --extra dev
-          uv run --frozen python -m pip check
+          uv pip check --python .venv/bin/python
 
       - name: Verify frozen scientific configuration
         run: |
