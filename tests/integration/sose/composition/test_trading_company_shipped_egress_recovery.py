@@ -54,11 +54,34 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
     shipped = recovered.entity("warehouse_fulfillment_order", info["fulfillment_order_id"])
     assert shipped is not None and shipped.state == "shipped"
 
+    # An alternate/pending reservation is not an accepted WF business fact.
+    # It must not be used as a source for WM consumption after a crash.
+    decoy = customer._publish(
+        BoundaryService(recovered),
+        contract_name="warehouse.inventory_reserved",
+        source_domain="warehouse_management",
+        source_identity="unaccepted-foreign-stock",
+        destination_domain="warehouse_fulfillment",
+        occurrence_key="unaccepted-reservation",
+        correlation_id=reserved.correlation_id,
+        causation_id=reserved.message_id,
+        produced_at=reserved.produced_at,
+        payload={
+            "fulfillment_order_id": info["fulfillment_order_id"],
+            "stock_id": "unaccepted-foreign-stock",
+            "reservation_reference": "unaccepted-reservation",
+            "sku": info["sku"],
+            "quantity": info["quantity"],
+        },
+    )
     outgoing = customer.reconcile_shipped_fulfillment_egress(
         recovered, correlation_id=reserved.correlation_id,
     )
     assert outgoing[0].contract_key == "warehouse.inventory_consumption_requested.v1"
     assert outgoing[0].causation_id == reserved.message_id
+    assert outgoing[0].payload()["reservation_reference"] == info["reservation_reference"]
+    assert outgoing[0].payload()["stock_id"] == info["stock_id"]
+    assert outgoing[0].causation_id != decoy.message_id
     consumption_info = outgoing[0].payload()
     if crash_contract == "warehouse.inventory_consumption_requested":
         # Recovery publishes the first message, but cannot dispatch while
