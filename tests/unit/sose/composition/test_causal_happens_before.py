@@ -157,3 +157,20 @@ def test_cannot_publish_ancestor_after_descendant_was_already_acknowledged():
         service.publish(parent)
     with store.transaction() as uow:
         assert uow.get_boundary_message(parent.message_id) is None
+
+
+def test_idempotent_parent_republication_after_completed_descendant():
+    service = BoundaryService(MemoryPersistence())
+    parent = msg("normal-parent")
+    child = msg("normal-child", cause=parent.message_id)
+    original_delivery = service.publish(parent)
+    service.publish(child)
+    registry = BoundaryConsumerRegistry()
+    registry.register(destination_domain="logistics", contract_name="test.flow",
+        contract_version=1, handler=lambda message, uow: "effect-" + message.message_id)
+    for expected in (parent, child):
+        lease = service.claim_next(owner_id="worker", now=NOW,
+            lease_duration=timedelta(hours=1))
+        assert lease is not None and lease.message_id == expected.message_id
+        service.consume(lease=lease, registry=registry, now=NOW)
+    assert service.publish(parent) == service.delivery(original_delivery.delivery_id)
