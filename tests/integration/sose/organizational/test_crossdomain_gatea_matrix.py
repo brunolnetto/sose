@@ -55,7 +55,9 @@ def test_same_gatea_invariants_across_three_process_semantics(domain, reference_
     assert result_a.manifest.world_count == plan.protocol.sample_size * 3
     assert result_a.manifest.run_count == result_a.manifest.world_count * 2
     assert all(e.evidence_hash for e in result_a.evidence)
-    assert all(assessment.passed for assessment in result_a.assessments if assessment.eligible)
+    eligible_truth = [assessment for assessment in result_a.assessments if assessment.eligible]
+    assert eligible_truth, 'cross-domain gate must evaluate at least one eligible ground-truth claim'
+    assert all(assessment.passed is True for assessment in eligible_truth)
 
     analysis = analyze_domain_experiment(reference=reference, result=result_a)
     assert any(effect.eligible for effect in analysis.effects)
