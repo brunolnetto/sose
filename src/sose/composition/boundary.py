@@ -80,9 +80,20 @@ class BoundaryService:
     def __init__(self, persistence: Persistence) -> None:
         self.persistence = persistence
 
+    def _transaction(self):
+        # Boundary protocol transitions require a single serial causal order.
+        # PostgreSQL provides a namespace-scoped advisory transaction lock;
+        # other adapters keep their native authoritative transaction semantics.
+        boundary_transaction = getattr(self.persistence, "boundary_transaction", None)
+        return (
+            boundary_transaction()
+            if callable(boundary_transaction)
+            else self.persistence.transaction()
+        )
+
     def publish(self, message: BoundaryMessage) -> BoundaryDelivery:
         delivery = BoundaryDelivery.pending(message)
-        with self.persistence.transaction() as uow:
+        with self._transaction() as uow:
             self._validate_causation(message, uow)
             existing_message = uow.get_boundary_message(message.message_id)
             if existing_message is not None and existing_message != message:
@@ -109,11 +120,11 @@ class BoundaryService:
             return delivery
 
     def delivery(self, delivery_id: str) -> BoundaryDelivery | None:
-        with self.persistence.transaction() as uow:
+        with self._transaction() as uow:
             return uow.get_boundary_delivery(delivery_id)
 
     def consumption(self, delivery_id: str) -> BoundaryConsumption | None:
-        with self.persistence.transaction() as uow:
+        with self._transaction() as uow:
             return uow.get_boundary_consumption(delivery_id)
 
     def claim_next(
@@ -143,7 +154,7 @@ class BoundaryService:
         ):
             raise ValueError("accepted_contracts requires nonempty names and positive versions")
 
-        with self.persistence.transaction() as uow:
+        with self._transaction() as uow:
             candidates: list[tuple[datetime, str, BoundaryDelivery]] = []
             for delivery in uow.boundary_deliveries():
                 if destination_domain is not None and (
@@ -203,7 +214,7 @@ class BoundaryService:
         registry: BoundaryConsumerRegistry,
         now: datetime,
     ) -> BoundaryConsumption:
-        with self.persistence.transaction() as uow:
+        with self._transaction() as uow:
             current = uow.get_boundary_delivery(lease.delivery_id)
             if current is None:
                 raise KeyError(f"unknown boundary delivery: {lease.delivery_id}")
