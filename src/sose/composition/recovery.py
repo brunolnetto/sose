@@ -15,6 +15,7 @@ from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
 from sose.composition.model import BoundaryMessage, DeliveryStatus
 from sose.examples.warehouse_fulfillment import simulation as fulfillment
 from sose.examples.logistics import simulation as logistics
+from sose.examples.order_to_cash import simulation as o2c
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.persistence.base import Persistence
 from sose.persistence.ownership import FencedEnginePersistence
@@ -22,10 +23,12 @@ from sose.persistence.ownership import FencedEnginePersistence
 
 _WM_CONTRACT = ("warehouse.inventory_consumption_requested", 1)
 _LOGISTICS_CONTRACT = ("warehouse.dispatch_ready", 1)
+_O2C_CONTRACT = ("logistics.delivery_completed", 1)
 _RECOVERABLE = frozenset({
     "composition.accept_inventory_reservation",
     "composition.consume_fulfillment_inventory",
     "composition.deliver_shipment",
+    "composition.complete_external_fulfillment",
 })
 
 
@@ -89,9 +92,10 @@ class TradingCustomerRecoveryRunner:
     ) -> None:
         details = source.payload()
         order_id = str(details.get("fulfillment_order_id", ""))
+        sales_order_id = str(details.get("order_id", ""))
         shipment_id = str(details.get("shipment_id", ""))
         fixture = customer._CustomerFixtures(
-            o2c=None,
+            o2c=o2c.O2CEntities(order_id=sales_order_id),
             fulfillment=fulfillment.WarehouseEntities(order_id=order_id, lot_ids=()),
             warehouse=None,
             logistics=logistics.LogisticsEntities(shipment_id=shipment_id),
@@ -129,6 +133,17 @@ class TradingCustomerRecoveryRunner:
                     intent_name="composition.deliver_shipment",
                     entity_type="shipment",
                     entity_id=str(details["shipment_id"]),
+                ),
+            )
+        elif message.contract_key == "logistics.delivery_completed.v1":
+            registry.register(
+                destination_domain="order_to_cash",
+                contract_name=_O2C_CONTRACT[0],
+                contract_version=_O2C_CONTRACT[1],
+                handler=customer._intent_handler(
+                    intent_name="composition.complete_external_fulfillment",
+                    entity_type="sales_order",
+                    entity_id=str(details["order_id"]),
                 ),
             )
         else:
@@ -177,6 +192,21 @@ class TradingCustomerRecoveryRunner:
             if actions >= self.max_actions:
                 break
 
+            with store.transaction() as uow:
+                o2c_before_ids = {
+                    delivery.message_id for delivery in uow.boundary_deliveries()
+                }
+            reconstructed_o2c = customer.reconcile_invoiced_o2c_egress(
+                store, max_new_messages=self.max_actions - actions,
+            )
+            emitted_o2c = sum(
+                message.message_id not in o2c_before_ids
+                for message in reconstructed_o2c
+            )
+            actions += emitted_o2c
+            if actions >= self.max_actions:
+                break
+
             lease = service.claim_next(
                 owner_id=self.owner_id,
                 now=now,
@@ -193,7 +223,15 @@ class TradingCustomerRecoveryRunner:
                     accepted_contracts=frozenset({_LOGISTICS_CONTRACT}),
                 )
             if lease is None:
-                if not emitted and not emitted_logistics:
+                lease = service.claim_next(
+                    owner_id=self.owner_id,
+                    now=now,
+                    lease_duration=self.lease_duration,
+                    destination_domain="order_to_cash",
+                    accepted_contracts=frozenset({_O2C_CONTRACT}),
+                )
+            if lease is None:
+                if not emitted and not emitted_logistics and not emitted_o2c:
                     break
                 continue
 
