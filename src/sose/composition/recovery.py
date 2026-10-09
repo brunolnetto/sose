@@ -14,7 +14,7 @@ from sose.composition import trading_company_customer as customer
 from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
 from sose.composition.model import BoundaryMessage, DeliveryStatus
 from sose.examples.warehouse_fulfillment import simulation as fulfillment
-from sose.jobs.model import SimulationJobState
+from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.persistence.base import Persistence
 from sose.persistence.ownership import FencedEnginePersistence
 
@@ -121,6 +121,8 @@ class TradingCustomerRecoveryRunner:
         actions = 0
         service = BoundaryService(store)
         for _ in range(self.max_actions):
+            if actions >= self.max_actions:
+                break
             pending = self._pending_effects(store)
             if pending:
                 source, effect_id = pending[0]
@@ -132,7 +134,9 @@ class TradingCustomerRecoveryRunner:
                 before_ids = {
                     delivery.message_id for delivery in uow.boundary_deliveries()
                 }
-            reconstructed = customer.reconcile_shipped_fulfillment_egress(store)
+            reconstructed = customer.reconcile_shipped_fulfillment_egress(
+                store, max_new_messages=self.max_actions - actions,
+            )
             emitted = sum(message.message_id not in before_ids for message in reconstructed)
             if emitted:
                 actions += emitted
@@ -191,7 +195,10 @@ class TradingCustomerRecoveryRunner:
                     logical_time=now,
                     next_tick=0,
                 )
-            if current.last_completed_trigger_id == trigger_id:
+            if current.last_completed_trigger_id == trigger_id or any(
+                record.trigger_id == trigger_id
+                for record in current.completed_batch_triggers
+            ):
                 return RecoveryTriggerResult(self.job_id, trigger_id, 0)
             if now < current.logical_time:
                 raise ValueError("composition trigger cannot rewind durable logical time")
@@ -209,12 +216,24 @@ class TradingCustomerRecoveryRunner:
             current = uow.get_job_state(self.job_id)
             if current is None or current.active_trigger_id != trigger_id:
                 raise RuntimeError("composition recovery trigger ownership lost")
+            completed_record = CompletedJobTrigger(
+                trigger_id=trigger_id,
+                requested_ticks=1,
+                start_tick=current.next_tick,
+                end_tick=current.next_tick + 1,
+                config_revision=current.config_revision,
+                logical_time=now,
+                run_count=current.run_count + 1,
+            )
             uow.save_job_state(replace(
                 current,
                 status="ready",
                 phase="idle",
                 active_trigger_id=None,
                 last_completed_trigger_id=trigger_id,
+                completed_batch_triggers=(
+                    *current.completed_batch_triggers, completed_record,
+                ),
                 next_tick=current.next_tick + 1,
                 run_count=current.run_count + 1,
                 last_error=None,
