@@ -128,6 +128,13 @@ def test_stale_composition_writer_cannot_commit_after_recovery_trigger(tmp_path)
     assert first.actions == 0
     assert first.trigger_id.startswith("empty-composition:scheduled:")
     assert worker.run_scheduled_trigger(scheduled_for=o2c.ORIGIN).actions == 0
+    assert worker.run_scheduled_trigger(
+        scheduled_for=o2c.ORIGIN + timedelta(minutes=1)
+    ).actions == 0
+    # A delayed retry of the FIRST occurrence remains a true no-op even after
+    # another scheduled occurrence advanced the durable checkpoint.
+    assert worker.run_scheduled_trigger(scheduled_for=o2c.ORIGIN).actions == 0
+    assert persistence.job_state("empty-composition").next_tick == 2
     with pytest.raises(StaleWriterError):
         with FencedEnginePersistence(persistence, old).transaction() as uow:
             uow.save_job_state(persistence.job_state("empty-composition"))
