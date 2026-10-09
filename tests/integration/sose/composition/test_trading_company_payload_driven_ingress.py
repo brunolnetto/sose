@@ -1,8 +1,6 @@
 """PC6 ingress must create durable fulfillment from the received contract, not fixtures."""
 from __future__ import annotations
 
-from copy import deepcopy
-
 import pytest
 
 from sose.composition import trading_company_customer as customer
@@ -116,7 +114,8 @@ def test_customer_path_does_not_preseed_fulfillment_before_ingress(monkeypatch):
     monkeypatch.setattr(customer.fulfillment, "seed_composed_reference", observed)
     result = customer.run_customer_demand_path()
     assert materializations == [f"order:{result.o2c_order_id}"]
-    assert persistence_order := result.persistence.entity(
+    persistence_order = result.persistence.entity(
         "warehouse_fulfillment_order", result.fulfillment_order_id
     )
+    assert persistence_order is not None
     assert persistence_order.state == "shipped"
