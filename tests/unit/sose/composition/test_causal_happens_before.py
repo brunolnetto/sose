@@ -5,6 +5,7 @@ from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryMessage,
 from sose.core.events import Command
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
+from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 NOW = datetime(2026, 10, 9, 12)
 
@@ -17,10 +18,11 @@ def msg(key, *, cause=None, correlation="flow", at=NOW):
         payload={"key": key},
     )
 
-@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+@pytest.mark.parametrize("adapter", ["memory", "sqlite", "incremental"])
 def test_child_waits_for_parent_application_and_independent_delivery_progresses(adapter, tmp_path):
     path = tmp_path / "causal.sqlite3"
-    persistence = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    persistence = (MemoryPersistence() if adapter == "memory" else
+        SQLitePersistence(path) if adapter == "sqlite" else SQLiteIncrementalPersistence(path))
     service = BoundaryService(persistence)
     parent = msg("parent")
     child = next(
@@ -47,16 +49,17 @@ def test_child_waits_for_parent_application_and_independent_delivery_progresses(
     lease = service.claim_next(owner_id="b", now=NOW, lease_duration=timedelta(hours=1))
     assert lease is not None and lease.message_id == independent.message_id
     service.consume(lease=lease, registry=registry, now=NOW)
-    if adapter == "sqlite":
+    if adapter != "memory":
         persistence.close()
-        persistence = SQLitePersistence(path)
+        persistence = (SQLitePersistence(path) if adapter == "sqlite"
+            else SQLiteIncrementalPersistence(path))
         service = BoundaryService(persistence)
     assert service.claim_next(owner_id="c", now=NOW, lease_duration=timedelta(hours=1)) is None
     with persistence.transaction() as uow:
         uow.delete_command("parent-effect")
     lease = service.claim_next(owner_id="c", now=NOW, lease_duration=timedelta(hours=1))
     assert lease is not None and lease.message_id == child.message_id
-    if adapter == "sqlite":
+    if adapter != "memory":
         persistence.close()
 
 def test_reject_parent_mismatch_clock_regression_and_cycle():
