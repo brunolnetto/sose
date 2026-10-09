@@ -441,31 +441,41 @@ def _execute_intent(
                 quantity=float(intent.payload["quantity"]),
             ):
                 raise RuntimeError("composed fulfillment allocation failed")
-            fulfillment.pick_composed_order(
-                persistence,
-                engine,
-                entities=fixtures.fulfillment,
+            order = persistence.entity(
+                "warehouse_fulfillment_order", fixtures.fulfillment.order_id,
             )
-            # Commit the outbound WM request at the durable pick boundary;
-            # a crash before packing/shipping is recovered from the picked
-            # allocation and occurrence without inventing a shipment event.
+            if order is None:
+                raise RuntimeError("composed fulfillment order disappeared")
+            if order.state in {"allocated", "picking"}:
+                fulfillment.pick_composed_order(
+                    persistence, engine, entities=fixtures.fulfillment,
+                )
+            # From picking, packed or shipped, the same durable pick occurrence
+            # proves the WM request. On a replay it may also reconstruct an
+            # already-durable dispatch message after WM has consumed stock.
             picked_messages = reconcile_shipped_fulfillment_egress(
                 persistence, correlation_id=correlation_id,
             )
-            if len(picked_messages) != 1 or picked_messages[0].contract_key != (
+            if not picked_messages or picked_messages[0].contract_key != (
                 "warehouse.inventory_consumption_requested.v1"
             ):
                 raise RuntimeError("durable composed picking must emit WM consumption")
-            fulfillment.pack_order(
-                persistence,
-                engine,
-                entities=fixtures.fulfillment,
+            order = persistence.entity(
+                "warehouse_fulfillment_order", fixtures.fulfillment.order_id,
             )
-            fulfillment.ship_order(
-                persistence,
-                engine,
-                entities=fixtures.fulfillment,
-            )
+            if order is not None and order.state == "picking":
+                fulfillment.pack_order(
+                    persistence, engine, entities=fixtures.fulfillment,
+                )
+                order = persistence.entity(
+                    "warehouse_fulfillment_order", fixtures.fulfillment.order_id,
+                )
+            if order is not None and order.state == "packed":
+                fulfillment.ship_order(
+                    persistence, engine, entities=fixtures.fulfillment,
+                )
+            elif order is None or order.state != "shipped":
+                raise RuntimeError("composed fulfillment cannot resume terminal shipment")
 
     elif intent.name == "composition.consume_fulfillment_inventory":
         _, engine = wm.build_runtime(persistence, now=intent.due_at)
