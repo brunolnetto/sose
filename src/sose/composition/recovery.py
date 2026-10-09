@@ -162,6 +162,15 @@ class TradingCustomerRecoveryRunner:
             actions += 1
         return actions
 
+    def run_scheduled_trigger(self, *, scheduled_for: datetime) -> RecoveryTriggerResult:
+        """Reuse SOSE's canonical durable identity for a scheduler occurrence."""
+        from sose.jobs.runner import scheduled_trigger_id
+
+        return self.run_trigger(
+            trigger_id=scheduled_trigger_id(self.job_id, scheduled_for),
+            now=scheduled_for,
+        )
+
     def run_trigger(self, *, trigger_id: str, now: datetime) -> RecoveryTriggerResult:
         if not trigger_id:
             raise ValueError("trigger_id must be nonempty")
