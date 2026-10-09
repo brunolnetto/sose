@@ -277,3 +277,35 @@ def test_certificate_cannot_be_reused_under_different_correlation():
     )
     with pytest.raises(CausalAuditError, match="certificate contradicts"):
         audit_causal_history(result.persistence)
+
+
+def test_unlinked_business_certificate_cannot_disappear_from_audit_digest():
+    result = run_customer_demand_path()
+    store = result.persistence
+    proof = next(x for x in store.business_effects() if x.entity_type == "shipment")
+    with store.transaction() as uow:
+        owned = next(
+            delivery for delivery in uow.boundary_deliveries()
+            if delivery.message_id == proof.boundary_message_id
+        )
+        uow._working.boundary_deliveries.pop(owned.delivery_id)
+        uow._working.boundary_consumptions.pop(owned.delivery_id)
+    with pytest.raises(CausalAuditError, match="orphaned business certificate"):
+        audit_causal_history(store)
+
+
+def test_typed_event_with_no_correlation_cannot_parent_correlated_message():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.append_event(DomainEvent(
+            event_id="without-correlation", name="accepted",
+            entity_type="sales_order", entity_id="sales-1",
+            occurred_at=T0, correlation_id=None,
+        ))
+    stage(store, msg(
+        "downstream",
+        at=T0 + timedelta(seconds=1),
+        cause="without-correlation", kind="event", flow="order-A",
+    ))
+    with pytest.raises(CausalAuditError, match="typed domain event correlation mismatch"):
+        audit_causal_history(store)
