@@ -32,11 +32,12 @@ def test_process_audit_exclusions_are_explicit_catalog_domains() -> None:
     assert PROCESS_AUDIT_EXCLUDED_DOMAINS <= catalog_domains
 
 
-def test_warehouse_fulfillment_audit_reaches_pc5_observable() -> None:
+def test_warehouse_fulfillment_pc6_promotion_is_bound_to_executable_trading_company_contracts() -> None:
     manifest = builtin_process_manifests()["warehouse_fulfillment"]
 
     assert manifest.assessment_complete
-    assert manifest.maturity is ProcessMaturity.PC5_OBSERVABLE
+    assert manifest.maturity is ProcessMaturity.PC6_COMPOSABLE
+    assert manifest.is_integrated_process_canonical
     assert manifest.is_complete_process_canonical
     assert not manifest.is_maturity_lower_bound
     assert manifest.trigger == "fulfillment_order_requested"
@@ -60,6 +61,25 @@ def test_warehouse_fulfillment_audit_reaches_pc5_observable() -> None:
     assert ProcessEvidence.STATECHART_DOCUMENTATION in manifest.evidence
     assert ProcessEvidence.PROJECTION_CONTRACT in manifest.evidence
     assert ProcessEvidence.CONFIGURATION_DOCUMENTATION in manifest.evidence
+
+    assert manifest.missing_for(ProcessMaturity.PC6_COMPOSABLE) == frozenset()
+    assert manifest.ingress_contracts == frozenset({
+        "o2c.fulfillment_requested.v1",
+        "warehouse.inventory_reserved.v1",
+    })
+    assert manifest.egress_contracts == frozenset({
+        "warehouse.inventory_reservation_requested.v1",
+        "warehouse.inventory_consumption_requested.v1",
+        "warehouse.dispatch_ready.v1",
+    })
+    assert all(
+        item in manifest.evidence
+        for item in (
+            ProcessEvidence.INGRESS_CONTRACTS,
+            ProcessEvidence.EGRESS_CONTRACTS,
+            ProcessEvidence.CROSS_DOMAIN_EXECUTION,
+        )
+    )
 
 
 def test_warehouse_management_audit_reaches_pc5_after_restart_equivalence() -> None:
@@ -109,12 +129,7 @@ def test_audit_orders_domains_by_maturity_then_name_and_reports_next_gate() -> N
     ]
 
     fulfillment = next(row for row in audit if row.domain == "warehouse_fulfillment")
-    assert fulfillment.next_maturity is ProcessMaturity.PC6_COMPOSABLE
+    assert fulfillment.maturity is ProcessMaturity.PC6_COMPOSABLE
+    assert fulfillment.next_maturity is None
     assert not fulfillment.assessment_is_lower_bound
-    assert fulfillment.missing_for_next_gate == frozenset(
-        {
-            ProcessEvidence.INGRESS_CONTRACTS,
-            ProcessEvidence.EGRESS_CONTRACTS,
-            ProcessEvidence.CROSS_DOMAIN_EXECUTION,
-        }
-    )
+    assert fulfillment.missing_for_next_gate == frozenset()
