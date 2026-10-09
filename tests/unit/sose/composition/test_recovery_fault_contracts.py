@@ -78,7 +78,7 @@ def test_runner_rejects_invalid_configuration(tmp_path, options, reason):
     with SQLiteIncrementalPersistence(tmp_path / "invalid.sqlite") as persistence:
         with pytest.raises(ValueError, match=reason):
             TradingCustomerRecoveryRunner(
-                persistence=persistence, owner_id="worker", **options
+                **{"persistence": persistence, "owner_id": "worker", **options}
             )
 
 
