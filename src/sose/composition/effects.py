@@ -70,8 +70,14 @@ class BusinessEffectService:
     def __init__(self, persistence: Persistence):
         self.persistence = persistence
 
+    def _transaction(self):
+        # Certificates and boundary claims must share one serial causal order
+        # on PostgreSQL. Generic independent OLTP writes remain concurrent.
+        factory = getattr(self.persistence, "boundary_transaction", None)
+        return factory() if callable(factory) else self.persistence.transaction()
+
     def get(self, effect_id: str) -> BusinessEffectApplied | None:
-        with self.persistence.transaction() as uow:
+        with self._transaction() as uow:
             return uow.get_business_effect(effect_id)
 
     def complete(
@@ -83,7 +89,7 @@ class BusinessEffectService:
         insertion and Command deletion runs inside the same authoritative UoW.
         Repeating the same effect ID returns immutable prior evidence.
         """
-        with self.persistence.transaction() as uow:
+        with self._transaction() as uow:
             prior = uow.get_business_effect(effect_id)
             pending = uow.get_command(effect_id)
             if prior is not None:
