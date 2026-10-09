@@ -1,4 +1,4 @@
-"""A worker crash cannot strand shipped WF inventory consumption or dispatch."""
+"""A worker crash cannot strand picked WF inventory consumption or shipped dispatch."""
 from __future__ import annotations
 
 from datetime import timedelta
@@ -7,6 +7,7 @@ import pytest
 
 from sose.composition import trading_company_customer as customer
 from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
+from sose.examples.warehouse_fulfillment import simulation as fulfillment
 from sose.persistence.sqlite import SQLitePersistence
 
 
@@ -51,7 +52,11 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
     )
     info = reserved.payload()
     shipped = recovered.entity("warehouse_fulfillment_order", info["fulfillment_order_id"])
-    assert shipped is not None and shipped.state == "shipped"
+    assert shipped is not None
+    assert shipped.state == (
+        "picking" if crash_contract == "warehouse.inventory_consumption_requested"
+        else "shipped"
+    )
 
     # First reconstruct from authoritative shipped state, then consume through
     # the real BoundaryService with durable fencing/consumer-effect identity.
@@ -104,6 +109,33 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
             now=outgoing[0].produced_at + timedelta(minutes=1),
         )
         assert replayed.consumer_effect_id == boundary_consumption.consumer_effect_id
+
+        # The original worker died after pick, before pack/ship. Resume the
+        # domain using persisted state and the accepted reservation intent;
+        # no old Python stage sequence is available.
+        with recovered.transaction() as uow:
+            reservation_effect = next(
+                uow.get_boundary_consumption(delivery.delivery_id).consumer_effect_id
+                for delivery in uow.boundary_deliveries()
+                if delivery.message_id == reserved.message_id
+            )
+        reservation_intent = recovered.command(reservation_effect)
+        assert reservation_intent is not None
+        _, engine = fulfillment.build_runtime(
+            recovered, now=outgoing[0].produced_at,
+        )
+        with customer._causal_command_scope(
+            engine, intent=reservation_intent,
+            correlation_id=reserved.correlation_id,
+        ):
+            entities = fulfillment.WarehouseEntities(
+                order_id=info["fulfillment_order_id"], lot_ids=(),
+            )
+            assert fulfillment.pack_order(recovered, engine, entities=entities)
+            assert fulfillment.ship_order(recovered, engine, entities=entities)
+        assert recovered.entity(
+            "warehouse_fulfillment_order", info["fulfillment_order_id"]
+        ).state == "shipped"
 
     # An alternate/pending reservation is not an accepted WF business fact.
     # It must not be used as a source for WM consumption after a crash.
