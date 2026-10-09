@@ -99,6 +99,39 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
             ),
         )
         service = BoundaryService(recovered)
+
+        # A published pick/WM request is NOT claimable while its accepted
+        # reservation intent is still in progress after the worker crash.
+        # Resuming the ancestor is necessary before the WM child may apply.
+        assert service.claim_next(
+            owner_id="blocked-warehouse-worker",
+            now=outgoing[0].produced_at,
+            lease_duration=timedelta(hours=1),
+        ) is None
+        with recovered.transaction() as uow:
+            reservation_effect = next(
+                uow.get_boundary_consumption(delivery.delivery_id).consumer_effect_id
+                for delivery in uow.boundary_deliveries()
+                if delivery.message_id == reserved.message_id
+            )
+        assert recovered.command(reservation_effect) is not None
+        customer._execute_intent(
+            recovered,
+            effect_id=reservation_effect,
+            fixtures=customer._CustomerFixtures(
+                o2c=None,
+                fulfillment=fulfillment.WarehouseEntities(
+                    order_id=info["fulfillment_order_id"], lot_ids=(),
+                ),
+                warehouse=None, logistics=None, payments=None, r2r=None,
+            ),
+            correlation_id=reserved.correlation_id,
+        )
+        assert recovered.command(reservation_effect) is None
+        assert recovered.entity(
+            "warehouse_fulfillment_order", info["fulfillment_order_id"]
+        ).state == "shipped"
+
         lease = service.claim_next(
             owner_id="recovered-warehouse-worker",
             now=outgoing[0].produced_at,
@@ -127,32 +160,6 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
         )
         assert replayed.consumer_effect_id == boundary_consumption.consumer_effect_id
 
-        # The original worker died after pick, before pack/ship. Resume the
-        # domain using persisted state and the accepted reservation intent;
-        # no old Python stage sequence is available.
-        with recovered.transaction() as uow:
-            reservation_effect = next(
-                uow.get_boundary_consumption(delivery.delivery_id).consumer_effect_id
-                for delivery in uow.boundary_deliveries()
-                if delivery.message_id == reserved.message_id
-            )
-        reservation_intent = recovered.command(reservation_effect)
-        assert reservation_intent is not None
-        _, engine = fulfillment.build_runtime(
-            recovered, now=outgoing[0].produced_at,
-        )
-        with customer._causal_command_scope(
-            engine, intent=reservation_intent,
-            correlation_id=reserved.correlation_id,
-        ):
-            entities = fulfillment.WarehouseEntities(
-                order_id=info["fulfillment_order_id"], lot_ids=(),
-            )
-            assert fulfillment.pack_order(recovered, engine, entities=entities)
-            assert fulfillment.ship_order(recovered, engine, entities=entities)
-        assert recovered.entity(
-            "warehouse_fulfillment_order", info["fulfillment_order_id"]
-        ).state == "shipped"
 
     # An alternate/pending reservation is not an accepted WF business fact.
     # It must not be used as a source for WM consumption after a crash.
