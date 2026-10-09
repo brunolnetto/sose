@@ -41,3 +41,24 @@ def test_freeze_candidate_rejects_missing_inputs(tmp_path: Path) -> None:
 def test_freeze_candidate_rejects_unsupported_domain(tmp_path: Path) -> None:
     with pytest.raises(ValueError):
         export_candidate(domain="unknown", root=Path.cwd(), destination=tmp_path / "unknown")
+
+
+def test_candidate_publication_never_exposes_partial_final_dir(tmp_path: Path, monkeypatch) -> None:
+    from sose.organizational import freeze_candidate
+
+    original = freeze_candidate._write_json
+    writes = 0
+
+    def fail_second_write(path, value):
+        nonlocal writes
+        writes += 1
+        if writes == 2:
+            raise OSError("injected write failure")
+        return original(path, value)
+
+    monkeypatch.setattr(freeze_candidate, "_write_json", fail_second_write)
+    destination = tmp_path / "o2c"
+    with pytest.raises(OSError, match="injected write failure"):
+        export_candidate(domain="o2c", root=Path.cwd(), destination=destination)
+    assert not destination.exists()
+    assert (tmp_path / "o2c.staging" / "protocol.json").is_file()
