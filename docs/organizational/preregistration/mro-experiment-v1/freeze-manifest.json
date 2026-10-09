@@ -1,0 +1,19 @@
+{
+  "domain": "mro",
+  "files": {
+    "docs/examples/mro/specification.md": "bbb2cfc5c2fc03183addd7644020fb20b7b194a32efd7862074812c2656f5d9f",
+    "docs/organizational/preregistration/mro-experiment-v1-proposal.md": "c990475725a72c862292d963c9cc79ccfbaa0516ae80470514c393f5069b211b",
+    "docs/product/requirements/prd-0006-mro-experiment-v1.md": "31b3a7b1e204ef6a5b4a6fe4c08b299734f32c23951e6f9263e85bf551dc50fe",
+    "docs/technical/requirements/trd-0006-mro-experiment-v1.md": "2a13daa611a7e2d368b0f89230088fdc56ee4052507e7b8b1f6e4a5902d870fa",
+    "src/sose/examples/mro/process_audit.py": "d7d0e0214435df1195b486542293ad5aebdeb3d8b54276c0367756e1c19f7efc",
+    "src/sose/organizational/mro_protocol.py": "44c0ea60e65a9c37b69ad8bfcc1b8e02c0cf7c5d478eb68ee177ed8273cd9baa",
+    "src/sose/organizational/mro_reference.py": "8f04382a802465e0fbe257bb47df953dd4808caa903b75a2077f090d39ae6681"
+  },
+  "official_execution_performed": false,
+  "plan_hash": "17cc9ab49ad817122781a0416c2fec49e301d70e23869dddab8f63f98577d59b",
+  "protocol_hash": "a5fe4199bbadc284df51977b0ad6120dfb3ce24dbb8442ca549c7687b5175d63",
+  "scientific_claims_authorized": false,
+  "status": "frozen",
+  "freeze_source_artifact": "GitHub Actions run 37874764092 artifact 11591197830",
+  "evidence_policy": "No official world before this freeze PR is merged; any changes to dependencies require versioned refreeze"
+}
