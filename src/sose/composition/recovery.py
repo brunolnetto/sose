@@ -2,8 +2,8 @@
 
 This runner owns no business entities. It replays accepted domain intents,
 reconstructs outbound WF messages from durable facts, and applies WM consumption
-through the existing boundary registry. It deliberately does not execute
-Logistics/O2C/Payments/R2R: those require separate domain workers.
+through the existing boundary registry. It now resumes Logistics effects from accepted dispatches. O2C/Payments/R2R
+still require separate domain worker ownership.
 """
 from __future__ import annotations
 
@@ -14,15 +14,18 @@ from sose.composition import trading_company_customer as customer
 from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
 from sose.composition.model import BoundaryMessage, DeliveryStatus
 from sose.examples.warehouse_fulfillment import simulation as fulfillment
+from sose.examples.logistics import simulation as logistics
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.persistence.base import Persistence
 from sose.persistence.ownership import FencedEnginePersistence
 
 
 _WM_CONTRACT = ("warehouse.inventory_consumption_requested", 1)
+_LOGISTICS_CONTRACT = ("warehouse.dispatch_ready", 1)
 _RECOVERABLE = frozenset({
     "composition.accept_inventory_reservation",
     "composition.consume_fulfillment_inventory",
+    "composition.deliver_shipment",
 })
 
 
@@ -86,11 +89,12 @@ class TradingCustomerRecoveryRunner:
     ) -> None:
         details = source.payload()
         order_id = str(details.get("fulfillment_order_id", ""))
+        shipment_id = str(details.get("shipment_id", ""))
         fixture = customer._CustomerFixtures(
             o2c=None,
             fulfillment=fulfillment.WarehouseEntities(order_id=order_id, lot_ids=()),
             warehouse=None,
-            logistics=None,
+            logistics=logistics.LogisticsEntities(shipment_id=shipment_id),
             payments=None,
             r2r=None,
         )
@@ -105,16 +109,30 @@ class TradingCustomerRecoveryRunner:
     def _registry_for(message: BoundaryMessage) -> BoundaryConsumerRegistry:
         details = message.payload()
         registry = BoundaryConsumerRegistry()
-        registry.register(
-            destination_domain="warehouse_management",
-            contract_name=_WM_CONTRACT[0],
-            contract_version=_WM_CONTRACT[1],
-            handler=customer._intent_handler(
-                intent_name="composition.consume_fulfillment_inventory",
-                entity_type="warehouse_management_stock",
-                entity_id=str(details["stock_id"]),
-            ),
-        )
+        if message.contract_key == "warehouse.inventory_consumption_requested.v1":
+            registry.register(
+                destination_domain="warehouse_management",
+                contract_name=_WM_CONTRACT[0],
+                contract_version=_WM_CONTRACT[1],
+                handler=customer._intent_handler(
+                    intent_name="composition.consume_fulfillment_inventory",
+                    entity_type="warehouse_management_stock",
+                    entity_id=str(details["stock_id"]),
+                ),
+            )
+        elif message.contract_key == "warehouse.dispatch_ready.v1":
+            registry.register(
+                destination_domain="logistics",
+                contract_name=_LOGISTICS_CONTRACT[0],
+                contract_version=_LOGISTICS_CONTRACT[1],
+                handler=customer._intent_handler(
+                    intent_name="composition.deliver_shipment",
+                    entity_type="shipment",
+                    entity_id=str(details["shipment_id"]),
+                ),
+            )
+        else:
+            raise ValueError("recovery runner received unsupported boundary contract")
         return registry
 
     def _run_bounded(self, store: Persistence, *, now: datetime) -> int:
@@ -144,6 +162,21 @@ class TradingCustomerRecoveryRunner:
                 if actions >= self.max_actions:
                     break
 
+            with store.transaction() as uow:
+                intermediate_ids = {
+                    delivery.message_id for delivery in uow.boundary_deliveries()
+                }
+            reconstructed_logistics = customer.reconcile_completed_logistics_egress(
+                store, max_new_messages=self.max_actions - actions,
+            )
+            emitted_logistics = sum(
+                message.message_id not in intermediate_ids
+                for message in reconstructed_logistics
+            )
+            actions += emitted_logistics
+            if actions >= self.max_actions:
+                break
+
             lease = service.claim_next(
                 owner_id=self.owner_id,
                 now=now,
@@ -152,7 +185,15 @@ class TradingCustomerRecoveryRunner:
                 accepted_contracts=frozenset({_WM_CONTRACT}),
             )
             if lease is None:
-                if not emitted:
+                lease = service.claim_next(
+                    owner_id=self.owner_id,
+                    now=now,
+                    lease_duration=self.lease_duration,
+                    destination_domain="logistics",
+                    accepted_contracts=frozenset({_LOGISTICS_CONTRACT}),
+                )
+            if lease is None:
+                if not emitted and not emitted_logistics:
                     break
                 continue
 

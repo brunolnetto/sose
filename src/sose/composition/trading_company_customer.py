@@ -494,80 +494,121 @@ def _execute_intent(
         )
 
     elif intent.name == "composition.deliver_shipment":
-        for work in persistence.scheduled_work():
-            scheduled = persistence.command(work.command_id)
-            if (
-                scheduled is not None
-                and scheduled.entity_type == "shipment"
-                and scheduled.entity_id == fixtures.logistics.shipment_id
-                and scheduled.name == "schedule_pickup"
-            ):
-                with persistence.transaction() as uow:
-                    uow.delete_scheduled_work(work.work_id)
-                    uow.delete_command(scheduled.command_id)
-
-        recovery_time = _recovery_time(persistence, intent.due_at)
+        # A worker can die after *any* statechart transition. Restart from
+        # durable shipment state rather than replaying the initial schedule.
+        shipment_id = fixtures.logistics.shipment_id
+        shipment = persistence.entity("shipment", shipment_id)
+        if shipment is None:
+            raise RuntimeError("logistics shipment disappeared")
+        position = persistence.simulation_position()
+        recovery_time = max(
+            intent.due_at,
+            position.logical_time if position is not None else intent.due_at,
+        )
         _, engine = logistics.build_runtime(persistence, now=recovery_time)
         backend = SimPyBackend(origin=recovery_time)
+
         with _causal_command_scope(
-            engine,
-            intent=intent,
-            correlation_id=correlation_id,
+            engine, intent=intent, correlation_id=correlation_id,
         ):
-            shipment = persistence.entity("shipment", fixtures.logistics.shipment_id)
-            if shipment is None:
-                raise RuntimeError("logistics shipment disappeared")
-            pickup_due = max(recovery_time, intent.due_at) + timedelta(hours=1)
-            pickup = engine.context.commands.create(
-                "schedule_pickup",
-                target=shipment,
-                due_at=pickup_due,
-                key=(
-                    "trading-company",
-                    shipment.id,
-                    "schedule-pickup",
-                    intent.command_id,
-                ),
-            )
-            engine.context.schedules.at(pickup_due, command=pickup)
+            if shipment.state == "created":
+                # Only an unstarted shipment may reset an inherited demo
+                # pickup schedule. Existing progress is never erased.
+                for work in persistence.scheduled_work():
+                    scheduled = persistence.command(work.command_id)
+                    if (
+                        scheduled is not None
+                        and scheduled.entity_type == "shipment"
+                        and scheduled.entity_id == shipment_id
+                        and scheduled.name == "schedule_pickup"
+                    ):
+                        with persistence.transaction() as uow:
+                            uow.delete_scheduled_work(work.work_id)
+                            uow.delete_command(scheduled.command_id)
+                pickup_due = recovery_time + timedelta(hours=1)
+                pickup = engine.context.commands.create(
+                    "schedule_pickup", target=shipment, due_at=pickup_due,
+                    key=("trading-company", shipment.id, "schedule-pickup", intent.command_id),
+                )
+                engine.context.schedules.at(pickup_due, command=pickup)
             engine.rebuild_backend(backend)
-            backend.run_until(pickup_due)
-            if not logistics.reconcile_pickup(
-                persistence,
-                engine,
-                backend,
-                entities=fixtures.logistics,
-            ):
-                raise RuntimeError("logistics pickup failed")
-            if not logistics.reconcile_origin_hub(
-                persistence,
-                engine,
-                backend,
-                entities=fixtures.logistics,
-            ):
-                raise RuntimeError("logistics origin-hub handling failed")
-            if not logistics.reconcile_transfer(
-                persistence,
-                engine,
-                backend,
-                entities=fixtures.logistics,
-            ):
-                raise RuntimeError("logistics transfer failed")
-            if not logistics.reconcile_delivery_dispatch(
-                persistence,
-                engine,
-                backend,
-                entities=fixtures.logistics,
-                ordinal=1,
-            ):
-                raise RuntimeError("logistics delivery dispatch failed")
-            logistics.reconcile_delivery_success(
-                persistence,
-                engine,
-                backend,
-                entities=fixtures.logistics,
-                ordinal=1,
-            )
+            # SimPy restores resource leases through zero-time acquisition
+            # callbacks. Materialize them before completing a partially
+            # committed delivery, otherwise release() sees no live lease.
+            backend.run_until(backend.now)
+
+            def current_state() -> str:
+                current = persistence.entity("shipment", shipment_id)
+                if current is None:
+                    raise RuntimeError("logistics shipment disappeared during recovery")
+                return current.state
+
+            if current_state() in {"created", "pickup_scheduled", "delayed_pickup"}:
+                # For a resumed schedule, respect the existing durable due time
+                # rather than scheduling a second pickup command.
+                pickup_times = [
+                    scheduled.due_at
+                    for work in persistence.scheduled_work()
+                    if (scheduled := persistence.command(work.command_id)) is not None
+                    and scheduled.name == "schedule_pickup"
+                    and scheduled.entity_type == "shipment"
+                    and scheduled.entity_id == shipment_id
+                ]
+                if pickup_times:
+                    pickup_due = max(backend.now, min(pickup_times))
+                    if pickup_due > backend.now:
+                        backend.run_until(pickup_due)
+                    else:
+                        backend.run_until(backend.now)
+                if not logistics.reconcile_pickup(
+                    persistence, engine, backend, entities=fixtures.logistics,
+                ):
+                    raise RuntimeError("logistics pickup failed")
+
+            if current_state() == "picked_up":
+                if not logistics.reconcile_origin_hub(
+                    persistence, engine, backend, entities=fixtures.logistics,
+                ):
+                    raise RuntimeError("logistics origin-hub handling failed")
+
+            if current_state() in {"at_origin_hub", "in_transfer"}:
+                if not logistics.reconcile_transfer(
+                    persistence, engine, backend, entities=fixtures.logistics,
+                ):
+                    raise RuntimeError("logistics transfer failed")
+
+            if current_state() in {"at_destination_hub", "delayed_destination_hub"}:
+                if not logistics.reconcile_delivery_dispatch(
+                    persistence, engine, backend, entities=fixtures.logistics,
+                    ordinal=1,
+                ):
+                    raise RuntimeError("logistics delivery dispatch failed")
+
+            if current_state() == "out_for_delivery":
+                attempt = persistence.entity(
+                    "delivery_attempt", logistics.delivery_attempt_id(1),
+                )
+                if attempt is not None and attempt.state == "delivered":
+                    # Crash after attempt.deliver but before shipment.deliver:
+                    # do not dispatch the already-committed attempt twice.
+                    active = persistence.entity("shipment", shipment_id)
+                    logistics._dispatch(
+                        engine, active, "deliver",
+                        key=("logistics-delivery", shipment_id, 1, "deliver"),
+                    )
+                    engine.resources.withdraw(
+                        backend, f"delivery-courier:{attempt.id}",
+                    )
+                else:
+                    logistics.reconcile_delivery_success(
+                        persistence, engine, backend,
+                        entities=fixtures.logistics, ordinal=1,
+                    )
+
+            if current_state() != "delivered":
+                raise RuntimeError(
+                    "logistics delivery recovery did not reach committed delivered state"
+                )
 
     elif intent.name == "composition.complete_external_fulfillment":
         _, engine = o2c.build_runtime(persistence, now=intent.due_at)
@@ -871,6 +912,91 @@ def reconcile_shipped_fulfillment_egress(
         if dispatch is None:
             break
         outgoing.append(dispatch)
+    return tuple(outgoing)
+
+
+def reconcile_completed_logistics_egress(
+    persistence: MemoryPersistence, *, correlation_id: str | None = None,
+    max_new_messages: int | None = None,
+) -> tuple[BoundaryMessage, ...]:
+    """Recover Logistics delivery completion solely from committed domain truth.
+
+    The dispatch ACK alone is not a delivered shipment. Publish downstream
+    only after the accepted Logistics Command has been executed/removed and
+    the persisted shipment is actually in the delivered state.
+    """
+    if max_new_messages is not None and max_new_messages < 0:
+        raise ValueError("max_new_messages must be >= 0")
+
+    with persistence.transaction() as uow:
+        inbound = tuple(
+            (delivery, uow.get_boundary_message(delivery.message_id))
+            for delivery in uow.boundary_deliveries()
+        )
+        requests = [
+            msg for _, msg in inbound
+            if msg is not None and msg.contract_key == "o2c.fulfillment_requested.v1"
+        ]
+        ready = []
+        for delivery, dispatch in inbound:
+            if (
+                dispatch is None
+                or dispatch.contract_key != "warehouse.dispatch_ready.v1"
+                or (correlation_id is not None and dispatch.correlation_id != correlation_id)
+                or delivery.status is not DeliveryStatus.CONSUMED
+            ):
+                continue
+            consumed = uow.get_boundary_consumption(delivery.delivery_id)
+            if consumed is None:
+                raise RuntimeError("ACKed logistics dispatch is missing consumption evidence")
+            if uow.get_command(consumed.consumer_effect_id) is not None:
+                continue
+            payload = dispatch.payload()
+            shipment_id = str(payload["shipment_id"])
+            shipment = uow.get_entity("shipment", shipment_id)
+            if shipment is None or shipment.state != "delivered":
+                continue
+            order_matches = [
+                msg for msg in requests
+                if msg.correlation_id == dispatch.correlation_id
+                and msg.payload()["fulfillment_order_id"] == payload["fulfillment_order_id"]
+            ]
+            if len(order_matches) != 1:
+                raise RuntimeError("delivered shipment lacks a unique durable sales order cause")
+            ready.append((dispatch, shipment_id, str(order_matches[0].payload()["order_id"])))
+
+    service = BoundaryService(persistence)
+    outgoing: list[BoundaryMessage] = []
+    for dispatch, shipment_id, sales_order_id in sorted(ready, key=lambda item: item[0].message_id):
+        identity = deterministic_id(
+            "boundary-message", "logistics", shipment_id,
+            "logistics.delivery_completed", 1, "order_to_cash", "delivery-completed",
+        )
+        with persistence.transaction() as uow:
+            prior = uow.get_boundary_message(identity)
+        produced_at = (
+            prior.produced_at if prior is not None
+            else _next_logical_time(persistence, dispatch.produced_at)
+        )
+        message = BoundaryMessage.create(
+            contract_name="logistics.delivery_completed", contract_version=1,
+            source_domain="logistics", source_identity=shipment_id,
+            destination_domain="order_to_cash", occurrence_key="delivery-completed",
+            correlation_id=dispatch.correlation_id, causation_id=dispatch.message_id,
+            produced_at=produced_at,
+            payload={"shipment_id": shipment_id, "order_id": sales_order_id},
+        )
+        if prior is not None:
+            if prior != message:
+                raise ValueError("durable Logistics egress conflicts with source facts")
+            outgoing.append(prior)
+            continue
+        if max_new_messages is not None and max_new_messages == 0:
+            break
+        if max_new_messages is not None:
+            max_new_messages -= 1
+        service.publish(message)
+        outgoing.append(message)
     return tuple(outgoing)
 
 
