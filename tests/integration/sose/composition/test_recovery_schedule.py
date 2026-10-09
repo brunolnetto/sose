@@ -86,6 +86,32 @@ def test_crashed_slot_is_retried_before_later_slots(tmp_path, monkeypatch):
         assert recovered.job_state(scheduler.runner.job_id).run_count == 3
 
 
+
+def test_replayed_old_slot_uses_current_observation_time_for_lease_expiry(
+    tmp_path, monkeypatch,
+):
+    """A physical lease cannot remain live just because logical slots are old."""
+    observed = START + timedelta(hours=4)
+    lease_times = []
+    original = TradingCustomerRecoveryRunner._run_bounded
+
+    def record_lease_clock(self, store, *, now):
+        lease_times.append(now)
+        return original(self, store, now=now)
+
+    monkeypatch.setattr(TradingCustomerRecoveryRunner, "_run_bounded", record_lease_clock)
+    with SQLiteIncrementalPersistence(tmp_path / "lease-clock.sqlite") as store:
+        schedule = RecoverySchedule(
+            make_scheduler(store).runner, START, timedelta(minutes=1), max_slots=3,
+        )
+        slots = schedule.run_due(now=observed)
+        assert len(slots) == 3
+        assert lease_times == [observed, observed, observed]
+        assert store.job_state(schedule.runner.job_id).logical_time == (
+            START + timedelta(minutes=2)
+        )
+
+
 def test_scheduler_rejects_invalid_time_and_interval(tmp_path):
     with SQLiteIncrementalPersistence(tmp_path / "invalid.sqlite") as store:
         runner = TradingCustomerRecoveryRunner(persistence=store, owner_id="worker")
