@@ -1,5 +1,5 @@
 # TRD-0005 — O2C experiment adapter
-**Status:** Draft.
+**Status:** Accepted — adapter design gate; no official protocol frozen.
 **Implements:** PRD-0005; inherits ADR-0002/0003/0004/0005.
 
 ## Adapter boundary
