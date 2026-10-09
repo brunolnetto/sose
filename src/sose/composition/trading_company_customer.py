@@ -321,8 +321,22 @@ def _materialize_fulfillment_from_request(
     sales_order_id = payload.get("order_id")
     if not isinstance(sales_order_id, str) or sales_order_id != expected_sales_order_id:
         raise ValueError("fulfillment request source sales order mismatch")
-    if persistence.entity("sales_order", sales_order_id) is None:
-        raise ValueError("fulfillment request has no durable source sales order")
+    # Boundary payload and immutable producer provenance are sufficient even
+    # when O2C state lives in a separate authoritative store.
+    if intent.causation_id is not None:
+        with persistence.transaction() as uow:
+            source = uow.get_boundary_message(intent.causation_id)
+        if (
+            source is None
+            or source.contract_key != "o2c.fulfillment_requested.v1"
+            or source.source_domain != "order_to_cash"
+            or source.destination_domain != "warehouse_fulfillment"
+            or source.source_identity != sales_order_id
+            or source.payload().get("order_id") != sales_order_id
+            or source.message_id != payload.get("boundary_message_id")
+            or source.correlation_id != intent.correlation_id
+        ):
+            raise ValueError("fulfillment request boundary source identity mismatch")
     request_key = f"order:{sales_order_id}"
     derived_id = deterministic_id(
         "entity", "warehouse_fulfillment_order", "warehouse-reference", request_key
