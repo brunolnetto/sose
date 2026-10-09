@@ -1,0 +1,74 @@
+{
+  "agency_levels": [
+    "A0"
+  ],
+  "baseline_model_spec_hash": "a5dbb57628777185c47e9640463ca4be16543e0854b13f99ac29dff0d9a3d6db",
+  "crn_enabled": true,
+  "falsification": {
+    "primary_metric": "order_to_cash_seconds",
+    "theta_fraction": 0.5
+  },
+  "horizon": 24,
+  "intervention_ids": [
+    "partial_fulfillment",
+    "overdue_collection"
+  ],
+  "outcomes": [
+    {
+      "direction": "maximize",
+      "equivalence_margin": 1e-9,
+      "name": "collected"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1,
+      "name": "order_to_cash_seconds"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1e-9,
+      "name": "partial_fulfillment_count"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1e-9,
+      "name": "overdue_count"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1e-9,
+      "name": "collection_case_count"
+    },
+    {
+      "direction": "minimize",
+      "equivalence_margin": 1e-9,
+      "name": "collection_escalation_count"
+    },
+    {
+      "direction": "maximize",
+      "equivalence_margin": 1e-9,
+      "name": "amount"
+    }
+  ],
+  "parameter_ranges": {
+    "due_delay_hours": {
+      "high": 5,
+      "low": 1
+    }
+  },
+  "protocol_version": "1",
+  "replication_plan": {
+    "max_replications": 2,
+    "min_replications": 2,
+    "target_ci_half_width": 0.01
+  },
+  "report_null_regions": true,
+  "research_question": "Do fixed-policy administrative handoffs, partial fulfillment and overdue collection preserve durable O2C invariants and recover configured mechanisms under paired synthetic runs?",
+  "sample_size": 4,
+  "sampling_design": "latin_hypercube",
+  "statistical_plan": {
+    "confidence_level": 0.95,
+    "multiple_comparison": "holm"
+  },
+  "warmup": 0
+}
