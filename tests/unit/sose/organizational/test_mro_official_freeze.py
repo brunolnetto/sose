@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
+import subprocess
 from pathlib import Path
 
 from sose.organizational.mro_protocol import build_mro_official_plan_v1
@@ -26,6 +27,13 @@ def test_mro_frozen_artifacts_match_exact_executable_plan_and_sources():
     assert manifest["plan_hash"] == executable.plan_hash
     assert protocol_artifact == executable.protocol.canonical_payload()
     assert plan_artifact == executable.canonical_payload()
+    assert manifest["runtime_tree_scope"] == "src/sose"
+    assert manifest["runtime_tree_sha"] == subprocess.check_output(
+        ["git", "rev-parse", "HEAD:src/sose"], text=True
+    ).strip()
+    assert manifest["uv_lock_git_blob_sha"] == subprocess.check_output(
+        ["git", "rev-parse", "HEAD:uv.lock"], text=True
+    ).strip()
     assert len(manifest["files"]) == 7
     assert len({*manifest["files"]}) == 7
     for name, expected_hash in manifest["files"].items():
