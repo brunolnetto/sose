@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import sqlite3
 from typing import Protocol
 
 from sose.core.events import Command
@@ -153,8 +154,23 @@ class DurableScheduler:
         return tuple(item for item in self.pending() if item.work.due_at <= at)
 
     def pending(self) -> tuple[DurableScheduledItem, ...]:
-        # Work and Command form one logical durable record. Read both under
-        # the same UnitOfWork instead of refreshing PostgreSQL independently.
+        # SQLite adapters use BEGIN IMMEDIATE and cannot open a second
+        # transaction inside the first. Existing callers can rebuild a backend
+        # while a SQLite transaction is active. Its connection is already the
+        # consistent snapshot, so reuse that read scope without starting BEGIN.
+        connection = getattr(self._persistence, "_connection", None)
+        if isinstance(connection, sqlite3.Connection) and connection.in_transaction:
+            items: list[DurableScheduledItem] = []
+            for work in self._persistence.scheduled_work():
+                command = self._persistence.command(work.command_id)
+                if command is None:
+                    raise RuntimeError(
+                        f"scheduled work references missing command: {work.work_id}/{work.command_id}"
+                    )
+                items.append(DurableScheduledItem(work=work, command=command))
+            return tuple(items)
+
+        # PostgreSQL and non-nested adapters read the pair in a single UoW.
         with self._persistence.transaction() as uow:
             items: list[DurableScheduledItem] = []
             for work in uow.scheduled_work():
