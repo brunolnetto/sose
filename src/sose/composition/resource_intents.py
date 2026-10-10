@@ -161,8 +161,10 @@ class IntentResourceCoordinator:
                 return False
         existing = self._ledger.get(effect_id)
         if existing is not None:
-            if existing.owner_id != organization_id or existing.address != pool.address():
-                raise ResourceConflictError("effect's resource identity changed")
+            if existing.owner_id != organization_id:
+                raise ResourceConflictError("effect's organizational ownership changed")
+            if existing.address != pool.address():
+                raise ResourceConflictError("effect's resource pool identity changed")
             if existing.status not in ("reserved", "released"):
                 raise ResourceConflictError("reserved intent was failed or preempted")
         else:
