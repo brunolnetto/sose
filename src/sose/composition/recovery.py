@@ -68,6 +68,7 @@ class TradingCustomerRecoveryRunner:
     lease_duration: timedelta = timedelta(hours=1)
     resource_policies: Mapping[str, ResourcePoolContract] | None = None
     resource_organizations: Mapping[str, str] | None = None
+    resource_persistence: Persistence | None = None
     resource_slot_duration: timedelta = timedelta(minutes=5)
     resource_retry_delay: timedelta = timedelta(minutes=5)
 
@@ -78,6 +79,12 @@ class TradingCustomerRecoveryRunner:
             raise ValueError("max_actions must be >= 1")
         if self.lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
+        if self.resource_persistence is not None:
+            if self.resource_policies is None:
+                raise ValueError("shared resource persistence requires explicit policies")
+            if (not hasattr(self.persistence, "dsn")
+                or self.persistence.dsn != getattr(self.resource_persistence, "dsn", None)):
+                raise ValueError("domain and physical resource ledgers must share PostgreSQL")
         if self.resource_policies is not None:
             if self.resource_slot_duration <= timedelta(0) or self.resource_retry_delay <= timedelta(0):
                 raise ValueError("resource slot and retry delay must be positive")
@@ -116,6 +123,7 @@ class TradingCustomerRecoveryRunner:
     def _execute_pending(
         store: Persistence, source: BoundaryMessage, effect_id: str,
         *, authoritative_pickup: TemporalReservation | None = None,
+        resource_persistence: Persistence | None = None,
     ) -> None:
         details = source.payload()
         order_id = str(details.get("fulfillment_order_id", ""))
@@ -141,6 +149,8 @@ class TradingCustomerRecoveryRunner:
             {"authoritative_pickup": authoritative_pickup}
             if authoritative_pickup is not None else {}
         )
+        if resource_persistence is not None and authoritative_pickup is not None:
+            kwargs["resource_persistence"] = resource_persistence
         customer._execute_intent(
             store,
             effect_id=effect_id,
@@ -225,10 +235,11 @@ class TradingCustomerRecoveryRunner:
         service = BoundaryService(store)
         resource_intents = (
             IntentResourceCoordinator(
-                self.persistence, self.resource_policies,
+                self.resource_persistence or self.persistence, self.resource_policies,
                 slot_duration=self.resource_slot_duration,
                 retry_delay=self.resource_retry_delay,
                 owner_epoch=getattr(getattr(store, "lease", None), "epoch", None),
+                fencing_persistence=self.persistence,
             )
             if self.resource_policies is not None else None
         )
@@ -278,9 +289,15 @@ class TradingCustomerRecoveryRunner:
                     else None
                 )
                 if pickup is not None:
-                    self._execute_pending(
-                        store, source, effect_id, authoritative_pickup=pickup,
-                    )
+                    if self.resource_persistence is not None:
+                        self._execute_pending(
+                            store, source, effect_id, authoritative_pickup=pickup,
+                            resource_persistence=self.resource_persistence,
+                        )
+                    else:
+                        self._execute_pending(
+                            store, source, effect_id, authoritative_pickup=pickup,
+                        )
                 else:
                     self._execute_pending(store, source, effect_id)
                 if resource_intents is not None:
