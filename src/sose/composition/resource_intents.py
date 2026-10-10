@@ -7,6 +7,7 @@ contention observable and prevents a busy-loop on subsequent recovery ticks.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from typing import Mapping
 
@@ -41,6 +42,7 @@ class IntentResourceCoordinator:
         *,
         slot_duration: timedelta,
         retry_delay: timedelta,
+        owner_epoch: int | None = None,
     ) -> None:
         if slot_duration <= timedelta(0) or retry_delay <= timedelta(0):
             raise ValueError("resource slot and retry duration must be positive")
@@ -49,6 +51,7 @@ class IntentResourceCoordinator:
         if not hasattr(persistence, "temporal_resources") or not hasattr(persistence, "_connection"):
             raise TypeError("authoritative intent coordination requires PostgreSQL")
         self._store = persistence
+        self._owner_epoch = owner_epoch
         self._db = persistence._connection
         self._policies = dict(policies)
         if any(not k or not isinstance(v, ResourcePoolContract) for k,v in self._policies.items()):
@@ -120,10 +123,28 @@ class IntentResourceCoordinator:
             """).format(self._waiting, self._waiting),
             (effect_id, organization_id, resource_key, ready_at))
 
+    def _writer_transaction(self):
+        # The runner's epoch is held throughout any admission or completion.
+        # The shared PG writer lock permits independent pool transactions,
+        # but fences workers whose epoch was superseded.
+        if self._owner_epoch is None:
+            return nullcontext()
+        return self._store.transaction(owner_epoch=self._owner_epoch)
+
     def admit(self, *, effect_id: str, intent_name: str,
               organization_id: str, due_at: datetime, now: datetime,
               causation_id: str | None = None) -> bool:
         """True: reservation durable and effect can run. False: wait is durable."""
+        with self._writer_transaction():
+            return self._admit(
+                effect_id=effect_id, intent_name=intent_name,
+                organization_id=organization_id, due_at=due_at, now=now,
+                causation_id=causation_id,
+            )
+
+    def _admit(self, *, effect_id: str, intent_name: str,
+               organization_id: str, due_at: datetime, now: datetime,
+               causation_id: str | None) -> bool:
         if not effect_id or not organization_id:
             raise ValueError("effect_id and organization_id must be nonempty")
         _aware(now, "now")
@@ -167,6 +188,10 @@ class IntentResourceCoordinator:
 
     def complete(self, effect_id: str) -> None:
         """Idempotent after a worker died following completion/commit."""
+        with self._writer_transaction():
+            self._complete(effect_id)
+
+    def _complete(self, effect_id: str) -> None:
         reservation = self._ledger.get(effect_id)
         if reservation is None:
             return  # Intent had no mapped resource.
