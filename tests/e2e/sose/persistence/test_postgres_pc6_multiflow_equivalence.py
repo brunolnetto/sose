@@ -187,6 +187,7 @@ def _semantic_view(store):
     deliveries = store.boundary_deliveries()
     assert all(d.status is DeliveryStatus.CONSUMED for d in deliveries)
     # Exclude physical lease attempt/epoch/owner/timestamp, not business facts.
+    proofs = store.business_effects()
     with store.boundary_transaction() as uow:
         consumed = tuple(sorted(
             (
@@ -195,7 +196,7 @@ def _semantic_view(store):
             ) for d in deliveries
         ))
         pending = tuple(sorted(
-            proof.effect_id for proof in store.business_effects()
+            proof.effect_id for proof in proofs
             if uow.get_command(proof.effect_id) is not None
         ))
     def norm(values):
