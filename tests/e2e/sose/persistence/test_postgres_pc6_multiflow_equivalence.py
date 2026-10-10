@@ -8,6 +8,7 @@ from dataclasses import asdict, replace
 from datetime import datetime, timedelta, timezone
 from threading import Barrier
 from uuid import uuid4
+from pathlib import Path
 import json
 import os
 
@@ -343,9 +344,16 @@ def test_pg_two_equal_value_pc6_flows_converge_after_independent_worker_deaths(t
     recovered = _execute("eq_fault_" + uuid4().hex[:12], inject_faults=True)
     # Persist a machine-readable result locally for CI evidence collection;
     # test logs and assertions remain authoritative if artifacts aren't uploaded.
+    evidence = json.dumps({
+        "protocol": "pc6-postgres-multiflow-v1",
+        "baseline": baseline, "recovered": recovered,
+        "equivalent": recovered == baseline,
+    }, default=str, sort_keys=True, indent=2)
     (tmp_path / "pc6-causal-equivalence.json").write_text(
-        json.dumps({"baseline": baseline, "recovered": recovered},
-                   default=str, sort_keys=True, indent=2),
-        encoding="utf-8",
+        evidence, encoding="utf-8",
     )
+    destination = os.environ.get("SOSE_PC6_EQUIVALENCE_REPORT")
+    if destination:
+        Path(destination).parent.mkdir(parents=True, exist_ok=True)
+        Path(destination).write_text(evidence, encoding="utf-8")
     assert recovered == baseline
