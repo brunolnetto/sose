@@ -129,7 +129,7 @@ class PostgresPersistence(MemoryPersistence):
                     """
                     CREATE TABLE IF NOT EXISTS {} (
                         correlation_id TEXT PRIMARY KEY,
-                        scope TEXT NOT NULL
+                        scope TEXT NOT NULL UNIQUE
                     )
                     """
                 ).format(self._correlation_owners_table)
@@ -359,6 +359,16 @@ class PostgresPersistence(MemoryPersistence):
                 (self.namespace, "writer-scope:" + scope),
             )
             if correlation_id is not None:
+                original = self._connection.execute(
+                    sql.SQL(
+                        "SELECT correlation_id FROM {} WHERE scope = %s"
+                    ).format(self._correlation_owners_table),
+                    (scope,),
+                ).fetchone()
+                if original is not None and original[0] != correlation_id:
+                    raise ValueError(
+                        "recovery job's durable organizational binding changed"
+                    )
                 self._connection.execute(
                     sql.SQL(
                         "INSERT INTO {} (correlation_id, scope) VALUES (%s, %s) "
