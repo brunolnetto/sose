@@ -100,12 +100,16 @@ class IntentResourceCoordinator:
                     resource_key TEXT NOT NULL,
                     causation_id TEXT NOT NULL,
                     correlation_id TEXT NOT NULL,
-                    local_effect_id TEXT
+                    local_effect_id TEXT,
+                    admitted_trigger_id TEXT
                 )
             """).format(self._links))
             # Existing authoritative single-store links must remain readable.
             self._db.execute(sql.SQL(
                 "ALTER TABLE {} ADD COLUMN IF NOT EXISTS local_effect_id TEXT"
+            ).format(self._links))
+            self._db.execute(sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS admitted_trigger_id TEXT"
             ).format(self._links))
         self._ledger = persistence.temporal_resources()
         for pool in self._policies.values():
@@ -187,20 +191,25 @@ class IntentResourceCoordinator:
     def admit(self, *, effect_id: str, intent_name: str,
               organization_id: str, due_at: datetime, now: datetime,
               causation_id: str | None = None,
-              correlation_id: str | None = None) -> bool:
+              correlation_id: str | None = None,
+              trigger_id: str | None = None) -> bool:
         """True: reservation durable and effect can run. False: wait is durable."""
         with self._writer_transaction():
             return self._admit(
                 effect_id=effect_id, intent_name=intent_name,
                 organization_id=organization_id, due_at=due_at, now=now,
                 causation_id=causation_id, correlation_id=correlation_id,
+                trigger_id=trigger_id,
             )
 
     def _admit(self, *, effect_id: str, intent_name: str,
                organization_id: str, due_at: datetime, now: datetime,
-               causation_id: str | None, correlation_id: str | None) -> bool:
+               causation_id: str | None, correlation_id: str | None,
+               trigger_id: str | None = None) -> bool:
         if not effect_id or not organization_id:
             raise ValueError("effect_id and organization_id must be nonempty")
+        if trigger_id is not None and not trigger_id:
+            raise ValueError("admitted trigger identity must be nonempty")
         _aware(now, "now")
         _aware(due_at, "due_at")
         pool = self._policies.get(intent_name)
@@ -210,6 +219,16 @@ class IntentResourceCoordinator:
         # This immutable link is the ownership boundary for reconciliation,
         # including a worker death before or after admission COMMIT.
         self._bind(effect_id, organization_id, key, causation_id, correlation_id)
+        if trigger_id is not None:
+            row = self._db.execute(sql.SQL("""
+                SELECT admitted_trigger_id FROM {} WHERE effect_id = %s
+            """).format(self._links), (self._resource_id(effect_id),)).fetchone()
+            if row is None:
+                raise ResourceConflictError("immutable resource intent link disappeared")
+            if row[0] is not None and row[0] != trigger_id:
+                raise ResourceConflictError(
+                    "physical effect was admitted by a different recurring trigger"
+                )
         current_wait = self.waiting(effect_id)
         if current_wait is not None:
             if current_wait.organization_id != organization_id:
@@ -248,6 +267,22 @@ class IntentResourceCoordinator:
                 (resource_id,),
             )
         self._advance_clock(organization_id, existing.start_at)
+        if trigger_id is not None:
+            # Durable enrollment precedes real domain execution. A successful
+            # effect cannot vanish from an interrupted recurring slot merely
+            # because the physical booking has already been released.
+            with self._db.transaction():
+                row = self._db.execute(sql.SQL("""
+                    UPDATE {} SET admitted_trigger_id = %s
+                    WHERE effect_id = %s
+                      AND (admitted_trigger_id IS NULL OR admitted_trigger_id = %s)
+                    RETURNING effect_id
+                """).format(self._links),
+                    (trigger_id, resource_id, trigger_id)).fetchone()
+                if row is None:
+                    raise ResourceConflictError(
+                        "physical effect was admitted by a different recurring trigger"
+                    )
         return True
 
     def booking_for(self, effect_id: str, intent_name: str) -> TemporalReservation | None:
@@ -282,6 +317,7 @@ class IntentResourceCoordinator:
     def reconcile_certified(
         self, store, organizations: Mapping[str, str], *,
         max_completed: int | None = None,
+        trigger_id: str | None = None,
     ) -> int:
         """Reconcile only resource reservations explicitly linked to this runner.
 
@@ -294,10 +330,12 @@ class IntentResourceCoordinator:
         pool_keys = {pool.address().lock_key() for pool in self._policies.values()}
         links = self._db.execute(sql.SQL("""
             SELECT effect_id, COALESCE(local_effect_id, effect_id),
-                   organization_id, resource_key, causation_id, correlation_id
+                   organization_id, resource_key, causation_id, correlation_id,
+                   admitted_trigger_id
               FROM {} ORDER BY effect_id
         """).format(self._links)).fetchall()
-        for resource_id, effect_id, organization_id, resource_key, causation_id, correlation_id in links:
+        for (resource_id, effect_id, organization_id, resource_key,
+             causation_id, correlation_id, admitted_trigger_id) in links:
             if max_completed is not None and completed >= max_completed:
                 break
             if resource_id != self._resource_id(effect_id):
@@ -307,7 +345,12 @@ class IntentResourceCoordinator:
             if organizations[correlation_id] != organization_id:
                 raise ResourceConflictError("resource reservation certificate organization mismatch")
             reservation = self._ledger.get(resource_id)
-            if reservation is None or reservation.status != "reserved":
+            if reservation is None or reservation.status not in ("reserved", "released"):
+                continue
+            if reservation.status == "released" and (
+                trigger_id is None or admitted_trigger_id != trigger_id
+            ):
+                # Older, already released work is not charged to a new slot.
                 continue
             with store.transaction() as uow:
                 command = uow.get_command(effect_id)
@@ -328,6 +371,10 @@ class IntentResourceCoordinator:
                 raise ResourceConflictError("resource reservation certificate causation mismatch")
             if organizations.get(certificate.correlation_id) != organization_id:
                 raise ResourceConflictError("resource reservation certificate organization mismatch")
-            self.complete(effect_id)
+            if reservation.status == "reserved":
+                self.complete(effect_id)
+            # A recovered, already released certified effect still consumes
+            # the unfinished trigger's durable action budget if enrollment
+            # proves it belongs to that SAME occurrence.
             completed += 1
         return completed

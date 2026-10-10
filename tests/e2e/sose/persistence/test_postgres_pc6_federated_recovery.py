@@ -26,7 +26,7 @@ from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.composition.scheduler import RecoverySchedule
 from sose.composition.resource_intents import IntentResourceCoordinator
 from sose.core.resource_identity import ResourcePoolContract
-from sose.core.resource_reservations import authoritative_effect_reservation_id
+from sose.core.resource_reservations import authoritative_effect_reservation_id, ResourceConflictError
 from sose.examples.logistics import simulation as logistics
 from sose.persistence.postgres import PostgresPersistence
 
@@ -131,6 +131,67 @@ raise AssertionError("worker unexpectedly survived the certified effect")
 """
 
 
+# Additional OS-kill windows; exiting the interpreter cannot execute cleanup.
+_KILL_OTHER_CUTS = """
+import os
+import sys
+from datetime import timedelta
+from sose.composition.recovery import TradingCustomerRecoveryRunner
+from sose.composition.scheduler import RecoverySchedule
+from sose.composition.resource_intents import IntentResourceCoordinator
+from sose.core.resource_identity import ResourcePoolContract
+from sose.examples.logistics import simulation as logistics
+from sose.persistence.postgres import PostgresPersistence
+
+dsn, domain_ns, resource_ns, org, cut = sys.argv[1:]
+if cut == "after_booking":
+    original = IntentResourceCoordinator.admit
+    def killed(self, **kwargs):
+        result = original(self, **kwargs)
+        if result:
+            booked = self.booking_for(kwargs["effect_id"], kwargs["intent_name"])
+            assert booked.status == "reserved"
+            os._exit(79)
+        return result
+    IntentResourceCoordinator.admit = killed
+elif cut == "after_release":
+    original = IntentResourceCoordinator.complete
+    def killed(self, effect_id):
+        result = original(self, effect_id)
+        assert self._ledger.get(self._resource_id(effect_id)).status == "released"
+        os._exit(79)
+    IntentResourceCoordinator.complete = killed
+elif cut == "after_checkpoint":
+    original = TradingCustomerRecoveryRunner.run_trigger
+    def killed(self, *, trigger_id, now, observed_at=None):
+        result = original(self, trigger_id=trigger_id, now=now, observed_at=observed_at)
+        state = self.persistence.job_state(self.job_id)
+        assert state.active_trigger_id is None
+        assert state.last_completed_trigger_id == trigger_id
+        os._exit(79)
+    TradingCustomerRecoveryRunner.run_trigger = killed
+else:
+    raise AssertionError("unknown fault cut " + cut)
+with PostgresPersistence(dsn, namespace=domain_ns) as domain:
+    with PostgresPersistence(dsn, namespace=resource_ns) as shared:
+        schedule = RecoverySchedule(
+            TradingCustomerRecoveryRunner(
+                persistence=domain, owner_id="killed-a", job_id=f"recovery-{org}",
+                max_actions=1, resource_persistence=shared,
+                resource_policies={"composition.deliver_shipment": ResourcePoolContract(
+                    resource_type="pickup_courier", pool_id="shared-federated-courier",
+                    scope="shared", capacity=1,
+                )},
+                resource_organizations={org:org}, resource_slot_duration=timedelta(minutes=5),
+                resource_retry_delay=timedelta(minutes=5),
+            ),
+            start_at=logistics.ORIGIN, interval=timedelta(hours=1), max_slots=1,
+        )
+        schedule.run_due(now=logistics.ORIGIN)
+raise AssertionError("worker unexpectedly survived " + cut)
+"""
+
+
 def _proof(dsn, domain_names, resource_ns, seeds):
     with PostgresPersistence(dsn, namespace=resource_ns) as shared:
         coordinator = IntentResourceCoordinator(
@@ -216,7 +277,7 @@ def _proof(dsn, domain_names, resource_ns, seeds):
     return {"domains": domains, "ledger": ledger, "resource_clocks": clocks}
 
 
-def _experiment(dsn, *, fault: bool):
+def _experiment(dsn, *, fault: bool, cut: str = "after_certificate"):
     names = {"a": _namespace("pc6orga"), "b": _namespace("pc6orgb")}
     resource_ns = _namespace("pc6pool")
     seeds = {org: _init_domain(dsn, names[org], org) for org in ("a", "b")}
@@ -229,17 +290,22 @@ def _experiment(dsn, *, fault: bool):
         )
     assert resource_id("a") != resource_id("b")
     if fault:
+        script = _KILL_AFTER_COMMIT if cut == "after_certificate" else _KILL_OTHER_CUTS
         child = subprocess.run(
-            [sys.executable, "-c", _KILL_AFTER_COMMIT, dsn,
-             names["a"], resource_ns, "a"],
+            [sys.executable, "-c", script, dsn, names["a"], resource_ns, "a",
+             *([] if cut == "after_certificate" else [cut])],
             capture_output=True, text=True, check=False, timeout=90,
         )
         assert child.returncode == 79, child.stderr
         with PostgresPersistence(dsn, namespace=resource_ns) as shared:
-            assert shared.temporal_resources().get(resource_id("a")).status == "reserved"
+            expected = "released" if cut in {"after_release", "after_checkpoint"} else "reserved"
+            assert shared.temporal_resources().get(resource_id("a")).status == expected
         with PostgresPersistence(dsn, namespace=names["a"]) as dead:
-            assert dead.job_state("recovery-a").active_trigger_id is not None
-            assert dead.entity("shipment", seeds["a"][0]).state == "delivered"
+            state = dead.job_state("recovery-a")
+            assert state is not None
+            assert (state.active_trigger_id is not None) == (cut != "after_checkpoint")
+            expected_state = "created" if cut == "after_booking" else "delivered"
+            assert dead.entity("shipment", seeds["a"][0]).state == expected_state
     else:
         with PostgresPersistence(dsn, namespace=names["a"]) as a:
             with PostgresPersistence(dsn, namespace=resource_ns) as shared:
@@ -261,7 +327,8 @@ def _experiment(dsn, *, fault: bool):
         # the real Logistics transition.
         with PostgresPersistence(dsn, namespace=names["a"]) as a:
             with PostgresPersistence(dsn, namespace=resource_ns) as shared:
-                assert len(_schedule(a, shared, "a").run_due(now=logistics.ORIGIN)) == 1
+                resumed = _schedule(a, shared, "a").run_due(now=logistics.ORIGIN)
+                assert len(resumed) == (0 if cut == "after_checkpoint" else 1)
                 assert shared.temporal_resources().get(resource_id("a")).status == "released"
 
     with PostgresPersistence(dsn, namespace=names["b"]) as b:
@@ -319,6 +386,35 @@ def test_pg_real_killed_worker_recovers_two_autonomous_organizations_without_glo
         }, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
 
 
+
+def test_pg_os_kill_at_multiple_federated_causal_commit_windows_is_equivalent():
+    """Kill live workers at three different durable transitions, then reopen."""
+    assert DSN
+    baseline = _experiment(DSN, fault=False)
+    evidence = {}
+    for cut in ("after_booking", "after_release", "after_checkpoint"):
+        recovered = _experiment(DSN, fault=True, cut=cut)
+        assert recovered == baseline, f"causal state differs after {cut}"
+        evidence[cut] = {
+            "equivalent": True,
+            "digest_sha256": _digest(_canonical(recovered)),
+            "organization_clocks": _canonical(recovered["resource_clocks"]),
+            "booking_events": _canonical(recovered["ledger"]["events"]),
+            "job_triggers": {
+                org: _canonical(recovered["domains"][org]["triggers"])
+                for org in ("a", "b")
+            },
+        }
+    report_path = os.environ.get("SOSE_PC6_FEDERATED_FAULT_MATRIX_REPORT")
+    if report_path:
+        Path(report_path).write_text(json.dumps({
+            "protocol": "pc6-federated-fault-windows-v1",
+            "termination": "os._exit(79) in a separate worker process",
+            "cuts": evidence,
+            "reference_digest_sha256": _digest(_canonical(baseline)),
+            "all_equivalent": all(v["equivalent"] for v in evidence.values()),
+        }, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
 def test_pg_independent_org_writer_commits_while_another_org_holds_its_lease():
     """A long-running A transaction must not fence or serialize unrelated B."""
     assert DSN
@@ -352,3 +448,46 @@ def test_pg_independent_org_writer_commits_while_another_org_holds_its_lease():
         assert not worker.is_alive()
         assert not failure, failure
         assert a.writer_epoch() == owned.epoch
+
+
+def test_pg_federated_enrollment_is_immutable_and_survives_a_full_restart():
+    """A physical grant belongs to exactly one durable scheduled occurrence."""
+    assert DSN
+    ns = _namespace("pc6_trigger_link")
+    kwargs = dict(
+        effect_id="local-effect-1", intent_name=POLICY, organization_id="a",
+        due_at=logistics.PICKUP_DUE, now=logistics.ORIGIN,
+        causation_id="boundary-a", correlation_id="a",
+    )
+    with PostgresPersistence(DSN, namespace=ns) as shared:
+        coordinator = IntentResourceCoordinator(
+            shared, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
+            effect_scope="organization-a",
+        )
+        assert coordinator.admit(**kwargs, trigger_id="organization-a:slot-0")
+        reserved = coordinator.booking_for("local-effect-1", POLICY)
+        assert coordinator.admit(**kwargs, trigger_id="organization-a:slot-0")
+        before = coordinator._ledger.snapshot()
+        with pytest.raises(ResourceConflictError, match="different recurring trigger"):
+            coordinator.admit(**kwargs, trigger_id="organization-a:slot-1")
+        with pytest.raises(ValueError, match="trigger identity"):
+            coordinator.admit(
+                **{**kwargs, "effect_id": "invalid-enrollment"}, trigger_id="",
+            )
+        assert coordinator._ledger.snapshot() == before
+        assert coordinator._ledger.get(reserved.reservation_id) == reserved
+        coordinator.complete("local-effect-1")
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        from psycopg import sql
+        coordinator = IntentResourceCoordinator(
+            reopened, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
+            effect_scope="organization-a",
+        )
+        row = reopened._connection.execute(sql.SQL("""
+            SELECT local_effect_id, admitted_trigger_id
+            FROM {} WHERE effect_id = %s
+        """).format(sql.Identifier(f"{ns}_resource_intent_link")),
+            (reserved.reservation_id,)).fetchone()
+        assert row == ("local-effect-1", "organization-a:slot-0")
+        assert coordinator._ledger.get(reserved.reservation_id).status == "released"
+        assert coordinator._ledger.audit()

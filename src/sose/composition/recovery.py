@@ -247,6 +247,14 @@ class TradingCustomerRecoveryRunner:
             )
             if self.resource_policies is not None else None
         )
+        # Each admitted resource effect has a durable enrollment in the
+        # current scheduled occurrence. A crash after physical release but
+        # before the job checkpoint must not make that slot appear empty.
+        with store.transaction() as uow:
+            current_job = uow.get_job_state(self.job_id)
+        active_trigger = (
+            current_job.active_trigger_id if current_job is not None else None
+        )
         # Reconcile a crash after immutable domain certification but before
         # release of its authoritative temporal reservation.
         if resource_intents is not None:
@@ -255,6 +263,7 @@ class TradingCustomerRecoveryRunner:
             # NEXT boundary effect one slot earlier than uninterrupted replay.
             actions += resource_intents.reconcile_certified(
                 store, self.resource_organizations, max_completed=self.max_actions,
+                trigger_id=active_trigger,
             )
             if actions >= self.max_actions:
                 return actions
@@ -288,6 +297,7 @@ class TradingCustomerRecoveryRunner:
                         correlation_id=source.correlation_id,
                         due_at=demand_due,
                         now=logical_now if logical_now is not None else now,
+                        **({"trigger_id": active_trigger} if active_trigger is not None else {}),
                     )
                     if not admitted:
                         deferred_this_tick.add(effect_id)
