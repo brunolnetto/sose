@@ -231,3 +231,30 @@ def test_pg_booking_for_different_shipment_cannot_authorize_pickup():
             )
         assert store.entity("shipment", entities.shipment_id).state == "pickup_scheduled"
         assert not store.resource_reservations()
+
+
+def test_pg_invalid_booking_never_resumes_a_delayed_shipment():
+    """The resume state transition cannot precede authoritative validation."""
+    assert DSN
+    with _context() as store:
+        entities, engine, backend = _runtime(store)
+        shipment = store.entity("shipment", entities.shipment_id)
+        logistics._dispatch(
+            engine, shipment, "delay",
+            key=("pc6", shipment.id, "delay-before-reservation"),
+        )
+        assert store.entity("shipment", entities.shipment_id).state == "delayed_pickup"
+        fake = TemporalReservation(
+            reservation_id="not-booked", address=_pool().address(),
+            owner_id="company-a", start_at=logistics.PICKUP_DUE,
+            end_at=logistics.PICKUP_DUE+SLOT,
+            causation_id="source-a",
+        )
+        events_before = tuple(store.events())
+        with pytest.raises(ResourceConflictError, match="authoritative pickup"):
+            logistics.reconcile_pickup(
+                store, engine, backend, entities=entities,
+                authoritative_pickup=fake,
+            )
+        assert store.entity("shipment", entities.shipment_id).state == "delayed_pickup"
+        assert store.events() == events_before
