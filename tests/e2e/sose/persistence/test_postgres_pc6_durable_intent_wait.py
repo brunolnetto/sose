@@ -130,6 +130,7 @@ def _execute(namespace, monkeypatch, *, restart):
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="resource-worker",
             resource_policies={POLICY_NAME: _pool()},
+            resource_organizations={"organization-a":"organization-a", "organization-b":"organization-b"},
             resource_slot_duration=SLOT, resource_retry_delay=SLOT,
         )
         assert runner._run_bounded(store, now=T0, logical_now=T0) == 1
@@ -145,6 +146,7 @@ def _execute(namespace, monkeypatch, *, restart):
             runner = TradingCustomerRecoveryRunner(
                 persistence=reopened, owner_id="recovered-worker",
                 resource_policies={POLICY_NAME: _pool()},
+            resource_organizations={"organization-a":"organization-a", "organization-b":"organization-b"},
                 resource_slot_duration=SLOT, resource_retry_delay=SLOT,
             )
             assert runner._run_bounded(
