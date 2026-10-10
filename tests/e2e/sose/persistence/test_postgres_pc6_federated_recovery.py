@@ -26,6 +26,7 @@ from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.composition.scheduler import RecoverySchedule
 from sose.composition.resource_intents import IntentResourceCoordinator
 from sose.core.resource_identity import ResourcePoolContract
+from sose.core.resource_reservations import authoritative_effect_reservation_id
 from sose.examples.logistics import simulation as logistics
 from sose.persistence.postgres import PostgresPersistence
 
@@ -136,7 +137,22 @@ def _proof(dsn, domain_names, resource_ns, seeds):
             shared, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
         )
         assert shared.temporal_resources().audit()
-        ledger = shared.temporal_resources().snapshot()
+        physical_ledger = shared.temporal_resources().snapshot()
+        # The two experiments use fresh namespace names. Only storage
+        # deployment scope IDs differ; normalize each globally qualified
+        # booking ID to the same semantic (organization, local effect) name.
+        # Causal predecessors and all other resource data are NOT removed.
+        serialized = json.dumps(physical_ledger, sort_keys=True, default=str)
+        for org, domain_ns in sorted(domain_names.items()):
+            local_effect_id = seeds[org][2]
+            physical_id = authoritative_effect_reservation_id(
+                local_effect_id, scope=domain_ns,
+            )
+            assert physical_id in serialized
+            serialized = serialized.replace(
+                physical_id, f"physical-effect:{org}:{local_effect_id}",
+            )
+        ledger = json.loads(serialized)
         clocks = {
             org: coordinator.logical_time(org)
             for org in sorted(domain_names)
@@ -198,6 +214,14 @@ def _experiment(dsn, *, fault: bool):
     names = {"a": _namespace("pc6orga"), "b": _namespace("pc6orgb")}
     resource_ns = _namespace("pc6pool")
     seeds = {org: _init_domain(dsn, names[org], org) for org in ("a", "b")}
+    # Organizations intentionally share the SAME locally deterministic ID;
+    # the authoritative ledger must still allocate independent physical IDs.
+    assert seeds["a"][2] == seeds["b"][2]
+    def resource_id(org):
+        return authoritative_effect_reservation_id(
+            seeds[org][2], scope=names[org],
+        )
+    assert resource_id("a") != resource_id("b")
     if fault:
         child = subprocess.run(
             [sys.executable, "-c", _KILL_AFTER_COMMIT, dsn,
@@ -206,7 +230,7 @@ def _experiment(dsn, *, fault: bool):
         )
         assert child.returncode == 79, child.stderr
         with PostgresPersistence(dsn, namespace=resource_ns) as shared:
-            assert shared.temporal_resources().get(seeds["a"][2]).status == "reserved"
+            assert shared.temporal_resources().get(resource_id("a")).status == "reserved"
         with PostgresPersistence(dsn, namespace=names["a"]) as dead:
             assert dead.job_state("recovery-a").active_trigger_id is not None
             assert dead.entity("shipment", seeds["a"][0]).state == "delivered"
@@ -221,7 +245,7 @@ def _experiment(dsn, *, fault: bool):
             schedule = _schedule(b, shared, "b")
             assert len(schedule.run_due(now=logistics.ORIGIN)) == 1
             assert b.job_state("recovery-b").next_tick == 1
-            assert shared.temporal_resources().get(seeds["b"][2]) is None
+            assert shared.temporal_resources().get(resource_id("b")) is None
             assert len(schedule.run_due(now=logistics.ORIGIN + INTERVAL)) == 1
             assert b.job_state("recovery-b").next_tick == 2
 
@@ -232,14 +256,14 @@ def _experiment(dsn, *, fault: bool):
         with PostgresPersistence(dsn, namespace=names["a"]) as a:
             with PostgresPersistence(dsn, namespace=resource_ns) as shared:
                 assert len(_schedule(a, shared, "a").run_due(now=logistics.ORIGIN)) == 1
-                assert shared.temporal_resources().get(seeds["a"][2]).status == "released"
+                assert shared.temporal_resources().get(resource_id("a")).status == "released"
 
     with PostgresPersistence(dsn, namespace=names["b"]) as b:
         with PostgresPersistence(dsn, namespace=resource_ns) as shared:
             assert len(_schedule(b, shared, "b").run_due(
                 now=logistics.ORIGIN + 2 * INTERVAL,
             )) == 1
-            assert shared.temporal_resources().get(seeds["b"][2]).status == "released"
+            assert shared.temporal_resources().get(resource_id("b")).status == "released"
             assert b.job_state("recovery-b").next_tick == 3
 
     return _proof(dsn, names, resource_ns, seeds)
