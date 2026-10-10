@@ -3,7 +3,7 @@
 The first durable ingress execution is barrier-synchronized: the test is not
 two sequential completions on two independent database connections.
 """
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import asdict
 from threading import Barrier, Lock
 from uuid import uuid4
@@ -42,7 +42,7 @@ def test_pg_two_real_customer_statecharts_overlap_without_business_aliasing(monk
                 ingress_correlations.append(correlation_id)
             # Both workers have durably ACKed their independent v2 ingress.
             # Neither can execute its first domain intent before the other.
-            arrival.wait(timeout=20)
+            arrival.wait(timeout=7)
         return original(
             persistence, effect_id=effect_id, fixtures=fixtures,
             correlation_id=correlation_id,
@@ -58,7 +58,15 @@ def test_pg_two_real_customer_statecharts_overlap_without_business_aliasing(monk
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(worker, key) for key in ("customer-a", "customer-b")]
-        results = tuple(f.result(timeout=90) for f in futures)
+        finished, unfinished = wait(futures, timeout=35)
+        assert not unfinished, "worker did not complete within bounded interval"
+        failures = [
+            (key, type(future.exception()).__name__, str(future.exception()))
+            for key, future in zip(("customer-a", "customer-b"), futures)
+            if future.exception() is not None
+        ]
+        assert not failures, f"independent worker errors: {failures}"
+        results = tuple(f.result() for f in futures)
 
     assert len(ingress_correlations) == 2
     assert len(set(ingress_correlations)) == 2
