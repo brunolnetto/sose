@@ -10,8 +10,22 @@ from datetime import datetime
 from typing import Literal
 
 from sose.core.resource_identity import ResourceAddress
+from sose.core.identity import deterministic_id
 
 ReservationStatus = Literal["reserved", "released", "preempted", "failed"]
+
+
+def authoritative_effect_reservation_id(effect_id: str, *, scope: str | None = None) -> str:
+    """Globally qualify locally deterministic effect IDs in a shared ledger.
+
+    Scope is the authoritative operational namespace, not a worker identity.
+    Existing single-store bookings retain their original IDs.
+    """
+    _nonempty(effect_id, "effect_id")
+    if scope is None:
+        return effect_id
+    _nonempty(scope, "scope")
+    return deterministic_id("federated-authoritative-resource-effect", scope, effect_id)
 
 
 def _aware(value: datetime, name: str) -> None:
