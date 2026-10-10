@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from contextlib import nullcontext
 from datetime import datetime
 
 from sose.core.identity import deterministic_id
@@ -247,7 +248,25 @@ class DurableResourceManager:
         self._pending_callbacks.pop(request_id, None)
         return True
 
+    def _release_guard(self, reservation_id: str):
+        """Scope a transient multi-commit guard to one durable reservation ID.
+
+        PostgreSQL's advisory session lock is not business truth. It prevents
+        a *live* release from racing restart reconciliation of its own intent.
+        Independent reservations never share this key; non-PG adapters retain
+        their historical single-worker behavior.
+        """
+        factory = getattr(self._persistence, "business_resource_guard", None)
+        return (
+            factory(f"sose.core.resource-release:{reservation_id}")
+            if callable(factory) else nullcontext()
+        )
+
     def release(self, backend, reservation_id: str) -> bool:
+        with self._release_guard(reservation_id):
+            return self._release_guarded(backend, reservation_id)
+
+    def _release_guarded(self, backend, reservation_id: str) -> bool:
         reservation = next(
             (
                 reservation
@@ -303,17 +322,25 @@ class DurableResourceManager:
             uow.delete_resource_release_intent(intent.intent_id)
 
     def _finalize_interrupted_releases(self) -> None:
-        for intent in self._persistence.resource_release_intents():
-            reservation = next(
-                (
-                    reservation
-                    for reservation in self._persistence.resource_reservations()
-                    if reservation.reservation_id == intent.reservation_id
-                ),
-                None,
-            )
-            if reservation is None:
+        for discovered in self._persistence.resource_release_intents():
+            # A *live* writer may be between durable intent commit and backend
+            # release. Wait on its reservation-specific guard, then re-read:
+            # a successfully completed writer must not be "recovered" twice.
+            with self._release_guard(discovered.reservation_id):
                 with self._persistence.transaction() as uow:
-                    uow.delete_resource_release_intent(intent.intent_id)
-                continue
-            self._finalize_release_intent(intent, reservation)
+                    intent = uow.get_resource_release_intent(discovered.intent_id)
+                    reservation = uow.get_resource_reservation(
+                        discovered.reservation_id
+                    )
+                if intent is None:
+                    continue
+                if intent != discovered:
+                    raise RuntimeError(
+                        f"resource release intent changed: {discovered.intent_id}"
+                    )
+                if reservation is None:
+                    with self._persistence.transaction() as uow:
+                        if uow.get_resource_release_intent(intent.intent_id) == intent:
+                            uow.delete_resource_release_intent(intent.intent_id)
+                    continue
+                self._finalize_release_intent(intent, reservation)
