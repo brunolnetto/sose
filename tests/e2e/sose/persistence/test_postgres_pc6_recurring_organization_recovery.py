@@ -372,3 +372,27 @@ def test_scoped_job_cannot_silently_rebind_another_organization():
         with pytest.raises(ValueError, match="organizational binding changed"):
             b.run_scheduled_trigger(scheduled_for=T0 + timedelta(minutes=5))
         assert store.job_state("shared-job") == original
+
+
+def test_correlation_cannot_be_claimed_by_two_distinct_recurring_jobs():
+    assert DSN
+    ns = _namespace()
+    with (
+        PostgresPersistence(DSN, namespace=ns) as a,
+        PostgresPersistence(DSN, namespace=ns) as b,
+    ):
+        first = TradingCustomerRecoveryRunner(
+            persistence=a, owner_id="worker-a", job_id="company-a-job",
+            scoped_writer=True, correlation_id="shared-correlation",
+            max_actions=1,
+        )
+        first.run_scheduled_trigger(scheduled_for=T0)
+        different = TradingCustomerRecoveryRunner(
+            persistence=b, owner_id="worker-b", job_id="other-job",
+            scoped_writer=True, correlation_id="shared-correlation",
+            max_actions=1,
+        )
+        with pytest.raises(ValueError, match="already owned by another job"):
+            different.run_scheduled_trigger(scheduled_for=T0)
+        assert b.job_state("other-job") is None
+        assert b.job_state("company-a-job").run_count == 1
