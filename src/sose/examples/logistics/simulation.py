@@ -191,6 +191,19 @@ def reconcile_pickup(
         with persistence.temporal_resources().authorize_use(
             authoritative_pickup, at=backend.now,
         ):
+            with persistence.transaction() as uow:
+                command = uow.get_command(authoritative_pickup.reservation_id)
+                if (
+                    command is None
+                    or command.name != "composition.deliver_shipment"
+                    or command.entity_type != "shipment"
+                    or command.entity_id != shipment.id
+                    or command.causation_id != authoritative_pickup.causation_id
+                    or not command.correlation_id
+                ):
+                    raise ResourceConflictError(
+                        "authoritative pickup target or causal predecessor mismatch"
+                    )
             _dispatch(
                 engine, shipment, "pickup",
                 key=("logistics-pickup", shipment.id, "pickup"),
