@@ -225,6 +225,10 @@ class TradingCustomerRecoveryRunner:
             )
             if self.resource_policies is not None else None
         )
+        # Reconcile a crash after immutable domain certification but before
+        # release of its authoritative temporal reservation.
+        if resource_intents is not None:
+            resource_intents.reconcile_certified(store, self.resource_organizations)
         # A deferred effect stays durable, but must not monopolize this tick.
         deferred_this_tick: set[str] = set()
         for _ in range(self.max_actions):
