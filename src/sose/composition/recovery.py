@@ -299,18 +299,24 @@ class TradingCustomerRecoveryRunner:
                     and command.name in self.resource_policies
                     else None
                 )
-                if pickup is not None:
-                    if self.resource_persistence is not None:
-                        self._execute_pending(
-                            store, source, effect_id, authoritative_pickup=pickup,
-                            resource_persistence=self.resource_persistence,
-                        )
+                try:
+                    if pickup is not None:
+                        if self.resource_persistence is not None:
+                            self._execute_pending(
+                                store, source, effect_id, authoritative_pickup=pickup,
+                                resource_persistence=self.resource_persistence,
+                            )
+                        else:
+                            self._execute_pending(
+                                store, source, effect_id, authoritative_pickup=pickup,
+                            )
                     else:
-                        self._execute_pending(
-                            store, source, effect_id, authoritative_pickup=pickup,
-                        )
-                else:
-                    self._execute_pending(store, source, effect_id)
+                        self._execute_pending(store, source, effect_id)
+                except customer.DurableResourceWait:
+                    # Physical capacity contention is waiting, not failure.
+                    # The immutable Command stays durable for another slot.
+                    deferred_this_tick.add(effect_id)
+                    continue
                 if resource_intents is not None:
                     resource_intents.complete(effect_id)
                 actions += 1

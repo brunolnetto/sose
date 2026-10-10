@@ -4,6 +4,7 @@ from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import isfinite
+from time import monotonic, sleep
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.events import Command
@@ -22,6 +23,19 @@ from .boundary import BoundaryConsumerRegistry, BoundaryService
 from .effects import BusinessEffectService, CERTIFIED_INTENTS
 from .bindings import CustomerSettlementBinding, SettlementBindingService
 from .model import BoundaryMessage, DeliveryStatus
+
+
+class DurableResourceWait(RuntimeError):
+    """Durable work remains pending because finite physical capacity is busy.
+
+    Not a failed business transition: an independent recurring worker must
+    retry the original Command after competing physical work is released.
+    """
+
+    def __init__(self, resource_name: str, request_id: str) -> None:
+        self.resource_name = resource_name
+        self.request_id = request_id
+        super().__init__(f"physical resource still pending: {resource_name} / {request_id}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -634,6 +648,17 @@ def _execute_intent(
                     resource_persistence=resource_persistence,
                     authoritative_effect_id=effect_id,
                 ):
+                    request_id = f"pickup-courier:{shipment_id}"
+                    if (
+                        authoritative_pickup is None
+                        and engine.resources.has_request(request_id)
+                    ):
+                        # A demand or grant is already durable; its status can
+                        # change between pickup's check and this read. Retry
+                        # the same identity rather than inventing a new
+                        # occurrence or
+                        # recording terminal business failure would be wrong.
+                        raise DurableResourceWait("pickup_courier", request_id)
                     raise RuntimeError("logistics pickup failed")
 
             if current_state() == "picked_up":
@@ -1515,12 +1540,22 @@ def run_customer_demand_path(
             expected_message_id=message.message_id,
         )
         effects.append(effect)
-        _execute_intent(
-            persistence,
-            effect_id=effect,
-            fixtures=fixtures,
-            correlation_id=correlation_id,
-        )
+        # Synchronous reference demonstration only. Production recurring
+        # recovery uses a durable next tick, never wall-time busy-polling.
+        deadline = monotonic() + 12.0
+        while True:
+            try:
+                _execute_intent(
+                    persistence,
+                    effect_id=effect,
+                    fixtures=fixtures,
+                    correlation_id=correlation_id,
+                )
+                break
+            except DurableResourceWait:
+                if monotonic() >= deadline:
+                    raise
+                sleep(0.02)
 
     def publish_consume_execute(
         *,
