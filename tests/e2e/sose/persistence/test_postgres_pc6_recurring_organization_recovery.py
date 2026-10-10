@@ -396,3 +396,66 @@ def test_correlation_cannot_be_claimed_by_two_distinct_recurring_jobs():
             different.run_scheduled_trigger(scheduled_for=T0)
         assert b.job_state("other-job") is None
         assert b.job_state("company-a-job").run_count == 1
+
+
+class _KilledAfterCheckpoint(TradingCustomerRecoveryRunner):
+    """This test worker receives an actual SIGKILL outside an open transaction."""
+
+    def _run_bounded(self, store, *, now, logical_now=None):
+        import signal
+        state = store.job_state(self.job_id)
+        assert state is not None and state.active_trigger_id is not None
+        os.kill(os.getpid(), signal.SIGKILL)
+        raise AssertionError("SIGKILL returned unexpectedly")
+
+
+def _child_die_during_scoped_trigger(namespace):
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        runner = _KilledAfterCheckpoint(
+            persistence=store, owner_id="killed-process",
+            job_id="job-a", scoped_writer=True, correlation_id="org-a",
+            max_actions=1,
+        )
+        runner.run_scheduled_trigger(scheduled_for=T0)
+
+
+def test_actual_sigkill_restarts_a_job_while_another_advances():
+    import multiprocessing
+    import signal
+
+    assert DSN
+    ns = _namespace()
+    child = multiprocessing.get_context("spawn").Process(
+        target=_child_die_during_scoped_trigger, args=(ns,),
+    )
+    child.start()
+    child.join(timeout=20)
+    if child.is_alive():
+        child.kill()
+        child.join(timeout=10)
+        pytest.fail("scoped recovery child did not reach its durable kill window")
+    assert child.exitcode == -signal.SIGKILL
+
+    with PostgresPersistence(DSN, namespace=ns) as other:
+        dead_checkpoint = other.job_state("job-a")
+        assert dead_checkpoint is not None and dead_checkpoint.active_trigger_id is not None
+        other_runner = TradingCustomerRecoveryRunner(
+            persistence=other, owner_id="unaffected-worker",
+            job_id="job-b", scoped_writer=True,
+            correlation_id="org-b", max_actions=1,
+        )
+        other_runner.run_scheduled_trigger(scheduled_for=T0 + timedelta(hours=2))
+        assert other.job_state("job-b").run_count == 1
+        assert other.job_state("job-a") == dead_checkpoint
+
+    with PostgresPersistence(DSN, namespace=ns) as restored:
+        runner = TradingCustomerRecoveryRunner(
+            persistence=restored, owner_id="replacement-worker",
+            job_id="job-a", scoped_writer=True,
+            correlation_id="org-a", max_actions=1,
+        )
+        slot = runner.run_scheduled_trigger(scheduled_for=T0)
+        assert slot.actions == 0
+        assert restored.job_state("job-a").active_trigger_id is None
+        assert restored.job_state("job-a").logical_time == T0
+        assert restored.job_state("job-b").logical_time == T0 + timedelta(hours=2)
