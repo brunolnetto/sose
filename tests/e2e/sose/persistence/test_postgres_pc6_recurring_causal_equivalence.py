@@ -7,6 +7,8 @@ The scope of this protocol is the Logistics dispatch/pickup/delivery subgraph.
 """
 from dataclasses import asdict
 from datetime import timedelta
+from hashlib import sha256
+from pathlib import Path
 from uuid import uuid4
 import json
 import os
@@ -222,3 +224,25 @@ def test_real_two_org_logistics_subgraph_is_causally_equivalent_after_recovery(m
     assert set(restarted["organization_positions"]) == set(ORGS)
     assert len(restarted["certificates"]) == 2
     assert len(restarted["causal_links"]) == 2
+    report_path = os.environ.get("SOSE_PC6_RECURRING_REPORT")
+    if report_path:
+        canonical = json.dumps(
+            baseline, sort_keys=True, separators=(",", ":"), default=str,
+        )
+        restarted_canonical = json.dumps(
+            restarted, sort_keys=True, separators=(",", ":"), default=str,
+        )
+        report = {
+            "protocol": "pc6-recurring-two-organization-logistics-subgraph-v1",
+            "claim_scope": "Logistics dispatch-to-delivery only; not full Trading Company",
+            "comparison": "canonical causal partial order; not global worker interleaving",
+            "equivalent": canonical == restarted_canonical,
+            "continuous_sha256": sha256(canonical.encode()).hexdigest(),
+            "recovered_sha256": sha256(restarted_canonical.encode()).hexdigest(),
+            "continuous": baseline,
+            "restarted": restarted,
+        }
+        Path(report_path).write_text(
+            json.dumps(report, sort_keys=True, indent=2, default=str) + "\n",
+            encoding="utf-8",
+        )
