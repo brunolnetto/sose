@@ -312,7 +312,7 @@ class TradingCustomerRecoveryRunner:
                             )
                     else:
                         self._execute_pending(store, source, effect_id)
-                    except customer.DurableResourceWait:
+                except customer.DurableResourceWait:
                     # Physical capacity contention is waiting, not failure.
                     # The immutable Command stays durable for another slot.
                     deferred_this_tick.add(effect_id)
