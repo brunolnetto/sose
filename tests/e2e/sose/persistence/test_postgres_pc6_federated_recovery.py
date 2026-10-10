@@ -9,6 +9,11 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import json
+from dataclasses import asdict, is_dataclass
+from datetime import datetime
+from hashlib import sha256
+from pathlib import Path
 from threading import Event, Thread
 from datetime import timedelta
 from uuid import uuid4
@@ -215,6 +220,23 @@ def _experiment(dsn, *, fault: bool):
     return _proof(dsn, names, resource_ns, seeds)
 
 
+def _canonical(value):
+    if is_dataclass(value):
+        return _canonical(asdict(value))
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {str(k): _canonical(v) for k, v in sorted(value.items())}
+    if isinstance(value, (list, tuple)):
+        return [_canonical(v) for v in value]
+    return value
+
+
+def _digest(canonical):
+    return sha256(json.dumps(canonical, sort_keys=True, default=str,
+                             separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
 def test_pg_real_killed_worker_recovers_two_autonomous_organizations_without_global_lock():
     assert DSN
     uninterrupted = _experiment(DSN, fault=False)
@@ -226,6 +248,20 @@ def test_pg_real_killed_worker_recovers_two_autonomous_organizations_without_glo
     assert recovered["resource_clocks"]["b"] == logistics.ORIGIN + 2 * INTERVAL + SLOT
     assert len(recovered["ledger"]["reservations"]) == 2
     assert len(recovered["ledger"]["events"]) == 4
+    # Publish a machine-readable certificate of equivalence, not only a green
+    # assertion. The OS-killed worker ran in an actual separate process.
+    report_path = os.environ.get("SOSE_PC6_FEDERATED_REPORT")
+    if report_path:
+        reference = _canonical(uninterrupted)
+        resumed = _canonical(recovered)
+        Path(report_path).write_text(json.dumps({
+            "protocol": "pc6-federated-recovery-v1",
+            "injected_fault": "os._exit(79) after real Logistics certificate commit",
+            "equivalent": reference == resumed,
+            "reference_digest_sha256": _digest(reference),
+            "recovered_digest_sha256": _digest(resumed),
+            "recovered_causal_evidence": resumed,
+        }, indent=2, sort_keys=True, default=str) + "\\n", encoding="utf-8")
 
 
 def test_pg_independent_org_writer_commits_while_another_org_holds_its_lease():
