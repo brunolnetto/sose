@@ -184,11 +184,11 @@ def _claim_pair(stores, stage):
 def _semantic_view(store):
     """Take this view only after both workers quiesce, on a fresh connection."""
     audit = audit_causal_history(store)
-    deliveries = store.boundary_deliveries()
-    assert all(d.status is DeliveryStatus.CONSUMED for d in deliveries)
     # Exclude physical lease attempt/epoch/owner/timestamp, not business facts.
     proofs = store.business_effects()
     with store.boundary_transaction() as uow:
+        deliveries = uow.boundary_deliveries()
+        assert all(d.status is DeliveryStatus.CONSUMED for d in deliveries)
         consumed = tuple(sorted(
             (
                 d.message_id, d.consumer_effect_id,
