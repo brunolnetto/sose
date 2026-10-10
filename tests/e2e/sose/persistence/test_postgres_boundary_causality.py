@@ -137,10 +137,14 @@ def test_pg_parent_business_effect_blocks_descendants_between_workers():
 
         with left.transaction() as uow:
             uow.delete_command("pg-parent-effect")
+        # A missing Command without a BusinessEffectApplied is not completion.
+        # This deliberately models an incomplete or corrupt legacy write.
         child_lease = BoundaryService(right).claim_next(
             owner_id="worker-b", now=NOW, lease_duration=timedelta(minutes=5),
         )
-        assert child_lease is not None and child_lease.message_id == child.message_id
+        assert child_lease is None
+        # A separate concurrent-worker test below proves the positive path
+        # after real terminal state and authoritative certification.
 
 
 def test_pg_applied_business_certificate_serializes_descendant_claim(monkeypatch):
