@@ -232,6 +232,19 @@ class IntentResourceCoordinator:
         self._advance_clock(organization_id, existing.start_at)
         return True
 
+    def booking_for(self, effect_id: str, intent_name: str) -> TemporalReservation | None:
+        """Re-read the live authoritative grant, never trust an in-memory claim."""
+        pool = self._policies.get(intent_name)
+        if pool is None:
+            return None
+        booking = self._ledger.get(effect_id)
+        if (
+            booking is None or booking.status != "reserved"
+            or booking.address != pool.address()
+        ):
+            raise ResourceConflictError("mapped intent has no live authoritative reservation")
+        return booking
+
     def complete(self, effect_id: str) -> None:
         """Idempotent after a worker died following completion/commit."""
         with self._writer_transaction():
