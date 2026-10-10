@@ -13,6 +13,7 @@ import pytest
 
 from sose.backends.simpy import SimPyBackend
 from sose.composition.resource_intents import IntentResourceCoordinator
+from sose.core.events import Command
 from sose.core.resource_identity import ResourcePoolContract
 from sose.core.resource_reservations import ResourceConflictError, TemporalReservation
 from sose.examples.logistics import simulation as logistics
@@ -47,6 +48,16 @@ def _runtime(store):
     return entities, engine, backend
 
 
+def _bind_effect(store, effect_id, shipment_id, *, cause="source-a"):
+    with store.transaction() as uow:
+        uow.save_command(Command(
+            command_id=effect_id, name=POLICY, entity_type="shipment",
+            entity_id=shipment_id, issued_at=logistics.PICKUP_DUE,
+            due_at=logistics.PICKUP_DUE,
+            causation_id=cause, correlation_id="correlation-a",
+        ))
+
+
 def test_pg_pickup_requires_live_durable_booking_and_does_not_double_book_simpy():
     assert DSN
     with _context() as store:
@@ -65,6 +76,7 @@ def test_pg_pickup_requires_live_durable_booking_and_does_not_double_book_simpy(
             )
         assert store.entity("shipment", entities.shipment_id).state == "pickup_scheduled"
 
+        _bind_effect(store, "effect-a", entities.shipment_id)
         coordinator = IntentResourceCoordinator(
             store, {POLICY: pool}, slot_duration=SLOT, retry_delay=SLOT,
         )
@@ -107,6 +119,7 @@ def test_pg_pickup_cannot_run_before_or_after_its_durable_occupancy_window():
     assert DSN
     with _context() as store:
         entities, engine, backend = _runtime(store)
+        _bind_effect(store, "future-effect", entities.shipment_id)
         coordinator = IntentResourceCoordinator(
             store, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
         )
@@ -195,3 +208,26 @@ def test_pg_pickup_authorization_holds_pool_lock_through_transition_commit():
         assert completed.is_set()
         assert second.get("owned").status == "released"
         assert second.audit()
+
+
+def test_pg_booking_for_different_shipment_cannot_authorize_pickup():
+    assert DSN
+    with _context() as store:
+        entities, engine, backend = _runtime(store)
+        _bind_effect(store, "wrong-target", "a-different-shipment")
+        coordinator = IntentResourceCoordinator(
+            store, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
+        )
+        assert coordinator.admit(
+            effect_id="wrong-target", intent_name=POLICY,
+            organization_id="company-a", due_at=logistics.PICKUP_DUE,
+            now=logistics.PICKUP_DUE, causation_id="source-a",
+            correlation_id="correlation-a",
+        )
+        with pytest.raises(ResourceConflictError, match="target"):
+            logistics.reconcile_pickup(
+                store, engine, backend, entities=entities,
+                authoritative_pickup=coordinator.booking_for("wrong-target", POLICY),
+            )
+        assert store.entity("shipment", entities.shipment_id).state == "pickup_scheduled"
+        assert not store.resource_reservations()
