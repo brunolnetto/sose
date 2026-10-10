@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from math import isfinite
@@ -759,34 +759,45 @@ def _execute_intent(
         "composition.post_customer_journal",
         "composition.post_replenishment_journal",
     }:
-        # Journal submission and posting are separate committed transitions.
-        # Restore the backend at the authoritative position before advancing
-        # to the intent due time; rebuilding at a later origin is invalid.
-        position = persistence.simulation_position()
-        restore_at = position.logical_time if position is not None else intent.due_at
-        target_at = max(restore_at, intent.due_at)
-        _, engine = r2r.build_runtime(persistence, now=restore_at)
-        backend = SimPyBackend(origin=restore_at)
-        engine.rebuild_backend(backend)
-        backend.run_until(backend.now)
-        if target_at > backend.now:
-            backend.run_until(target_at)
-        engine.context.clock.now = target_at
-        with _causal_command_scope(
-            engine,
-            intent=intent,
-            correlation_id=correlation_id,
-        ):
-            if not r2r.submit_and_post_journal(
-                persistence,
+        # A shared posting processor has capacity one. Coordinate the whole
+        # journal statechart (which spans several durable transactions) across
+        # independent PostgreSQL workers, rather than letting one falsely
+        # interpret temporary resource contention as permanent business failure.
+        # Other adapters retain their existing single-worker semantics.
+        guard_factory = getattr(persistence, "business_resource_guard", None)
+        guard = (
+            guard_factory("r2r.posting_processor")
+            if callable(guard_factory) else nullcontext()
+        )
+        with guard:
+            # Journal submission and posting are separate committed transitions.
+            # Restore the backend at the authoritative position before advancing
+            # to the intent due time; rebuilding at a later origin is invalid.
+            position = persistence.simulation_position()
+            restore_at = position.logical_time if position is not None else intent.due_at
+            target_at = max(restore_at, intent.due_at)
+            _, engine = r2r.build_runtime(persistence, now=restore_at)
+            backend = SimPyBackend(origin=restore_at)
+            engine.rebuild_backend(backend)
+            backend.run_until(backend.now)
+            if target_at > backend.now:
+                backend.run_until(target_at)
+            engine.context.clock.now = target_at
+            with _causal_command_scope(
                 engine,
-                backend,
-                entities=fixtures.r2r,
+                intent=intent,
+                correlation_id=correlation_id,
             ):
-                raise RuntimeError("R2R journal posting failed")
-            posted = persistence.entity("journal_entry", fixtures.r2r.journal_id)
-            if posted is None or posted.state != "posted":
-                raise RuntimeError("R2R journal effect lacks durable posted state")
+                if not r2r.submit_and_post_journal(
+                    persistence,
+                    engine,
+                    backend,
+                    entities=fixtures.r2r,
+                ):
+                    raise RuntimeError("R2R journal posting failed")
+                posted = persistence.entity("journal_entry", fixtures.r2r.journal_id)
+                if posted is None or posted.state != "posted":
+                    raise RuntimeError("R2R journal effect lacks durable posted state")
     else:
         raise ValueError(f"unsupported Trading Company customer intent: {intent.name}")
 
