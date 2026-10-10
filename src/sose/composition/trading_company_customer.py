@@ -652,10 +652,11 @@ def _execute_intent(
                     if (
                         authoritative_pickup is None
                         and engine.resources.has_request(request_id)
-                        and engine.resources.reservation_for(request_id) is None
                     ):
-                        # ResourceDemand is already durable. Retrying must
-                        # reconstruct it; inventing a new occurrence or
+                        # A demand or grant is already durable; its status can
+                        # change between pickup's check and this read. Retry
+                        # the same identity rather than inventing a new
+                        # occurrence or
                         # recording terminal business failure would be wrong.
                         raise DurableResourceWait("pickup_courier", request_id)
                     raise RuntimeError("logistics pickup failed")
