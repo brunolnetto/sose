@@ -153,6 +153,12 @@ def _proof(dsn, domain_names, resource_ns, seeds):
                 physical_id, f"physical-effect:{org}:{local_effect_id}",
             )
         ledger = json.loads(serialized)
+        # Pool snapshots are sorted by storage-local UUID before redaction.
+        # Re-sort only AFTER scope canonicalization so a different deployment
+        # namespace cannot alter the ordering of causally equivalent records.
+        ledger["reservations"].sort()
+        ledger["outages"].sort()
+        ledger["events"].sort()
         clocks = {
             org: coordinator.logical_time(org)
             for org in sorted(domain_names)
