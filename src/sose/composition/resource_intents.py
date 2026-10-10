@@ -91,7 +91,8 @@ class IntentResourceCoordinator:
                     effect_id TEXT PRIMARY KEY,
                     organization_id TEXT NOT NULL,
                     resource_key TEXT NOT NULL,
-                    causation_id TEXT NOT NULL
+                    causation_id TEXT NOT NULL,
+                    correlation_id TEXT NOT NULL
                 )
             """).format(self._links))
         self._ledger = persistence.temporal_resources()
@@ -120,22 +121,25 @@ class IntentResourceCoordinator:
             """).format(self._positions, self._positions), (organization_id, at))
 
     def _bind(self, effect_id: str, organization_id: str,
-              resource_key: str, causation_id: str | None) -> None:
+              resource_key: str, causation_id: str | None,
+              correlation_id: str | None) -> None:
+        if not correlation_id:
+            raise ValueError("mapped intents require explicit causal correlation")
         if not causation_id:
             raise ValueError("mapped resource effects require immutable boundary causation")
         with self._db.transaction():
             previous = self._db.execute(sql.SQL("""
-                SELECT organization_id, resource_key, causation_id
+                SELECT organization_id, resource_key, causation_id, correlation_id
                   FROM {} WHERE effect_id = %s FOR UPDATE
             """).format(self._links), (effect_id,)).fetchone()
-            expected = (organization_id, resource_key, causation_id)
+            expected = (organization_id, resource_key, causation_id, correlation_id)
             if previous is not None:
                 if previous != expected:
                     raise ResourceConflictError("immutable resource intent ownership/causation changed")
                 return
             self._db.execute(sql.SQL("""
-                INSERT INTO {} (effect_id, organization_id, resource_key, causation_id)
-                VALUES (%s,%s,%s,%s)
+                INSERT INTO {} (effect_id, organization_id, resource_key, causation_id, correlation_id)
+                VALUES (%s,%s,%s,%s,%s)
             """).format(self._links), (effect_id, *expected))
 
     def _defer(self, effect_id: str, organization_id: str,
@@ -165,18 +169,19 @@ class IntentResourceCoordinator:
 
     def admit(self, *, effect_id: str, intent_name: str,
               organization_id: str, due_at: datetime, now: datetime,
-              causation_id: str | None = None) -> bool:
+              causation_id: str | None = None,
+              correlation_id: str | None = None) -> bool:
         """True: reservation durable and effect can run. False: wait is durable."""
         with self._writer_transaction():
             return self._admit(
                 effect_id=effect_id, intent_name=intent_name,
                 organization_id=organization_id, due_at=due_at, now=now,
-                causation_id=causation_id,
+                causation_id=causation_id, correlation_id=correlation_id,
             )
 
     def _admit(self, *, effect_id: str, intent_name: str,
                organization_id: str, due_at: datetime, now: datetime,
-               causation_id: str | None) -> bool:
+               causation_id: str | None, correlation_id: str | None) -> bool:
         if not effect_id or not organization_id:
             raise ValueError("effect_id and organization_id must be nonempty")
         _aware(now, "now")
@@ -187,7 +192,7 @@ class IntentResourceCoordinator:
         key = pool.address().lock_key()
         # This immutable link is the ownership boundary for reconciliation,
         # including a worker death before or after admission COMMIT.
-        self._bind(effect_id, organization_id, key, causation_id)
+        self._bind(effect_id, organization_id, key, causation_id, correlation_id)
         current_wait = self.waiting(effect_id)
         if current_wait is not None:
             if current_wait.organization_id != organization_id:
@@ -251,26 +256,20 @@ class IntentResourceCoordinator:
         completed = 0
         pool_keys = {pool.address().lock_key() for pool in self._policies.values()}
         links = self._db.execute(sql.SQL("""
-            SELECT effect_id, organization_id, resource_key, causation_id
+            SELECT effect_id, organization_id, resource_key, causation_id, correlation_id
               FROM {} ORDER BY effect_id
         """).format(self._links)).fetchall()
-        for effect_id, organization_id, resource_key, causation_id in links:
-            if resource_key not in pool_keys:
+        for effect_id, organization_id, resource_key, causation_id, correlation_id in links:
+            if resource_key not in pool_keys or correlation_id not in organizations:
                 continue
+            if organizations[correlation_id] != organization_id:
+                raise ResourceConflictError("resource reservation certificate organization mismatch")
             reservation = self._ledger.get(effect_id)
             if reservation is None or reservation.status != "reserved":
                 continue
             with store.transaction() as uow:
                 command = uow.get_command(effect_id)
                 certificate = uow.get_business_effect(effect_id)
-            # A shared pool can contain unrelated jobs. Select only effects
-            # owned by this runner OR explicitly certified under a correlation
-            # this runner owns. Contradictory owner/correlation must fail closed.
-            if (
-                organization_id not in organizations.values()
-                and (certificate is None or certificate.correlation_id not in organizations)
-            ):
-                continue
             if (reservation.owner_id != organization_id
                 or reservation.address.lock_key() != resource_key
                 or reservation.causation_id != causation_id):
@@ -281,6 +280,8 @@ class IntentResourceCoordinator:
                 raise ResourceConflictError(
                     "linked resource effect lacks both durable Command and business certificate"
                 )
+            if certificate.correlation_id != correlation_id:
+                raise ResourceConflictError("resource reservation certificate correlation mismatch")
             if certificate.boundary_message_id != causation_id:
                 raise ResourceConflictError("resource reservation certificate causation mismatch")
             if organizations.get(certificate.correlation_id) != organization_id:
