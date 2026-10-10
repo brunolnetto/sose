@@ -183,22 +183,18 @@ def reconcile_pickup(
         return False
 
     if authoritative_pickup is not None:
-        # SimPy executes the statechart. OLTP is the sole source of finite
-        # capacity for this opt-in pickup; never request a second SimPy lease.
-        booking = persistence.temporal_resources().get(authoritative_pickup.reservation_id)
-        if (
-            booking != authoritative_pickup
-            or booking.status != "reserved"
-            or booking.address.resource_type != "pickup_courier"
-            or not booking.start_at <= backend.now < booking.end_at
+        # The same PostgreSQL transaction pins physical capacity while the
+        # nested Engine UoW commits the pickup. SimPy never allocates a second
+        # courier for this opt-in path.
+        if authoritative_pickup.address.resource_type != "pickup_courier":
+            raise ResourceConflictError("authoritative pickup requires pickup_courier")
+        with persistence.temporal_resources().authorize_use(
+            authoritative_pickup, at=backend.now,
         ):
-            raise ResourceConflictError(
-                "authoritative pickup lacks a live matching temporal reservation"
+            _dispatch(
+                engine, shipment, "pickup",
+                key=("logistics-pickup", shipment.id, "pickup"),
             )
-        _dispatch(
-            engine, shipment, "pickup",
-            key=("logistics-pickup", shipment.id, "pickup"),
-        )
         return True
 
     request_id = f"pickup-courier:{shipment.id}"
