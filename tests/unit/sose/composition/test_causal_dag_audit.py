@@ -330,3 +330,20 @@ def test_certificate_cannot_claim_different_terminal_state_at_same_entity_versio
         uow.save_entity(replace(entity, state="cancelled"))
     with pytest.raises(CausalAuditError, match="certificate terminal state conflicts"):
         audit_causal_history(store)
+
+
+def test_certificate_allows_later_entity_version_without_inventing_historical_state():
+    """A receipt anchors its own version; a later state is not a contradiction."""
+    result = run_customer_demand_path()
+    store = result.persistence
+    proof = next(x for x in store.business_effects() if x.entity_type == "shipment")
+    baseline = audit_causal_history(store)
+    with store.transaction() as uow:
+        entity = uow.get_entity(proof.entity_type, proof.entity_id)
+        assert entity.version == proof.entity_version
+        uow.save_entity(replace(
+            entity, state="archived", version=entity.version + 1,
+        ))
+    replay = audit_causal_history(store)
+    assert replay.semantic_digest == baseline.semantic_digest
+    assert replay.applied_effects == baseline.applied_effects
