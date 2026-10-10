@@ -93,7 +93,8 @@ class OrganizationRecoveryFleet:
             location = (
                 ("postgres", store.dsn, store.namespace)
                 if hasattr(store, "dsn") and hasattr(store, "namespace")
-                else ("instance", id(store))
+                else (("sqlite", store.path) if hasattr(store, "path")
+                      and store.path != ":memory:" else ("instance", id(store)))
             )
             if location in locations:
                 raise ValueError("independent organizations require distinct operational stores")
