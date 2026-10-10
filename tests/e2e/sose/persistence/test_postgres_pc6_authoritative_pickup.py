@@ -293,6 +293,8 @@ def test_pg_crash_before_pickup_commit_rolls_back_domain_transition_not_booking(
     with PostgresPersistence(DSN, namespace=ns) as restarted:
         assert restarted.entity("shipment", entities.shipment_id).state == "pickup_scheduled"
         assert restarted.temporal_resources().get("crash-effect") == booking
+        events_before = {event.event_id for event in restarted.events()}
+        version_before = restarted.entity("shipment", entities.shipment_id).version
         position = restarted.simulation_position()
         restore_at = position.logical_time if position is not None else logistics.ORIGIN
         _, engine = logistics.build_runtime(restarted, now=restore_at)
@@ -303,13 +305,22 @@ def test_pg_crash_before_pickup_commit_rolls_back_domain_transition_not_booking(
             restarted, engine, backend, entities=entities,
             authoritative_pickup=booking,
         )
-        assert restarted.entity("shipment", entities.shipment_id).state == "picked_up"
-        assert sum(
-            event.entity_type == "shipment"
+        picked = restarted.entity("shipment", entities.shipment_id)
+        assert picked.state == "picked_up"
+        assert picked.version == version_before + 1
+        newly_committed = [
+            event for event in restarted.events()
+            if event.event_id not in events_before
+            and event.entity_type == "shipment"
             and event.entity_id == entities.shipment_id
-            and event.name == "pickup"
-            for event in restarted.events()
-        ) == 1
+        ]
+        assert len(newly_committed) == 1
+        events_after_pickup = restarted.events()
+        assert logistics.reconcile_pickup(
+            restarted, engine, backend, entities=entities,
+            authoritative_pickup=booking,
+        )
+        assert restarted.events() == events_after_pickup
         recovered = IntentResourceCoordinator(
             restarted, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
         )
