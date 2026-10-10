@@ -68,6 +68,7 @@ def seed_reference(
     dock_count: int = 2,
     forklift_count: int = 2,
     planned_completion_hours: float = 4.0,
+    instance_key: str | None = None,
 ) -> WarehouseManagementEntities:
     if origin_on_hand < 0:
         raise ValueError("origin_on_hand cannot be negative")
@@ -82,16 +83,19 @@ def seed_reference(
     if planned_completion_hours <= 0:
         raise ValueError("planned_completion_hours must be positive")
 
+    if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
+        raise ValueError("instance_key must be a nonempty string")
+    prefix = ("warehouse-management",) if instance_key is None else ("warehouse-management", instance_key)
     context, _ = build_runtime(persistence, now=now)
     origin_site = context.entities.create(
         WarehouseSite,
-        key=("warehouse-management", "site-origin"),
+        key=(*prefix, "site-origin"),
         state="operational",
         attributes={"code": "SITE-A", "name": "Origin DC"},
     )
     destination_site = context.entities.create(
         WarehouseSite,
-        key=("warehouse-management", "site-destination"),
+        key=(*prefix, "site-destination"),
         state="operational",
         attributes={"code": "SITE-B", "name": "Destination DC"},
     )
@@ -99,7 +103,7 @@ def seed_reference(
     docks = tuple(
         context.entities.create(
             Dock,
-            key=("warehouse-management", "dock", index),
+            key=(*prefix, "dock", index),
             state="available",
             attributes={"site_id": destination_site.id, "dock_code": f"D-{index + 1}"},
         )
@@ -108,7 +112,7 @@ def seed_reference(
     forklifts = tuple(
         context.entities.create(
             Forklift,
-            key=("warehouse-management", "forklift", index),
+            key=(*prefix, "forklift", index),
             state="available",
             attributes={"site_id": destination_site.id, "forklift_code": f"FL-{index + 1}"},
         )
@@ -116,13 +120,13 @@ def seed_reference(
     )
     truck = context.entities.create(
         Truck,
-        key=("warehouse-management", "truck-1"),
+        key=(*prefix, "truck-1"),
         state="scheduled",
         attributes={"truck_code": "TRK-1", "shipment_id": None},
     )
     origin_stock = context.entities.create(
         StockPosition,
-        key=("warehouse-management", origin_site.id, sku),
+        key=(*prefix, origin_site.id, sku),
         state="available",
         attributes={
             "site_id": origin_site.id,
@@ -133,7 +137,7 @@ def seed_reference(
     )
     destination_stock = context.entities.create(
         StockPosition,
-        key=("warehouse-management", destination_site.id, sku),
+        key=(*prefix, destination_site.id, sku),
         state="available",
         attributes={
             "site_id": destination_site.id,
@@ -144,7 +148,7 @@ def seed_reference(
     )
     shipment = context.entities.create(
         Shipment,
-        key=("warehouse-management", "shipment-1"),
+        key=(*prefix, "shipment-1"),
         state="planned",
         attributes={
             "origin_site_id": origin_site.id,
