@@ -504,7 +504,7 @@ jobs:
 
     env:
       SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
-      SOSE_PC6_EQUIVALENCE_REPORT: ${{ runner.temp }}/pc6-causal-equivalence.json
+      SOSE_PC6_EQUIVALENCE_REPORT: pc6-causal-equivalence.json
 
     steps:
       - name: Checkout
@@ -530,6 +530,6 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: pc6-postgres-causal-equivalence
-          path: ${{ runner.temp }}/pc6-causal-equivalence.json
+          path: pc6-causal-equivalence.json
           if-no-files-found: warn
           retention-days: 14
