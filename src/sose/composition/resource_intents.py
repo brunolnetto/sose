@@ -121,7 +121,8 @@ class IntentResourceCoordinator:
             (effect_id, organization_id, resource_key, ready_at))
 
     def admit(self, *, effect_id: str, intent_name: str,
-              organization_id: str, due_at: datetime, now: datetime) -> bool:
+              organization_id: str, due_at: datetime, now: datetime,
+              causation_id: str | None = None) -> bool:
         """True: reservation durable and effect can run. False: wait is durable."""
         if not effect_id or not organization_id:
             raise ValueError("effect_id and organization_id must be nonempty")
@@ -149,7 +150,7 @@ class IntentResourceCoordinator:
                 reservation_id=effect_id, address=pool.address(),
                 owner_id=organization_id, start_at=start,
                 end_at=start + self._slot,
-                causation_id=effect_id,
+                causation_id=causation_id,
             )
             try:
                 existing = self._ledger.reserve(request)
