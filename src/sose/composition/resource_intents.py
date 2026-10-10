@@ -14,6 +14,7 @@ from typing import Mapping
 from psycopg import sql
 
 from sose.core.resource_identity import ResourcePoolContract
+from sose.composition.effects import CERTIFIED_INTENTS
 from sose.core.resource_reservations import (
     ResourceCapacityError, ResourceConflictError, TemporalReservation, _aware,
 )
@@ -57,6 +58,8 @@ class IntentResourceCoordinator:
         self._policies = dict(policies)
         if any(not k or not isinstance(v, ResourcePoolContract) for k,v in self._policies.items()):
             raise ValueError("invalid named domain resource policy")
+        if not set(self._policies).issubset(CERTIFIED_INTENTS):
+            raise ValueError("resource-mapped intents require immutable business certification")
         self._slot = slot_duration
         self._retry = retry_delay
         self._waiting = sql.Identifier(f"{persistence.namespace}_resource_intent_wait")
@@ -207,3 +210,32 @@ class IntentResourceCoordinator:
         elif reservation.status != "released":
             raise ResourceConflictError("effect's resource was terminated by another cause")
         self._advance_clock(reservation.owner_id, reservation.end_at)
+
+    def reconcile_certified(self, store, organizations: Mapping[str, str]) -> int:
+        """Finish resource release lost after a certified Command was deleted.
+
+        A missing Command by itself is *not* proof that business execution
+        completed. Only a matching immutable BusinessEffectApplied receipt,
+        with the same boundary cause and organization, authorizes release.
+        """
+        completed = 0
+        addresses = {pool.address() for pool in self._policies.values()}
+        for reservation in self._ledger.reservations():
+            if reservation.address not in addresses or reservation.status != "reserved":
+                continue
+            with store.transaction() as uow:
+                command = uow.get_command(reservation.reservation_id)
+                certificate = uow.get_business_effect(reservation.reservation_id)
+            if command is not None:
+                continue
+            if certificate is None:
+                raise ResourceConflictError(
+                    "reserved effect lacks both durable Command and business certificate"
+                )
+            if certificate.boundary_message_id != reservation.causation_id:
+                raise ResourceConflictError("resource reservation certificate causation mismatch")
+            if organizations.get(certificate.correlation_id) != reservation.owner_id:
+                raise ResourceConflictError("resource reservation certificate organization mismatch")
+            self.complete(reservation.reservation_id)
+            completed += 1
+        return completed
