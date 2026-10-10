@@ -65,6 +65,7 @@ class PostgresPersistence(MemoryPersistence):
         self._meta_table = sql.Identifier(f"{namespace}_record_meta")
         self._record_table = sql.Identifier(f"{namespace}_record")
         self._scoped_writers_table = sql.Identifier(f"{namespace}_writer_scope")
+        self._correlation_owners_table = sql.Identifier(f"{namespace}_recovery_owner")
         self._connection = psycopg.connect(dsn, autocommit=True)
 
         with self._connection.transaction():
@@ -122,6 +123,16 @@ class PostgresPersistence(MemoryPersistence):
                     )
                     """
                 ).format(self._scoped_writers_table)
+            )
+            self._connection.execute(
+                sql.SQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        correlation_id TEXT PRIMARY KEY,
+                        scope TEXT NOT NULL
+                    )
+                    """
+                ).format(self._correlation_owners_table)
             )
             row = self._connection.execute(
                 sql.SQL(
@@ -332,11 +343,14 @@ class PostgresPersistence(MemoryPersistence):
 
     def claim_scoped_writer(
         self, scope: str, owner_id: str, *, expected_epoch: int,
+        correlation_id: str | None = None,
     ) -> ScopedWriterLease:
         if not scope or not owner_id:
             raise ValueError("scope and owner must be nonempty")
         if expected_epoch < 0:
             raise ValueError("expected_epoch must be >= 0")
+        if correlation_id is not None and not correlation_id:
+            raise ValueError("correlation_id must be nonempty")
         with self._connection.transaction():
             # Only workers claiming this same scope serialize. Do not use the
             # namespace-wide writer epoch or lock for independent jobs.
@@ -344,6 +358,24 @@ class PostgresPersistence(MemoryPersistence):
                 "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
                 (self.namespace, "writer-scope:" + scope),
             )
+            if correlation_id is not None:
+                self._connection.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (correlation_id, scope) VALUES (%s, %s) "
+                        "ON CONFLICT (correlation_id) DO NOTHING"
+                    ).format(self._correlation_owners_table),
+                    (correlation_id, scope),
+                )
+                owner = self._connection.execute(
+                    sql.SQL(
+                        "SELECT scope FROM {} WHERE correlation_id = %s"
+                    ).format(self._correlation_owners_table),
+                    (correlation_id,),
+                ).fetchone()
+                if owner is None or owner[0] != scope:
+                    raise ValueError(
+                        "recovery correlation is already owned by another job"
+                    )
             row = self._connection.execute(
                 sql.SQL("SELECT owner_epoch FROM {} WHERE scope = %s").format(
                     self._scoped_writers_table
