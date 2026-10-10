@@ -564,28 +564,37 @@ def _execute_intent(
                     raise RuntimeError("logistics shipment disappeared during recovery")
                 return current.state
 
-            if current_state() in {"created", "pickup_scheduled", "delayed_pickup"}:
-                # For a resumed schedule, respect the existing durable due time
-                # rather than scheduling a second pickup command.
-                pickup_times = [
-                    scheduled.due_at
-                    for work in persistence.scheduled_work()
-                    if (scheduled := persistence.command(work.command_id)) is not None
-                    and scheduled.name == "schedule_pickup"
-                    and scheduled.entity_type == "shipment"
-                    and scheduled.entity_id == shipment_id
-                ]
-                if pickup_times:
-                    pickup_due = max(backend.now, min(pickup_times))
-                    if pickup_due > backend.now:
-                        backend.run_until(pickup_due)
-                    else:
-                        backend.run_until(backend.now)
-                if not logistics.reconcile_pickup(
-                    persistence, engine, backend, entities=fixtures.logistics,
-                ):
-                    raise RuntimeError("logistics pickup failed")
-
+            # Pickup-courier has finite shared capacity. Serialize only this
+            # multi-transaction pickup lifecycle across PostgreSQL workers,
+            # not independent organization workflows or later shipment stages.
+            guard_factory = getattr(persistence, "business_resource_guard", None)
+            guard = (
+                guard_factory("logistics.pickup_courier")
+                if callable(guard_factory) else nullcontext()
+            )
+            with guard:
+                if current_state() in {"created", "pickup_scheduled", "delayed_pickup"}:
+                    # For a resumed schedule, respect the existing durable due time
+                    # rather than scheduling a second pickup command.
+                    pickup_times = [
+                        scheduled.due_at
+                        for work in persistence.scheduled_work()
+                        if (scheduled := persistence.command(work.command_id)) is not None
+                        and scheduled.name == "schedule_pickup"
+                        and scheduled.entity_type == "shipment"
+                        and scheduled.entity_id == shipment_id
+                    ]
+                    if pickup_times:
+                        pickup_due = max(backend.now, min(pickup_times))
+                        if pickup_due > backend.now:
+                            backend.run_until(pickup_due)
+                        else:
+                            backend.run_until(backend.now)
+                    if not logistics.reconcile_pickup(
+                        persistence, engine, backend, entities=fixtures.logistics,
+                    ):
+                        raise RuntimeError("logistics pickup failed")
+    
             if current_state() == "picked_up":
                 if not logistics.reconcile_origin_hub(
                     persistence, engine, backend, entities=fixtures.logistics,
