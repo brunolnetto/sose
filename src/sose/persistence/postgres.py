@@ -135,6 +135,28 @@ class PostgresPersistence(MemoryPersistence):
         self._revision = -1
         self._refresh_from_db(force=True)
 
+    @contextmanager
+    def business_resource_guard(self, resource_name: str) -> Iterator[None]:
+        """Coordinate a multi-commit domain operation on shared PG capacity.
+
+        A session advisory lock lasts across the inner domain transactions.
+        PostgreSQL releases it automatically if the owning worker connection
+        dies, unlike an in-memory mutex. It is not a durable business receipt.
+        """
+        if not resource_name:
+            raise ValueError("resource_name must be nonempty")
+        self._connection.execute(
+            "SELECT pg_advisory_lock(hashtext(%s), hashtext(%s))",
+            (self.namespace, resource_name),
+        )
+        try:
+            yield
+        finally:
+            self._connection.execute(
+                "SELECT pg_advisory_unlock(hashtext(%s), hashtext(%s))",
+                (self.namespace, resource_name),
+            )
+
     def close(self) -> None:
         self._connection.close()
 
