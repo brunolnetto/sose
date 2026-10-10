@@ -67,7 +67,9 @@ def test_crash_during_recurrence_replays_only_its_job_slot(monkeypatch):
 
     def bounded(self, store, *, now, logical_now=None):
         scope = store.lease.scope
-        observations.append((scope, now))
+        # Physical lease/observation time may be later on restart; the
+        # persisted schedule's logical time must remain the original slot.
+        observations.append((scope, now, store.job_state(self.job_id).logical_time))
         if scope == "job-a" and failure["armed"]:
             failure["armed"] = False
             raise RuntimeError("simulated worker death after durable checkpoint")
@@ -114,8 +116,10 @@ def test_crash_during_recurrence_replays_only_its_job_slot(monkeypatch):
         assert recovered_a.job_state("job-a").run_count == 2
         assert recovered_a.job_state("job-b").run_count == 1
         assert observations == [
-            ("job-a", T0), ("job-b", slots["organization-b"]),
-            ("job-a", T0), ("job-a", T0 + timedelta(minutes=5)),
+            ("job-a", T0, T0),
+            ("job-b", slots["organization-b"], slots["organization-b"]),
+            ("job-a", T0 + timedelta(minutes=5), T0),
+            ("job-a", T0 + timedelta(minutes=5), T0 + timedelta(minutes=5)),
         ]
 
 
