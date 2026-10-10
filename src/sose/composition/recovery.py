@@ -424,9 +424,13 @@ class TradingCustomerRecoveryRunner:
                 last_triggered_at=now,
             ))
 
-        actions = self._run_bounded(
-            store, now=observed_at if observed_at is not None else now, logical_now=now,
-        )
+        lease_clock = observed_at if observed_at is not None else now
+        if self.resource_policies is None:
+            # Legacy recovery extension points accept only 'now'. Preserve
+            # their call contract and the historical physical lease clock.
+            actions = self._run_bounded(store, now=lease_clock)
+        else:
+            actions = self._run_bounded(store, now=lease_clock, logical_now=now)
         with store.transaction() as uow:
             current = uow.get_job_state(self.job_id)
             if current is None or current.active_trigger_id != trigger_id:
