@@ -10,6 +10,7 @@ from sose.core.engine import Engine
 from sose.core.identity import deterministic_id
 from sose.core.randomness import RandomSource
 from sose.core.runtime import ResourceDefinition, StoreDefinition
+from sose.core.resource_reservations import ResourceConflictError, TemporalReservation
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.memory import MemoryPersistence
@@ -154,6 +155,7 @@ def reconcile_pickup(
     backend: SimPyBackend,
     *,
     entities: LogisticsEntities,
+    authoritative_pickup: TemporalReservation | None = None,
 ) -> bool:
     shipment = _shipment(persistence, entities)
     courier_available = engine.context.scenarios.attribute(
@@ -179,6 +181,25 @@ def reconcile_pickup(
             key=("logistics-pickup", shipment.id, "capacity-delay"),
         )
         return False
+
+    if authoritative_pickup is not None:
+        # SimPy executes the statechart. OLTP is the sole source of finite
+        # capacity for this opt-in pickup; never request a second SimPy lease.
+        booking = persistence.temporal_resources().get(authoritative_pickup.reservation_id)
+        if (
+            booking != authoritative_pickup
+            or booking.status != "reserved"
+            or booking.address.resource_type != "pickup_courier"
+            or not booking.start_at <= backend.now < booking.end_at
+        ):
+            raise ResourceConflictError(
+                "authoritative pickup lacks a live matching temporal reservation"
+            )
+        _dispatch(
+            engine, shipment, "pickup",
+            key=("logistics-pickup", shipment.id, "pickup"),
+        )
+        return True
 
     request_id = f"pickup-courier:{shipment.id}"
     reservation = engine.resources.ensure_requested(
