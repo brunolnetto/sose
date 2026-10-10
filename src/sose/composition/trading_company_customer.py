@@ -588,7 +588,7 @@ def _execute_intent(
 
             if current_state() == "out_for_delivery":
                 attempt = persistence.entity(
-                    "delivery_attempt", logistics.delivery_attempt_id(1),
+                    "delivery_attempt", logistics.delivery_attempt_id(1, shipment_id=shipment_id),
                 )
                 if attempt is not None and attempt.state == "delivered":
                     # Crash after attempt.deliver but before shipment.deliver:
