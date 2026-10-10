@@ -230,14 +230,18 @@ def _consume_next(
     *,
     owner_id: str,
     now: datetime,
+    expected_message_id: str,
 ) -> str:
     lease = service.claim_next(
         owner_id=owner_id,
         now=now,
         lease_duration=timedelta(hours=1),
+        message_id=expected_message_id,
     )
     if lease is None:
-        raise RuntimeError("expected one pending composition delivery")
+        raise RuntimeError("expected own pending composition delivery")
+    if lease.message_id != expected_message_id:
+        raise RuntimeError("composition claimed another causal flow")
     consumption = service.consume(
         lease=lease,
         registry=registry,
@@ -1449,6 +1453,7 @@ def run_customer_demand_path(
             registry,
             owner_id=owner_id,
             now=message.produced_at,
+            expected_message_id=message.message_id,
         )
         effects.append(effect)
         _execute_intent(
