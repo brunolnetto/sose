@@ -405,19 +405,29 @@ class PostgresPersistence(MemoryPersistence):
         self, *, owner_epoch: int | None = None,
         writer_scope: str | None = None,
     ) -> Iterator[MemoryUnitOfWork]:
-        """Serialize semantic boundary writes without serializing disjoint domain writes.
+        """Serialize overlapping causal boundary writes, not unrelated jobs.
 
-        Generic OLTP transactions intentionally permit concurrent independent
-        dirty records. Claim/ACK/publication are different: reading and
-        committing a causal boundary history must happen in one serial order.
-        Acquire the boundary advisory lock *before* opening the nested UoW
-        transaction so a second worker cannot snapshot an uncommitted parent.
+        Legacy calls exclusively lock the whole namespace. Scoped jobs take
+        the compatible shared namespace lock plus an exclusive per-job lock.
+        This lets independent correlations claim/ACK concurrently while any
+        legacy unscoped writer remains mutually exclusive with scoped writers.
         """
         with self._connection.transaction():
-            self._connection.execute(
-                "SELECT pg_advisory_xact_lock(hashtext(%s))",
-                (f"{self.namespace}:causal-boundary",),
-            )
+            boundary_namespace = f"{self.namespace}:causal-boundary"
+            if writer_scope is None:
+                self._connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (boundary_namespace,),
+                )
+            else:
+                self._connection.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtext(%s))",
+                    (boundary_namespace,),
+                )
+                self._connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                    (boundary_namespace, "job:" + writer_scope),
+                )
             with self.transaction(
                 owner_epoch=owner_epoch, writer_scope=writer_scope,
             ) as uow:
