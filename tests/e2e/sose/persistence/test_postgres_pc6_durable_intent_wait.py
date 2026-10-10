@@ -330,3 +330,27 @@ def test_pg_shared_pool_reconciler_does_not_claim_external_organization_work():
         ) == 0
         assert coordinator._ledger.get("other-job-reservation") == external
         assert coordinator._ledger.audit()
+
+
+def test_pg_reconciliation_keeps_another_job_of_same_organization_untouched():
+    assert DSN
+    with PostgresPersistence(DSN, namespace=_namespace("pc6sameorgjobs")) as db:
+        coordinator = _coordinator(db)
+        assert coordinator.admit(
+            effect_id="other-job", intent_name=POLICY_NAME,
+            organization_id="same-company", due_at=T0, now=T0,
+            causation_id="other-job-boundary", correlation_id="other-job-correlation",
+        )
+        # Even when the organization and pool match, this causal correlation
+        # belongs to a different recovery job and cannot be reconciled here.
+        with db.transaction() as uow:
+            uow.save_business_effect(BusinessEffectApplied.from_applied(
+                effect_id="other-job", boundary_message_id="other-job-boundary",
+                correlation_id="other-job-correlation", entity_type="shipment",
+                entity_id="shipment-other", terminal_state="delivered",
+                entity_version=1, completed_at=T0,
+            ))
+        assert coordinator.reconcile_certified(
+            db, {"this-job-correlation": "same-company"},
+        ) == 0
+        assert coordinator._ledger.get("other-job").status == "reserved"
