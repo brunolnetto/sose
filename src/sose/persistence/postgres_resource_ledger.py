@@ -252,12 +252,12 @@ class PostgresTemporalResourceLedger:
             pool = self._pool(key)
             if pool.address() != replace(request.address, instance_id=None):
                 raise ResourceConflictError("reservation pool identity mismatch")
-            if request.address.instance_id is not None:
-                pool.address(instance_id=request.address.instance_id)
             if pool.instance_ids and request.address.instance_id is None:
                 raise ValueError("instanced resources must identify the physical instance")
             if not pool.instance_ids and request.address.instance_id is not None:
                 raise ValueError("fungible resource pool cannot use physical instance")
+            if request.address.instance_id is not None:
+                pool.address(instance_id=request.address.instance_id)
             existing = self._get_booking(request.reservation_id)
             if existing is not None:
                 if replace(existing, status="reserved", stopped_at=None) != request:
