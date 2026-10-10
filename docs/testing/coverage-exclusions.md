@@ -39,7 +39,7 @@ them would require invalidating an already-tested stronger contract.
 | `backends/simpy.py:626` | Preemptive resource lifecycle executes inside an active SimPy process |
 | `persistence/postgres.py:142` | Metadata singleton cannot disappear after transactional bootstrap |
 | `persistence/postgres.py:290` | Record changes have a closed internal operation set |
-| `persistence/postgres.py:537` | Metadata singleton cannot disappear during revision update |
+| `persistence/postgres.py:547` | Metadata singleton cannot disappear during revision update |
 | `persistence/sqlite_incremental.py:144` | Metadata singleton cannot disappear after transactional bootstrap |
 | `persistence/sqlite_incremental.py:288` | Record changes have a closed internal operation set |
 | `persistence/sqlite_incremental.py:327` | Writer metadata cannot disappear after a successful compare-and-swap update |
