@@ -5,6 +5,7 @@ second time when an opt-in PostgreSQL temporal reservation owns capacity.
 """
 from dataclasses import replace
 from datetime import timedelta
+from threading import Event, Thread
 from uuid import uuid4
 import os
 
@@ -131,3 +132,66 @@ def test_pg_pickup_cannot_run_before_or_after_its_durable_occupancy_window():
         )
         coordinator.complete("future-effect")
         assert coordinator._ledger.audit()
+
+
+def test_pg_pickup_authorization_holds_pool_lock_through_transition_commit():
+    """A concurrent release cannot invalidate the booking during its use."""
+    assert DSN
+    ns = "pc6_pickup_lock_" + uuid4().hex[:12]
+    with (
+        PostgresPersistence(DSN, namespace=ns) as owner,
+        PostgresPersistence(DSN, namespace=ns) as contender,
+    ):
+        first = IntentResourceCoordinator(
+            owner, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
+        )
+        second = contender.temporal_resources()
+        assert first.admit(
+            effect_id="owned", intent_name=POLICY,
+            organization_id="company-a", due_at=logistics.PICKUP_DUE,
+            now=logistics.PICKUP_DUE, causation_id="boundary-a",
+            correlation_id="flow-a",
+        )
+        booking = first.booking_for("owned", POLICY)
+        inside = Event()
+        unlock = Event()
+        attempted = Event()
+        completed = Event()
+        failures = []
+
+        def authorized_transition():
+            try:
+                with owner.temporal_resources().authorize_use(
+                    booking, at=logistics.PICKUP_DUE,
+                ):
+                    inside.set()
+                    if not unlock.wait(10):
+                        raise TimeoutError("authorization release not signaled")
+            except BaseException as exc:
+                failures.append(exc)
+
+        def concurrent_release():
+            try:
+                attempted.set()
+                second.release("owned", at=logistics.PICKUP_DUE + SLOT)
+                completed.set()
+            except BaseException as exc:
+                failures.append(exc)
+
+        first_worker = Thread(target=authorized_transition)
+        second_worker = Thread(target=concurrent_release)
+        first_worker.start()
+        assert inside.wait(10)
+        second_worker.start()
+        assert attempted.wait(10)
+        try:
+            assert not completed.wait(0.3)
+        finally:
+            unlock.set()
+        first_worker.join(timeout=10)
+        second_worker.join(timeout=10)
+        assert not first_worker.is_alive() and not second_worker.is_alive()
+        assert failures == []
+        assert completed.is_set()
+        assert second.get("owned").status == "released"
+        assert second.audit()
