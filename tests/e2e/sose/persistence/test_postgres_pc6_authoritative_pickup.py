@@ -293,10 +293,12 @@ def test_pg_crash_before_pickup_commit_rolls_back_domain_transition_not_booking(
     with PostgresPersistence(DSN, namespace=ns) as restarted:
         assert restarted.entity("shipment", entities.shipment_id).state == "pickup_scheduled"
         assert restarted.temporal_resources().get("crash-effect") == booking
-        _, engine = logistics.build_runtime(restarted)
-        backend = SimPyBackend(origin=logistics.ORIGIN)
+        position = restarted.simulation_position()
+        restore_at = position.logical_time if position is not None else logistics.ORIGIN
+        _, engine = logistics.build_runtime(restarted, now=restore_at)
+        backend = SimPyBackend(origin=restore_at)
         engine.rebuild_backend(backend)
-        backend.run_until(logistics.PICKUP_DUE)
+        backend.run_until(max(backend.now, logistics.PICKUP_DUE))
         assert logistics.reconcile_pickup(
             restarted, engine, backend, entities=entities,
             authoritative_pickup=booking,
