@@ -32,16 +32,15 @@ def flow_correlation_id() -> str:
     return deterministic_id("logistics-flow", "reference", "shipment-1")
 
 
-def delivery_attempt_id(ordinal: int) -> str:
+def delivery_attempt_id(ordinal: int, *, shipment_id: str | None = None) -> str:
     if ordinal < 1:
         raise ValueError("delivery attempt ordinal must be >= 1")
+    legacy_shipment = deterministic_id("entity", "shipment", "logistics-reference", "shipment-1")
+    if shipment_id is not None and not shipment_id:
+        raise ValueError("shipment_id must be nonempty")
+    identity = "shipment-1" if shipment_id in (None, legacy_shipment) else shipment_id
     return deterministic_id(
-        "entity",
-        "delivery_attempt",
-        "logistics-reference",
-        "shipment-1",
-        "attempt",
-        ordinal,
+        "entity", "delivery_attempt", "logistics-reference", identity, "attempt", ordinal,
     )
 
 
@@ -79,11 +78,15 @@ def seed_reference(
     resource_capacity: int = 1,
     hub_queue_capacity: int = 10,
     pickup_delay: timedelta = timedelta(hours=1),
+    instance_key: str | None = None,
 ) -> LogisticsEntities:
+    if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
+        raise ValueError("instance_key must be a nonempty string")
     context, engine = build_runtime(persistence, now=now)
     shipment = context.entities.create(
         Shipment,
-        key=("logistics-reference", "shipment-1"),
+        key=(("logistics-reference", "shipment-1") if instance_key is None
+             else ("logistics-reference", "shipment-1", instance_key)),
         state="created",
         attributes={"service_level": service_level, "route": route},
     )
@@ -121,8 +124,12 @@ def _shipment(persistence: MemoryPersistence, entities: LogisticsEntities) -> Sh
     return shipment
 
 
-def _attempt(persistence: MemoryPersistence, ordinal: int) -> DeliveryAttempt | None:
-    return persistence.entity("delivery_attempt", delivery_attempt_id(ordinal))
+def _attempt(
+    persistence: MemoryPersistence, ordinal: int, *, shipment_id: str | None = None,
+) -> DeliveryAttempt | None:
+    return persistence.entity(
+        "delivery_attempt", delivery_attempt_id(ordinal, shipment_id=shipment_id),
+    )
 
 
 def _dispatch(
@@ -378,18 +385,25 @@ def ensure_delivery_attempt(
     engine: Engine,
     *,
     ordinal: int,
+    shipment_id: str | None = None,
 ) -> DeliveryAttempt:
-    existing = _attempt(persistence, ordinal)
+    legacy_shipment = deterministic_id(
+        "entity", "shipment", "logistics-reference", "shipment-1",
+    )
+    actual_shipment = legacy_shipment if shipment_id is None else shipment_id
+    existing = _attempt(persistence, ordinal, shipment_id=actual_shipment)
     if existing is not None:
+        if existing.attributes.get("shipment_id") != actual_shipment:
+            raise ValueError("delivery attempt belongs to another shipment")
         return existing
 
     attempt = engine.context.entities.create(
         DeliveryAttempt,
-        key=("logistics-reference", "shipment-1", "attempt", ordinal),
+        key=("logistics-reference",
+             "shipment-1" if actual_shipment == legacy_shipment else actual_shipment,
+             "attempt", ordinal),
         state="pending",
-        attributes={"shipment_id": deterministic_id(
-            "entity", "shipment", "logistics-reference", "shipment-1"
-        ), "ordinal": ordinal},
+        attributes={"shipment_id": actual_shipment, "ordinal": ordinal},
     )
     with persistence.transaction() as uow:
         uow.save_entity(attempt)
@@ -494,7 +508,9 @@ def reconcile_delivery_dispatch(
     if not _eligible_delivery_dispatch_state(shipment):
         return False
 
-    attempt = ensure_delivery_attempt(persistence, engine, ordinal=ordinal)
+    attempt = ensure_delivery_attempt(
+        persistence, engine, ordinal=ordinal, shipment_id=entities.shipment_id,
+    )
     if attempt.state == "out_for_delivery":
         return True
     if not _attempt_ready_for_dispatch(attempt):
@@ -527,7 +543,7 @@ def reconcile_delivery_dispatch(
     ):
         return False
 
-    attempt = _attempt(persistence, ordinal)
+    attempt = _attempt(persistence, ordinal, shipment_id=entities.shipment_id)
     if attempt is None:
         raise RuntimeError("delivery attempt disappeared")
     _dispatch(
@@ -547,7 +563,7 @@ def reconcile_delivery_success(
     entities: LogisticsEntities,
     ordinal: int,
 ) -> None:
-    attempt = _attempt(persistence, ordinal)
+    attempt = _attempt(persistence, ordinal, shipment_id=entities.shipment_id)
     shipment = _shipment(persistence, entities)
     if attempt is None or attempt.state != "out_for_delivery":
         raise RuntimeError("delivery attempt is not active")
@@ -579,7 +595,7 @@ def reconcile_delivery_failure(
     ordinal: int,
     retry_after: timedelta = RETRY_DELAY,
 ) -> datetime:
-    attempt = _attempt(persistence, ordinal)
+    attempt = _attempt(persistence, ordinal, shipment_id=entities.shipment_id)
     shipment = _shipment(persistence, entities)
     if attempt is None or attempt.state != "out_for_delivery":
         raise RuntimeError("delivery attempt is not active")
