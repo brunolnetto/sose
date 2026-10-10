@@ -157,6 +157,7 @@ def reconcile_pickup(
     *,
     entities: LogisticsEntities,
     authoritative_pickup: TemporalReservation | None = None,
+    resource_persistence: MemoryPersistence | None = None,
 ) -> bool:
     shipment = _shipment(persistence, entities)
     courier_available = engine.context.scenarios.attribute(
@@ -171,7 +172,9 @@ def reconcile_pickup(
     if authorized and authoritative_pickup.address.resource_type != "pickup_courier":
         raise ResourceConflictError("authoritative pickup requires pickup_courier")
     guard = (
-        persistence.temporal_resources().authorize_use(authoritative_pickup, at=backend.now)
+        (resource_persistence or persistence).temporal_resources().authorize_use(
+            authoritative_pickup, at=backend.now,
+        )
         if authorized else nullcontext()
     )
     with guard:
