@@ -327,11 +327,16 @@ class DurableResourceManager:
             # release. Wait on its reservation-specific guard, then re-read:
             # a successfully completed writer must not be "recovered" twice.
             with self._release_guard(discovered.reservation_id):
-                with self._persistence.transaction() as uow:
-                    intent = uow.get_resource_release_intent(discovered.intent_id)
-                    reservation = uow.get_resource_reservation(
-                        discovered.reservation_id
-                    )
+                intent = next(
+                    (item for item in self._persistence.resource_release_intents()
+                     if item.intent_id == discovered.intent_id),
+                    None,
+                )
+                reservation = next(
+                    (item for item in self._persistence.resource_reservations()
+                     if item.reservation_id == discovered.reservation_id),
+                    None,
+                )
                 if intent is None:
                     continue
                 if intent != discovered:
@@ -340,7 +345,6 @@ class DurableResourceManager:
                     )
                 if reservation is None:
                     with self._persistence.transaction() as uow:
-                        if uow.get_resource_release_intent(intent.intent_id) == intent:
-                            uow.delete_resource_release_intent(intent.intent_id)
+                        uow.delete_resource_release_intent(intent.intent_id)
                     continue
                 self._finalize_release_intent(intent, reservation)
