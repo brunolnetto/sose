@@ -209,3 +209,28 @@ def test_pg_superseded_worker_epoch_cannot_book_or_advance_another_organization(
         assert {r.reservation_id for r in successor.temporal_resources().reservations()} == {
             "effect-a"
         }
+
+
+def test_pg_two_correlations_of_one_organization_share_monotonic_resource_time():
+    assert DSN
+    with PostgresPersistence(DSN, namespace=_namespace("pc6orgclock")) as store:
+        coordinator = _coordinator(store)
+        assert coordinator.admit(
+            effect_id="order-one", intent_name=POLICY_NAME,
+            organization_id="same-company", due_at=T0, now=T0,
+            causation_id="message-one",
+        )
+        coordinator.complete("order-one")
+        assert coordinator.logical_time("same-company") == T0+SLOT
+        assert coordinator.admit(
+            effect_id="order-two", intent_name=POLICY_NAME,
+            organization_id="same-company", due_at=T0, now=T0,
+            causation_id="message-two",
+        )
+        second = coordinator._ledger.get("order-two")
+        assert second.start_at == T0+SLOT
+        assert second.causation_id == "message-two"
+        coordinator.complete("order-two")
+        assert coordinator.logical_time("same-company") == T0+2*SLOT
+        assert coordinator.logical_time("unrelated-company") is None
+        assert coordinator._ledger.audit()
