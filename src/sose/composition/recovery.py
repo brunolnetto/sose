@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from typing import Mapping
+
+from sose.core.resource_identity import ResourcePoolContract
+from sose.composition.resource_intents import IntentResourceCoordinator
 
 from sose.composition import trading_company_customer as customer
 from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
@@ -61,6 +65,10 @@ class TradingCustomerRecoveryRunner:
     job_id: str = "trading-company-customer-recovery"
     max_actions: int = 16
     lease_duration: timedelta = timedelta(hours=1)
+    resource_policies: Mapping[str, ResourcePoolContract] | None = None
+    resource_organizations: Mapping[str, str] | None = None
+    resource_slot_duration: timedelta = timedelta(minutes=5)
+    resource_retry_delay: timedelta = timedelta(minutes=5)
 
     def __post_init__(self) -> None:
         if not self.owner_id or not self.job_id:
@@ -69,6 +77,16 @@ class TradingCustomerRecoveryRunner:
             raise ValueError("max_actions must be >= 1")
         if self.lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
+        if self.resource_policies is not None:
+            if self.resource_slot_duration <= timedelta(0) or self.resource_retry_delay <= timedelta(0):
+                raise ValueError("resource slot and retry delay must be positive")
+            if not self.resource_organizations or any(
+                not correlation or not organization
+                for correlation, organization in self.resource_organizations.items()
+            ):
+                raise ValueError(
+                    "resource policies require explicit correlation-to-organization bindings"
+                )
         if not callable(getattr(self.persistence, "writer_epoch", None)) or not callable(
             getattr(self.persistence, "claim_writer", None)
         ):
@@ -193,16 +211,54 @@ class TradingCustomerRecoveryRunner:
             raise ValueError("recovery runner received unsupported boundary contract")
         return registry
 
-    def _run_bounded(self, store: Persistence, *, now: datetime) -> int:
+    def _run_bounded(
+        self, store: Persistence, *, now: datetime, logical_now: datetime | None = None,
+    ) -> int:
         actions = 0
         service = BoundaryService(store)
+        resource_intents = (
+            IntentResourceCoordinator(
+                self.persistence, self.resource_policies,
+                slot_duration=self.resource_slot_duration,
+                retry_delay=self.resource_retry_delay,
+                owner_epoch=getattr(getattr(store, "lease", None), "epoch", None),
+            )
+            if self.resource_policies is not None else None
+        )
+        # Reconcile a crash after immutable domain certification but before
+        # release of its authoritative temporal reservation.
+        if resource_intents is not None:
+            resource_intents.reconcile_certified(store, self.resource_organizations)
+        # A deferred effect stays durable, but must not monopolize this tick.
+        deferred_this_tick: set[str] = set()
         for _ in range(self.max_actions):
             if actions >= self.max_actions:
                 break
-            pending = self._pending_effects(store)
+            pending = [
+                pair for pair in self._pending_effects(store)
+                if pair[1] not in deferred_this_tick
+            ]
             if pending:
                 source, effect_id = pending[0]
+                if resource_intents is not None:
+                    command = store.command(effect_id)
+                    if command is None:
+                        raise RuntimeError("accepted effect disappeared before resource admission")
+                    admitted = resource_intents.admit(
+                        effect_id=effect_id,
+                        intent_name=command.name,
+                        organization_id=self.resource_organizations[source.correlation_id],
+                        causation_id=source.message_id,
+                        correlation_id=source.correlation_id,
+                        due_at=command.due_at,
+                        now=logical_now if logical_now is not None else now,
+                    )
+                    if not admitted:
+                        deferred_this_tick.add(effect_id)
+                        continue
                 self._execute_pending(store, source, effect_id)
+                if resource_intents is not None:
+                    resource_intents.complete(effect_id)
                 actions += 1
                 continue
 
@@ -368,7 +424,13 @@ class TradingCustomerRecoveryRunner:
                 last_triggered_at=now,
             ))
 
-        actions = self._run_bounded(store, now=observed_at if observed_at is not None else now)
+        lease_clock = observed_at if observed_at is not None else now
+        if self.resource_policies is None:
+            # Legacy recovery extension points accept only 'now'. Preserve
+            # their call contract and the historical physical lease clock.
+            actions = self._run_bounded(store, now=lease_clock)
+        else:
+            actions = self._run_bounded(store, now=lease_clock, logical_now=now)
         with store.transaction() as uow:
             current = uow.get_job_state(self.job_id)
             if current is None or current.active_trigger_id != trigger_id:
