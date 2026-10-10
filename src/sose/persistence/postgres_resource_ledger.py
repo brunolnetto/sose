@@ -7,6 +7,7 @@ reservation records and immutable causal events commit in the *same* transaction
 from __future__ import annotations
 
 from dataclasses import asdict, replace
+from contextlib import contextmanager
 from datetime import datetime
 from hashlib import sha256
 import json
@@ -325,6 +326,32 @@ class PostgresTemporalResourceLedger:
 
     def get(self, reservation_id: str) -> TemporalReservation | None:
         return self._get_booking(reservation_id)
+
+    @contextmanager
+    def authorize_use(self, expected: TemporalReservation, *, at: datetime):
+        """Pin a live booking against release/failure while its domain transition commits.
+
+        Uses the same pool-scoped transaction lock as reserve/release/fail. When
+        the caller dispatches through the *same* persistence connection,
+        nested Engine UoWs are savepoints of this transaction: the validated
+        resource and the business transition are committed or rolled back
+        together, without serializing unrelated pools.
+        """
+        if not isinstance(expected, TemporalReservation):
+            raise TypeError("authoritative use requires TemporalReservation")
+        _aware(at, "at")
+        key = replace(expected.address, instance_id=None).lock_key()
+        with self._db.transaction():
+            self._lock(key)
+            actual = self._get_booking(expected.reservation_id)
+            if (
+                actual != expected or actual.status != "reserved"
+                or not actual.start_at <= at < actual.end_at
+            ):
+                raise ResourceConflictError(
+                    "authoritative pickup lacks a live matching temporal reservation"
+                )
+            yield actual
 
     def release(self, reservation_id: str, *, at: datetime) -> TemporalReservation:
         _aware(at, "at")

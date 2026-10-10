@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 
 from sose.backends.simpy import SimPyBackend
@@ -10,6 +11,7 @@ from sose.core.engine import Engine
 from sose.core.identity import deterministic_id
 from sose.core.randomness import RandomSource
 from sose.core.runtime import ResourceDefinition, StoreDefinition
+from sose.core.resource_reservations import ResourceConflictError, TemporalReservation
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.memory import MemoryPersistence
@@ -154,51 +156,84 @@ def reconcile_pickup(
     backend: SimPyBackend,
     *,
     entities: LogisticsEntities,
+    authoritative_pickup: TemporalReservation | None = None,
 ) -> bool:
     shipment = _shipment(persistence, entities)
     courier_available = engine.context.scenarios.attribute(
         "logistics.courier.available", True
     )
-    if shipment.state == "delayed_pickup" and courier_available:
-        _dispatch(
-            engine,
-            shipment,
-            "resume",
-            key=("logistics-pickup", shipment.id, "capacity-resume"),
+    # Validate the resource before *any* business transition, including
+    # resuming a delayed pickup. The domain UoW then commits under the same
+    # pool-scoped PostgreSQL transaction as the resource validation.
+    authorized = authoritative_pickup is not None and shipment.state in {
+        "pickup_scheduled", "delayed_pickup",
+    }
+    if authorized and authoritative_pickup.address.resource_type != "pickup_courier":
+        raise ResourceConflictError("authoritative pickup requires pickup_courier")
+    guard = (
+        persistence.temporal_resources().authorize_use(authoritative_pickup, at=backend.now)
+        if authorized else nullcontext()
+    )
+    with guard:
+        if authorized:
+            with persistence.transaction() as uow:
+                command = uow.get_command(authoritative_pickup.reservation_id)
+                if (
+                    command is None
+                    or command.name != "composition.deliver_shipment"
+                    or command.entity_type != "shipment"
+                    or command.entity_id != shipment.id
+                    or command.causation_id != authoritative_pickup.causation_id
+                    or not command.correlation_id
+                ):
+                    raise ResourceConflictError(
+                        "authoritative pickup target or causal predecessor mismatch"
+                    )
+        if shipment.state == "delayed_pickup" and courier_available:
+            _dispatch(
+                engine, shipment, "resume",
+                key=("logistics-pickup", shipment.id, "capacity-resume"),
+            )
+            shipment = _shipment(persistence, entities)
+
+        if shipment.state != "pickup_scheduled":
+            return shipment.state not in {"created", "delayed_pickup"}
+
+        if not courier_available:
+            _dispatch(
+                engine, shipment, "delay",
+                key=("logistics-pickup", shipment.id, "capacity-delay"),
+            )
+            return False
+
+        if authorized:
+            # PostgreSQL owns physical capacity; never allocate this courier
+            # again through the independent SimPy/Engine resource lifecycle.
+            _dispatch(
+                engine, shipment, "pickup",
+                key=("logistics-pickup", shipment.id, "pickup"),
+            )
+            return True
+
+        request_id = f"pickup-courier:{shipment.id}"
+        reservation = engine.resources.ensure_requested(
+            backend,
+            resource_name="pickup_courier",
+            request_id=request_id,
+            requested_at=backend.now,
         )
+        if reservation is None:
+            return False
+
         shipment = _shipment(persistence, entities)
-
-    if shipment.state != "pickup_scheduled":
-        return shipment.state not in {"created", "delayed_pickup"}
-
-    if not courier_available:
         _dispatch(
             engine,
             shipment,
-            "delay",
-            key=("logistics-pickup", shipment.id, "capacity-delay"),
+            "pickup",
+            key=("logistics-pickup", shipment.id, "pickup"),
         )
-        return False
-
-    request_id = f"pickup-courier:{shipment.id}"
-    reservation = engine.resources.ensure_requested(
-        backend,
-        resource_name="pickup_courier",
-        request_id=request_id,
-        requested_at=backend.now,
-    )
-    if reservation is None:
-        return False
-
-    shipment = _shipment(persistence, entities)
-    _dispatch(
-        engine,
-        shipment,
-        "pickup",
-        key=("logistics-pickup", shipment.id, "pickup"),
-    )
-    engine.resources.withdraw(backend, request_id)
-    return True
+        engine.resources.withdraw(backend, request_id)
+        return True
 
 
 def reconcile_origin_hub(

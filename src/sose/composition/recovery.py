@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Mapping
 
 from sose.core.resource_identity import ResourcePoolContract
+from sose.core.resource_reservations import TemporalReservation
 from sose.composition.resource_intents import IntentResourceCoordinator
 
 from sose.composition import trading_company_customer as customer
@@ -114,6 +115,7 @@ class TradingCustomerRecoveryRunner:
     @staticmethod
     def _execute_pending(
         store: Persistence, source: BoundaryMessage, effect_id: str,
+        *, authoritative_pickup: TemporalReservation | None = None,
     ) -> None:
         details = source.payload()
         order_id = str(details.get("fulfillment_order_id", ""))
@@ -135,11 +137,16 @@ class TradingCustomerRecoveryRunner:
                 reconciliation_id="", close_task_id="",
             ),
         )
+        kwargs = (
+            {"authoritative_pickup": authoritative_pickup}
+            if authoritative_pickup is not None else {}
+        )
         customer._execute_intent(
             store,
             effect_id=effect_id,
             fixtures=fixture,
             correlation_id=source.correlation_id,
+            **kwargs,
         )
 
     @staticmethod
@@ -244,19 +251,38 @@ class TradingCustomerRecoveryRunner:
                     command = store.command(effect_id)
                     if command is None:
                         raise RuntimeError("accepted effect disappeared before resource admission")
+                    demand_due = command.due_at
+                    if (
+                        command.name == "composition.deliver_shipment"
+                        and command.name in self.resource_policies
+                        and store.entity("shipment", command.entity_id) is not None
+                    ):
+                        demand_due = customer.pickup_resource_due_at(store, command)
                     admitted = resource_intents.admit(
                         effect_id=effect_id,
                         intent_name=command.name,
                         organization_id=self.resource_organizations[source.correlation_id],
                         causation_id=source.message_id,
                         correlation_id=source.correlation_id,
-                        due_at=command.due_at,
+                        due_at=demand_due,
                         now=logical_now if logical_now is not None else now,
                     )
                     if not admitted:
                         deferred_this_tick.add(effect_id)
                         continue
-                self._execute_pending(store, source, effect_id)
+                pickup = (
+                    resource_intents.booking_for(effect_id, command.name)
+                    if resource_intents is not None
+                    and command.name == "composition.deliver_shipment"
+                    and command.name in self.resource_policies
+                    else None
+                )
+                if pickup is not None:
+                    self._execute_pending(
+                        store, source, effect_id, authoritative_pickup=pickup,
+                    )
+                else:
+                    self._execute_pending(store, source, effect_id)
                 if resource_intents is not None:
                     resource_intents.complete(effect_id)
                 actions += 1

@@ -8,6 +8,7 @@ from math import isfinite
 from sose.backends.simpy import SimPyBackend
 from sose.core.events import Command
 from sose.core.identity import deterministic_id
+from sose.core.resource_reservations import ResourceConflictError, TemporalReservation
 from sose.persistence.memory import MemoryPersistence
 
 from sose.examples.order_to_cash import simulation as o2c
@@ -397,16 +398,46 @@ def _materialize_fulfillment_from_request(
     return created
 
 
+def pickup_resource_due_at(persistence: MemoryPersistence, intent: Command) -> datetime:
+    """Resolve the earliest physical pickup time from durable domain state."""
+    shipment = persistence.entity("shipment", intent.entity_id)
+    if shipment is None:
+        raise RuntimeError("pickup demand references a missing shipment")
+    position = persistence.simulation_position()
+    anchor = max(
+        intent.due_at,
+        position.logical_time if position is not None else intent.due_at,
+    )
+    if shipment.state == "created":
+        return anchor + timedelta(hours=1)
+    pickup_times = [
+        cmd.due_at
+        for work in persistence.scheduled_work()
+        if (cmd := persistence.command(work.command_id)) is not None
+        and cmd.name == "schedule_pickup"
+        and cmd.entity_type == "shipment"
+        and cmd.entity_id == shipment.id
+    ]
+    return max(anchor, min(pickup_times)) if pickup_times else anchor
+
+
 def _execute_intent(
     persistence: MemoryPersistence,
     *,
     effect_id: str,
     fixtures: _CustomerFixtures,
     correlation_id: str,
+    authoritative_pickup: TemporalReservation | None = None,
 ) -> None:
     intent = persistence.command(effect_id)
     if intent is None:
         return
+    if authoritative_pickup is not None and (
+        intent.name != "composition.deliver_shipment"
+        or authoritative_pickup.reservation_id != effect_id
+        or authoritative_pickup.causation_id != intent.causation_id
+    ):
+        raise ResourceConflictError("authoritative pickup grant contradicts source effect")
 
     if intent.name == "composition.request_fulfillment_inventory":
         order_ref = _materialize_fulfillment_from_request(
@@ -542,7 +573,14 @@ def _execute_intent(
                         with persistence.transaction() as uow:
                             uow.delete_scheduled_work(work.work_id)
                             uow.delete_command(scheduled.command_id)
-                pickup_due = recovery_time + timedelta(hours=1)
+                pickup_due = (
+                    authoritative_pickup.start_at if authoritative_pickup is not None
+                    else recovery_time + timedelta(hours=1)
+                )
+                if pickup_due < recovery_time:
+                    raise ResourceConflictError(
+                        "authoritative pickup interval precedes persisted recovery clock"
+                    )
                 pickup = engine.context.commands.create(
                     "schedule_pickup", target=shipment, due_at=pickup_due,
                     key=("trading-company", shipment.id, "schedule-pickup", intent.command_id),
@@ -577,12 +615,17 @@ def _execute_intent(
                 ]
                 if pickup_times:
                     pickup_due = max(backend.now, min(pickup_times))
+                    if authoritative_pickup is not None:
+                        pickup_due = max(pickup_due, authoritative_pickup.start_at)
                     if pickup_due > backend.now:
                         backend.run_until(pickup_due)
                     else:
                         backend.run_until(backend.now)
+                elif authoritative_pickup is not None and authoritative_pickup.start_at > backend.now:
+                    backend.run_until(authoritative_pickup.start_at)
                 if not logistics.reconcile_pickup(
                     persistence, engine, backend, entities=fixtures.logistics,
+                    authoritative_pickup=authoritative_pickup,
                 ):
                     raise RuntimeError("logistics pickup failed")
 
