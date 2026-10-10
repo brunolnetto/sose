@@ -155,7 +155,32 @@ def _proof(dsn, domain_names, resource_ns, seeds):
             assert domain.command(effect_id) is None
             state = domain.job_state(f"recovery-{org}")
             assert state is not None and state.active_trigger_id is None
+            # Compare authoritative causal boundary truth as well as final
+            # statecharts. Lease attempts/owners are intentionally excluded.
+            with domain.transaction(owner_epoch=domain.writer_epoch()) as uow:
+                deliveries = sorted(uow.boundary_deliveries(), key=lambda d: d.delivery_id)
+                boundary_messages = tuple(
+                    uow.get_boundary_message(d.message_id) for d in deliveries
+                )
+                boundary_consumptions = tuple(
+                    uow.get_boundary_consumption(d.delivery_id) for d in deliveries
+                )
             domains[org] = {
+                "boundary_messages": tuple(
+                    (m.message_id, m.contract_key, m.causation_id, m.correlation_id)
+                    for m in boundary_messages if m is not None
+                ),
+                "deliveries": tuple(
+                    (d.delivery_id, d.message_id, d.status.value, d.consumer_effect_id)
+                    for d in deliveries
+                ),
+                "consumptions": tuple(
+                    (c.consumption_id, c.message_id, c.consumer_effect_id)
+                    for c in boundary_consumptions if c is not None
+                ),
+                "scheduled_work": tuple(
+                    (w.work_id, w.command_id) for w in domain.scheduled_work()
+                ),
                 "shipment": (shipment.state, shipment.version),
                 "events": tuple(
                     (e.event_id, e.causation_id, e.correlation_id)
