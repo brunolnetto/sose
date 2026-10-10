@@ -261,7 +261,7 @@ def test_pg_real_killed_worker_recovers_two_autonomous_organizations_without_glo
             "reference_digest_sha256": _digest(reference),
             "recovered_digest_sha256": _digest(resumed),
             "recovered_causal_evidence": resumed,
-        }, indent=2, sort_keys=True, default=str) + "\\n", encoding="utf-8")
+        }, indent=2, sort_keys=True, default=str) + "\n", encoding="utf-8")
 
 
 def test_pg_independent_org_writer_commits_while_another_org_holds_its_lease():
