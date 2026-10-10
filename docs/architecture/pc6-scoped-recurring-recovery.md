@@ -30,6 +30,14 @@ immutable `resource_organizations` correlation-to-organization binding.
   resource-intent admission) checks that same scope and epoch. A stale
   same-job worker cannot commit after a successor acquires the scope, but
   different jobs may hold valid epochs at the same time.
+- Scoped boundary operations use a per-job causal lock and a **shared**
+  namespace compatibility lock. Two independent scoped jobs can concurrently
+  own their causal critical sections; an unscoped legacy boundary writer
+  still takes the namespace **exclusive** lock. This preserves coexistence
+  without forcing scoped organizations to serialize with each other.
+- An immutable PostgreSQL `correlation_id -> job_id` ownership record and the
+  persisted `SimulationJobState.config_json` prohibit silent reassignment
+  of a correlation or an existing job during recovery.
 - Boundary claims, pending domain-intent selections, reconstructed outbound
   messages and certified-reservation release are filtered by the runner's
   owned correlation. Unmapped legacy behavior remains unchanged.
@@ -56,10 +64,10 @@ flowchart LR
 
 ## Exact qualification still required
 
-Tests in this increment falsify namespace-wide job fencing, exercise
-interrupted and recovered slots, check two simultaneously active workers
-and verify that a PostgreSQL boundary ACK is claimed for only its owning
-correlation.
+Tests in this increment falsify namespace-wide job fencing and
+boundary locking, exercise interrupted/recovered slots and actual process
+SIGKILL, and verify PostgreSQL ACK ownership, real Logistics certification
+and authoritative reservation recovery after injected post-commit failure.
 
 **Not yet established**:
 
@@ -72,10 +80,10 @@ correlation.
 3. Mixed legacy SimPy resource requests and authoritative temporal
    reservations against the *same physical pool*.
 4. Removal or justified narrowing of the remaining **global** PostgreSQL
-   record-revision row and namespace boundary-history lock. These currently
-   serialize short commits or boundary transactions despite job-scoped
-   ownership; they should not be mistaken for a proven lock-free
-   per-organization execution model.
+   record-revision row. Scoped boundary locks no longer serialize distinct
+   jobs, although the compatibility lock intentionally excludes unscoped
+   writers. A globally incremented revision still creates a short shared
+   commit point, so this is not a lock-free organizational execution model.
 5. A published deterministic canonical comparison of multiple organizations'
    durable clocks, immutable causal graphs, resource-instance history and
    business effect certificates.
