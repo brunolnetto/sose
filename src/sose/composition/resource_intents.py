@@ -23,6 +23,7 @@ from sose.core.resource_reservations import (
 class DeferredResourceIntent:
     effect_id: str
     organization_id: str
+    resource_key: str
     ready_at: datetime
     attempts: int
 
@@ -87,7 +88,7 @@ class IntentResourceCoordinator:
 
     def waiting(self, effect_id: str) -> DeferredResourceIntent | None:
         row = self._db.execute(sql.SQL("""
-            SELECT effect_id, organization_id, ready_at, attempts
+            SELECT effect_id, organization_id, resource_key, ready_at, attempts
               FROM {} WHERE effect_id = %s
         """).format(self._waiting), (effect_id,)).fetchone()
         return DeferredResourceIntent(*row) if row is not None else None
@@ -157,6 +158,8 @@ class IntentResourceCoordinator:
         if current_wait is not None:
             if current_wait.organization_id != organization_id:
                 raise ResourceConflictError("effect's organizational ownership changed")
+            if current_wait.resource_key != key:
+                raise ResourceConflictError("effect's durable waiting resource changed")
             if now < current_wait.ready_at:
                 return False
         existing = self._ledger.get(effect_id)
@@ -165,6 +168,8 @@ class IntentResourceCoordinator:
                 raise ResourceConflictError("effect's organizational ownership changed")
             if existing.address != pool.address():
                 raise ResourceConflictError("effect's resource pool identity changed")
+            if existing.causation_id != causation_id:
+                raise ResourceConflictError("resource intent's causal predecessor changed")
             if existing.status not in ("reserved", "released"):
                 raise ResourceConflictError("reserved intent was failed or preempted")
         else:
