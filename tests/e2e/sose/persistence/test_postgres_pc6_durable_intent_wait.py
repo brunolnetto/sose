@@ -77,6 +77,12 @@ def test_pg_intent_capacity_wait_survives_restart_without_double_booking():
         assert _admit(coordinator, "effect-b", "organization-b", T0+3*SLOT)
         coordinator.complete("effect-b")
         assert coordinator._ledger.snapshot() == before
+        with pytest.raises(ResourceConflictError, match="causal predecessor"):
+            coordinator.admit(
+                effect_id="effect-b", intent_name=POLICY_NAME,
+                organization_id="organization-b", due_at=T0, now=T0+4*SLOT,
+                causation_id="unrelated-boundary",
+            )
         assert len(coordinator._ledger.reservations()) == 2
         assert len(coordinator._ledger.events()) == 4
         with pytest.raises(ResourceConflictError, match="ownership"):
