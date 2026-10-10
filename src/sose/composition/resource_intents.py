@@ -45,6 +45,7 @@ class IntentResourceCoordinator:
         slot_duration: timedelta,
         retry_delay: timedelta,
         owner_epoch: int | None = None,
+        fencing_persistence=None,
     ) -> None:
         if slot_duration <= timedelta(0) or retry_delay <= timedelta(0):
             raise ValueError("resource slot and retry duration must be positive")
@@ -53,6 +54,9 @@ class IntentResourceCoordinator:
         if not hasattr(persistence, "temporal_resources") or not hasattr(persistence, "_connection"):
             raise TypeError("authoritative intent coordination requires PostgreSQL")
         self._store = persistence
+        # A federated organization's writer epoch belongs to its domain store,
+        # not to the separately owned shared physical resource ledger.
+        self._fencing_persistence = fencing_persistence or persistence
         self._owner_epoch = owner_epoch
         self._db = persistence._connection
         self._policies = dict(policies)
@@ -165,7 +169,7 @@ class IntentResourceCoordinator:
         # but fences workers whose epoch was superseded.
         if self._owner_epoch is None:
             return nullcontext()
-        return self._store.transaction(owner_epoch=self._owner_epoch)
+        return self._fencing_persistence.transaction(owner_epoch=self._owner_epoch)
 
     def admit(self, *, effect_id: str, intent_name: str,
               organization_id: str, due_at: datetime, now: datetime,
