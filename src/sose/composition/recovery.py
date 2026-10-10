@@ -246,7 +246,14 @@ class TradingCustomerRecoveryRunner:
         # Reconcile a crash after immutable domain certification but before
         # release of its authoritative temporal reservation.
         if resource_intents is not None:
-            resource_intents.reconcile_certified(store, self.resource_organizations)
+            # A recovered release is a committed physical/causal action, not
+            # free extra work. Otherwise a resumed occurrence may emit the
+            # NEXT boundary effect one slot earlier than uninterrupted replay.
+            actions += resource_intents.reconcile_certified(
+                store, self.resource_organizations, max_completed=self.max_actions,
+            )
+            if actions >= self.max_actions:
+                return actions
         # A deferred effect stays durable, but must not monopolize this tick.
         deferred_this_tick: set[str] = set()
         for _ in range(self.max_actions):
