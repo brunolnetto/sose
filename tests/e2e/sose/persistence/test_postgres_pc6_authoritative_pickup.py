@@ -13,6 +13,9 @@ import pytest
 
 from sose.backends.simpy import SimPyBackend
 from sose.composition.resource_intents import IntentResourceCoordinator
+from sose.composition.boundary import BoundaryService
+from sose.composition.model import BoundaryMessage
+from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.core.events import Command
 from sose.core.resource_identity import ResourcePoolContract
 from sose.core.resource_reservations import ResourceConflictError, TemporalReservation
@@ -310,3 +313,72 @@ def test_pg_crash_before_pickup_commit_rolls_back_domain_transition_not_booking(
         )
         recovered.complete("crash-effect")
         assert recovered._ledger.audit()
+
+
+def test_pg_real_pickup_statechart_is_booked_through_recovery_runner_and_restarts():
+    """No mocks: boundary ACK, durable intent, admission, real SimPy pickup and certificate."""
+    assert DSN
+    ns = "pc6_pickup_real_" + uuid4().hex[:12]
+    correlation = "real-logistics-correlation"
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        entities = logistics.seed_reference(store)
+        source = BoundaryMessage.create(
+            contract_name="warehouse.dispatch_ready", contract_version=1,
+            source_domain="warehouse_fulfillment",
+            source_identity=entities.shipment_id, destination_domain="logistics",
+            occurrence_key="dispatch-ready", correlation_id=correlation,
+            causation_id=None, produced_at=logistics.ORIGIN,
+            payload={"shipment_id": entities.shipment_id},
+        )
+        service = BoundaryService(store)
+        service.publish(source)
+        lease = service.claim_next(
+            owner_id="ingress-worker", now=logistics.ORIGIN,
+            lease_duration=timedelta(minutes=10),
+            destination_domain="logistics",
+            accepted_contracts=frozenset({("warehouse.dispatch_ready", 1)}),
+        )
+        assert lease is not None
+        receipt = service.consume(
+            lease=lease, registry=TradingCustomerRecoveryRunner._registry_for(source),
+            now=logistics.ORIGIN,
+        )
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store, owner_id="recovery-worker", max_actions=1,
+            resource_policies={POLICY: _pool()},
+            resource_organizations={correlation: "company-a"},
+            resource_slot_duration=SLOT, resource_retry_delay=SLOT,
+        )
+        outcome = runner.run_scheduled_trigger(scheduled_for=logistics.ORIGIN)
+        assert outcome.actions == 1
+        assert store.entity("shipment", entities.shipment_id).state == "delivered"
+        assert not any(
+            r.resource_name == "pickup_courier"
+            for r in store.resource_reservations()
+        )
+        resource_booking = store.temporal_resources().get(receipt.consumer_effect_id)
+        assert resource_booking is not None and resource_booking.status == "released"
+        assert resource_booking.causation_id == source.message_id
+        assert store.command(receipt.consumer_effect_id) is None
+        assert len([
+            effect for effect in store.business_effects()
+            if effect.effect_id == receipt.consumer_effect_id
+        ]) == 1
+
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        runner = TradingCustomerRecoveryRunner(
+            persistence=reopened, owner_id="retry-worker", max_actions=1,
+            resource_policies={POLICY: _pool()},
+            resource_organizations={correlation: "company-a"},
+            resource_slot_duration=SLOT, resource_retry_delay=SLOT,
+        )
+        assert runner.run_scheduled_trigger(scheduled_for=logistics.ORIGIN).actions == 0
+        assert reopened.entity("shipment", entities.shipment_id).state == "delivered"
+        assert reopened.temporal_resources().get(
+            receipt.consumer_effect_id
+        ) == resource_booking
+        assert reopened.temporal_resources().audit()
+        assert len([
+            effect for effect in reopened.business_effects()
+            if effect.effect_id == receipt.consumer_effect_id
+        ]) == 1
