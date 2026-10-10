@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from typing import Mapping
 
 from .recovery import RecoveryTriggerResult, TradingCustomerRecoveryRunner
 
@@ -60,3 +61,53 @@ class RecoverySchedule:
             results.append(self.runner.run_scheduled_trigger(scheduled_for=slot, observed_at=now))
             slot = self._next_slot()
         return tuple(results)
+
+
+@dataclass(frozen=True, slots=True)
+class OrganizationRecoveryBatch:
+    """Independent durable results; failures never hide other organizations' work."""
+
+    completed: dict[str, tuple[RecoveryTriggerResult, ...]]
+    failures: dict[str, str]
+
+
+@dataclass(slots=True)
+class OrganizationRecoveryFleet:
+    """Dispatch existing recurring jobs without a fleet-wide clock or writer lease.
+
+    Each organization's RecoverySchedule owns its own persistence and job
+    checkpoint. A failed organization is recorded; other organizations remain
+    runnable. Call a single organization's schedule directly to run workers
+    concurrently in separate processes. The fleet is only a bounded dispatcher,
+    never an OLTP or scheduling authority.
+    """
+
+    schedules: Mapping[str, RecoverySchedule]
+
+    def __post_init__(self) -> None:
+        if not self.schedules or any(not key for key in self.schedules):
+            raise ValueError("fleet requires nonempty organization identities")
+        locations: set[tuple] = set()
+        for schedule in self.schedules.values():
+            store = schedule.runner.persistence
+            location = (
+                ("postgres", store.dsn, store.namespace)
+                if hasattr(store, "dsn") and hasattr(store, "namespace")
+                else ("instance", id(store))
+            )
+            if location in locations:
+                raise ValueError("independent organizations require distinct operational stores")
+            locations.add(location)
+
+    def run_due(self, *, now: datetime) -> OrganizationRecoveryBatch:
+        completed: dict[str, tuple[RecoveryTriggerResult, ...]] = {}
+        failures: dict[str, str] = {}
+        for organization_id, schedule in sorted(self.schedules.items()):
+            try:
+                results = schedule.run_due(now=now)
+            except Exception as exc:
+                failures[organization_id] = f"{type(exc).__name__}: {exc}"
+            else:
+                if results:
+                    completed[organization_id] = results
+        return OrganizationRecoveryBatch(completed=completed, failures=failures)
