@@ -160,6 +160,13 @@ def audit_causal_history(persistence: Persistence) -> CausalAuditReport:
                 entity = uow.get_entity(certificate.entity_type, certificate.entity_id)
                 if entity is None or entity.version < certificate.entity_version:
                     raise CausalAuditError("business certificate lacks compatible durable entity version")
+                if (
+                    entity.version == certificate.entity_version
+                    and entity.state != certificate.terminal_state
+                ):
+                    raise CausalAuditError(
+                        "business certificate terminal state conflicts with entity at certified version"
+                    )
                 target_field = {
                     "warehouse.dispatch_ready.v1": ("shipment", "shipment_id"),
                     "logistics.delivery_completed.v1": ("sales_order", "order_id"),
