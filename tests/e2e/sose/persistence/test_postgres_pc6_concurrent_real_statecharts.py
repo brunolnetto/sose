@@ -217,3 +217,51 @@ def test_pg_business_resource_guard_serializes_independent_workers():
         assert not a.is_alive() and not b.is_alive()
         assert acquired_second.is_set()
         assert failures == []
+
+
+def test_pg_cards_resource_guard_serializes_independent_workers():
+    """The shared payment processor capacity guard must span inner domain transactions."""
+    assert DSN is not None
+    namespace = "pc6_guard_" + uuid4().hex[:12]
+    with (
+        PostgresPersistence(DSN, namespace=namespace) as first,
+        PostgresPersistence(DSN, namespace=namespace) as second,
+    ):
+        acquired_first = Event()
+        release_first = Event()
+        attempted_second = Event()
+        acquired_second = Event()
+        failures = []
+
+        def owner():
+            try:
+                with first.business_resource_guard("cards_payments.authorization_settlement"):
+                    acquired_first.set()
+                    if not release_first.wait(10):
+                        raise TimeoutError("first payment worker was not released")
+            except BaseException as error:
+                failures.append(error)
+
+        def contender():
+            attempted_second.set()
+            try:
+                with second.business_resource_guard("cards_payments.authorization_settlement"):
+                    acquired_second.set()
+            except BaseException as error:
+                failures.append(error)
+
+        a = Thread(target=owner)
+        b = Thread(target=contender)
+        a.start()
+        assert acquired_first.wait(10)
+        b.start()
+        assert attempted_second.wait(10)
+        try:
+            assert not acquired_second.wait(0.3)
+        finally:
+            release_first.set()
+        a.join(timeout=10)
+        b.join(timeout=10)
+        assert not a.is_alive() and not b.is_alive()
+        assert acquired_second.is_set()
+        assert failures == []
