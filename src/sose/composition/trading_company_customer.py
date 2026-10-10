@@ -428,6 +428,7 @@ def _execute_intent(
     fixtures: _CustomerFixtures,
     correlation_id: str,
     authoritative_pickup: TemporalReservation | None = None,
+    resource_persistence: MemoryPersistence | None = None,
 ) -> None:
     intent = persistence.command(effect_id)
     if intent is None:
@@ -626,6 +627,7 @@ def _execute_intent(
                 if not logistics.reconcile_pickup(
                     persistence, engine, backend, entities=fixtures.logistics,
                     authoritative_pickup=authoritative_pickup,
+                    resource_persistence=resource_persistence,
                 ):
                     raise RuntimeError("logistics pickup failed")
 
