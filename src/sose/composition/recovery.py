@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+import json
 from typing import Mapping
 
 from sose.core.resource_identity import ResourcePoolContract
@@ -457,13 +458,21 @@ class TradingCustomerRecoveryRunner:
                 self.owner_id, expected_epoch=self.persistence.writer_epoch(),
             )
         store = FencedEnginePersistence(self.persistence, lease)
+        config = {}
+        if self.scoped_writer:
+            config["correlation_id"] = self.correlation_id
+            if self.resource_organizations is not None:
+                config["organization_id"] = self.resource_organizations[self.correlation_id]
+        config_json = json.dumps(config, sort_keys=True, separators=(",", ":"))
         with store.transaction() as uow:
             current = uow.get_job_state(self.job_id)
+            if current is not None and current.config_json != config_json:
+                raise ValueError("recovery job's durable organizational binding changed")
             if current is None:
                 current = SimulationJobState(
                     job_id=self.job_id,
                     domain_name="trading_company_composition",
-                    config_json="{}",
+                    config_json=config_json,
                     config_revision=1,
                     status="ready",
                     initialized=True,
