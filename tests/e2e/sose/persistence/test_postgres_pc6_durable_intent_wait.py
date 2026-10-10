@@ -11,7 +11,7 @@ from sose.composition.resource_intents import IntentResourceCoordinator
 from sose.core.events import Command
 from sose.core.resource_identity import ResourcePoolContract
 from sose.core.resource_reservations import ResourceConflictError
-from sose.persistence.postgres import PostgresPersistence
+from sose.persistence.postgres import PostgresPersistence, StaleWriterError
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
@@ -183,3 +183,27 @@ def test_pg_unmapped_domain_intent_never_consumes_an_unrelated_pool():
         )
         assert coordinator._ledger.reservations() == ()
         assert coordinator.logical_time("organization-a") is None
+
+
+def test_pg_superseded_worker_epoch_cannot_book_or_advance_another_organization():
+    assert DSN
+    ns = _namespace("pc6fencing")
+    with (
+        PostgresPersistence(DSN, namespace=ns) as first,
+        PostgresPersistence(DSN, namespace=ns) as successor,
+    ):
+        lease = first.claim_writer("owner-1", expected_epoch=first.writer_epoch())
+        guarded = IntentResourceCoordinator(
+            first, {POLICY_NAME: _pool()},
+            slot_duration=SLOT, retry_delay=SLOT,
+            owner_epoch=lease.epoch,
+        )
+        assert _admit(guarded, "effect-a", "organization-a", T0)
+        successor.claim_writer("owner-2", expected_epoch=lease.epoch)
+        with pytest.raises(StaleWriterError, match="stale writer epoch"):
+            _admit(guarded, "effect-b", "organization-b", T0+SLOT)
+        assert guarded.waiting("effect-b") is None
+        assert guarded.logical_time("organization-b") is None
+        assert {r.reservation_id for r in successor.temporal_resources().reservations()} == {
+            "effect-a"
+        }
