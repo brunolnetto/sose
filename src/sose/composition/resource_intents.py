@@ -219,6 +219,16 @@ class IntentResourceCoordinator:
         # This immutable link is the ownership boundary for reconciliation,
         # including a worker death before or after admission COMMIT.
         self._bind(effect_id, organization_id, key, causation_id, correlation_id)
+        if trigger_id is not None:
+            row = self._db.execute(sql.SQL("""
+                SELECT admitted_trigger_id FROM {} WHERE effect_id = %s
+            """).format(self._links), (self._resource_id(effect_id),)).fetchone()
+            if row is None:
+                raise ResourceConflictError("immutable resource intent link disappeared")
+            if row[0] is not None and row[0] != trigger_id:
+                raise ResourceConflictError(
+                    "physical effect was admitted by a different recurring trigger"
+                )
         current_wait = self.waiting(effect_id)
         if current_wait is not None:
             if current_wait.organization_id != organization_id:
