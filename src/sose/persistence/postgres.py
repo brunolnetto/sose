@@ -56,6 +56,14 @@ class PostgresPersistence(MemoryPersistence):
         self._connection = psycopg.connect(dsn, autocommit=True)
 
         with self._connection.transaction():
+            # CREATE TABLE IF NOT EXISTS does not serialize concurrent first
+            # creation of PostgreSQL composite types/catalog rows. Use the
+            # same namespace advisory lock as boundary/epoch writers, in its
+            # exclusive form, before any schema creation or migration.
+            self._connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (self.namespace,),
+            )
             self._connection.execute(
                 sql.SQL(
                     """
