@@ -11,7 +11,7 @@ from sose.core.engine import Engine
 from sose.core.identity import deterministic_id
 from sose.core.randomness import RandomSource
 from sose.core.runtime import ResourceDefinition, StoreDefinition
-from sose.core.resource_reservations import ResourceConflictError, TemporalReservation
+from sose.core.resource_reservations import ResourceConflictError, TemporalReservation, authoritative_effect_reservation_id
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.memory import MemoryPersistence
@@ -158,6 +158,7 @@ def reconcile_pickup(
     entities: LogisticsEntities,
     authoritative_pickup: TemporalReservation | None = None,
     resource_persistence: MemoryPersistence | None = None,
+    authoritative_effect_id: str | None = None,
 ) -> bool:
     shipment = _shipment(persistence, entities)
     courier_available = engine.context.scenarios.attribute(
@@ -179,8 +180,15 @@ def reconcile_pickup(
     )
     with guard:
         if authorized:
+            effect_id = authoritative_effect_id or authoritative_pickup.reservation_id
+            expected_resource_id = authoritative_effect_reservation_id(
+                effect_id,
+                scope=persistence.namespace if resource_persistence is not None else None,
+            )
+            if authoritative_pickup.reservation_id != expected_resource_id:
+                raise ResourceConflictError("authoritative pickup physical identity mismatch")
             with persistence.transaction() as uow:
-                command = uow.get_command(authoritative_pickup.reservation_id)
+                command = uow.get_command(effect_id)
                 if (
                     command is None
                     or command.name != "composition.deliver_shipment"
