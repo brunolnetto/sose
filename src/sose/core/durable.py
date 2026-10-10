@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+import sqlite3
 from typing import Protocol
 
 from sose.core.events import Command
@@ -112,33 +113,22 @@ class DurableScheduler:
         return None if not matches else matches[0]
 
     def cancel(self, work_id: str) -> bool:
-        """Atomically remove pending work and its persisted command.
+        """Atomically cancel work plus its Command from the same durable snapshot.
 
-        Backend callbacks already queued for this work may still fire. They are
-        intentionally harmless: Engine.dispatch_scheduled() rechecks durable
-        ownership and returns False for a cancelled/consumed item.
+        A competing worker may have already consumed both records. That is an
+        ordinary idempotent miss, not an orphaned-work integrity violation.
+        A work row *present* without its Command in the same transaction remains
+        an error, and must not be silently repaired.
         """
-        work = next(
-            (
-                candidate
-                for candidate in self._persistence.scheduled_work()
-                if candidate.work_id == work_id
-            ),
-            None,
-        )
-        if work is None:
-            return False
-        command = self._persistence.command(work.command_id)
-        if command is None:
-            raise RuntimeError(
-                f"scheduled work references missing command: {work.work_id}/{work.command_id}"
-            )
-
         with self._persistence.transaction() as uow:
-            persisted_work = uow.get_scheduled_work(work.work_id)
-            persisted_command = uow.get_command(command.command_id)
-            if persisted_work != work or persisted_command != command:
+            work = uow.get_scheduled_work(work_id)
+            if work is None:
                 return False
+            command = uow.get_command(work.command_id)
+            if command is None:
+                raise RuntimeError(
+                    f"scheduled work references missing command: {work.work_id}/{work.command_id}"
+                )
             uow.delete_scheduled_work(work.work_id)
             uow.delete_command(command.command_id)
         return True
@@ -164,16 +154,33 @@ class DurableScheduler:
         return tuple(item for item in self.pending() if item.work.due_at <= at)
 
     def pending(self) -> tuple[DurableScheduledItem, ...]:
-        items: list[DurableScheduledItem] = []
-        for work in self._persistence.scheduled_work():
-            command = self._persistence.command(work.command_id)
-            if command is None:
-                raise RuntimeError(
-                    f"scheduled work references missing command: {work.work_id}/{work.command_id}"
-                )
-            items.append(DurableScheduledItem(work=work, command=command))
-        return tuple(items)
+        # SQLite adapters use BEGIN IMMEDIATE and cannot open a second
+        # transaction inside the first. Existing callers can rebuild a backend
+        # while a SQLite transaction is active. Its connection is already the
+        # consistent snapshot, so reuse that read scope without starting BEGIN.
+        connection = getattr(self._persistence, "_connection", None)
+        if isinstance(connection, sqlite3.Connection) and connection.in_transaction:
+            items: list[DurableScheduledItem] = []
+            for work in self._persistence.scheduled_work():
+                command = self._persistence.command(work.command_id)
+                if command is None:
+                    raise RuntimeError(
+                        f"scheduled work references missing command: {work.work_id}/{work.command_id}"
+                    )
+                items.append(DurableScheduledItem(work=work, command=command))
+            return tuple(items)
 
+        # PostgreSQL and non-nested adapters read the pair in a single UoW.
+        with self._persistence.transaction() as uow:
+            items: list[DurableScheduledItem] = []
+            for work in uow.scheduled_work():
+                command = uow.get_command(work.command_id)
+                if command is None:
+                    raise RuntimeError(
+                        f"scheduled work references missing command: {work.work_id}/{work.command_id}"
+                    )
+                items.append(DurableScheduledItem(work=work, command=command))
+            return tuple(items)
 
 @dataclass(frozen=True, slots=True)
 class RecoveryParticipant:

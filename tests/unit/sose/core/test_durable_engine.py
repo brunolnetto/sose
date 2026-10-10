@@ -451,3 +451,84 @@ def test_cancel_returns_false_when_work_changes_mid_transaction():
     assert scheduler.cancel(scheduled.work_id) is False
     assert mismatch.command(command.command_id) == command
     assert mismatch.scheduled_work() == (scheduled,)
+
+
+def test_pending_reads_work_and_command_from_one_transaction(monkeypatch):
+    """A rival commit between separate persistence reads must not fabricate an orphan."""
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release", target=work_order, due_at=now,
+        key=("atomic-schedule-pending", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    work = scheduler.schedule(command)
+
+    def forbid_split_snapshot(*args, **kwargs):
+        raise AssertionError("split scheduled-work/Command read outside UnitOfWork")
+    monkeypatch.setattr(persistence, "scheduled_work", forbid_split_snapshot)
+    monkeypatch.setattr(persistence, "command", forbid_split_snapshot)
+
+    assert scheduler.pending()[0].work == work
+    assert scheduler.pending()[0].command == command
+
+
+def test_cancel_reads_work_and_command_from_one_transaction(monkeypatch):
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release", target=work_order, due_at=now,
+        key=("atomic-schedule-cancel", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    work = scheduler.schedule(command)
+
+    def forbid_split_snapshot(*args, **kwargs):
+        raise AssertionError("split cancellation snapshot outside UnitOfWork")
+    monkeypatch.setattr(persistence, "scheduled_work", forbid_split_snapshot)
+    monkeypatch.setattr(persistence, "command", forbid_split_snapshot)
+    assert scheduler.cancel(work.work_id) is True
+    assert scheduler.cancel(work.work_id) is False
+    with persistence.transaction() as uow:
+        assert uow.get_scheduled_work(work.work_id) is None
+        assert uow.get_command(command.command_id) is None
+
+
+def test_real_orphan_within_atomic_schedule_snapshot_is_rejected():
+    import pytest
+
+    now, context, persistence, engine, work_order = build_runtime()
+    command = context.commands.create(
+        "release", target=work_order, due_at=now,
+        key=("atomic-schedule-orphan", work_order.id),
+    )
+    scheduler = DurableScheduler(persistence)
+    work = scheduler.schedule(command)
+    with persistence.transaction() as uow:
+        uow.delete_command(command.command_id)
+    with pytest.raises(RuntimeError, match="scheduled work references missing command"):
+        scheduler.pending()
+    with pytest.raises(RuntimeError, match="scheduled work references missing command"):
+        scheduler.cancel(work.work_id)
+
+
+def test_pending_reuses_active_sqlite_transaction_without_nested_begin(tmp_path):
+    import pytest
+    from sose.core.events import Command
+    from sose.persistence.sqlite import SQLitePersistence
+    from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for adapter in (SQLitePersistence, SQLiteIncrementalPersistence):
+        with adapter(tmp_path / f"{adapter.__name__}.sqlite") as store:
+            command = Command(
+                command_id=f"nested-{adapter.__name__}",
+                name="release", entity_type="work_order",
+                entity_id="work-1", due_at=now,
+            )
+            scheduler = DurableScheduler(store)
+            scheduled = scheduler.schedule(command)
+            with store.transaction() as uow:
+                pending = scheduler.pending()
+                assert len(pending) == 1
+                assert pending[0].work == scheduled
+                assert pending[0].command == command
+                assert uow.get_command(command.command_id) == command

@@ -311,6 +311,9 @@ class MemoryUnitOfWork:
         self._working.commands.pop(command_id, None)
         self._mark_dirty("commands", command_id)
 
+    def scheduled_work(self) -> tuple[ScheduledWork, ...]:
+        return tuple(sorted(deepcopy(tuple(self._working.scheduled_work.values()))))
+
     def get_scheduled_work(self, work_id: str) -> ScheduledWork | None:
         value = self._working.scheduled_work.get(work_id)
         return deepcopy(value) if value else None
