@@ -66,6 +66,7 @@ class TradingCustomerRecoveryRunner:
     max_actions: int = 16
     lease_duration: timedelta = timedelta(hours=1)
     resource_policies: Mapping[str, ResourcePoolContract] | None = None
+    resource_organizations: Mapping[str, str] | None = None
     resource_slot_duration: timedelta = timedelta(minutes=5)
     resource_retry_delay: timedelta = timedelta(minutes=5)
 
@@ -79,6 +80,13 @@ class TradingCustomerRecoveryRunner:
         if self.resource_policies is not None:
             if self.resource_slot_duration <= timedelta(0) or self.resource_retry_delay <= timedelta(0):
                 raise ValueError("resource slot and retry delay must be positive")
+            if not self.resource_organizations or any(
+                not correlation or not organization
+                for correlation, organization in self.resource_organizations.items()
+            ):
+                raise ValueError(
+                    "resource policies require explicit correlation-to-organization bindings"
+                )
         if not callable(getattr(self.persistence, "writer_epoch", None)) or not callable(
             getattr(self.persistence, "claim_writer", None)
         ):
@@ -235,7 +243,8 @@ class TradingCustomerRecoveryRunner:
                     admitted = resource_intents.admit(
                         effect_id=effect_id,
                         intent_name=command.name,
-                        organization_id=source.correlation_id,
+                        organization_id=self.resource_organizations[source.correlation_id],
+                        causation_id=source.message_id,
                         due_at=command.due_at,
                         now=logical_now if logical_now is not None else now,
                     )
