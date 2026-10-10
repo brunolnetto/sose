@@ -508,3 +508,27 @@ def test_real_orphan_within_atomic_schedule_snapshot_is_rejected():
         scheduler.pending()
     with pytest.raises(RuntimeError, match="scheduled work references missing command"):
         scheduler.cancel(work.work_id)
+
+
+def test_pending_reuses_active_sqlite_transaction_without_nested_begin(tmp_path):
+    import pytest
+    from sose.core.events import Command
+    from sose.persistence.sqlite import SQLitePersistence
+    from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+
+    now = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    for adapter in (SQLitePersistence, SQLiteIncrementalPersistence):
+        with adapter(tmp_path / f"{adapter.__name__}.sqlite") as store:
+            command = Command(
+                command_id=f"nested-{adapter.__name__}",
+                name="release", entity_type="work_order",
+                entity_id="work-1", due_at=now,
+            )
+            scheduler = DurableScheduler(store)
+            scheduled = scheduler.schedule(command)
+            with store.transaction() as uow:
+                pending = scheduler.pending()
+                assert len(pending) == 1
+                assert pending[0].work == scheduled
+                assert pending[0].command == command
+                assert uow.get_command(command.command_id) == command
