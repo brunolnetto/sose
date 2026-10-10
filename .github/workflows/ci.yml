@@ -506,6 +506,7 @@ jobs:
       SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
       SOSE_PC6_EQUIVALENCE_REPORT: pc6-causal-equivalence.json
       SOSE_PC6_REAL_STATECHART_REPORT: pc6-real-statechart-equivalence.json
+      SOSE_PC6_RECURRING_REPORT: pc6-recurring-causal-equivalence.json
 
     steps:
       - name: Checkout
@@ -541,4 +542,12 @@ jobs:
           name: pc6-postgres-real-statecharts
           path: pc6-real-statechart-equivalence.json
           if-no-files-found: warn
+          retention-days: 14
+      - name: Upload recurring two-organization causal equivalence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pc6-postgres-recurring-causal-equivalence
+          path: pc6-recurring-causal-equivalence.json
+          if-no-files-found: error
           retention-days: 14
