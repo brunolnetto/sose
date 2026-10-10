@@ -264,12 +264,17 @@ class IntentResourceCoordinator:
             raise ResourceConflictError("effect's resource was terminated by another cause")
         self._advance_clock(reservation.owner_id, reservation.end_at)
 
-    def reconcile_certified(self, store, organizations: Mapping[str, str]) -> int:
+    def reconcile_certified(
+        self, store, organizations: Mapping[str, str], *,
+        max_completed: int | None = None,
+    ) -> int:
         """Reconcile only resource reservations explicitly linked to this runner.
 
         Shared pools may contain unrelated jobs' bookings; an address match
         alone never authorizes a runner to modify their business resources.
         """
+        if max_completed is not None and max_completed < 1:
+            raise ValueError("max_completed must be >= 1")
         completed = 0
         pool_keys = {pool.address().lock_key() for pool in self._policies.values()}
         links = self._db.execute(sql.SQL("""
@@ -277,6 +282,8 @@ class IntentResourceCoordinator:
               FROM {} ORDER BY effect_id
         """).format(self._links)).fetchall()
         for effect_id, organization_id, resource_key, causation_id, correlation_id in links:
+            if max_completed is not None and completed >= max_completed:
+                break
             if resource_key not in pool_keys or correlation_id not in organizations:
                 continue
             if organizations[correlation_id] != organization_id:
