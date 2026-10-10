@@ -97,3 +97,49 @@ def test_destination_filter_rejects_empty_name_without_claiming():
         lease_duration=timedelta(minutes=1),
     )
     assert lease is not None and lease.message_id == msg.message_id
+
+
+@pytest.mark.parametrize("store_type", ["memory", "sqlite"])
+def test_exact_message_claim_does_not_steal_another_customer_at_same_destination(
+    store_type, tmp_path,
+):
+    store = (
+        MemoryPersistence() if store_type == "memory"
+        else SQLitePersistence(tmp_path / "exact-message.sqlite")
+    )
+    try:
+        service = BoundaryService(store)
+        other = _message(destination="logistics", key="other-customer", when=NOW)
+        owned = _message(
+            destination="logistics", key="current-customer",
+            when=NOW + timedelta(seconds=1),
+        )
+        service.publish(other)
+        service.publish(owned)
+
+        lease = service.claim_next(
+            owner_id="customer-worker", now=NOW + timedelta(seconds=1),
+            lease_duration=timedelta(minutes=2),
+            destination_domain="logistics",
+            message_id=owned.message_id,
+        )
+        assert lease is not None and lease.message_id == owned.message_id
+        assert service.delivery(lease.delivery_id).status is DeliveryStatus.CLAIMED
+        assert service.claim_next(
+            owner_id="other-worker", now=NOW + timedelta(seconds=1),
+            lease_duration=timedelta(minutes=2),
+            destination_domain="logistics",
+            message_id=other.message_id,
+        ).message_id == other.message_id
+    finally:
+        if store_type == "sqlite":
+            store.close()
+
+
+def test_exact_message_claim_rejects_empty_identity():
+    service = BoundaryService(MemoryPersistence())
+    with pytest.raises(ValueError, match="message_id"):
+        service.claim_next(
+            owner_id="worker", now=NOW,
+            lease_duration=timedelta(minutes=1), message_id="",
+        )
