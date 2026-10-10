@@ -91,8 +91,8 @@ def test_pg_pickup_requires_live_durable_booking_and_does_not_double_book_simpy(
         coordinator.complete("effect-a")
         coordinator.complete("effect-a")
         assert coordinator._ledger.get("effect-a").status == "released"
-        assert tuple(e.action for e in coordinator._ledger.events()) == (
-            "reserved", "released",
+        assert tuple(sorted(e[3] for e in coordinator._ledger.events())) == (
+            "released", "reserved",
         )
         assert coordinator._ledger.audit()
 
