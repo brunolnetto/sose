@@ -376,6 +376,15 @@ def test_scoped_job_cannot_silently_rebind_another_organization():
         with pytest.raises(ValueError, match="organizational binding changed"):
             b.run_scheduled_trigger(scheduled_for=T0 + timedelta(minutes=5))
         assert store.job_state("shared-job") == original
+        # Failed reconfiguration must not poison the rejected correlation:
+        # another independent job can still legitimately claim it.
+        owned_b = TradingCustomerRecoveryRunner(
+            persistence=store, owner_id="worker-b-legitimate",
+            job_id="independent-job-b", scoped_writer=True,
+            correlation_id="organization-b", max_actions=1,
+        )
+        owned_b.run_scheduled_trigger(scheduled_for=T0)
+        assert store.job_state("independent-job-b").run_count == 1
 
 
 def test_correlation_cannot_be_claimed_by_two_distinct_recurring_jobs():
