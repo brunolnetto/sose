@@ -8,7 +8,7 @@ from math import isfinite
 from sose.backends.simpy import SimPyBackend
 from sose.core.events import Command
 from sose.core.identity import deterministic_id
-from sose.core.resource_reservations import ResourceConflictError, TemporalReservation
+from sose.core.resource_reservations import ResourceConflictError, TemporalReservation, authoritative_effect_reservation_id
 from sose.persistence.memory import MemoryPersistence
 
 from sose.examples.order_to_cash import simulation as o2c
@@ -428,13 +428,18 @@ def _execute_intent(
     fixtures: _CustomerFixtures,
     correlation_id: str,
     authoritative_pickup: TemporalReservation | None = None,
+    resource_persistence: MemoryPersistence | None = None,
 ) -> None:
     intent = persistence.command(effect_id)
     if intent is None:
         return
+    expected_resource_id = authoritative_effect_reservation_id(
+        effect_id,
+        scope=persistence.namespace if resource_persistence is not None else None,
+    )
     if authoritative_pickup is not None and (
         intent.name != "composition.deliver_shipment"
-        or authoritative_pickup.reservation_id != effect_id
+        or authoritative_pickup.reservation_id != expected_resource_id
         or authoritative_pickup.causation_id != intent.causation_id
     ):
         raise ResourceConflictError("authoritative pickup grant contradicts source effect")
@@ -626,6 +631,8 @@ def _execute_intent(
                 if not logistics.reconcile_pickup(
                     persistence, engine, backend, entities=fixtures.logistics,
                     authoritative_pickup=authoritative_pickup,
+                    resource_persistence=resource_persistence,
+                    authoritative_effect_id=effect_id,
                 ):
                     raise RuntimeError("logistics pickup failed")
 

@@ -506,6 +506,7 @@ jobs:
       SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
       SOSE_PC6_EQUIVALENCE_REPORT: pc6-causal-equivalence.json
       SOSE_PC6_REAL_STATECHART_REPORT: pc6-real-statechart-equivalence.json
+      SOSE_PC6_FEDERATED_REPORT: pc6-federated-recovery.json
 
     steps:
       - name: Checkout
@@ -525,7 +526,31 @@ jobs:
 
       - name: Run PostgreSQL conformance, restart, and concurrency tests
         run: |
-          python -m pytest -q             tests/e2e/sose/persistence/test_postgres_persistence.py             tests/e2e/sose/persistence/test_postgres_persistence_restart.py             tests/e2e/sose/persistence/test_postgres_authoritative_conformance.py             tests/e2e/sose/persistence/test_postgres_pc6_multiflow_equivalence.py             tests/e2e/sose/persistence/test_postgres_pc6_two_real_paths.py             tests/e2e/sose/persistence/test_postgres_pc6_concurrent_real_statecharts.py             tests/e2e/sose/persistence/test_postgres_pc6_scoped_organizational_fixtures.py             tests/e2e/sose/persistence/test_postgres_resource_identity.py             tests/e2e/sose/persistence/test_postgres_temporal_resource_ledger.py             tests/e2e/sose/persistence/test_postgres_temporal_resource_negative.py             tests/e2e/sose/persistence/test_postgres_temporal_resource_audit_falsification.py             tests/e2e/sose/persistence/test_postgres_pc6_durable_intent_wait.py
+          python -m pytest -q \
+            tests/e2e/sose/persistence/test_postgres_persistence.py \
+            tests/e2e/sose/persistence/test_postgres_persistence_restart.py \
+            tests/e2e/sose/persistence/test_postgres_authoritative_conformance.py \
+            tests/e2e/sose/persistence/test_postgres_pc6_multiflow_equivalence.py \
+            tests/e2e/sose/persistence/test_postgres_pc6_two_real_paths.py \
+            tests/e2e/sose/persistence/test_postgres_pc6_concurrent_real_statecharts.py \
+            tests/e2e/sose/persistence/test_postgres_pc6_scoped_organizational_fixtures.py \
+            tests/e2e/sose/persistence/test_postgres_resource_identity.py \
+            tests/e2e/sose/persistence/test_postgres_temporal_resource_ledger.py \
+            tests/e2e/sose/persistence/test_postgres_temporal_resource_negative.py \
+            tests/e2e/sose/persistence/test_postgres_temporal_resource_audit_falsification.py \
+            tests/e2e/sose/persistence/test_postgres_pc6_durable_intent_wait.py \
+            tests/e2e/sose/persistence/test_postgres_pc6_authoritative_pickup.py \
+            tests/e2e/sose/persistence/test_postgres_resource_release_race.py \
+            tests/e2e/sose/persistence/test_postgres_pc6_federated_recovery.py
+      - name: Upload PC6 federated restart equivalence evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pc6-federated-recovery
+          path: pc6-federated-recovery.json
+          if-no-files-found: error
+          retention-days: 14
+
       - name: Upload PC6 causal equivalence evidence
         if: always()
         uses: actions/upload-artifact@v7

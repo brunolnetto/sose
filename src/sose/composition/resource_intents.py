@@ -17,6 +17,7 @@ from sose.core.resource_identity import ResourcePoolContract
 from sose.composition.effects import CERTIFIED_INTENTS
 from sose.core.resource_reservations import (
     ResourceCapacityError, ResourceConflictError, TemporalReservation, _aware,
+    authoritative_effect_reservation_id,
 )
 
 
@@ -45,6 +46,8 @@ class IntentResourceCoordinator:
         slot_duration: timedelta,
         retry_delay: timedelta,
         owner_epoch: int | None = None,
+        fencing_persistence=None,
+        effect_scope: str | None = None,
     ) -> None:
         if slot_duration <= timedelta(0) or retry_delay <= timedelta(0):
             raise ValueError("resource slot and retry duration must be positive")
@@ -53,7 +56,11 @@ class IntentResourceCoordinator:
         if not hasattr(persistence, "temporal_resources") or not hasattr(persistence, "_connection"):
             raise TypeError("authoritative intent coordination requires PostgreSQL")
         self._store = persistence
+        # A federated organization's writer epoch belongs to its domain store,
+        # not to the separately owned shared physical resource ledger.
+        self._fencing_persistence = fencing_persistence or persistence
         self._owner_epoch = owner_epoch
+        self._effect_scope = effect_scope
         self._db = persistence._connection
         self._policies = dict(policies)
         if any(not k or not isinstance(v, ResourcePoolContract) for k,v in self._policies.items()):
@@ -92,19 +99,27 @@ class IntentResourceCoordinator:
                     organization_id TEXT NOT NULL,
                     resource_key TEXT NOT NULL,
                     causation_id TEXT NOT NULL,
-                    correlation_id TEXT NOT NULL
+                    correlation_id TEXT NOT NULL,
+                    local_effect_id TEXT
                 )
             """).format(self._links))
+            # Existing authoritative single-store links must remain readable.
+            self._db.execute(sql.SQL(
+                "ALTER TABLE {} ADD COLUMN IF NOT EXISTS local_effect_id TEXT"
+            ).format(self._links))
         self._ledger = persistence.temporal_resources()
         for pool in self._policies.values():
             self._ledger.register_pool(pool)
+
+    def _resource_id(self, effect_id: str) -> str:
+        return authoritative_effect_reservation_id(effect_id, scope=self._effect_scope)
 
     def waiting(self, effect_id: str) -> DeferredResourceIntent | None:
         row = self._db.execute(sql.SQL("""
             SELECT effect_id, organization_id, resource_key, ready_at, attempts
               FROM {} WHERE effect_id = %s
-        """).format(self._waiting), (effect_id,)).fetchone()
-        return DeferredResourceIntent(*row) if row is not None else None
+        """).format(self._waiting), (self._resource_id(effect_id),)).fetchone()
+        return DeferredResourceIntent(effect_id, *row[1:]) if row is not None else None
 
     def logical_time(self, organization_id: str) -> datetime | None:
         row = self._db.execute(sql.SQL("""
@@ -129,18 +144,20 @@ class IntentResourceCoordinator:
             raise ValueError("mapped resource effects require immutable boundary causation")
         with self._db.transaction():
             previous = self._db.execute(sql.SQL("""
-                SELECT organization_id, resource_key, causation_id, correlation_id
+                SELECT organization_id, resource_key, causation_id, correlation_id,
+                       COALESCE(local_effect_id, effect_id)
                   FROM {} WHERE effect_id = %s FOR UPDATE
-            """).format(self._links), (effect_id,)).fetchone()
-            expected = (organization_id, resource_key, causation_id, correlation_id)
+            """).format(self._links), (self._resource_id(effect_id),)).fetchone()
+            expected = (organization_id, resource_key, causation_id, correlation_id, effect_id)
             if previous is not None:
                 if previous != expected:
                     raise ResourceConflictError("immutable resource intent ownership/causation changed")
                 return
             self._db.execute(sql.SQL("""
-                INSERT INTO {} (effect_id, organization_id, resource_key, causation_id, correlation_id)
-                VALUES (%s,%s,%s,%s,%s)
-            """).format(self._links), (effect_id, *expected))
+                INSERT INTO {} (effect_id, organization_id, resource_key, causation_id,
+                                correlation_id, local_effect_id)
+                VALUES (%s,%s,%s,%s,%s,%s)
+            """).format(self._links), (self._resource_id(effect_id), *expected))
 
     def _defer(self, effect_id: str, organization_id: str,
                resource_key: str, now: datetime) -> None:
@@ -148,7 +165,7 @@ class IntentResourceCoordinator:
         with self._db.transaction():
             row = self._db.execute(sql.SQL("""
                 SELECT organization_id, resource_key FROM {} WHERE effect_id=%s FOR UPDATE
-            """).format(self._waiting), (effect_id,)).fetchone()
+            """).format(self._waiting), (self._resource_id(effect_id),)).fetchone()
             if row is not None and row != (organization_id, resource_key):
                 raise ResourceConflictError("effect changed organizational resource ownership")
             self._db.execute(sql.SQL("""
@@ -157,7 +174,7 @@ class IntentResourceCoordinator:
                 ON CONFLICT (effect_id) DO UPDATE
                 SET ready_at=EXCLUDED.ready_at, attempts={}.attempts+1
             """).format(self._waiting, self._waiting),
-            (effect_id, organization_id, resource_key, ready_at))
+            (self._resource_id(effect_id), organization_id, resource_key, ready_at))
 
     def _writer_transaction(self):
         # The runner's epoch is held throughout any admission or completion.
@@ -165,7 +182,7 @@ class IntentResourceCoordinator:
         # but fences workers whose epoch was superseded.
         if self._owner_epoch is None:
             return nullcontext()
-        return self._store.transaction(owner_epoch=self._owner_epoch)
+        return self._fencing_persistence.transaction(owner_epoch=self._owner_epoch)
 
     def admit(self, *, effect_id: str, intent_name: str,
               organization_id: str, due_at: datetime, now: datetime,
@@ -201,7 +218,8 @@ class IntentResourceCoordinator:
                 raise ResourceConflictError("effect's durable waiting resource changed")
             if now < current_wait.ready_at:
                 return False
-        existing = self._ledger.get(effect_id)
+        resource_id = self._resource_id(effect_id)
+        existing = self._ledger.get(resource_id)
         if existing is not None:
             if existing.owner_id != organization_id:
                 raise ResourceConflictError("effect's organizational ownership changed")
@@ -214,7 +232,7 @@ class IntentResourceCoordinator:
         else:
             start = max(now, due_at, self.logical_time(organization_id) or due_at)
             request = TemporalReservation(
-                reservation_id=effect_id, address=pool.address(),
+                reservation_id=resource_id, address=pool.address(),
                 owner_id=organization_id, start_at=start,
                 end_at=start + self._slot,
                 causation_id=causation_id,
@@ -227,7 +245,7 @@ class IntentResourceCoordinator:
         with self._db.transaction():
             self._db.execute(
                 sql.SQL("DELETE FROM {} WHERE effect_id=%s").format(self._waiting),
-                (effect_id,),
+                (resource_id,),
             )
         self._advance_clock(organization_id, existing.start_at)
         return True
@@ -237,7 +255,7 @@ class IntentResourceCoordinator:
         pool = self._policies.get(intent_name)
         if pool is None:
             return None
-        booking = self._ledger.get(effect_id)
+        booking = self._ledger.get(self._resource_id(effect_id))
         if (
             booking is None or booking.status != "reserved"
             or booking.address != pool.address()
@@ -251,33 +269,44 @@ class IntentResourceCoordinator:
             self._complete(effect_id)
 
     def _complete(self, effect_id: str) -> None:
-        reservation = self._ledger.get(effect_id)
+        resource_id = self._resource_id(effect_id)
+        reservation = self._ledger.get(resource_id)
         if reservation is None:
             return  # Intent had no mapped resource.
         if reservation.status == "reserved":
-            self._ledger.release(effect_id, at=reservation.end_at)
+            self._ledger.release(resource_id, at=reservation.end_at)
         elif reservation.status != "released":
             raise ResourceConflictError("effect's resource was terminated by another cause")
         self._advance_clock(reservation.owner_id, reservation.end_at)
 
-    def reconcile_certified(self, store, organizations: Mapping[str, str]) -> int:
+    def reconcile_certified(
+        self, store, organizations: Mapping[str, str], *,
+        max_completed: int | None = None,
+    ) -> int:
         """Reconcile only resource reservations explicitly linked to this runner.
 
         Shared pools may contain unrelated jobs' bookings; an address match
         alone never authorizes a runner to modify their business resources.
         """
+        if max_completed is not None and max_completed < 1:
+            raise ValueError("max_completed must be >= 1")
         completed = 0
         pool_keys = {pool.address().lock_key() for pool in self._policies.values()}
         links = self._db.execute(sql.SQL("""
-            SELECT effect_id, organization_id, resource_key, causation_id, correlation_id
+            SELECT effect_id, COALESCE(local_effect_id, effect_id),
+                   organization_id, resource_key, causation_id, correlation_id
               FROM {} ORDER BY effect_id
         """).format(self._links)).fetchall()
-        for effect_id, organization_id, resource_key, causation_id, correlation_id in links:
+        for resource_id, effect_id, organization_id, resource_key, causation_id, correlation_id in links:
+            if max_completed is not None and completed >= max_completed:
+                break
+            if resource_id != self._resource_id(effect_id):
+                continue  # Another organization's operational namespace.
             if resource_key not in pool_keys or correlation_id not in organizations:
                 continue
             if organizations[correlation_id] != organization_id:
                 raise ResourceConflictError("resource reservation certificate organization mismatch")
-            reservation = self._ledger.get(effect_id)
+            reservation = self._ledger.get(resource_id)
             if reservation is None or reservation.status != "reserved":
                 continue
             with store.transaction() as uow:
