@@ -183,10 +183,11 @@ def test_recurring_jobs_claim_only_their_own_causal_boundary(monkeypatch):
             )
             completed = runner.run_scheduled_trigger(scheduled_for=logical_time)
             assert completed.actions == 1
-            return (
-                store.job_state(job_id).logical_time,
-                tuple((d.message_id, d.status) for d in store.boundary_deliveries()),
-            )
+            with store.transaction() as uow:
+                statuses = tuple(
+                    (d.message_id, d.status) for d in uow.boundary_deliveries()
+                )
+            return store.job_state(job_id).logical_time, statuses
 
     time_a, deliveries = run("organization-a", "job-a", T0)
     assert time_a == T0
@@ -200,6 +201,12 @@ def test_recurring_jobs_claim_only_their_own_causal_boundary(monkeypatch):
     with PostgresPersistence(DSN, namespace=ns) as restored:
         assert restored.job_state("job-a").logical_time == T0
         assert restored.job_state("job-b").logical_time == T0 + timedelta(hours=2)
-        assert restored.command(
-            restored.boundary_consumptions()[0].consumer_effect_id
-        ) is not None
+        with restored.transaction() as uow:
+            consumptions = [
+                uow.get_boundary_consumption(d.delivery_id)
+                for d in uow.boundary_deliveries()
+            ]
+            assert len(consumptions) == 2
+            assert all(receipt is not None for receipt in consumptions)
+            assert all(uow.get_command(receipt.consumer_effect_id) is not None
+                       for receipt in consumptions)
