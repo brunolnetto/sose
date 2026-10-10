@@ -8,6 +8,8 @@ from typing import Iterator
 import psycopg
 from psycopg import sql
 
+from sose.core.resource_identity import ResourceAddress
+
 from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
@@ -136,25 +138,32 @@ class PostgresPersistence(MemoryPersistence):
         self._refresh_from_db(force=True)
 
     @contextmanager
-    def business_resource_guard(self, resource_name: str) -> Iterator[None]:
-        """Coordinate a multi-commit domain operation on shared PG capacity.
+    def business_resource_guard(
+        self, resource_name: str | ResourceAddress,
+    ) -> Iterator[None]:
+        """Coordinate a multi-commit domain operation on one resource identity.
 
-        A session advisory lock lasts across the inner domain transactions.
-        PostgreSQL releases it automatically if the owning worker connection
-        dies, unlike an in-memory mutex. It is not a durable business receipt.
+        Typed addresses distinguish locally owned pools, shared pools and
+        physical instances. Existing string keys retain their exact locking
+        semantics. This guard serializes an operation but is not a durable
+        reservation or proof of capacity allocation.
         """
-        if not resource_name:
-            raise ValueError("resource_name must be nonempty")
+        if isinstance(resource_name, ResourceAddress):
+            key = resource_name.lock_key()
+        elif isinstance(resource_name, str) and resource_name:
+            key = resource_name
+        else:
+            raise ValueError("resource_name must be a nonempty name or ResourceAddress")
         self._connection.execute(
             "SELECT pg_advisory_lock(hashtext(%s), hashtext(%s))",
-            (self.namespace, resource_name),
+            (self.namespace, key),
         )
         try:
             yield
         finally:
             self._connection.execute(
                 "SELECT pg_advisory_unlock(hashtext(%s), hashtext(%s))",
-                (self.namespace, resource_name),
+                (self.namespace, key),
             )
 
     def close(self) -> None:
