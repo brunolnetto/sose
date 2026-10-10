@@ -353,3 +353,22 @@ def test_real_logistics_certified_crash_keeps_other_organization_progressing(mon
             r.resource_name == "pickup_courier"
             for r in recovered_a.resource_reservations()
         )
+
+
+def test_scoped_job_cannot_silently_rebind_another_organization():
+    assert DSN
+    ns = _namespace()
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        a = TradingCustomerRecoveryRunner(
+            persistence=store, owner_id="worker-a", job_id="shared-job",
+            scoped_writer=True, correlation_id="organization-a", max_actions=1,
+        )
+        a.run_scheduled_trigger(scheduled_for=T0)
+        original = store.job_state("shared-job")
+        b = TradingCustomerRecoveryRunner(
+            persistence=store, owner_id="worker-b", job_id="shared-job",
+            scoped_writer=True, correlation_id="organization-b", max_actions=1,
+        )
+        with pytest.raises(ValueError, match="organizational binding changed"):
+            b.run_scheduled_trigger(scheduled_for=T0 + timedelta(minutes=5))
+        assert store.job_state("shared-job") == original
