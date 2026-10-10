@@ -44,7 +44,7 @@ def _admit(coordinator, effect_id, org, time):
     return coordinator.admit(
         effect_id=effect_id, intent_name=POLICY_NAME,
         organization_id=org, due_at=T0, now=time,
-        causation_id=f"boundary:{org}",
+        causation_id=f"boundary:{org}", correlation_id=org,
     )
 
 
@@ -82,7 +82,7 @@ def test_pg_intent_capacity_wait_survives_restart_without_double_booking():
             coordinator.admit(
                 effect_id="effect-b", intent_name=POLICY_NAME,
                 organization_id="organization-b", due_at=T0, now=T0+4*SLOT,
-                causation_id="unrelated-boundary",
+                causation_id="unrelated-boundary", correlation_id="organization-b",
             )
         assert len(coordinator._ledger.reservations()) == 2
         assert len(coordinator._ledger.events()) == 4
@@ -225,14 +225,14 @@ def test_pg_two_correlations_of_one_organization_share_monotonic_resource_time()
         assert coordinator.admit(
             effect_id="order-one", intent_name=POLICY_NAME,
             organization_id="same-company", due_at=T0, now=T0,
-            causation_id="message-one",
+            causation_id="message-one", correlation_id="order-one",
         )
         coordinator.complete("order-one")
         assert coordinator.logical_time("same-company") == T0+SLOT
         assert coordinator.admit(
             effect_id="order-two", intent_name=POLICY_NAME,
             organization_id="same-company", due_at=T0, now=T0,
-            causation_id="message-two",
+            causation_id="message-two", correlation_id="order-two",
         )
         second = coordinator._ledger.get("order-two")
         assert second.start_at == T0+SLOT
@@ -258,7 +258,7 @@ def test_pg_restart_releases_certified_effect_after_command_deletion():
         assert coordinator.admit(
             effect_id="certified-effect", intent_name=POLICY_NAME,
             organization_id="company-a", due_at=T0, now=T0,
-            causation_id="immutable-boundary",
+            causation_id="immutable-boundary", correlation_id="corr-a",
         )
         # Simulate a worker killed between authoritative domain certificate
         # commit and the resource release commit.
@@ -299,7 +299,7 @@ def test_pg_reconciliation_rejects_causal_or_organizational_rebinding(
         assert coordinator.admit(
             effect_id="cert-effect", intent_name=POLICY_NAME,
             organization_id="company-a", due_at=T0, now=T0,
-            causation_id="immutable-boundary",
+            causation_id="immutable-boundary", correlation_id="corr-a",
         )
         with db.transaction() as uow:
             uow.save_business_effect(BusinessEffectApplied.from_applied(
