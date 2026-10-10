@@ -166,6 +166,15 @@ class PostgresPersistence(MemoryPersistence):
                 (self.namespace, key),
             )
 
+    def temporal_resources(self):
+        """Access the opt-in authoritative PostgreSQL temporal resource ledger.
+
+        Mutations and resource causal receipts commit atomically within the
+        ledger. They are not automatically part of a separate engine UoW.
+        """
+        from .postgres_resource_ledger import PostgresTemporalResourceLedger
+        return PostgresTemporalResourceLedger(self)
+
     def close(self) -> None:
         self._connection.close()
 
