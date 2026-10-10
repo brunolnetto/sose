@@ -101,6 +101,16 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
         ),
     )
     registry.register(
+        destination_domain="warehouse_fulfillment",
+        contract_name="o2c.fulfillment_requested",
+        contract_version=2,
+        handler=_intent_handler(
+            intent_name="composition.request_fulfillment_inventory",
+            entity_type="warehouse_fulfillment_order",
+            entity_id=fixtures.fulfillment.order_id,
+        ),
+    )
+    registry.register(
         destination_domain="warehouse_management",
         contract_name="warehouse.inventory_reservation_requested",
         contract_version=1,
@@ -196,10 +206,11 @@ def _publish(
     causation_id: str | None,
     produced_at: datetime,
     payload: dict[str, object],
+    contract_version: int = 1,
 ) -> BoundaryMessage:
     message = BoundaryMessage.create(
         contract_name=contract_name,
-        contract_version=1,
+        contract_version=contract_version,
         source_domain=source_domain,
         source_identity=source_identity,
         destination_domain=destination_domain,
@@ -330,7 +341,9 @@ def _materialize_fulfillment_from_request(
             source = uow.get_boundary_message(intent.causation_id)
         if (
             source is None
-            or source.contract_key != "o2c.fulfillment_requested.v1"
+            or source.contract_key not in {
+                "o2c.fulfillment_requested.v1", "o2c.fulfillment_requested.v2",
+            }
             or source.source_domain != "order_to_cash"
             or source.destination_domain != "warehouse_fulfillment"
             or source.source_identity != sales_order_id
@@ -503,12 +516,10 @@ def _execute_intent(
         if shipment is None:
             raise RuntimeError("logistics shipment disappeared")
         position = persistence.simulation_position()
-        recovery_time = max(
-            intent.due_at,
-            position.logical_time if position is not None else intent.due_at,
-        )
-        _, engine = logistics.build_runtime(persistence, now=recovery_time)
-        backend = SimPyBackend(origin=recovery_time)
+        restore_at = position.logical_time if position is not None else intent.due_at
+        recovery_time = max(restore_at, intent.due_at)
+        _, engine = logistics.build_runtime(persistence, now=restore_at)
+        backend = SimPyBackend(origin=restore_at)
 
         with _causal_command_scope(
             engine, intent=intent, correlation_id=correlation_id,
@@ -534,10 +545,14 @@ def _execute_intent(
                 )
                 engine.context.schedules.at(pickup_due, command=pickup)
             engine.rebuild_backend(backend)
-            # SimPy restores resource leases through zero-time acquisition
-            # callbacks. Materialize them before completing a partially
-            # committed delivery, otherwise release() sees no live lease.
+            # Rebuild at the *authoritative* persisted position, never at an
+            # arbitrarily later inbound message timestamp. Then advance to
+            # the requested command time without violating durable lineage.
+            # Materialize reattached resource leases before running forward.
             backend.run_until(backend.now)
+            if recovery_time > backend.now:
+                backend.run_until(recovery_time)
+            engine.context.clock.now = recovery_time
 
             def current_state() -> str:
                 current = persistence.entity("shipment", shipment_id)
@@ -823,7 +838,9 @@ def reconcile_shipped_fulfillment_egress(
     messages = tuple(message for _, message in inbound)
     requests = [
         message for message in messages
-        if message.contract_key == "o2c.fulfillment_requested.v1"
+        if message.contract_key in {
+            "o2c.fulfillment_requested.v1", "o2c.fulfillment_requested.v2",
+        }
     ]
     reservations = [
         message for message in messages
@@ -885,17 +902,30 @@ def reconcile_shipped_fulfillment_egress(
         ]
         if len(matching) != 1:
             raise ValueError("shipped fulfillment lacks unique durable O2C request")
-        # Existing v1 requests did not carry shipment_id. Never retroactively
-        # change their payload under the same immutable message identity.
-        # The single-shipment reference can recover only when that owner is
-        # unambiguous. Multiple shipments require a new versioned contract.
-        shipment_ids = [
-            entity.id for entity in persistence.entities()
-            if entity.entity_type == "shipment"
-        ]
-        if len(shipment_ids) != 1:
-            raise ValueError("legacy v1 shipment linkage is ambiguous")
-        shipment_id = shipment_ids[0]
+        # Contract v2 binds one shipment directly to immutable ingress.
+        # Frozen v1 stays opaque and requires an unambiguous single shipment.
+        request = matching[0]
+        if request.contract_key == "o2c.fulfillment_requested.v2":
+            shipment_id = request.payload().get("shipment_id")
+            if not isinstance(shipment_id, str) or not shipment_id:
+                raise ValueError("v2 fulfillment request lacks shipment identity")
+            if persistence.entity("shipment", shipment_id) is None:
+                raise ValueError("v2 fulfillment request references missing shipment")
+            if any(
+                other.message_id != request.message_id
+                and other.contract_key == "o2c.fulfillment_requested.v2"
+                and other.payload().get("shipment_id") == shipment_id
+                for other in requests
+            ):
+                raise ValueError("v2 shipment has multiple fulfillment owners")
+        else:
+            shipment_ids = [
+                entity.id for entity in persistence.entities()
+                if entity.entity_type == "shipment"
+            ]
+            if len(shipment_ids) != 1:
+                raise ValueError("legacy v1 shipment linkage is ambiguous")
+            shipment_id = shipment_ids[0]
         stock_id = str(details["stock_id"])
         reservation_reference = str(details["reservation_reference"])
         allocation_ids = tuple(order.attributes.get("allocation_ids", ()))
@@ -1010,7 +1040,9 @@ def reconcile_completed_logistics_egress(
         )
         requests = [
             msg for _, msg in inbound
-            if msg is not None and msg.contract_key == "o2c.fulfillment_requested.v1"
+            if msg is not None and msg.contract_key in {
+                "o2c.fulfillment_requested.v1", "o2c.fulfillment_requested.v2",
+            }
         ]
         ready = []
         for delivery, dispatch in inbound:
@@ -1038,7 +1070,13 @@ def reconcile_completed_logistics_egress(
             ]
             if len(order_matches) != 1:
                 raise RuntimeError("delivered shipment lacks a unique durable sales order cause")
-            ready.append((dispatch, shipment_id, str(order_matches[0].payload()["order_id"])))
+            source = order_matches[0]
+            if (
+                source.contract_key == "o2c.fulfillment_requested.v2"
+                and source.payload().get("shipment_id") != shipment_id
+            ):
+                raise ValueError("Logistics egress contradicts v2 immutable shipment owner")
+            ready.append((dispatch, shipment_id, str(source.payload()["order_id"])))
 
     service = BoundaryService(persistence)
     outgoing: list[BoundaryMessage] = []
@@ -1279,21 +1317,39 @@ def reconcile_settled_payment_egress(
     return tuple(results)
 
 
-def run_customer_demand_path() -> CustomerDemandPathResult:
+def run_customer_demand_path(
+    *, persistence: MemoryPersistence | None = None, instance_key: str | None = None,
+) -> CustomerDemandPathResult:
     """Execute the durable Trading Company customer-demand composition path.
 
     Composed fulfillment delegates stock reservation/consumption to Warehouse
     Management and never creates authoritative Warehouse Fulfillment inventory lots.
     """
 
-    persistence = MemoryPersistence()
-    origin = o2c.ORIGIN
+    if persistence is not None and instance_key is None:
+        raise ValueError("instance_key is required for injected persistence")
+    if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
+        raise ValueError("instance_key must be a nonempty string")
+    persistence = persistence if persistence is not None else MemoryPersistence()
+    position = persistence.simulation_position()
+    origin = max(
+        o2c.ORIGIN, position.logical_time if position is not None else o2c.ORIGIN,
+    )
     amount = 250.0
     currency = "USD"
     requested_quantity = 10.0
+    if instance_key is not None:
+        order_id = deterministic_id(
+            "entity", "sales_order", "o2c-reference", "order-1", instance_key,
+        )
+        if persistence.entity("sales_order", order_id) is not None:
+            raise ValueError(
+                "customer instance already initialized: use durable recovery instead of reseeding"
+            )
 
     sales_order = o2c.seed_reference(
         persistence, now=origin, amount=amount, currency=currency,
+        instance_key=instance_key,
     )
     fulfillment_order_id = deterministic_id(
         "entity", "warehouse_fulfillment_order",
@@ -1312,22 +1368,26 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
             origin_on_hand=20.0,
             transfer_quantity=1.0,
             sku=fulfillment.PRIMARY_SKU,
+            instance_key=instance_key,
         ),
         logistics=logistics.seed_reference(
             persistence,
             now=origin,
+            instance_key=instance_key,
         ),
         payments=payments.seed_reference(
             persistence,
             now=origin,
             amount=amount,
             currency=currency,
+            instance_key=instance_key,
         ),
         r2r=r2r.seed_reference(
             persistence,
             now=origin,
             amount=amount,
             currency=currency,
+            instance_key=instance_key,
         ),
     )
 
@@ -1396,6 +1456,7 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
         occurrence_key: str,
         owner_id: str,
         payload: dict[str, object],
+        contract_version: int = 1,
     ) -> BoundaryMessage:
         previous = messages[-1] if messages else None
         message = _publish(
@@ -1413,12 +1474,14 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
                 else _next_logical_time(persistence, previous.produced_at)
             ),
             payload=payload,
+            contract_version=contract_version,
         )
         consume_published_boundary(message, owner_id=owner_id)
         return message
 
     publish_consume_execute(
         contract_name="o2c.fulfillment_requested",
+        contract_version=2 if instance_key is not None else 1,
         source_domain="order_to_cash",
         source_identity=fixtures.o2c.order_id,
         destination_domain="warehouse_fulfillment",
@@ -1429,6 +1492,8 @@ def run_customer_demand_path() -> CustomerDemandPathResult:
             "fulfillment_order_id": fixtures.fulfillment.order_id,
             "requested_quantity": requested_quantity,
             "sku": fulfillment.PRIMARY_SKU,
+            **({"shipment_id": fixtures.logistics.shipment_id}
+               if instance_key is not None else {}),
         },
     )
     publish_consume_execute(
