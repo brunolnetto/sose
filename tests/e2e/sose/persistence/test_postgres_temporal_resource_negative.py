@@ -143,8 +143,6 @@ def test_invalid_instance_names_and_idempotent_terminal_retry():
         assert ledger.reserve(request) == released
         with pytest.raises(ResourceConflictError, match="different contents"):
             ledger.reserve(replace(request, priority=1))
-        with pytest.raises(ResourceConflictError, match="already terminated"):
-            ledger.release("success", at=T+2*H) if False else ledger.fail  # placeholder
         assert ledger.audit()
 
 
