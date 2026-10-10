@@ -26,7 +26,7 @@ from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.composition.scheduler import RecoverySchedule
 from sose.composition.resource_intents import IntentResourceCoordinator
 from sose.core.resource_identity import ResourcePoolContract
-from sose.core.resource_reservations import authoritative_effect_reservation_id
+from sose.core.resource_reservations import authoritative_effect_reservation_id, ResourceConflictError
 from sose.examples.logistics import simulation as logistics
 from sose.persistence.postgres import PostgresPersistence
 
@@ -448,3 +448,46 @@ def test_pg_independent_org_writer_commits_while_another_org_holds_its_lease():
         assert not worker.is_alive()
         assert not failure, failure
         assert a.writer_epoch() == owned.epoch
+
+
+def test_pg_federated_enrollment_is_immutable_and_survives_a_full_restart():
+    """A physical grant belongs to exactly one durable scheduled occurrence."""
+    assert DSN
+    ns = _namespace("pc6_trigger_link")
+    kwargs = dict(
+        effect_id="local-effect-1", intent_name=POLICY, organization_id="a",
+        due_at=logistics.PICKUP_DUE, now=logistics.ORIGIN,
+        causation_id="boundary-a", correlation_id="a",
+    )
+    with PostgresPersistence(DSN, namespace=ns) as shared:
+        coordinator = IntentResourceCoordinator(
+            shared, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
+            effect_scope="organization-a",
+        )
+        assert coordinator.admit(**kwargs, trigger_id="organization-a:slot-0")
+        reserved = coordinator.booking_for("local-effect-1", POLICY)
+        assert coordinator.admit(**kwargs, trigger_id="organization-a:slot-0")
+        before = coordinator._ledger.snapshot()
+        with pytest.raises(ResourceConflictError, match="different recurring trigger"):
+            coordinator.admit(**kwargs, trigger_id="organization-a:slot-1")
+        with pytest.raises(ValueError, match="trigger identity"):
+            coordinator.admit(
+                **{**kwargs, "effect_id": "invalid-enrollment"}, trigger_id="",
+            )
+        assert coordinator._ledger.snapshot() == before
+        assert coordinator._ledger.get(reserved.reservation_id) == reserved
+        coordinator.complete("local-effect-1")
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        from psycopg import sql
+        coordinator = IntentResourceCoordinator(
+            reopened, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
+            effect_scope="organization-a",
+        )
+        row = reopened._connection.execute(sql.SQL("""
+            SELECT local_effect_id, admitted_trigger_id
+            FROM {} WHERE effect_id = %s
+        """).format(sql.Identifier(f"{ns}_resource_intent_link")),
+            (reserved.reservation_id,)).fetchone()
+        assert row == ("local-effect-1", "organization-a:slot-0")
+        assert coordinator._ledger.get(reserved.reservation_id).status == "released"
+        assert coordinator._ledger.audit()
