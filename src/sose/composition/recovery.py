@@ -213,6 +213,7 @@ class TradingCustomerRecoveryRunner:
                 self.persistence, self.resource_policies,
                 slot_duration=self.resource_slot_duration,
                 retry_delay=self.resource_retry_delay,
+                owner_epoch=getattr(getattr(store, "lease", None), "epoch", None),
             )
             if self.resource_policies is not None else None
         )
