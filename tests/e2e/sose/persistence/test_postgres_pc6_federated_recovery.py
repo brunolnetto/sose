@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from threading import Event, Thread
 from datetime import timedelta
 from uuid import uuid4
 
@@ -225,3 +226,38 @@ def test_pg_real_killed_worker_recovers_two_autonomous_organizations_without_glo
     assert recovered["resource_clocks"]["b"] == logistics.ORIGIN + 2 * INTERVAL + SLOT
     assert len(recovered["ledger"]["reservations"]) == 2
     assert len(recovered["ledger"]["events"]) == 4
+
+
+def test_pg_independent_org_writer_commits_while_another_org_holds_its_lease():
+    """A long-running A transaction must not fence or serialize unrelated B."""
+    assert DSN
+    a_ns, b_ns, shared_ns = (
+        _namespace("pc6writer_a"), _namespace("pc6writer_b"), _namespace("pc6writer_shared")
+    )
+    completed = Event()
+    failure = []
+
+    def run_b():
+        try:
+            with PostgresPersistence(DSN, namespace=b_ns) as b:
+                with PostgresPersistence(DSN, namespace=shared_ns) as shared:
+                    slot = _schedule(b, shared, "b")
+                    assert len(slot.run_due(now=logistics.ORIGIN)) == 1
+                    assert b.job_state("recovery-b").next_tick == 1
+        except BaseException as exc:
+            failure.append(exc)
+        finally:
+            completed.set()
+
+    with PostgresPersistence(DSN, namespace=a_ns) as a:
+        owned = a.claim_writer("organization-a", expected_epoch=a.writer_epoch())
+        worker = Thread(target=run_b, daemon=True)
+        # Deliberately keep A's writer transaction and namespace-scoped
+        # advisory lock open while B completes on its own connection.
+        with a.transaction(owner_epoch=owned.epoch):
+            worker.start()
+            assert completed.wait(20), "B was blocked by unrelated organizational writer"
+        worker.join(timeout=10)
+        assert not worker.is_alive()
+        assert not failure, failure
+        assert a.writer_epoch() == owned.epoch
