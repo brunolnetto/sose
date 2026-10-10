@@ -85,13 +85,17 @@ def seed_reference(
     now: datetime = ORIGIN,
     amount: float = 250.0,
     currency: str = "USD",
+    instance_key: str | None = None,
 ) -> O2CEntities:
+    if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
+        raise ValueError("instance_key must be a nonempty string")
     if amount <= 0:
         raise ValueError("amount must be positive")
     context, _ = build_runtime(persistence, now=now)
     order = context.entities.create(
         SalesOrder,
-        key=("o2c-reference", "order-1"),
+        key=(("o2c-reference", "order-1") if instance_key is None
+             else ("o2c-reference", "order-1", instance_key)),
         state="submitted",
         attributes={"amount": float(amount), "currency": currency},
     )

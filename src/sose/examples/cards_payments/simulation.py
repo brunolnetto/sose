@@ -75,11 +75,15 @@ def seed_reference(
     amount: float = 125.0,
     currency: str = "USD",
     processor_capacity: int = 1,
+    instance_key: str | None = None,
 ) -> PaymentEntities:
+    if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
+        raise ValueError("instance_key must be a nonempty string")
     context, _ = build_runtime(persistence, now=now)
     payment = context.entities.create(
         Payment,
-        key=("cards-reference", "payment-1"),
+        key=(("cards-reference", "payment-1") if instance_key is None
+             else ("cards-reference", "payment-1", instance_key)),
         state="authorization_requested",
         attributes={"amount": amount, "currency": currency},
     )
