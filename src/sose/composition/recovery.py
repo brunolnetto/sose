@@ -249,6 +249,7 @@ class TradingCustomerRecoveryRunner:
                         intent_name=command.name,
                         organization_id=self.resource_organizations[source.correlation_id],
                         causation_id=source.message_id,
+                        correlation_id=source.correlation_id,
                         due_at=command.due_at,
                         now=logical_now if logical_now is not None else now,
                     )
