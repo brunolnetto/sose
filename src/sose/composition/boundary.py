@@ -136,6 +136,7 @@ class BoundaryService:
         destination_domain: str | None = None,
         accepted_contracts: frozenset[tuple[str, int]] | None = None,
         message_id: str | None = None,
+        correlation_id: str | None = None,
     ) -> BoundaryLease | None:
         """Lease only a worker-owned destination when requested.
 
@@ -148,6 +149,8 @@ class BoundaryService:
             raise ValueError("destination_domain must be nonempty when specified")
         if message_id is not None and not message_id:
             raise ValueError("message_id must be nonempty when specified")
+        if correlation_id is not None and not correlation_id:
+            raise ValueError("correlation_id must be nonempty when specified")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
         if accepted_contracts is not None and any(
@@ -183,6 +186,8 @@ class BoundaryService:
                     raise RuntimeError(
                         f"boundary delivery missing message: {delivery.delivery_id}"
                     )
+                if correlation_id is not None and message.correlation_id != correlation_id:
+                    continue
                 if not self._causal_predecessor_applied(message, uow):
                     continue
                 candidates.append((message.produced_at, delivery.delivery_id, delivery))

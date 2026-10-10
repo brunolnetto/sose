@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+import json
 from typing import Mapping
 
 from sose.core.resource_identity import ResourcePoolContract
@@ -70,6 +71,9 @@ class TradingCustomerRecoveryRunner:
     resource_organizations: Mapping[str, str] | None = None
     resource_slot_duration: timedelta = timedelta(minutes=5)
     resource_retry_delay: timedelta = timedelta(minutes=5)
+    # Opt-in: one recurring job owns one correlation. No global writer lease.
+    correlation_id: str | None = None
+    scoped_writer: bool = False
 
     def __post_init__(self) -> None:
         if not self.owner_id or not self.job_id:
@@ -78,6 +82,13 @@ class TradingCustomerRecoveryRunner:
             raise ValueError("max_actions must be >= 1")
         if self.lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
+        if self.correlation_id is not None and not self.correlation_id:
+            raise ValueError("correlation_id cannot be empty")
+        if self.scoped_writer:
+            if self.correlation_id is None:
+                raise ValueError("scoped recovery requires one explicit correlation_id")
+            if not callable(getattr(self.persistence, "claim_scoped_writer", None)):
+                raise TypeError("scoped recovery requires PostgreSQL scoped fencing")
         if self.resource_policies is not None:
             if self.resource_slot_duration <= timedelta(0) or self.resource_retry_delay <= timedelta(0):
                 raise ValueError("resource slot and retry delay must be positive")
@@ -88,8 +99,12 @@ class TradingCustomerRecoveryRunner:
                 raise ValueError(
                     "resource policies require explicit correlation-to-organization bindings"
                 )
-        if not callable(getattr(self.persistence, "writer_epoch", None)) or not callable(
-            getattr(self.persistence, "claim_writer", None)
+        if self.resource_policies is not None and self.correlation_id is not None:
+            if self.correlation_id not in self.resource_organizations:
+                raise ValueError("resource mapping lacks the owned correlation_id")
+        if not self.scoped_writer and (
+            not callable(getattr(self.persistence, "writer_epoch", None))
+            or not callable(getattr(self.persistence, "claim_writer", None))
         ):
             raise TypeError("composition runner requires authoritative writer fencing")
 
@@ -229,13 +244,19 @@ class TradingCustomerRecoveryRunner:
                 slot_duration=self.resource_slot_duration,
                 retry_delay=self.resource_retry_delay,
                 owner_epoch=getattr(getattr(store, "lease", None), "epoch", None),
+                writer_scope=getattr(getattr(store, "lease", None), "scope", None),
             )
             if self.resource_policies is not None else None
         )
         # Reconcile a crash after immutable domain certification but before
         # release of its authoritative temporal reservation.
         if resource_intents is not None:
-            resource_intents.reconcile_certified(store, self.resource_organizations)
+            owned_organizations = self.resource_organizations
+            if self.correlation_id is not None:
+                owned_organizations = {
+                    self.correlation_id: self.resource_organizations[self.correlation_id],
+                }
+            resource_intents.reconcile_certified(store, owned_organizations)
         # A deferred effect stays durable, but must not monopolize this tick.
         deferred_this_tick: set[str] = set()
         for _ in range(self.max_actions):
@@ -244,6 +265,7 @@ class TradingCustomerRecoveryRunner:
             pending = [
                 pair for pair in self._pending_effects(store)
                 if pair[1] not in deferred_this_tick
+                and (self.correlation_id is None or pair[0].correlation_id == self.correlation_id)
             ]
             if pending:
                 source, effect_id = pending[0]
@@ -294,6 +316,7 @@ class TradingCustomerRecoveryRunner:
                 }
             reconstructed = customer.reconcile_shipped_fulfillment_egress(
                 store, max_new_messages=self.max_actions - actions,
+            **({"correlation_id": self.correlation_id} if self.correlation_id is not None else {}),
             )
             emitted = sum(message.message_id not in before_ids for message in reconstructed)
             if emitted:
@@ -308,6 +331,7 @@ class TradingCustomerRecoveryRunner:
                 }
             reconstructed_logistics = customer.reconcile_completed_logistics_egress(
                 store, max_new_messages=self.max_actions - actions,
+            **({"correlation_id": self.correlation_id} if self.correlation_id is not None else {}),
             )
             emitted_logistics = sum(
                 message.message_id not in intermediate_ids
@@ -323,6 +347,7 @@ class TradingCustomerRecoveryRunner:
                 }
             reconstructed_o2c = customer.reconcile_invoiced_o2c_egress(
                 store, max_new_messages=self.max_actions - actions,
+            **({"correlation_id": self.correlation_id} if self.correlation_id is not None else {}),
             )
             emitted_o2c = sum(
                 message.message_id not in o2c_before_ids
@@ -338,6 +363,7 @@ class TradingCustomerRecoveryRunner:
                 }
             reconstructed_payment = customer.reconcile_settled_payment_egress(
                 store, max_new_messages=self.max_actions - actions,
+            **({"correlation_id": self.correlation_id} if self.correlation_id is not None else {}),
             )
             emitted_payment = sum(
                 message.message_id not in payment_before_ids
@@ -353,6 +379,7 @@ class TradingCustomerRecoveryRunner:
                 lease_duration=self.lease_duration,
                 destination_domain="warehouse_management",
                 accepted_contracts=frozenset({_WM_CONTRACT}),
+                    correlation_id=self.correlation_id,
             )
             if lease is None:
                 lease = service.claim_next(
@@ -361,6 +388,7 @@ class TradingCustomerRecoveryRunner:
                     lease_duration=self.lease_duration,
                     destination_domain="logistics",
                     accepted_contracts=frozenset({_LOGISTICS_CONTRACT}),
+                    correlation_id=self.correlation_id,
                 )
             if lease is None:
                 lease = service.claim_next(
@@ -369,6 +397,7 @@ class TradingCustomerRecoveryRunner:
                     lease_duration=self.lease_duration,
                     destination_domain="order_to_cash",
                     accepted_contracts=frozenset({_O2C_CONTRACT}),
+                    correlation_id=self.correlation_id,
                 )
             if lease is None:
                 lease = service.claim_next(
@@ -377,6 +406,7 @@ class TradingCustomerRecoveryRunner:
                     lease_duration=self.lease_duration,
                     destination_domain="cards_payments",
                     accepted_contracts=frozenset({_PAYMENTS_CONTRACT}),
+                    correlation_id=self.correlation_id,
                 )
             if lease is None:
                 lease = service.claim_next(
@@ -385,6 +415,7 @@ class TradingCustomerRecoveryRunner:
                     lease_duration=self.lease_duration,
                     destination_domain="record_to_report",
                     accepted_contracts=frozenset({_R2R_CONTRACT}),
+                    correlation_id=self.correlation_id,
                 )
             if lease is None:
                 if not emitted and not emitted_logistics and not emitted_o2c and not emitted_payment:
@@ -417,17 +448,32 @@ class TradingCustomerRecoveryRunner:
     ) -> RecoveryTriggerResult:
         if not trigger_id:
             raise ValueError("trigger_id must be nonempty")
-        lease = self.persistence.claim_writer(
-            self.owner_id, expected_epoch=self.persistence.writer_epoch(),
-        )
+        if self.scoped_writer:
+            lease = self.persistence.claim_scoped_writer(
+                self.job_id, self.owner_id,
+                expected_epoch=self.persistence.scoped_writer_epoch(self.job_id),
+                correlation_id=self.correlation_id,
+            )
+        else:
+            lease = self.persistence.claim_writer(
+                self.owner_id, expected_epoch=self.persistence.writer_epoch(),
+            )
         store = FencedEnginePersistence(self.persistence, lease)
+        config = {}
+        if self.scoped_writer:
+            config["correlation_id"] = self.correlation_id
+            if self.resource_organizations is not None:
+                config["organization_id"] = self.resource_organizations[self.correlation_id]
+        config_json = json.dumps(config, sort_keys=True, separators=(",", ":"))
         with store.transaction() as uow:
             current = uow.get_job_state(self.job_id)
+            if current is not None and current.config_json != config_json:
+                raise ValueError("recovery job's durable organizational binding changed")
             if current is None:
                 current = SimulationJobState(
                     job_id=self.job_id,
                     domain_name="trading_company_composition",
-                    config_json="{}",
+                    config_json=config_json,
                     config_revision=1,
                     status="ready",
                     initialized=True,

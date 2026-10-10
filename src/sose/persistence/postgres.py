@@ -25,6 +25,15 @@ class WriterLease:
 class StaleWriterError(RuntimeError):
     """Raised when a PostgreSQL writer loses its fencing epoch."""
 
+
+@dataclass(frozen=True, slots=True)
+class ScopedWriterLease:
+    """A writer epoch owned by one job, independent of other job scopes."""
+
+    owner_id: str
+    epoch: int
+    scope: str
+
 _NAMESPACE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}$")
 
 
@@ -55,6 +64,8 @@ class PostgresPersistence(MemoryPersistence):
         self.namespace = namespace
         self._meta_table = sql.Identifier(f"{namespace}_record_meta")
         self._record_table = sql.Identifier(f"{namespace}_record")
+        self._scoped_writers_table = sql.Identifier(f"{namespace}_writer_scope")
+        self._correlation_owners_table = sql.Identifier(f"{namespace}_recovery_owner")
         self._connection = psycopg.connect(dsn, autocommit=True)
 
         with self._connection.transaction():
@@ -101,6 +112,27 @@ class PostgresPersistence(MemoryPersistence):
                     """
                 ).format(self._meta_table),
                 (_SCHEMA_VERSION,),
+            )
+            self._connection.execute(
+                sql.SQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        scope TEXT PRIMARY KEY,
+                        owner_id TEXT NOT NULL,
+                        owner_epoch BIGINT NOT NULL CHECK (owner_epoch >= 1)
+                    )
+                    """
+                ).format(self._scoped_writers_table)
+            )
+            self._connection.execute(
+                sql.SQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS {} (
+                        correlation_id TEXT PRIMARY KEY,
+                        scope TEXT NOT NULL
+                    )
+                    """
+                ).format(self._correlation_owners_table)
             )
             row = self._connection.execute(
                 sql.SQL(
@@ -298,24 +330,107 @@ class PostgresPersistence(MemoryPersistence):
                 )
             return WriterLease(owner_id=owner_id, epoch=int(row[0]))
 
+    def scoped_writer_epoch(self, scope: str) -> int:
+        if not scope:
+            raise ValueError("writer scope must be nonempty")
+        row = self._connection.execute(
+            sql.SQL("SELECT owner_epoch FROM {} WHERE scope = %s").format(
+                self._scoped_writers_table
+            ),
+            (scope,),
+        ).fetchone()
+        return 0 if row is None else int(row[0])
+
+    def claim_scoped_writer(
+        self, scope: str, owner_id: str, *, expected_epoch: int,
+        correlation_id: str | None = None,
+    ) -> ScopedWriterLease:
+        if not scope or not owner_id:
+            raise ValueError("scope and owner must be nonempty")
+        if expected_epoch < 0:
+            raise ValueError("expected_epoch must be >= 0")
+        if correlation_id is not None and not correlation_id:
+            raise ValueError("correlation_id must be nonempty")
+        with self._connection.transaction():
+            # Only workers claiming this same scope serialize. Do not use the
+            # namespace-wide writer epoch or lock for independent jobs.
+            self._connection.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                (self.namespace, "writer-scope:" + scope),
+            )
+            if correlation_id is not None:
+                self._connection.execute(
+                    sql.SQL(
+                        "INSERT INTO {} (correlation_id, scope) VALUES (%s, %s) "
+                        "ON CONFLICT (correlation_id) DO NOTHING"
+                    ).format(self._correlation_owners_table),
+                    (correlation_id, scope),
+                )
+                owner = self._connection.execute(
+                    sql.SQL(
+                        "SELECT scope FROM {} WHERE correlation_id = %s"
+                    ).format(self._correlation_owners_table),
+                    (correlation_id,),
+                ).fetchone()
+                if owner is None or owner[0] != scope:
+                    raise ValueError(
+                        "recovery correlation is already owned by another job"
+                    )
+            row = self._connection.execute(
+                sql.SQL("SELECT owner_epoch FROM {} WHERE scope = %s").format(
+                    self._scoped_writers_table
+                ), (scope,),
+            ).fetchone()
+            current = 0 if row is None else int(row[0])
+            if current != expected_epoch:
+                raise StaleWriterError(
+                    f"scoped writer claim lost for {scope}: expected {expected_epoch}, "
+                    f"current {current}"
+                )
+            self._connection.execute(
+                sql.SQL(
+                    """
+                    INSERT INTO {} (scope, owner_id, owner_epoch)
+                    VALUES (%s, %s, %s)
+                    ON CONFLICT (scope) DO UPDATE
+                    SET owner_id=EXCLUDED.owner_id, owner_epoch=EXCLUDED.owner_epoch
+                    """
+                ).format(self._scoped_writers_table),
+                (scope, owner_id, current + 1),
+            )
+            return ScopedWriterLease(owner_id, current + 1, scope)
+
     @contextmanager
     def boundary_transaction(
         self, *, owner_epoch: int | None = None,
+        writer_scope: str | None = None,
     ) -> Iterator[MemoryUnitOfWork]:
-        """Serialize semantic boundary writes without serializing disjoint domain writes.
+        """Serialize overlapping causal boundary writes, not unrelated jobs.
 
-        Generic OLTP transactions intentionally permit concurrent independent
-        dirty records. Claim/ACK/publication are different: reading and
-        committing a causal boundary history must happen in one serial order.
-        Acquire the boundary advisory lock *before* opening the nested UoW
-        transaction so a second worker cannot snapshot an uncommitted parent.
+        Legacy calls exclusively lock the whole namespace. Scoped jobs take
+        the compatible shared namespace lock plus an exclusive per-job lock.
+        This lets independent correlations claim/ACK concurrently while any
+        legacy unscoped writer remains mutually exclusive with scoped writers.
         """
         with self._connection.transaction():
-            self._connection.execute(
-                "SELECT pg_advisory_xact_lock(hashtext(%s))",
-                (f"{self.namespace}:causal-boundary",),
-            )
-            with self.transaction(owner_epoch=owner_epoch) as uow:
+            boundary_namespace = f"{self.namespace}:causal-boundary"
+            if writer_scope is None:
+                self._connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (boundary_namespace,),
+                )
+            else:
+                self._connection.execute(
+                    "SELECT pg_advisory_xact_lock_shared(hashtext(%s))",
+                    (boundary_namespace,),
+                )
+                self._connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                    (boundary_namespace, "job:" + writer_scope),
+                )
+            with self.transaction(
+                owner_epoch=owner_epoch, writer_scope=writer_scope,
+            ) as uow:
                 yield uow
 
     @contextmanager
@@ -323,11 +438,18 @@ class PostgresPersistence(MemoryPersistence):
         self,
         *,
         owner_epoch: int | None = None,
+        writer_scope: str | None = None,
     ) -> Iterator[MemoryUnitOfWork]:
         before: _State | None = None
         try:
             with self._connection.transaction():
-                self._lock_and_validate_epoch(owner_epoch)
+                if writer_scope is None:
+                    # Preserve the original single-argument extension point.
+                    self._lock_and_validate_epoch(owner_epoch)
+                else:
+                    self._lock_and_validate_epoch(
+                        owner_epoch, writer_scope=writer_scope,
+                    )
                 before, uow = self._begin_transaction_uow()
                 yield uow
                 if not uow._closed:
@@ -349,7 +471,30 @@ class PostgresPersistence(MemoryPersistence):
                 self._state = before
             raise
 
-    def _lock_and_validate_epoch(self, owner_epoch: int | None) -> int:
+    def _lock_and_validate_epoch(
+        self, owner_epoch: int | None, *, writer_scope: str | None = None,
+    ) -> int:
+        if writer_scope is not None:
+            if not writer_scope or owner_epoch is None:
+                raise ValueError("scoped transactions require scope and writer epoch")
+            # A scope's exclusive claim waits for its in-flight writes, but
+            # cannot preempt or block transactions from another job scope.
+            self._connection.execute(
+                "SELECT pg_advisory_xact_lock_shared(hashtext(%s), hashtext(%s))",
+                (self.namespace, "writer-scope:" + writer_scope),
+            )
+            row = self._connection.execute(
+                sql.SQL("SELECT owner_epoch FROM {} WHERE scope = %s").format(
+                    self._scoped_writers_table
+                ), (writer_scope,),
+            ).fetchone()
+            current = -1 if row is None else int(row[0])
+            if current != owner_epoch:
+                raise StaleWriterError(
+                    f"stale scoped writer epoch {owner_epoch} for {writer_scope}; "
+                    f"current epoch is {current}"
+                )
+            return current
         self._connection.execute(
             "SELECT pg_advisory_xact_lock_shared(hashtext(%s))",
             (self.namespace,),

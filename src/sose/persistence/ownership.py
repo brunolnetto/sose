@@ -22,13 +22,20 @@ class FencedEnginePersistence:
         self._persistence = persistence
         self.lease = lease
 
+    def _writer_kwargs(self):
+        kwargs = {"owner_epoch": self.lease.epoch}
+        scope = getattr(self.lease, "scope", None)
+        if scope is not None:
+            kwargs["writer_scope"] = scope
+        return kwargs
+
     def transaction(self):
-        return self._persistence.transaction(owner_epoch=self.lease.epoch)
+        return self._persistence.transaction(**self._writer_kwargs())
 
     def boundary_transaction(self):
         factory = getattr(self._persistence, "boundary_transaction", None)
         if callable(factory):
-            return factory(owner_epoch=self.lease.epoch)
+            return factory(**self._writer_kwargs())
         return self.transaction()
 
     def __getattr__(self, name: str):
