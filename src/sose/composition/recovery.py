@@ -452,6 +452,7 @@ class TradingCustomerRecoveryRunner:
             lease = self.persistence.claim_scoped_writer(
                 self.job_id, self.owner_id,
                 expected_epoch=self.persistence.scoped_writer_epoch(self.job_id),
+                correlation_id=self.correlation_id,
             )
         else:
             lease = self.persistence.claim_writer(
