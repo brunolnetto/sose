@@ -443,7 +443,12 @@ class PostgresPersistence(MemoryPersistence):
         before: _State | None = None
         try:
             with self._connection.transaction():
-                self._lock_and_validate_epoch(owner_epoch, writer_scope=writer_scope)
+                if writer_scope is None:
+                    self._lock_and_validate_epoch(owner_epoch)
+                else:
+                    self._lock_and_validate_epoch(
+                        owner_epoch, writer_scope=writer_scope,
+                    )
                 before, uow = self._begin_transaction_uow()
                 yield uow
                 if not uow._closed:
