@@ -63,6 +63,7 @@ class IntentResourceCoordinator:
         self._slot = slot_duration
         self._retry = retry_delay
         self._waiting = sql.Identifier(f"{persistence.namespace}_resource_intent_wait")
+        self._links = sql.Identifier(f"{persistence.namespace}_resource_intent_link")
         self._positions = sql.Identifier(f"{persistence.namespace}_resource_org_position")
         with self._db.transaction():
             # Serialize only one-time DDL, not organizational resource actions.
@@ -85,6 +86,14 @@ class IntentResourceCoordinator:
                     logical_time TIMESTAMPTZ NOT NULL
                 )
             """).format(self._positions))
+            self._db.execute(sql.SQL("""
+                CREATE TABLE IF NOT EXISTS {} (
+                    effect_id TEXT PRIMARY KEY,
+                    organization_id TEXT NOT NULL,
+                    resource_key TEXT NOT NULL,
+                    causation_id TEXT NOT NULL
+                )
+            """).format(self._links))
         self._ledger = persistence.temporal_resources()
         for pool in self._policies.values():
             self._ledger.register_pool(pool)
@@ -109,6 +118,25 @@ class IntentResourceCoordinator:
                 ON CONFLICT (organization_id) DO UPDATE
                     SET logical_time = GREATEST({}.logical_time, EXCLUDED.logical_time)
             """).format(self._positions, self._positions), (organization_id, at))
+
+    def _bind(self, effect_id: str, organization_id: str,
+              resource_key: str, causation_id: str | None) -> None:
+        if not causation_id:
+            raise ValueError("mapped resource effects require immutable boundary causation")
+        with self._db.transaction():
+            previous = self._db.execute(sql.SQL("""
+                SELECT organization_id, resource_key, causation_id
+                  FROM {} WHERE effect_id = %s FOR UPDATE
+            """).format(self._links), (effect_id,)).fetchone()
+            expected = (organization_id, resource_key, causation_id)
+            if previous is not None:
+                if previous != expected:
+                    raise ResourceConflictError("immutable resource intent ownership/causation changed")
+                return
+            self._db.execute(sql.SQL("""
+                INSERT INTO {} (effect_id, organization_id, resource_key, causation_id)
+                VALUES (%s,%s,%s,%s)
+            """).format(self._links), (effect_id, *expected))
 
     def _defer(self, effect_id: str, organization_id: str,
                resource_key: str, now: datetime) -> None:
@@ -156,8 +184,11 @@ class IntentResourceCoordinator:
         pool = self._policies.get(intent_name)
         if pool is None:
             return True  # Unmapped intents retain their historical semantics.
-        current_wait = self.waiting(effect_id)
         key = pool.address().lock_key()
+        # This immutable link is the ownership boundary for reconciliation,
+        # including a worker death before or after admission COMMIT.
+        self._bind(effect_id, organization_id, key, causation_id)
+        current_wait = self.waiting(effect_id)
         if current_wait is not None:
             if current_wait.organization_id != organization_id:
                 raise ResourceConflictError("effect's organizational ownership changed")
@@ -212,30 +243,40 @@ class IntentResourceCoordinator:
         self._advance_clock(reservation.owner_id, reservation.end_at)
 
     def reconcile_certified(self, store, organizations: Mapping[str, str]) -> int:
-        """Finish resource release lost after a certified Command was deleted.
+        """Reconcile only resource reservations explicitly linked to this runner.
 
-        A missing Command by itself is *not* proof that business execution
-        completed. Only a matching immutable BusinessEffectApplied receipt,
-        with the same boundary cause and organization, authorizes release.
+        Shared pools may contain unrelated jobs' bookings; an address match
+        alone never authorizes a runner to modify their business resources.
         """
         completed = 0
-        addresses = {pool.address() for pool in self._policies.values()}
-        for reservation in self._ledger.reservations():
-            if reservation.address not in addresses or reservation.status != "reserved":
+        pool_keys = {pool.address().lock_key() for pool in self._policies.values()}
+        links = self._db.execute(sql.SQL("""
+            SELECT effect_id, organization_id, resource_key, causation_id
+              FROM {} ORDER BY effect_id
+        """).format(self._links)).fetchall()
+        for effect_id, organization_id, resource_key, causation_id in links:
+            if resource_key not in pool_keys or organization_id not in organizations.values():
                 continue
+            reservation = self._ledger.get(effect_id)
+            if reservation is None or reservation.status != "reserved":
+                continue
+            if (reservation.owner_id != organization_id
+                or reservation.address.lock_key() != resource_key
+                or reservation.causation_id != causation_id):
+                raise ResourceConflictError("resource link contradicts immutable reservation")
             with store.transaction() as uow:
-                command = uow.get_command(reservation.reservation_id)
-                certificate = uow.get_business_effect(reservation.reservation_id)
+                command = uow.get_command(effect_id)
+                certificate = uow.get_business_effect(effect_id)
             if command is not None:
                 continue
             if certificate is None:
                 raise ResourceConflictError(
-                    "reserved effect lacks both durable Command and business certificate"
+                    "linked resource effect lacks both durable Command and business certificate"
                 )
-            if certificate.boundary_message_id != reservation.causation_id:
+            if certificate.boundary_message_id != causation_id:
                 raise ResourceConflictError("resource reservation certificate causation mismatch")
-            if organizations.get(certificate.correlation_id) != reservation.owner_id:
+            if organizations.get(certificate.correlation_id) != organization_id:
                 raise ResourceConflictError("resource reservation certificate organization mismatch")
-            self.complete(reservation.reservation_id)
+            self.complete(effect_id)
             completed += 1
         return completed
