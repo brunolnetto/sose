@@ -122,7 +122,9 @@ def _execute(namespace, monkeypatch, *, restart):
             if store.command(effects[key].command_id) is not None
         )
 
-    def execute(store, source, effect_id):
+    def execute(store, source, effect_id, *, authoritative_pickup=None):
+        assert authoritative_pickup is not None
+        assert authoritative_pickup.reservation_id == effect_id
         executed.append((source.correlation_id, effect_id))
         with store.transaction() as uow:
             uow.delete_command(effect_id)
