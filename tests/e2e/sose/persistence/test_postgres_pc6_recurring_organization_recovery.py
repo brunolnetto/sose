@@ -210,3 +210,129 @@ def test_recurring_jobs_claim_only_their_own_causal_boundary(monkeypatch):
             assert all(receipt is not None for receipt in consumptions)
             assert all(uow.get_command(receipt.consumer_effect_id) is not None
                        for receipt in consumptions)
+
+
+def test_real_logistics_certified_crash_keeps_other_organization_progressing(monkeypatch):
+    """Real Logistics statecharts and PG physical bookings: cert-before-release crash."""
+    from sose.composition.boundary import BoundaryService
+    from sose.composition.model import BoundaryMessage
+    from sose.composition.resource_intents import IntentResourceCoordinator
+    from sose.core.resource_identity import ResourcePoolContract
+    from sose.examples.logistics import simulation as logistics
+
+    assert DSN
+    ns = _namespace()
+    orgs = ("organization-a", "organization-b")
+    pool = ResourcePoolContract(
+        resource_type="pickup_courier", pool_id="pc6-shared-dispatch",
+        scope="shared", capacity=2,
+    )
+    effects = {}
+    shipments = {}
+    with PostgresPersistence(DSN, namespace=ns) as original:
+        service = BoundaryService(original)
+        for org in orgs:
+            entities = logistics.seed_reference(original, instance_key=org)
+            shipments[org] = entities.shipment_id
+            source = BoundaryMessage.create(
+                contract_name="warehouse.dispatch_ready", contract_version=1,
+                source_domain="warehouse_fulfillment",
+                source_identity=entities.shipment_id,
+                destination_domain="logistics", occurrence_key="dispatch-ready",
+                correlation_id=org, causation_id=None,
+                produced_at=logistics.ORIGIN,
+                payload={"shipment_id": entities.shipment_id},
+            )
+            service.publish(source)
+            boundary_lease = service.claim_next(
+                owner_id="ingress-worker", now=logistics.ORIGIN,
+                lease_duration=timedelta(hours=1),
+                destination_domain="logistics", message_id=source.message_id,
+            )
+            assert boundary_lease is not None
+            ack = service.consume(
+                lease=boundary_lease,
+                registry=TradingCustomerRecoveryRunner._registry_for(source),
+                now=logistics.ORIGIN,
+            )
+            effects[org] = ack.consumer_effect_id
+
+    def schedule(store, org, owner):
+        return RecoverySchedule(
+            runner=TradingCustomerRecoveryRunner(
+                persistence=store, owner_id=owner, job_id="job-" + org,
+                correlation_id=org, scoped_writer=True, max_actions=1,
+                resource_policies={"composition.deliver_shipment": pool},
+                resource_organizations={org: org},
+                resource_slot_duration=timedelta(minutes=5),
+                resource_retry_delay=timedelta(minutes=5),
+            ),
+            start_at=logistics.ORIGIN, interval=timedelta(minutes=5),
+            max_slots=2,
+        )
+
+    original_complete = IntentResourceCoordinator.complete
+    armed = {"crash": True}
+
+    def die_after_domain_certificate(self, effect_id):
+        if effect_id == effects["organization-a"] and armed["crash"]:
+            armed["crash"] = False
+            with self._store.transaction(
+                owner_epoch=self._owner_epoch, writer_scope=self._writer_scope,
+            ) as uow:
+                proof = uow.get_business_effect(effect_id)
+                assert proof is not None and proof.terminal_state == "delivered"
+                assert uow.get_command(effect_id) is None
+            assert self._ledger.get(effect_id).status == "reserved"
+            raise RuntimeError("killed after real Logistics certification")
+        return original_complete(self, effect_id)
+
+    monkeypatch.setattr(IntentResourceCoordinator, "complete", die_after_domain_certificate)
+    with PostgresPersistence(DSN, namespace=ns) as first_a:
+        with pytest.raises(RuntimeError, match="killed after real Logistics certification"):
+            schedule(first_a, orgs[0], "a-first").run_due(now=logistics.ORIGIN)
+        assert first_a.job_state("job-organization-a").active_trigger_id is not None
+        assert first_a.entity("shipment", shipments[orgs[0]]).state == "delivered"
+        assert first_a.temporal_resources().get(effects[orgs[0]]).status == "reserved"
+
+    with PostgresPersistence(DSN, namespace=ns) as b:
+        b_slots = schedule(b, orgs[1], "b-healthy").run_due(
+            now=logistics.ORIGIN + timedelta(minutes=5),
+        )
+        assert len(b_slots) == 2
+        assert b.entity("shipment", shipments[orgs[1]]).state == "delivered"
+        assert b.temporal_resources().get(effects[orgs[1]]).status == "released"
+        # A's certified effect and unreleased booking are not B's to reconcile.
+        assert b.temporal_resources().get(effects[orgs[0]]).status == "reserved"
+        assert b.job_state("job-organization-b").run_count == 2
+        assert b.job_state("job-organization-a").run_count == 0
+
+    with PostgresPersistence(DSN, namespace=ns) as recovered_a:
+        recovered_slots = schedule(recovered_a, orgs[0], "a-recovered").run_due(
+            now=logistics.ORIGIN + timedelta(minutes=5),
+        )
+        assert len(recovered_slots) == 2
+        ledger = recovered_a.temporal_resources()
+        assert ledger.audit()
+        assert all(ledger.get(effects[org]).status == "released" for org in orgs)
+        assert all(
+            recovered_a.entity("shipment", shipments[org]).state == "delivered"
+            for org in orgs
+        )
+        assert all(
+            sum(e.effect_id == effects[org] for e in recovered_a.business_effects()) == 1
+            for org in orgs
+        )
+        assert recovered_a.job_state("job-organization-a").run_count == 2
+        assert recovered_a.job_state("job-organization-b").run_count == 2
+        assert recovered_a.job_state("job-organization-a").logical_time == (
+            logistics.ORIGIN + timedelta(minutes=5)
+        )
+        assert recovered_a.job_state("job-organization-b").logical_time == (
+            logistics.ORIGIN + timedelta(minutes=5)
+        )
+        assert len({ledger.get(effects[org]).owner_id for org in orgs}) == 2
+        assert not any(
+            r.resource_name == "pickup_courier"
+            for r in recovered_a.resource_reservations()
+        )
