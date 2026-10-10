@@ -5,7 +5,7 @@ two sequential completions on two independent database connections.
 """
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import asdict
-from threading import Barrier, Lock
+from threading import Barrier, Event, Lock, Thread
 from uuid import uuid4
 import json
 import os
@@ -169,3 +169,51 @@ def test_pg_concurrent_first_namespace_bootstrap_is_serializable():
     with PostgresPersistence(DSN, namespace=namespace) as restored:
         assert restored.persisted_record_count() == 0
         assert restored.writer_epoch() == epochs[0]
+
+
+def test_pg_business_resource_guard_serializes_independent_workers():
+    """The shared journal capacity guard must span inner domain transactions."""
+    assert DSN is not None
+    namespace = "pc6_guard_" + uuid4().hex[:12]
+    with (
+        PostgresPersistence(DSN, namespace=namespace) as first,
+        PostgresPersistence(DSN, namespace=namespace) as second,
+    ):
+        acquired_first = Event()
+        release_first = Event()
+        attempted_second = Event()
+        acquired_second = Event()
+        failures = []
+
+        def owner():
+            try:
+                with first.business_resource_guard("r2r.posting_processor"):
+                    acquired_first.set()
+                    if not release_first.wait(10):
+                        raise TimeoutError("first posting worker was not released")
+            except BaseException as error:
+                failures.append(error)
+
+        def contender():
+            attempted_second.set()
+            try:
+                with second.business_resource_guard("r2r.posting_processor"):
+                    acquired_second.set()
+            except BaseException as error:
+                failures.append(error)
+
+        a = Thread(target=owner)
+        b = Thread(target=contender)
+        a.start()
+        assert acquired_first.wait(10)
+        b.start()
+        assert attempted_second.wait(10)
+        try:
+            assert not acquired_second.wait(0.3)
+        finally:
+            release_first.set()
+        a.join(timeout=10)
+        b.join(timeout=10)
+        assert not a.is_alive() and not b.is_alive()
+        assert acquired_second.is_set()
+        assert failures == []
