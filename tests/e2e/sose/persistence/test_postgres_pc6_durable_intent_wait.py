@@ -6,6 +6,7 @@ import os
 import pytest
 
 from sose.composition.model import BoundaryMessage
+from sose.composition.effects import BusinessEffectApplied
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.composition.resource_intents import IntentResourceCoordinator
 from sose.core.events import Command
@@ -240,3 +241,73 @@ def test_pg_two_correlations_of_one_organization_share_monotonic_resource_time()
         assert coordinator.logical_time("same-company") == T0+2*SLOT
         assert coordinator.logical_time("unrelated-company") is None
         assert coordinator._ledger.audit()
+
+
+def test_pg_restart_releases_certified_effect_after_command_deletion():
+    assert DSN
+    ns = _namespace("pc6certrelease")
+    with PostgresPersistence(DSN, namespace=ns) as original:
+        coordinator = _coordinator(original)
+        with original.transaction() as uow:
+            uow.save_command(Command(
+                command_id="certified-effect", name=POLICY_NAME,
+                entity_type="shipment", entity_id="shipment-1",
+                due_at=T0, issued_at=T0,
+                causation_id="immutable-boundary", correlation_id="corr-a",
+            ))
+        assert coordinator.admit(
+            effect_id="certified-effect", intent_name=POLICY_NAME,
+            organization_id="company-a", due_at=T0, now=T0,
+            causation_id="immutable-boundary",
+        )
+        # Simulate a worker killed between authoritative domain certificate
+        # commit and the resource release commit.
+        with original.transaction() as uow:
+            uow.save_business_effect(BusinessEffectApplied.from_applied(
+                effect_id="certified-effect",
+                boundary_message_id="immutable-boundary",
+                correlation_id="corr-a",
+                entity_type="shipment", entity_id="shipment-1",
+                terminal_state="delivered", entity_version=1, completed_at=T0,
+            ))
+            uow.delete_command("certified-effect")
+
+    with PostgresPersistence(DSN, namespace=ns) as restarted:
+        coordinator = _coordinator(restarted)
+        assert coordinator._ledger.get("certified-effect").status == "reserved"
+        assert coordinator.reconcile_certified(
+            restarted, {"corr-a": "company-a"},
+        ) == 1
+        assert coordinator._ledger.get("certified-effect").status == "released"
+        assert coordinator.logical_time("company-a") == T0+SLOT
+        assert coordinator.reconcile_certified(
+            restarted, {"corr-a": "company-a"},
+        ) == 0
+        assert coordinator._ledger.audit()
+
+
+@pytest.mark.parametrize("cause,bindings,match", [
+    ("different-parent", {"corr-a": "company-a"}, "causation mismatch"),
+    ("immutable-boundary", {"corr-a": "different-company"}, "organization mismatch"),
+])
+def test_pg_reconciliation_rejects_causal_or_organizational_rebinding(
+    cause, bindings, match,
+):
+    assert DSN
+    with PostgresPersistence(DSN, namespace=_namespace("pc6certbad")) as db:
+        coordinator = _coordinator(db)
+        assert coordinator.admit(
+            effect_id="cert-effect", intent_name=POLICY_NAME,
+            organization_id="company-a", due_at=T0, now=T0,
+            causation_id="immutable-boundary",
+        )
+        with db.transaction() as uow:
+            uow.save_business_effect(BusinessEffectApplied.from_applied(
+                effect_id="cert-effect", boundary_message_id=cause,
+                correlation_id="corr-a", entity_type="shipment",
+                entity_id="shipment-1", terminal_state="delivered",
+                entity_version=1, completed_at=T0,
+            ))
+        with pytest.raises(ResourceConflictError, match=match):
+            coordinator.reconcile_certified(db, bindings)
+        assert coordinator._ledger.get("cert-effect").status == "reserved"
