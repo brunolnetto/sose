@@ -504,6 +504,7 @@ jobs:
 
     env:
       SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
+      SOSE_PC6_EQUIVALENCE_REPORT: ${{ runner.temp }}/pc6-causal-equivalence.json
 
     steps:
       - name: Checkout
@@ -524,3 +525,11 @@ jobs:
       - name: Run PostgreSQL conformance, restart, and concurrency tests
         run: |
           python -m pytest -q             tests/e2e/sose/persistence/test_postgres_persistence.py             tests/e2e/sose/persistence/test_postgres_persistence_restart.py             tests/e2e/sose/persistence/test_postgres_authoritative_conformance.py             tests/e2e/sose/persistence/test_postgres_pc6_multiflow_equivalence.py
+      - name: Upload PC6 causal equivalence evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pc6-postgres-causal-equivalence
+          path: ${{ runner.temp }}/pc6-causal-equivalence.json
+          if-no-files-found: warn
+          retention-days: 14
