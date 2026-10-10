@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - "src/sose/**"
+      - "tests/e2e/sose/persistence/test_postgres_pc6_multiflow_equivalence.py"
+      - ".github/workflows/ci.yml"
       - "scripts/**"
       - "uv.lock"
       - "docs/organizational/preregistration/**"
@@ -13,6 +15,8 @@ on:
     branches: [main]
     paths:
       - "src/sose/**"
+      - "tests/e2e/sose/persistence/test_postgres_pc6_multiflow_equivalence.py"
+      - ".github/workflows/ci.yml"
       - "scripts/**"
       - "uv.lock"
       - "docs/organizational/preregistration/**"
