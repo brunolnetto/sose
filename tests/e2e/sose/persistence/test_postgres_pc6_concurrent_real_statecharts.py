@@ -143,3 +143,29 @@ def test_pg_two_real_customer_statecharts_overlap_without_business_aliasing(monk
             _canonical(reopened.job_states()),
             _canonical(reopened.sink_checkpoints()),
         )
+
+
+def test_pg_concurrent_first_namespace_bootstrap_is_serializable():
+    """Four fresh writers may create the same namespace without catalog races."""
+    assert DSN is not None
+    namespace = "pc6_boot_" + uuid4().hex[:12]
+    gate = Barrier(4)
+
+    def open_writer(index):
+        gate.wait(timeout=10)
+        with PostgresPersistence(DSN, namespace=namespace) as store:
+            assert store.persisted_record_count() == 0
+            return store.writer_epoch()
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(open_writer, i) for i in range(4)]
+        finished, unfinished = wait(futures, timeout=30)
+        assert not unfinished, "concurrent PostgreSQL bootstrap timed out"
+        errors = [repr(f.exception()) for f in futures if f.exception() is not None]
+        assert not errors, f"concurrent bootstrap violated catalog uniqueness: {errors}"
+        epochs = tuple(f.result() for f in futures)
+    assert len(set(epochs)) == 1
+
+    with PostgresPersistence(DSN, namespace=namespace) as restored:
+        assert restored.persisted_record_count() == 0
+        assert restored.writer_epoch() == epochs[0]
