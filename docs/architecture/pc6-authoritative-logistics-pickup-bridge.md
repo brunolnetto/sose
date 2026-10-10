@@ -28,9 +28,12 @@ unchanged unless the resource mapping is explicitly activated.
    a resumed schedule may be delayed until a later admitted slot.
 3. `logistics.reconcile_pickup(..., authoritative_pickup=booking)` verifies
    the **live** PostgreSQL record, status, identity and `start <= backend.now
-   < end` at the transition site. Any disagreement fails closed before
-   dispatch. With a valid booking, SimPy drives the statechart without a
-   second `engine.resources.ensure_requested/withdraw` for pickup.
+   < end` at the transition site. It holds the ledger's **pool-scoped
+   transactional lock through the nested Engine UoW commit**. Release, failure
+   and preemption cannot invalidate the booking in the read/dispatch gap.
+   Any disagreement fails closed before dispatch. With a valid booking, SimPy
+   drives the statechart without a second
+   `engine.resources.ensure_requested/withdraw` for pickup.
 4. The existing BusinessEffectApplied certificate and `IntentResourceCoordinator`
    completion perform idempotent release. After death between certificate and
    release, the existing #438 certified-effect reconciler releases the same
@@ -64,7 +67,8 @@ unchanged unless the resource mapping is explicitly activated.
 
 - PostgreSQL falsification: no booking, forged owner, or out-of-window grant
   cannot pick up; valid grant transitions once and creates no second SimPy
-  pickup allocation; two idempotent releases emit exactly one release event.
+  pickup allocation; a competing release waits for the transactionally pinned
+  domain use; two idempotent releases emit exactly one release event.
 - PostgreSQL restart: persisted business state and booking remain recoverable.
 - Existing #438 wait/correlation/recovery tests, concurrent real PC6
   statecharts, full Python 3.12–3.14 matrix, coverage >=95%, dedicated
