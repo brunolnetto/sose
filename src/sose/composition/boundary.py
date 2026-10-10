@@ -135,6 +135,7 @@ class BoundaryService:
         lease_duration: timedelta,
         destination_domain: str | None = None,
         accepted_contracts: frozenset[tuple[str, int]] | None = None,
+        message_id: str | None = None,
     ) -> BoundaryLease | None:
         """Lease only a worker-owned destination when requested.
 
@@ -145,6 +146,8 @@ class BoundaryService:
             raise ValueError("owner_id cannot be empty")
         if destination_domain is not None and not destination_domain:
             raise ValueError("destination_domain must be nonempty when specified")
+        if message_id is not None and not message_id:
+            raise ValueError("message_id must be nonempty when specified")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
         if accepted_contracts is not None and any(
@@ -157,6 +160,8 @@ class BoundaryService:
         with self._transaction() as uow:
             candidates: list[tuple[datetime, str, BoundaryDelivery]] = []
             for delivery in uow.boundary_deliveries():
+                if message_id is not None and delivery.message_id != message_id:
+                    continue
                 if destination_domain is not None and (
                     delivery.destination_domain != destination_domain
                 ):
