@@ -255,18 +255,26 @@ class IntentResourceCoordinator:
               FROM {} ORDER BY effect_id
         """).format(self._links)).fetchall()
         for effect_id, organization_id, resource_key, causation_id in links:
-            if resource_key not in pool_keys or organization_id not in organizations.values():
+            if resource_key not in pool_keys:
                 continue
             reservation = self._ledger.get(effect_id)
             if reservation is None or reservation.status != "reserved":
+                continue
+            with store.transaction() as uow:
+                command = uow.get_command(effect_id)
+                certificate = uow.get_business_effect(effect_id)
+            # A shared pool can contain unrelated jobs. Select only effects
+            # owned by this runner OR explicitly certified under a correlation
+            # this runner owns. Contradictory owner/correlation must fail closed.
+            if (
+                organization_id not in organizations.values()
+                and (certificate is None or certificate.correlation_id not in organizations)
+            ):
                 continue
             if (reservation.owner_id != organization_id
                 or reservation.address.lock_key() != resource_key
                 or reservation.causation_id != causation_id):
                 raise ResourceConflictError("resource link contradicts immutable reservation")
-            with store.transaction() as uow:
-                command = uow.get_command(effect_id)
-                certificate = uow.get_business_effect(effect_id)
             if command is not None:
                 continue
             if certificate is None:
