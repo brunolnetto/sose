@@ -8,6 +8,8 @@ The same two independently schedulable Logistics organizations must reach identi
 
 A restart must reconstruct the domain statechart and active Command, reconcile physically booked capacity from the authoritative temporal ledger, recover immutable business-effect certificates, and replay an unfinished occurrence without fabricating new causal identities. A completed occurrence must be a strict no-op on duplicate invocation.
 
+**Durable trigger enrollment:** every successful resource-backed admission for a running recurring job now stamps its immutable physical-effect link with `admitted_trigger_id` before domain execution. Deferred admissions do not receive a trigger enrollment. On restart, `reconcile_certified` verifies the original boundary causation and terminal `BusinessEffectApplied` certificate, and charges that effect to the unfinished occurrence even if the resource release itself is already committed. Released work from any *different* trigger does not count toward the current action budget. This prevents a recovered slot from emitting a downstream message earlier than uninterrupted execution. The new column is additive to historical single-namespace links, including NULL for links that predate the protocol; frozen v1 datasets are unchanged.
+
 ## TRD — separately fatal causal windows
 
 The integration test `test_pg_os_kill_at_multiple_federated_causal_commit_windows_is_equivalent` in `tests/e2e/sose/persistence/test_postgres_pc6_federated_recovery.py` runs three new child-process cuts with actual `os._exit(79)`, not raised exceptions:
