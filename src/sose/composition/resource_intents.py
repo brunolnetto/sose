@@ -208,6 +208,8 @@ class IntentResourceCoordinator:
                trigger_id: str | None = None) -> bool:
         if not effect_id or not organization_id:
             raise ValueError("effect_id and organization_id must be nonempty")
+        if trigger_id is not None and not trigger_id:
+            raise ValueError("admitted trigger identity must be nonempty")
         _aware(now, "now")
         _aware(due_at, "due_at")
         pool = self._policies.get(intent_name)
@@ -256,8 +258,6 @@ class IntentResourceCoordinator:
             )
         self._advance_clock(organization_id, existing.start_at)
         if trigger_id is not None:
-            if not trigger_id:
-                raise ValueError("admitted trigger identity must be nonempty")
             # Durable enrollment precedes real domain execution. A successful
             # effect cannot vanish from an interrupted recurring slot merely
             # because the physical booking has already been released.
