@@ -77,21 +77,25 @@ def seed_reference(
     now: datetime = ORIGIN,
     amount: float = 1000.0,
     currency: str = "USD",
+    instance_key: str | None = None,
 ) -> R2REntities:
     if amount <= 0:
         raise ValueError("amount must be positive")
     if not currency:
         raise ValueError("currency must be non-empty")
+    if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
+        raise ValueError("instance_key must be a nonempty string")
+    prefix = ("r2r-reference",) if instance_key is None else ("r2r-reference", instance_key)
     context, _ = build_runtime(persistence, now=now)
     period = context.entities.create(
         AccountingPeriod,
-        key=("r2r-reference", "period-2026-09"),
+        key=(*prefix, "period-2026-09"),
         state="open",
         attributes={"period": "2026-09", "reopen_count": 0},
     )
     journal = context.entities.create(
         JournalEntry,
-        key=("r2r-reference", period.id, "journal-1"),
+        key=(*prefix, period.id, "journal-1"),
         state="drafted",
         attributes={
             "period_id": period.id,
@@ -101,7 +105,7 @@ def seed_reference(
     )
     reconciliation = context.entities.create(
         ReconciliationItem,
-        key=("r2r-reference", period.id, "reconciliation-1"),
+        key=(*prefix, period.id, "reconciliation-1"),
         state="pending",
         attributes={
             "period_id": period.id,
@@ -112,7 +116,7 @@ def seed_reference(
     )
     close_task = context.entities.create(
         CloseTask,
-        key=("r2r-reference", period.id, "close-task", 1),
+        key=(*prefix, period.id, "close-task", 1),
         state="pending",
         attributes={"period_id": period.id, "ordinal": 1},
     )
