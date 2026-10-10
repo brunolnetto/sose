@@ -6,7 +6,7 @@ proof reconstructs resource records from PostgreSQL after closing the writer.
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
-from threading import Barrier
+from threading import Barrier, Event, Thread
 from uuid import uuid4
 import os
 
@@ -18,6 +18,8 @@ from sose.core.resource_reservations import (
     TemporalReservation, TemporalOutage,
 )
 from sose.persistence.postgres import PostgresPersistence
+from sose.core.events import DomainEvent
+from sose.domain.entity import Entity
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
@@ -215,3 +217,102 @@ def test_pg_worker_sigkill_restart_is_causally_equivalent_to_continuous_referenc
     baseline = _experiment(_namespace("baseline"), kill_worker=False)
     killed = _experiment(_namespace("faulted"), kill_worker=True)
     assert baseline == killed, "worker death changed durable resource business causality"
+
+
+def test_pg_domain_event_and_allocation_share_transactional_commit():
+    """An outer Engine UoW can atomically commit domain truth plus resource truth."""
+    assert DSN
+    ns = _namespace("coupled")
+    pool = _pool()
+    with PostgresPersistence(DSN, namespace=ns) as db:
+        ledger = db.temporal_resources()
+        ledger.register_pool(pool)
+        with pytest.raises(RuntimeError, match="injected before commit"):
+            with db.transaction() as uow:
+                ledger.reserve(_request(pool, "rolled-back", 0, 2))
+                uow.save_entity(Entity(
+                    id="work-1", entity_type="work_order", state="processing",
+                ))
+                uow.append_event(DomainEvent(
+                    event_id="work-1:started", name="work.started",
+                    entity_type="work_order", entity_id="work-1", occurred_at=T0,
+                    causation_id="reserve:rolled-back",
+                ))
+                raise RuntimeError("injected before commit")
+        assert ledger.get("rolled-back") is None
+        assert db.entity("work_order", "work-1") is None
+        assert db.events() == ()
+        with db.transaction() as uow:
+            ledger.reserve(_request(pool, "committed", 0, 2))
+            uow.save_entity(Entity(
+                id="work-1", entity_type="work_order", state="processing",
+            ))
+            uow.append_event(DomainEvent(
+                event_id="work-1:started", name="work.started",
+                entity_type="work_order", entity_id="work-1", occurred_at=T0,
+                causation_id="reserve:committed",
+            ))
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        ledger = reopened.temporal_resources()
+        assert len(ledger.reservations()) == 1
+        assert ledger.get("committed") is not None
+        assert reopened.entity("work_order", "work-1").state == "processing"
+        assert len(reopened.events()) == 1
+        assert reopened.events()[0].causation_id == "reserve:committed"
+        assert ledger.audit()
+
+
+def test_pg_distinct_organization_pools_commit_while_other_transaction_open():
+    """No namespace-wide resource mutex may serialize unrelated organizations."""
+    assert DSN
+    ns = _namespace("disjoint")
+    local_a = _pool(scope="organization", org="factory-a")
+    local_b = _pool(scope="organization", org="factory-b")
+    with (
+        PostgresPersistence(DSN, namespace=ns) as first,
+        PostgresPersistence(DSN, namespace=ns) as second,
+    ):
+        a = first.temporal_resources()
+        b = second.temporal_resources()
+        a.register_pool(local_a)
+        b.register_pool(local_b)
+        held = Event()
+        release = Event()
+        finished_b = Event()
+        errors = []
+
+        def reserve_a_with_open_transaction():
+            try:
+                with first.transaction():
+                    a.reserve(_request(local_a, "org-a", 0, 2))
+                    held.set()
+                    if not release.wait(10):
+                        raise TimeoutError("owner not released")
+            except BaseException as exc:
+                errors.append(exc)
+
+        def reserve_b_independently():
+            try:
+                assert held.wait(10)
+                b.reserve(_request(local_b, "org-b", 0, 2))
+                finished_b.set()
+            except BaseException as exc:
+                errors.append(exc)
+
+        x = Thread(target=reserve_a_with_open_transaction)
+        y = Thread(target=reserve_b_independently)
+        x.start()
+        y.start()
+        try:
+            assert held.wait(10)
+            assert finished_b.wait(5), "unrelated scoped resource blocked by global lock"
+        finally:
+            release.set()
+            x.join(timeout=10)
+            y.join(timeout=10)
+        assert not x.is_alive() and not y.is_alive()
+        assert not errors
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        ledger = reopened.temporal_resources()
+        assert {x.reservation_id for x in ledger.reservations()} == {"org-a", "org-b"}
+        assert ledger.audit()
