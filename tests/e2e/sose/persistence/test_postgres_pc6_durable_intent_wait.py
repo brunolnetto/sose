@@ -11,7 +11,7 @@ from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.composition.resource_intents import IntentResourceCoordinator
 from sose.core.events import Command
 from sose.core.resource_identity import ResourcePoolContract
-from sose.core.resource_reservations import ResourceConflictError
+from sose.core.resource_reservations import ResourceConflictError, TemporalReservation
 from sose.persistence.postgres import PostgresPersistence, StaleWriterError
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
@@ -78,7 +78,7 @@ def test_pg_intent_capacity_wait_survives_restart_without_double_booking():
         assert _admit(coordinator, "effect-b", "organization-b", T0+3*SLOT)
         coordinator.complete("effect-b")
         assert coordinator._ledger.snapshot() == before
-        with pytest.raises(ResourceConflictError, match="causal predecessor"):
+        with pytest.raises(ResourceConflictError, match="causation"):
             coordinator.admit(
                 effect_id="effect-b", intent_name=POLICY_NAME,
                 organization_id="organization-b", due_at=T0, now=T0+4*SLOT,
@@ -311,3 +311,22 @@ def test_pg_reconciliation_rejects_causal_or_organizational_rebinding(
         with pytest.raises(ResourceConflictError, match=match):
             coordinator.reconcile_certified(db, bindings)
         assert coordinator._ledger.get("cert-effect").status == "reserved"
+
+
+def test_pg_shared_pool_reconciler_does_not_claim_external_organization_work():
+    assert DSN
+    with PostgresPersistence(DSN, namespace=_namespace("pc6external")) as db:
+        coordinator = _coordinator(db)
+        pool = _pool()
+        external = TemporalReservation(
+            reservation_id="other-job-reservation",
+            address=pool.address(), owner_id="unrelated-company",
+            start_at=T0, end_at=T0+SLOT,
+            causation_id="other-domain-command",
+        )
+        coordinator._ledger.reserve(external)
+        assert coordinator.reconcile_certified(
+            db, {"our-correlation":"our-company"},
+        ) == 0
+        assert coordinator._ledger.get("other-job-reservation") == external
+        assert coordinator._ledger.audit()
