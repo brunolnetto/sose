@@ -152,3 +152,54 @@ def test_two_distinct_job_scopes_can_be_in_flight_together(monkeypatch):
     with PostgresPersistence(DSN, namespace=ns) as recovered:
         assert recovered.job_state("job-a").run_count == 1
         assert recovered.job_state("job-b").run_count == 1
+
+
+def test_recurring_jobs_claim_only_their_own_causal_boundary(monkeypatch):
+    """Real PostgreSQL ACKs, not synthetic work callbacks, stay org scoped."""
+    from sose.composition.boundary import BoundaryService
+    from sose.composition.model import BoundaryMessage, DeliveryStatus
+
+    assert DSN
+    ns = _namespace()
+    messages = {}
+    with PostgresPersistence(DSN, namespace=ns) as seed:
+        for org in ("organization-a", "organization-b"):
+            message = BoundaryMessage.create(
+                contract_name="warehouse.dispatch_ready", contract_version=1,
+                source_domain="warehouse_fulfillment",
+                source_identity=f"fulfillment-{org}",
+                destination_domain="logistics", occurrence_key="dispatch-ready",
+                correlation_id=org, causation_id=None, produced_at=T0,
+                payload={"shipment_id": f"shipment-{org}"},
+            )
+            BoundaryService(seed).publish(message)
+            messages[org] = message
+
+    def run(org, job_id, logical_time):
+        with PostgresPersistence(DSN, namespace=ns) as store:
+            runner = TradingCustomerRecoveryRunner(
+                persistence=store, owner_id=f"worker-{org}", job_id=job_id,
+                correlation_id=org, scoped_writer=True, max_actions=1,
+            )
+            completed = runner.run_scheduled_trigger(scheduled_for=logical_time)
+            assert completed.actions == 1
+            return (
+                store.job_state(job_id).logical_time,
+                tuple((d.message_id, d.status) for d in store.boundary_deliveries()),
+            )
+
+    time_a, deliveries = run("organization-a", "job-a", T0)
+    assert time_a == T0
+    by_message = dict(deliveries)
+    assert by_message[messages["organization-a"].message_id] is DeliveryStatus.CONSUMED
+    assert by_message[messages["organization-b"].message_id] is DeliveryStatus.PENDING
+
+    time_b, deliveries = run("organization-b", "job-b", T0 + timedelta(hours=2))
+    assert time_b == T0 + timedelta(hours=2)
+    assert all(status is DeliveryStatus.CONSUMED for _, status in deliveries)
+    with PostgresPersistence(DSN, namespace=ns) as restored:
+        assert restored.job_state("job-a").logical_time == T0
+        assert restored.job_state("job-b").logical_time == T0 + timedelta(hours=2)
+        assert restored.command(
+            restored.boundary_consumptions()[0].consumer_effect_id
+        ) is not None
