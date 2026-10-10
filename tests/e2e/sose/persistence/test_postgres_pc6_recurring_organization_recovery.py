@@ -459,3 +459,31 @@ def test_actual_sigkill_restarts_a_job_while_another_advances():
         assert restored.job_state("job-a").active_trigger_id is None
         assert restored.job_state("job-a").logical_time == T0
         assert restored.job_state("job-b").logical_time == T0 + timedelta(hours=2)
+
+
+def test_scoped_boundary_acks_do_not_require_a_global_causal_mutex():
+    assert DSN
+    ns = _namespace()
+    barrier = Barrier(2)
+
+    def scoped_boundary(job, correlation):
+        with PostgresPersistence(DSN, namespace=ns) as store:
+            lease = store.claim_scoped_writer(
+                job, "worker-" + job,
+                expected_epoch=store.scoped_writer_epoch(job),
+                correlation_id=correlation,
+            )
+            fenced = FencedEnginePersistence(store, lease)
+            with fenced.boundary_transaction() as uow:
+                assert uow.get_job_state(job) is None
+                # Both transactions must be in their causal critical sections
+                # concurrently; a namespace-global exclusive lock deadlocks.
+                barrier.wait(timeout=12)
+            return job
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [
+            pool.submit(scoped_boundary, "job-a", "organization-a"),
+            pool.submit(scoped_boundary, "job-b", "organization-b"),
+        ]
+        assert {f.result(timeout=25) for f in futures} == {"job-a", "job-b"}
