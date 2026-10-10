@@ -234,6 +234,20 @@ def test_real_logistics_certified_crash_keeps_other_organization_progressing(mon
         for org in orgs:
             entities = logistics.seed_reference(original, instance_key=org)
             shipments[org] = entities.shipment_id
+            fulfillment_id = f"fulfillment-{org}"
+            upstream = BoundaryMessage.create(
+                contract_name="o2c.fulfillment_requested", contract_version=2,
+                source_domain="order_to_cash", source_identity=f"order-{org}",
+                destination_domain="warehouse_fulfillment",
+                occurrence_key="fulfillment-requested", correlation_id=org,
+                causation_id=None, produced_at=logistics.ORIGIN,
+                payload={
+                    "order_id": f"order-{org}",
+                    "fulfillment_order_id": fulfillment_id,
+                    "shipment_id": entities.shipment_id,
+                },
+            )
+            service.publish(upstream)
             source = BoundaryMessage.create(
                 contract_name="warehouse.dispatch_ready", contract_version=1,
                 source_domain="warehouse_fulfillment",
@@ -241,7 +255,10 @@ def test_real_logistics_certified_crash_keeps_other_organization_progressing(mon
                 destination_domain="logistics", occurrence_key="dispatch-ready",
                 correlation_id=org, causation_id=None,
                 produced_at=logistics.ORIGIN,
-                payload={"shipment_id": entities.shipment_id},
+                payload={
+                    "shipment_id": entities.shipment_id,
+                    "fulfillment_order_id": fulfillment_id,
+                },
             )
             service.publish(source)
             boundary_lease = service.claim_next(
@@ -267,8 +284,10 @@ def test_real_logistics_certified_crash_keeps_other_organization_progressing(mon
                 resource_slot_duration=timedelta(minutes=5),
                 resource_retry_delay=timedelta(minutes=5),
             ),
-            start_at=logistics.ORIGIN, interval=timedelta(minutes=5),
-            max_slots=2,
+            start_at=logistics.ORIGIN + (
+                timedelta(minutes=5) if org == "organization-b" else timedelta()
+            ),
+            interval=timedelta(minutes=5), max_slots=1,
         )
 
     original_complete = IntentResourceCoordinator.complete
@@ -299,19 +318,19 @@ def test_real_logistics_certified_crash_keeps_other_organization_progressing(mon
         b_slots = schedule(b, orgs[1], "b-healthy").run_due(
             now=logistics.ORIGIN + timedelta(minutes=5),
         )
-        assert len(b_slots) == 2
+        assert len(b_slots) == 1
         assert b.entity("shipment", shipments[orgs[1]]).state == "delivered"
         assert b.temporal_resources().get(effects[orgs[1]]).status == "released"
         # A's certified effect and unreleased booking are not B's to reconcile.
         assert b.temporal_resources().get(effects[orgs[0]]).status == "reserved"
-        assert b.job_state("job-organization-b").run_count == 2
+        assert b.job_state("job-organization-b").run_count == 1
         assert b.job_state("job-organization-a").run_count == 0
 
     with PostgresPersistence(DSN, namespace=ns) as recovered_a:
         recovered_slots = schedule(recovered_a, orgs[0], "a-recovered").run_due(
             now=logistics.ORIGIN + timedelta(minutes=5),
         )
-        assert len(recovered_slots) == 2
+        assert len(recovered_slots) == 1
         ledger = recovered_a.temporal_resources()
         assert ledger.audit()
         assert all(ledger.get(effects[org]).status == "released" for org in orgs)
@@ -323,11 +342,9 @@ def test_real_logistics_certified_crash_keeps_other_organization_progressing(mon
             sum(e.effect_id == effects[org] for e in recovered_a.business_effects()) == 1
             for org in orgs
         )
-        assert recovered_a.job_state("job-organization-a").run_count == 2
-        assert recovered_a.job_state("job-organization-b").run_count == 2
-        assert recovered_a.job_state("job-organization-a").logical_time == (
-            logistics.ORIGIN + timedelta(minutes=5)
-        )
+        assert recovered_a.job_state("job-organization-a").run_count == 1
+        assert recovered_a.job_state("job-organization-b").run_count == 1
+        assert recovered_a.job_state("job-organization-a").logical_time == logistics.ORIGIN
         assert recovered_a.job_state("job-organization-b").logical_time == (
             logistics.ORIGIN + timedelta(minutes=5)
         )
