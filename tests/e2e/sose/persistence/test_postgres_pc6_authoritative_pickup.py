@@ -258,3 +258,55 @@ def test_pg_invalid_booking_never_resumes_a_delayed_shipment():
             )
         assert store.entity("shipment", entities.shipment_id).state == "delayed_pickup"
         assert store.events() == events_before
+
+
+def test_pg_crash_before_pickup_commit_rolls_back_domain_transition_not_booking():
+    """The resource-authorized domain UoW and its event roll back together."""
+    assert DSN
+    ns = "pc6_pickup_rollback_" + uuid4().hex[:12]
+    with PostgresPersistence(DSN, namespace=ns) as original:
+        entities, engine, backend = _runtime(original)
+        _bind_effect(original, "crash-effect", entities.shipment_id)
+        coordinator = IntentResourceCoordinator(
+            original, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
+        )
+        assert coordinator.admit(
+            effect_id="crash-effect", intent_name=POLICY,
+            organization_id="company-a", due_at=logistics.PICKUP_DUE,
+            now=logistics.PICKUP_DUE, causation_id="source-a",
+            correlation_id="correlation-a",
+        )
+        booking = coordinator.booking_for("crash-effect", POLICY)
+        with pytest.raises(RuntimeError, match="killed before commit"):
+            with original.temporal_resources().authorize_use(
+                booking, at=backend.now,
+            ):
+                logistics._dispatch(
+                    engine, original.entity("shipment", entities.shipment_id),
+                    "pickup", key=("logistics-pickup", entities.shipment_id, "pickup"),
+                )
+                raise RuntimeError("killed before commit")
+
+    with PostgresPersistence(DSN, namespace=ns) as restarted:
+        assert restarted.entity("shipment", entities.shipment_id).state == "pickup_scheduled"
+        assert restarted.temporal_resources().get("crash-effect") == booking
+        _, engine = logistics.build_runtime(restarted)
+        backend = SimPyBackend(origin=logistics.ORIGIN)
+        engine.rebuild_backend(backend)
+        backend.run_until(logistics.PICKUP_DUE)
+        assert logistics.reconcile_pickup(
+            restarted, engine, backend, entities=entities,
+            authoritative_pickup=booking,
+        )
+        assert restarted.entity("shipment", entities.shipment_id).state == "picked_up"
+        assert sum(
+            event.entity_type == "shipment"
+            and event.entity_id == entities.shipment_id
+            and event.name == "pickup"
+            for event in restarted.events()
+        ) == 1
+        recovered = IntentResourceCoordinator(
+            restarted, {POLICY: _pool()}, slot_duration=SLOT, retry_delay=SLOT,
+        )
+        recovered.complete("crash-effect")
+        assert recovered._ledger.audit()
