@@ -21,6 +21,7 @@ TREATMENT_ARMS = (
     "structural_combined",
 )
 ALL_ARMS = ("baseline", *TREATMENT_ARMS)
+_COMPILER_ATTESTATION = object()  # in-process admission only, never a scientific signature
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,10 +70,12 @@ class OD5aCompiledArm:
     model: ModelSpec
     charged_cost: OD5aChargedCost | None
     _intervention_json: str | None
+    _compiler_token: object | None
 
     def __init__(
         self, arm_id: str, model: ModelSpec, charged_cost: OD5aChargedCost | None,
-        intervention: ModelIntervention | None,
+        intervention: ModelIntervention | None, *,
+        _compiler_token: object | None = None,
     ) -> None:
         object.__setattr__(self, "arm_id", arm_id)
         object.__setattr__(self, "model", model)
@@ -85,6 +88,12 @@ class OD5aCompiledArm:
             )
         )
         object.__setattr__(self, "_intervention_json", frozen_payload)
+        object.__setattr__(self, "_compiler_token", _compiler_token)
+
+    @property
+    def compiler_admitted(self) -> bool:
+        """In-process provenance only; independent freeze remains authoritative."""
+        return self._compiler_token is _COMPILER_ATTESTATION
 
     @property
     def intervention(self) -> ModelIntervention | None:
@@ -258,7 +267,10 @@ def compile_od5a_arms(
         ),
     }
 
-    result = [OD5aCompiledArm("baseline", baseline, None, None)]
+    result = [OD5aCompiledArm(
+        "baseline", baseline, None, None,
+        _compiler_token=_COMPILER_ATTESTATION,
+    )]
     initial = baseline.canonical_payload()
     for arm in TREATMENT_ARMS:
         intervention_class, edits, mechanisms = mutations[arm]
@@ -283,5 +295,8 @@ def compile_od5a_arms(
             raise ValueError(f"{arm} changed a mechanism outside its registered treatment")
         if model.model_spec_hash == baseline.model_spec_hash:
             raise ValueError(f"{arm} is a no-op intervention")
-        result.append(OD5aCompiledArm(arm, model, cost, intervention))
+        result.append(OD5aCompiledArm(
+            arm, model, cost, intervention,
+            _compiler_token=_COMPILER_ATTESTATION,
+        ))
     return tuple(result)
