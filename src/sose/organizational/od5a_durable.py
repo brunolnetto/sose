@@ -232,7 +232,7 @@ def _transition(uow: Any, state: dict[str, Any], job_id: str) -> bool:
             state["finished"].append(_key(item, target))
             if all(_key(item, node) in state["finished"] for node in state["stations"]):
                 state["completed"][item] = now
-            for downstream in state["outgoing"][target]:
+            for downstream in sorted(state["outgoing"][target]):
                 _request(state, "coordination", {
                     "item": item, "source": target,
                     "target": downstream, "causes": [emitted],
