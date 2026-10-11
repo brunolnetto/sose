@@ -382,3 +382,48 @@ def test_unsorted_declared_dag_edges_preserve_simpy_causal_handoff_order(tmp_pat
         ) for e in expected.events)
         assert state["completed"] == dict(expected.completed_at)
         assert actual == reference
+
+
+def test_foreign_reservation_blocks_same_physical_instance_before_grant(tmp_path):
+    """A second reservation ID must not defeat capacity-one physical truth."""
+    from datetime import datetime, timezone
+    from sose.core.runtime import ResourceReservation
+
+    path = tmp_path / "foreign-lease.db"
+    arm = _arms()["baseline"]
+    with SQLitePersistence(path) as store:
+        initialize_od5a_durable(store, job_id="od5a-test", arm=arm, items=_items())
+        with store.transaction() as uow:
+            uow.save_resource_reservation(ResourceReservation(
+                reservation_id="external-lease", request_id="external-request",
+                resource_name="od5a-test/execution:0",
+                acquired_at=datetime(2000, 1, 1, tzinfo=timezone.utc),
+            ))
+        prior = od5a_durable_state(store, job_id="od5a-test")
+        before_events = od5a_durable_events(store, job_id="od5a-test")
+        with pytest.raises(RuntimeError, match="resource|reservation|capacity"):
+            advance_od5a_durable(store, job_id="od5a-test")
+        assert od5a_durable_state(store, job_id="od5a-test") == prior
+        assert od5a_durable_events(store, job_id="od5a-test") == before_events
+        reservations = store.resource_reservations()
+        assert len(reservations) == 1
+        assert reservations[0].reservation_id == "external-lease"
+
+
+def test_hand_constructed_compiled_label_cannot_claim_scientific_admission(tmp_path):
+    """Matching arm label and hash do not prove the preregistered compiler ran."""
+    arm = _arms()["baseline"]
+    forged_baseline = OD5aCompiledArm(
+        "baseline", arm.model, OD5aChargedCost(8, 1, 1, 1), None,
+    )
+    forged_treatment = OD5aCompiledArm(
+        "capacity_only", _arms()["capacity_only"].model, None, None,
+    )
+    for index, illegal in enumerate((forged_baseline, forged_treatment)):
+        path = tmp_path / f"forged-{index}.db"
+        with SQLitePersistence(path) as store:
+            with pytest.raises(ValueError, match="compiled|admission"):
+                initialize_od5a_durable(
+                    store, job_id="forged", arm=illegal, items=_items(),
+                )
+            assert store.entity("od5a_durable_pilot", "forged") is None
