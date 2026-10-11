@@ -274,6 +274,18 @@ def initialize_od5a_durable(
     """Idempotent identity-bound start; every mutation is one durable UoW."""
     if not job_id or arm.arm_id not in ALL_ARMS or not items:
         raise ValueError("registered arm, job ID and nonempty workload required")
+    # The arm label alone is not scientific admission. Treating hand-made arm
+    # objects as compiled would permit unpaid treatment or mislabeled baseline.
+    if not arm.compiler_admitted:
+        raise ValueError("OD-5a arm lacks compiler admission or mutated admission hash")
+    if arm.arm_id == "baseline":
+        if arm.charged_cost is not None or arm.intervention is not None:
+            raise ValueError("compiled baseline cannot carry an intervention or cost")
+    elif (
+        arm.charged_cost is None or arm.intervention is None
+        or arm.intervention.intervention_id != arm.arm_id
+    ):
+        raise ValueError("compiled treatment must carry matching intervention and cost")
     stations = tuple(sorted(arm.model.stations))
     if not stations:
         raise ValueError("at least one physical station required")
