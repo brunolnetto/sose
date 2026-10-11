@@ -56,16 +56,48 @@ class OD5aChargedCost:
         )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, init=False)
 class OD5aCompiledArm:
+    """Admission truth is immutable even if a caller mutates an inspection copy.
+
+    Pydantic's frozen ModelIntervention freezes attributes, not the nested
+    set_values and mechanisms_changed collections. Store a canonical immutable
+    snapshot and return a fresh validated intervention to each consumer.
+    """
+
     arm_id: str
     model: ModelSpec
     charged_cost: OD5aChargedCost | None
-    intervention: ModelIntervention | None
+    _intervention_json: str | None
+
+    def __init__(
+        self, arm_id: str, model: ModelSpec, charged_cost: OD5aChargedCost | None,
+        intervention: ModelIntervention | None,
+    ) -> None:
+        object.__setattr__(self, "arm_id", arm_id)
+        object.__setattr__(self, "model", model)
+        object.__setattr__(self, "charged_cost", charged_cost)
+        frozen_payload = (
+            None if intervention is None
+            else json.dumps(
+                intervention.canonical_payload(), sort_keys=True,
+                separators=(",", ":"), ensure_ascii=False, allow_nan=False,
+            )
+        )
+        object.__setattr__(self, "_intervention_json", frozen_payload)
+
+    @property
+    def intervention(self) -> ModelIntervention | None:
+        """New independent value object; editing it cannot change admission."""
+        if self._intervention_json is None:
+            return None
+        return ModelIntervention.model_validate(json.loads(self._intervention_json))
 
     @property
     def intervention_hash(self) -> str | None:
-        return None if self.intervention is None else self.intervention.intervention_hash
+        if self._intervention_json is None:
+            return None
+        return sha256(self._intervention_json.encode("utf-8")).hexdigest()
 
     @property
     def admission_hash(self) -> str:
