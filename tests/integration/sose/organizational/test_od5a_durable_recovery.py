@@ -347,3 +347,38 @@ def test_large_logical_clock_fails_closed_on_float_second_precision_loss(tmp_pat
         assert od5a_durable_state(store, job_id="huge") == prior
         assert not od5a_durable_events(store, job_id="huge")
         assert not store.resource_reservations()
+
+
+def test_unsorted_declared_dag_edges_preserve_simpy_causal_handoff_order(tmp_path):
+    """Coordinator contention must use the same deterministic target order."""
+    from sose.organizational.od5a_mechanisms import run_od5a_pilot
+
+    baseline = _arms()["baseline"]
+    payload = baseline.model.canonical_payload()
+    payload["routing"] = {
+        "dependency_edges": [["a", "c"], ["a", "b"], ["b", "c"]],
+    }
+    model = ModelSpec.model_validate(payload)
+    arm = OD5aCompiledArm("baseline", model, None, None)
+    work = _items()
+    expected = run_od5a_pilot(arm=arm, items=work, horizon=100.0)
+    with SQLitePersistence(tmp_path / "unsorted.db") as store:
+        initialize_od5a_durable(store, job_id="unsorted", arm=arm, items=work)
+        for _ in range(150):
+            if not advance_od5a_durable(store, job_id="unsorted"):
+                break
+        else:
+            pytest.fail("unordered-DAG workload failed to terminate")
+        state = od5a_durable_state(store, job_id="unsorted")
+        actual = sorted((
+            e.payload["kind"], e.payload["item_id"],
+            e.payload["source"], e.payload["target"],
+            e.payload["start"], e.payload["end"], e.payload["resource"],
+        ) for e in od5a_durable_events(store, job_id="unsorted")
+            if e.payload["kind"] != "arrival")
+        reference = sorted((
+            e.kind, e.item_id, e.source, e.target,
+            e.start, e.end, e.resource_instance,
+        ) for e in expected.events)
+        assert state["completed"] == dict(expected.completed_at)
+        assert actual == reference
