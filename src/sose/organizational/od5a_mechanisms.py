@@ -10,15 +10,24 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
+from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from math import isfinite
 
 from sose.backends.simpy import SimPyBackend
+from sose.core.identity import deterministic_id
 
 from .od5a_admission import ALL_ARMS, OD5aCompiledArm
 
 
 _ORIGIN = datetime(2000, 1, 1, tzinfo=timezone.utc)
+
+
+def _require_microsecond_time(value: float | int, *, name: str) -> None:
+    """Reject silently rounded intervals at the datetime-backed SimPy boundary."""
+    ticks = Decimal(str(value)) * 1_000_000
+    if ticks != ticks.to_integral_value():
+        raise ValueError(f"{name} must be representable at microsecond resolution")
 
 
 @dataclass(frozen=True, slots=True)
@@ -36,6 +45,7 @@ class OD5aWorkItem:
             raise ValueError("arrival time must be numeric")
         if not isfinite(self.arrival_at) or self.arrival_at < 0:
             raise ValueError("arrival time must be finite and nonnegative")
+        _require_microsecond_time(self.arrival_at, name="arrival time")
         if not self.service_by_station:
             raise ValueError("work item must have at least one station")
         names: set[str] = set()
@@ -46,6 +56,7 @@ class OD5aWorkItem:
                 raise ValueError("service demand must be numeric")
             if not isfinite(duration) or duration <= 0:
                 raise ValueError("service demand must be finite and positive")
+            _require_microsecond_time(duration, name="service demand")
             names.add(station)
 
 
@@ -85,6 +96,7 @@ def run_od5a_pilot(
         raise ValueError("horizon must be numeric")
     if not isfinite(horizon) or horizon <= 0:
         raise ValueError("pilot horizon must be finite and positive")
+    _require_microsecond_time(horizon, name="pilot horizon")
     if not items or len({item.item_id for item in items}) != len(items):
         raise ValueError("pilot requires nonempty distinct work items")
     model = arm.model
@@ -103,6 +115,7 @@ def run_od5a_pilot(
         raise ValueError("coordination_latency must be numeric")
     if not isfinite(raw_latency) or raw_latency < 0:
         raise ValueError("coordination_latency must be finite and nonnegative")
+    _require_microsecond_time(raw_latency, name="coordination latency")
     coordination_latency = float(raw_latency)
 
     incoming: dict[str, set[str]] = {station: set() for station in station_ids}
@@ -118,6 +131,7 @@ def run_od5a_pilot(
     # The admission compiler verifies DAG acyclicity, so no edge can deadlock.
 
     transition_time = arm.charged_cost.transition_time if arm.charged_cost else 0.0
+    _require_microsecond_time(transition_time, name="transition time")
     backend = SimPyBackend(origin=_ORIGIN)
     backend.create_resource("execution", capacity=raw_slots)
     backend.create_resource("coordination", capacity=1)
@@ -159,7 +173,8 @@ def run_od5a_pilot(
                 events.append(OD5aMechanismEvent(
                     kind="execution", item_id=item_id, source=station, target=station,
                     start=started, end=ending, resource_instance=f"execution:{slot}",
-                    cause=f"{item_id}:{station}:work", model_spec_hash=model_hash,
+                    cause=deterministic_id("od5a-work-cause", item_id, station),
+                    model_spec_hash=model_hash,
                 ))
                 available_slots.add(slot)
                 backend.release_resource(lease)
@@ -176,7 +191,7 @@ def run_od5a_pilot(
 
         backend.request_resource(
             "execution",
-            request_id=f"od5a-execution:{item_id}:{station}",
+            request_id=deterministic_id("od5a-execution-request", item_id, station),
             on_acquired=granted,
         )
 
@@ -189,7 +204,7 @@ def run_od5a_pilot(
                 events.append(OD5aMechanismEvent(
                     kind="coordination", item_id=item_id, source=source, target=target,
                     start=started, end=ending, resource_instance="coordination:0",
-                    cause=f"{item_id}:{source}:{target}:dependency",
+                    cause=deterministic_id("od5a-handoff-cause", item_id, source, target),
                     model_spec_hash=model_hash,
                 ))
                 backend.release_resource(lease)
@@ -207,7 +222,7 @@ def run_od5a_pilot(
 
         backend.request_resource(
             "coordination",
-            request_id=f"od5a-handoff:{item_id}:{source}:{target}",
+            request_id=deterministic_id("od5a-handoff-request", item_id, source, target),
             on_acquired=granted,
         )
 
