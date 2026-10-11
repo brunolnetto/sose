@@ -124,6 +124,8 @@ def test_immutable_baseline_and_full_priced_transition_are_hash_addressed():
     ("zero", "positive priced budget"),
     ("unpriced_time", "positive shadow price"),
     ("nan", "finite and nonnegative"),
+    ("overflow", "total lifecycle budget must be finite"),
+    ("wrong_type", "typed charged cost ledger"),
 ])
 def test_fail_closed_cost_admission(case, match):
     costs = _costs()
@@ -143,6 +145,12 @@ def test_fail_closed_cost_admission(case, match):
         with pytest.raises(ValueError, match=match):
             OD5aChargedCost(float("nan"), 0, 0, 1)
         return
+    elif case == "overflow":
+        with pytest.raises(ValueError, match=match):
+            OD5aChargedCost(1e308, 1e308, 0, 1)
+        return
+    elif case == "wrong_type":
+        costs["topology_only"] = {"total": 10}
     with pytest.raises(ValueError, match=match):
         _admit(declared_costs=costs)
 
