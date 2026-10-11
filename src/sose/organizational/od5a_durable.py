@@ -128,6 +128,16 @@ def _grant(
     if state["resources"][resource] not in (None, ""):
         raise RuntimeError("conflicting authoritative physical reservation")
     resource_name = f"{job_id}/{resource}"
+    # The local entity only records *our* leases. Another participant may
+    # already own this physical instance under an unrelated reservation ID.
+    # Read the transaction-local authoritative ledger before granting.
+    if any(
+        lease.resource_name == resource_name
+        for lease in uow.resource_reservations()
+    ):
+        raise RuntimeError(
+            f"authoritative physical resource capacity exhausted: {resource_name}"
+        )
     request_id = deterministic_id(
         "od5a-durable-request", job_id, kind, request["item"],
         request["source"], request["target"],
