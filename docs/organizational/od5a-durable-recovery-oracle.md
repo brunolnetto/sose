@@ -50,3 +50,8 @@ As with the datetime-backed SimPy pilot, this reference reducer rejects nonrepre
 ## Review hardening: cumulative time arithmetic
 
 Input durations alone being microsecond-aligned is insufficient: IEEE-754 addition can yield `0.1 + 0.2 = 0.30000000000000004` and create a false causal ordering difference between the durable reducer and the datetime-normalizing SimPy backend. The durable action completion scheduler now converts both terms to integral microseconds, adds integers and only then converts the normalized absolute offset to seconds. Loss of representability above `2**53` microsecond ticks fails closed. Even below that cap, where IEEE-754 float-seconds spacing may exceed a microsecond (such as a clock at `2**33` seconds), a strict round-trip from integer ticks to seconds and back must succeed before any action is recorded; otherwise the complete UoW rolls back. A five-arm fractional service/arrival differential regression compares full physical traces against the independent SimPy pilot.
+
+
+## Causal scheduling conformance
+
+Declared dependency edges need not be lexicographically ordered. Because the physical coordinator is capacity one, the ordering of simultaneously available downstream handoffs affects resource reservations, event positions and observed completion times. The durable reducer sorts downstream station targets exactly like the reference SimPy pilot, rather than trusting JSON edge declaration order. A negative-to-positive differential fixture fixes an intentionally unsorted DAG and compares the complete physical event trace and per-item completion checkpoints.
