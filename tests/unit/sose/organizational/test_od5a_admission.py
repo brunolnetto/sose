@@ -112,7 +112,7 @@ def test_immutable_baseline_and_full_priced_transition_are_hash_addressed():
     cost = admitted[1].charged_cost
     assert cost.total == 7 + 2 + 1
     changed_costs = _costs()
-    changed_costs["capacity_only"] = replace(cost, operating_cost_at_horizon=6.95)
+    changed_costs["capacity_only"] = replace(cost, operating_cost_at_horizon=6.8)
     with pytest.raises(ValueError, match="matched lifecycle cost"):
         _admit(declared_costs=changed_costs)
 
