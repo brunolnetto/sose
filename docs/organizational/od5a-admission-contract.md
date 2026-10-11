@@ -8,12 +8,12 @@
 
 The first executable increment creates five immutable, hash-addressed `ModelSpec` worlds using the existing `ModelIntervention` boundary. This is a prerequisite for the independently frozen experiment, not its execution or its certification.
 
-Every baseline must predeclare a directed acyclic `routing.dependency_edges` graph and numeric configuration parameters `service_capacity`, `coordination_latency`, and `arrival_rate`, each with `parameter_evidence`. The baseline has stable model identity and no treatment cost.
+Every baseline must predeclare a directed acyclic `routing.dependency_edges` graph and numeric configuration parameters `execution_slots` (integer parallel physical slots), `coordination_latency`, and `arrival_rate`, each with `parameter_evidence`. The baseline has stable model identity and no treatment cost.
 
 | Arm | Authorized mutations | Prohibited mutations |
 |---|---|---|
 | `baseline` | none | all treatment changes |
-| `capacity_only` | increase `parameters.service_capacity` | handoffs, coordination, arrivals, calendars, service-distribution parameters |
+| `capacity_only` | increase integer `parameters.execution_slots` | handoffs, coordination, arrivals, calendars, service-distribution parameters |
 | `topology_only` | remove a declared nonempty proper subset of existing dependency edges | capacity, coordination latency, arrivals, other routing |
 | `coordination_only` | decrease `parameters.coordination_latency` | capacity, handoff edges, service distribution |
 | `structural_combined` | topology removal and coordination decrease, together | capacity and every other configured field |
