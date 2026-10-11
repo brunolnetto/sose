@@ -89,6 +89,8 @@ def test_exogenous_design_refuses_missing_unknown_or_endogenous_axes(fault, matc
     ("load_changed", "load coordinate differs"),
     ("stratum_changed", "stratum changes"),
     ("mixed_seed", "mixes unrelated"),
+    ("permuted", "canonical stratum/load order"),
+    ("outcome_injected", "invalid non-load coordinates"),
 ])
 def test_incomplete_or_confounded_world_matrix_cannot_expand_into_run_keys(fault, match):
     worlds = list(build_od5a_configured_worlds(
@@ -101,9 +103,17 @@ def test_incomplete_or_confounded_world_matrix_cannot_expand_into_run_keys(fault
     elif fault == "load_changed":
         worlds[0] = replace(worlds[0], rho_nominal=1.6)
     elif fault == "stratum_changed":
-        worlds[1] = replace(worlds[1], nonload_coordinates={"calendar_availability": 0.5})
+        point = dict(worlds[1].nonload_coordinates)
+        point["calendar_availability"] += 0.01
+        worlds[1] = replace(worlds[1], nonload_coordinates=point)
     elif fault == "mixed_seed":
         worlds[1] = replace(worlds[1], design_seed=3)
+    elif fault == "permuted":
+        worlds.reverse()
+    elif fault == "outcome_injected":
+        point = dict(worlds[1].nonload_coordinates)
+        point["realized_WIP"] = 1.0
+        worlds[1] = replace(worlds[1], nonload_coordinates=point)
     with pytest.raises(ValueError, match=match):
         tuple(iter_od5a_run_keys(worlds))
 
