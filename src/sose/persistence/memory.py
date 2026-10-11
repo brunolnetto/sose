@@ -369,6 +369,13 @@ class MemoryUnitOfWork:
         value = self._working.resource_reservations.get(reservation_id)
         return deepcopy(value) if value else None
 
+    def resource_reservations(self) -> tuple[ResourceReservation, ...]:
+        """Committed plus transaction-local reservations, never stale store state."""
+        return tuple(
+            deepcopy(self._working.resource_reservations[key])
+            for key in sorted(self._working.resource_reservations)
+        )
+
     def save_resource_reservation(self, reservation: ResourceReservation) -> None:
         if reservation.resource_name not in self._working.resource_definitions:
             raise KeyError(f"unknown resource definition: {reservation.resource_name}")
