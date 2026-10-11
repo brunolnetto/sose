@@ -509,6 +509,7 @@ jobs:
       SOSE_PC6_FEDERATED_REPORT: pc6-federated-recovery.json
       SOSE_PC6_FEDERATED_FAULT_MATRIX_REPORT: pc6-federated-fault-matrix.json
       SOSE_PC6_MULTIDOMAIN_OSKILL_REPORT: pc6-multidomain-oskill.json
+      SOSE_PC6_REAL_MULTIDOMAIN_REPORT: pc6-real-multidomain-recurring.json
       SOSE_PC6_REAL_MULTIDOMAIN_REPORT: pc6-real-multidomain.json
 
     steps:
@@ -544,7 +545,8 @@ jobs:
             tests/e2e/sose/persistence/test_postgres_pc6_durable_intent_wait.py \
             tests/e2e/sose/persistence/test_postgres_pc6_authoritative_pickup.py \
             tests/e2e/sose/persistence/test_postgres_resource_release_race.py \
-            tests/e2e/sose/persistence/test_postgres_pc6_federated_recovery.py
+            tests/e2e/sose/persistence/test_postgres_pc6_federated_recovery.py \
+            tests/e2e/sose/persistence/test_postgres_pc6_real_multidomain_recurring.py
       - name: Run real multidomain recurring recovery integration
         run: python -m pytest -q tests/e2e/sose/persistence/test_postgres_pc6_full_real_domain_recovery.py
       - name: Verify all eight real-domain causal restart certificates
@@ -571,6 +573,15 @@ jobs:
         with:
           name: pc6-real-multidomain-recurring
           path: pc6-real-multidomain.json
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload PC6 real multi-domain recurrent recovery
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: pc6-real-multidomain-recurring
+          path: pc6-real-multidomain-recurring.json
           if-no-files-found: error
           retention-days: 14
 
