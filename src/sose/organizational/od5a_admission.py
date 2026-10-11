@@ -71,6 +71,7 @@ class OD5aCompiledArm:
     charged_cost: OD5aChargedCost | None
     _intervention_json: str | None
     _compiler_token: object | None
+    _compiler_hash: str | None
 
     def __init__(
         self, arm_id: str, model: ModelSpec, charged_cost: OD5aChargedCost | None,
@@ -89,11 +90,18 @@ class OD5aCompiledArm:
         )
         object.__setattr__(self, "_intervention_json", frozen_payload)
         object.__setattr__(self, "_compiler_token", _compiler_token)
+        object.__setattr__(
+            self, "_compiler_hash",
+            self.admission_hash if _compiler_token is _COMPILER_ATTESTATION else None,
+        )
 
     @property
     def compiler_admitted(self) -> bool:
         """In-process provenance only; independent freeze remains authoritative."""
-        return self._compiler_token is _COMPILER_ATTESTATION
+        return (
+            self._compiler_token is _COMPILER_ATTESTATION
+            and self._compiler_hash == self.admission_hash
+        )
 
     @property
     def intervention(self) -> ModelIntervention | None:
