@@ -42,6 +42,28 @@ def _arms():
     )}
 
 
+
+def _compiled_baseline_for(
+    model: ModelSpec,
+    *, removed: tuple[str, str],
+    reduced_latency: float = 0.0,
+) -> OD5aCompiledArm:
+    """Custom falsification models must still pass the real five-arm compiler."""
+    costs = {
+        name: OD5aChargedCost(8, 1, 1, 1)
+        for name in (
+            "capacity_only", "topology_only", "coordination_only",
+            "structural_combined",
+        )
+    }
+    return compile_od5a_arms(
+        baseline=model,
+        expanded_capacity=model.parameters["execution_slots"] + 1,
+        removed_dependency_edges=(removed,),
+        reduced_coordination_latency=reduced_latency,
+        declared_costs=costs,
+    )[0]
+
 def _items():
     return tuple(
         OD5aWorkItem(
@@ -170,7 +192,9 @@ def test_durable_identity_does_not_alias_colon_bearing_item_station_pairs(tmp_pa
     raw = base.model.canonical_payload()
     raw["stations"] = {"c": {}, "b:c": {}, "root": {}}
     raw["routing"] = {"dependency_edges": [["c", "root"], ["b:c", "root"]]}
-    arm = OD5aCompiledArm("baseline", ModelSpec.model_validate(raw), None, None)
+    arm = _compiled_baseline_for(
+        ModelSpec.model_validate(raw), removed=("c", "root"),
+    )
     work = tuple(
         OD5aWorkItem(
             item_id=i, arrival_at=0.0,
@@ -280,7 +304,9 @@ def test_durable_rejects_coordination_below_datetime_resolution(tmp_path):
     baseline = _arms()["baseline"]
     payload = baseline.model.canonical_payload()
     payload["parameters"]["coordination_latency"] = 0.0000001
-    invalid = OD5aCompiledArm("baseline", ModelSpec.model_validate(payload), None, None)
+    invalid = _compiled_baseline_for(
+        ModelSpec.model_validate(payload), removed=("a", "c"),
+    )
     with SQLitePersistence(tmp_path / "precision.db") as store:
         with pytest.raises(ValueError, match="microsecond"):
             initialize_od5a_durable(store, job_id="precision", arm=invalid, items=_items())
@@ -359,7 +385,7 @@ def test_unsorted_declared_dag_edges_preserve_simpy_causal_handoff_order(tmp_pat
         "dependency_edges": [["a", "c"], ["a", "b"], ["b", "c"]],
     }
     model = ModelSpec.model_validate(payload)
-    arm = OD5aCompiledArm("baseline", model, None, None)
+    arm = _compiled_baseline_for(model, removed=("a", "c"))
     work = _items()
     expected = run_od5a_pilot(arm=arm, items=work, horizon=100.0)
     with SQLitePersistence(tmp_path / "unsorted.db") as store:
