@@ -17,3 +17,8 @@ Depends on the #471 arm compiler. This increment is **NOT** the independent exec
 The pilot consumes **small hand-constructed workloads only**, using an ephemeral SimPy backend. It does not yet certify durability, worker-death replay, persistent reservations, exact item/actor ledgers, dynamic source-hash execution freezes, signed cost schedules, or statistical inference. A recovered run must be shown equivalent to a continuous run using SOSE's **authoritative persistence**, not by serializing SimPy state; connecting this adapter to that boundary is the next TDD increment.
 
 Do **not** reuse the pilot output as a confirmatory OD-5a sample. Before running any registered workload, separately freeze the full data-generating model, graph-construction rules for the Sobol coordinates, deterministic arrival/service CRN counters, lifecycle-cost schedule, actor/resource topology, H, seeds, source + `uv.lock` hashes, and independent hash-verification schema. The immutable v1 freezes are out of scope.
+
+
+## Post-merge review hardening
+
+Pilot request and causal IDs use SOSE's typed, collision-safe `deterministic_id` encoding. Distinct user-supplied item/station names remain distinct even when any component contains `:` or another separator. The datetime-backed pilot admits arrival times, positive service demands, coordination latency, intervention transition time and observation horizon only at exact microsecond resolution; it rejects rather than silently rounds finer durations. This constrains **pilot input encoding**, not the preregistered continuous-time statistical model. The later execution freeze must explicitly specify the model-to-backend duration quantization rule before any confirmatory workloads are generated.
