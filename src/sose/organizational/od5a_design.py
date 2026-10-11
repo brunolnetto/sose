@@ -143,11 +143,20 @@ def iter_od5a_run_keys(
     actual = {(world.stratum_index, world.load_index) for world in worlds}
     if len(actual) != len(worlds) or actual != expected:
         raise ValueError("OD-5a design is incomplete or duplicates a stratum/load pair")
+    if tuple((world.stratum_index, world.load_index) for world in worlds) != tuple(
+        (stratum, load) for stratum in range(N_STRATA)
+        for load in range(len(LOAD_GRID))
+    ):
+        raise ValueError("OD-5a run enumeration requires canonical stratum/load order")
     first_seed = worlds[0].design_seed
     per_stratum: dict[int, Mapping[str, float]] = {}
     for world in worlds:
         if world.design_seed != first_seed:
             raise ValueError("OD-5a design mixes unrelated Sobol seeds")
+        if (set(world.nonload_coordinates) != NONLOAD_COORDINATES
+                or any(not isinstance(value, (int, float)) or not isfinite(value)
+                       for value in world.nonload_coordinates.values())):
+            raise ValueError("OD-5a run matrix contains invalid non-load coordinates")
         if world.rho_nominal != LOAD_GRID[world.load_index]:
             raise ValueError("OD-5a load coordinate differs from preregistered grid")
         prior = per_stratum.setdefault(world.stratum_index, world.nonload_coordinates)
