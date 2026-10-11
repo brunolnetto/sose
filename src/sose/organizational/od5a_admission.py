@@ -154,7 +154,9 @@ def compile_od5a_arms(
     differ. No simulation outcomes, realized queues, or service measurements
     are inputs to this function.
     """
-    original_capacity = _parameter(baseline, "service_capacity", strictly_positive=True)
+    original_capacity = _parameter(baseline, "execution_slots", strictly_positive=True)
+    if not original_capacity.is_integer():
+        raise ValueError("execution_slots must represent an integer number of physical slots")
     original_latency = _parameter(
         baseline, "coordination_latency", strictly_positive=True,
     )
@@ -162,8 +164,8 @@ def compile_od5a_arms(
     original_edges = _edges(baseline)
 
     if (isinstance(expanded_capacity, bool)
-            or not isinstance(expanded_capacity, (int, float))
-            or not isfinite(expanded_capacity) or expanded_capacity <= original_capacity):
+            or not isinstance(expanded_capacity, int)
+            or expanded_capacity <= original_capacity):
         raise ValueError("capacity-only arm must strictly increase execution capacity")
     if (isinstance(reduced_coordination_latency, bool)
             or not isinstance(reduced_coordination_latency, (int, float))
@@ -198,7 +200,7 @@ def compile_od5a_arms(
     mutations = {
         "capacity_only": (
             InterventionClass.CAPACITY,
-            {"/parameters/service_capacity": float(expanded_capacity)},
+            {"/parameters/execution_slots": expanded_capacity},
             ("execution_capacity",),
         ),
         "topology_only": (
