@@ -44,6 +44,8 @@ class OD5aChargedCost:
                 raise ValueError(f"{field} must be finite and nonnegative")
         if self.transition_time > 0 and self.shadow_price_per_transition_time <= 0:
             raise ValueError("transition time must have a positive shadow price")
+        if not isfinite(self.total):
+            raise ValueError("total lifecycle budget must be finite")
 
     @property
     def total(self) -> float:
@@ -188,12 +190,13 @@ def compile_od5a_arms(
     if (not isfinite(budget_tolerance_fraction)
             or not 0 <= budget_tolerance_fraction <= 0.01):
         raise ValueError("matched-cost tolerance cannot exceed preregistered 1%")
+    for arm, cost in declared_costs.items():
+        if not isinstance(cost, OD5aChargedCost):
+            raise ValueError(f"{arm} must have a typed charged cost ledger")
     reference_total = declared_costs["capacity_only"].total
     if reference_total <= 0:
         raise ValueError("capacity-only treatment must have a positive priced budget")
     for arm, cost in declared_costs.items():
-        if not isinstance(cost, OD5aChargedCost):
-            raise ValueError(f"{arm} must have a typed charged cost ledger")
         if abs(cost.total - reference_total) / reference_total > budget_tolerance_fraction:
             raise ValueError(f"{arm} treatment breaches matched lifecycle cost budget")
 
