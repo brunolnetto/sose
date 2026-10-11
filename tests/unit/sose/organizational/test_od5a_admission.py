@@ -196,3 +196,17 @@ def test_distinct_shadow_price_changes_admission_hash_at_equal_total_spend():
     after = _admit(declared_costs=costs)
     assert before[2].charged_cost.total == after[2].charged_cost.total == 10.0
     assert before[2].admission_hash != after[2].admission_hash
+
+def test_admitted_arm_defensively_snapshots_mutable_intervention_payload():
+    """Mutation of an inspected Pydantic intervention must not rewrite admitted truth."""
+    arm = _admit()[2]
+    before_admission_hash = arm.admission_hash
+    before_intervention_hash = arm.intervention_hash
+    before_model_hash = arm.model.model_spec_hash
+    inspection = arm.intervention
+    inspection.set_values["/routing/dependency_edges"][0][0] = "tampered"
+    inspection.mechanisms_changed.append("unregistered")
+    assert arm.admission_hash == before_admission_hash
+    assert arm.intervention_hash == before_intervention_hash
+    assert arm.model.model_spec_hash == before_model_hash
+    assert arm.intervention.apply(_baseline())[0].model_spec_hash == before_model_hash
