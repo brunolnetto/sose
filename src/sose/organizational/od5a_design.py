@@ -52,6 +52,14 @@ class OD5aConfiguredWorld:
     rho_nominal: float
     nonload_coordinates: Mapping[str, float]
 
+    def __post_init__(self) -> None:
+        # frozen=True does not freeze an externally supplied mutable Mapping.
+        # A caller must not be able to change a hash-addressed world in place.
+        object.__setattr__(
+            self, "nonload_coordinates",
+            MappingProxyType(dict(self.nonload_coordinates)),
+        )
+
     @property
     def canonical_payload(self) -> dict[str, object]:
         return {
@@ -154,7 +162,8 @@ def iter_od5a_run_keys(
         if world.design_seed != first_seed:
             raise ValueError("OD-5a design mixes unrelated Sobol seeds")
         if (set(world.nonload_coordinates) != NONLOAD_COORDINATES
-                or any(not isinstance(value, (int, float)) or not isfinite(value)
+                or any(isinstance(value, bool)
+                       or not isinstance(value, (int, float)) or not isfinite(value)
                        for value in world.nonload_coordinates.values())):
             raise ValueError("OD-5a run matrix contains invalid non-load coordinates")
         if world.rho_nominal != LOAD_GRID[world.load_index]:
