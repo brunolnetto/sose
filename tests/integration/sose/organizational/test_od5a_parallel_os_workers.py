@@ -77,11 +77,19 @@ def _drain(store: SQLitePersistence, job_id: str) -> None:
     raise RuntimeError("OD-5a worker exceeded bounded causal progress")
 
 
-def _worker(path: str, job_id: str, gate) -> None:
-    if not gate.wait(timeout=30):
-        raise RuntimeError("workers never received start signal")
+def _worker(path: str, job_id: str, worker_index: int, ready, first_round, reports) -> None:
+    # Construct a distinct OS-process SQLite connection before the shared
+    # barrier; no process is allowed to drain the world on its own.
     with SQLitePersistence(path) as store:
+        ready.wait(timeout=30)
+        advanced = advance_od5a_durable(store, job_id=job_id)
+        # Before any worker can drain, every other worker must have completed
+        # its own *committed* authoritative step, not merely started a process.
+        first_round.wait(timeout=30)
+        if not advanced:
+            raise AssertionError("race participant observed an already completed world")
         _drain(store, job_id)
+        reports.put((worker_index, int(advanced)))
 
 
 def _snapshot(path: Path, jobs: tuple[str, ...]):
@@ -94,23 +102,38 @@ def _snapshot(path: Path, jobs: tuple[str, ...]):
         }, store.resource_reservations()
 
 
-def _spawn_and_join(path: Path, target_jobs: tuple[str, ...]) -> None:
+def _spawn_and_join(path: Path, target_jobs: tuple[str, ...]) -> tuple[int, ...]:
     context = get_context("spawn")
-    gate = context.Event()
+    ready = context.Barrier(len(target_jobs))
+    first_round = context.Barrier(len(target_jobs))
+    reports = context.Queue()
     children = [
-        context.Process(target=_worker, args=(str(path), job_id, gate))
-        for job_id in target_jobs
+        context.Process(
+            target=_worker,
+            args=(str(path), job_id, index, ready, first_round, reports),
+        )
+        for index, job_id in enumerate(target_jobs)
     ]
-    for child in children:
-        child.start()
-    gate.set()
-    for child in children:
-        child.join(timeout=45)
-        if child.is_alive():
-            child.kill()
-            child.join()
-            pytest.fail("OD-5a process failed to terminate")
-        assert child.exitcode == 0, f"worker exited abnormally: {child.exitcode}"
+    try:
+        for child in children:
+            child.start()
+        for child in children:
+            child.join(timeout=45)
+            if child.is_alive():
+                child.kill()
+                child.join()
+                pytest.fail("OD-5a worker hung during concurrent authoritative advancement")
+            assert child.exitcode == 0, f"worker exited abnormally: {child.exitcode}"
+        reports_by_index = dict(reports.get(timeout=5) for _ in children)
+        assert len(reports_by_index) == len(children), "lost worker progress attestations"
+        return tuple(reports_by_index[index] for index in range(len(children)))
+    finally:
+        for child in children:
+            if child.is_alive():
+                child.kill()
+                child.join()
+        reports.close()
+        reports.join_thread()
 
 
 @pytest.mark.parametrize("arm", [
