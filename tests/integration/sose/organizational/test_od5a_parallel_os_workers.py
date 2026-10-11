@@ -124,7 +124,8 @@ def test_two_real_processes_competing_for_same_job_preserve_exact_causal_truth(t
     _init(concurrent, jobs)
     with SQLitePersistence(control) as store:
         _drain(store, "shared:job")
-    _spawn_and_join(concurrent, ("shared:job", "shared:job"))
+    contributions = _spawn_and_join(concurrent, ("shared:job", "shared:job"))
+    assert contributions == (1, 1), "both workers must advance authoritative causal steps"
     expected, no_leases = _snapshot(control, ("shared:job",))
     actual, recovered_leases = _snapshot(concurrent, ("shared:job",))
     assert actual == expected
@@ -147,7 +148,8 @@ def test_independent_organizations_retain_local_clocks_and_causal_events(tmp_pat
     with SQLitePersistence(control) as store:
         for job_id in jobs:
             _drain(store, job_id)
-    _spawn_and_join(concurrent, tuple(jobs))
+    contributions = _spawn_and_join(concurrent, tuple(jobs))
+    assert contributions == (1, 1, 1), "all organizations must execute in real child processes"
     expected, leases = _snapshot(control, tuple(jobs))
     actual, current_leases = _snapshot(concurrent, tuple(jobs))
     assert actual == expected
