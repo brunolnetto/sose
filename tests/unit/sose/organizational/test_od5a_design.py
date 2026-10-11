@@ -127,3 +127,22 @@ def test_world_hash_contains_structural_coordinates_before_any_observation():
     assert changed.world_hash != first.world_hash
     with pytest.raises(TypeError):
         first.nonload_coordinates["dependency_density"] = 0.9
+
+def test_configured_world_defensively_copies_mutable_exogenous_coordinates():
+    worlds = build_od5a_configured_worlds(nonload_bounds=_bounds(), design_seed=17)
+    user_mapping = dict(worlds[0].nonload_coordinates)
+    world = replace(worlds[0], nonload_coordinates=user_mapping)
+    frozen_hash = world.world_hash
+    user_mapping["calendar_availability"] += 0.1
+    assert world.world_hash == frozen_hash
+    with pytest.raises(TypeError):
+        world.nonload_coordinates["calendar_availability"] = 0.9
+
+
+def test_run_enumeration_rejects_boolean_exogenous_coordinate():
+    worlds = list(build_od5a_configured_worlds(nonload_bounds=_bounds(), design_seed=17))
+    altered = dict(worlds[0].nonload_coordinates)
+    altered["calendar_availability"] = True
+    worlds[0] = replace(worlds[0], nonload_coordinates=altered)
+    with pytest.raises(ValueError, match="invalid non-load coordinates"):
+        tuple(iter_od5a_run_keys(worlds))
