@@ -113,3 +113,47 @@ def test_pilot_refuses_nonpositive_service_and_horizon():
         OD5aWorkItem("bad", 0, (("a", -1),))
     with pytest.raises(ValueError):
         run_od5a_pilot(arm=_arms()["baseline"], items=_work(), horizon=0)
+
+
+def test_colon_bearing_identity_components_do_not_alias_backend_requests():
+    # Two different item/station pairs used to encode as the same concatenated ID.
+    from dataclasses import replace
+
+    baseline = _arms()["baseline"]
+    payload = baseline.model.canonical_payload()
+    payload["stations"] = {"c": {}, "b:c": {}, "root": {}}
+    payload["routing"] = {"dependency_edges": [["c", "root"], ["b:c", "root"]]}
+    model = ModelSpec.model_validate(payload)
+    arm = replace(baseline, model=model)
+    work = tuple(
+        OD5aWorkItem(item_id=item_id, arrival_at=0.0,
+                     service_by_station=(("c", 1.0), ("b:c", 1.0), ("root", 1.0)))
+        for item_id in ("a:b", "a")
+    )
+    result = run_od5a_pilot(arm=arm, items=work, horizon=50.0)
+    assert {item_id for item_id, _ in result.completed_at} == {"a:b", "a"}
+    assert len([event for event in result.events if event.kind == "execution"]) == 6
+    assert len({event.cause for event in result.events}) == len(result.events)
+
+
+@pytest.mark.parametrize("arrival,service", [
+    (0.0000001, 1.0),
+    (0.0, 0.0000001),
+    (0.0, 0.0000015),
+])
+def test_pilot_rejects_unrepresentable_arrival_and_service_times(arrival, service):
+    with pytest.raises(ValueError, match="microsecond"):
+        OD5aWorkItem("bad", arrival, (("a", service),))
+
+
+def test_pilot_rejects_submicrosecond_coordination_and_horizon():
+    from dataclasses import replace
+
+    base = _arms()["baseline"]
+    payload = base.model.canonical_payload()
+    payload["parameters"]["coordination_latency"] = 0.0000001
+    altered = replace(base, model=ModelSpec.model_validate(payload))
+    with pytest.raises(ValueError, match="microsecond"):
+        run_od5a_pilot(arm=altered, items=_work(), horizon=80.0)
+    with pytest.raises(ValueError, match="microsecond"):
+        run_od5a_pilot(arm=base, items=_work(), horizon=0.0000001)
