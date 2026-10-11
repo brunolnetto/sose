@@ -26,13 +26,13 @@ def _baseline() -> ModelSpec:
         costs={"baseline_operating_cost": 4.0},
         parameters={
             "arrival_rate": 0.8,
-            "service_capacity": 1.0,
+            "execution_slots": 1,
             "coordination_latency": 2.0,
             "service_cv": 0.7,
         },
         parameter_evidence={
             key: EvidenceClass.ASSUMED for key in (
-                "arrival_rate", "service_capacity", "coordination_latency", "service_cv",
+                "arrival_rate", "execution_slots", "coordination_latency", "service_cv",
             )
         },
     )
@@ -50,7 +50,7 @@ def _costs() -> dict[str, OD5aChargedCost]:
 def _admit(**overrides):
     args = {
         "baseline": _baseline(),
-        "expanded_capacity": 1.5,
+        "expanded_capacity": 2,
         "removed_dependency_edges": (("a", "c"),),
         "reduced_coordination_latency": 1.2,
         "declared_costs": _costs(),
@@ -84,16 +84,16 @@ def test_intervention_changes_only_allowed_mechanisms_and_preserves_exogenous_so
         ["a", "b"], ["b", "c"], ["a", "c"],
     ]
     assert capacity["routing"] == baseline["routing"]
-    assert capacity["parameters"]["service_capacity"] == 1.5
+    assert capacity["parameters"]["execution_slots"] == 2
     assert capacity["parameters"]["coordination_latency"] == 2.0
     assert topology["parameters"] == baseline["parameters"]
     assert topology["routing"]["dependency_edges"] == [["a", "b"], ["b", "c"]]
     assert coordination["routing"] == baseline["routing"]
     assert coordination["parameters"]["coordination_latency"] == 1.2
-    assert coordination["parameters"]["service_capacity"] == 1.0
+    assert coordination["parameters"]["execution_slots"] == 1
     assert combined["routing"]["dependency_edges"] == topology["routing"]["dependency_edges"]
     assert combined["parameters"]["coordination_latency"] == 1.2
-    assert combined["parameters"]["service_capacity"] == 1.0
+    assert combined["parameters"]["execution_slots"] == 1
     for arm in results.values():
         model = arm.model.canonical_payload()
         for section in ("demand", "actors", "calendars", "costs", "parameter_evidence"):
@@ -148,8 +148,8 @@ def test_fail_closed_cost_admission(case, match):
 
 
 @pytest.mark.parametrize("changes,match", [
-    ({"expanded_capacity": 1.0}, "strictly increase"),
-    ({"expanded_capacity": float("inf")}, "strictly increase"),
+    ({"expanded_capacity": 1}, "strictly increase"),
+    ({"expanded_capacity": 1.5}, "strictly increase"),
     ({"reduced_coordination_latency": 2.0}, "strictly reduce"),
     ({"reduced_coordination_latency": -0.1}, "strictly reduce"),
     ({"removed_dependency_edges": ()}, "nonempty and unique"),
