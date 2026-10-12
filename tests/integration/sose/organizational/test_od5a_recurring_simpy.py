@@ -439,7 +439,7 @@ def test_released_lease_trigger_must_match_completed_job_before_reclaim(tmp_path
             assert lease.state == "released"
             lease.attributes["trigger_id"] = forged_trigger
             uow.save_entity(lease)
-        with pytest.raises(ValueError, match="released.*trigger"):
+        with pytest.raises(ValueError, match="completed trigger lacks released lease history"):
             claim_od5a_recurring_tick(
                 store, job_id="org:A", owner_id="worker:B",
                 now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
