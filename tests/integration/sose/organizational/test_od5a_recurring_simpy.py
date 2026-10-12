@@ -552,6 +552,10 @@ def test_claim_validates_external_trigger_worker_and_lease(
     ("released_owned", "owner contradicts released"),
     ("wrong_active_trigger", "lease trigger contradicts active job"),
     ("expiry_before_claim", "lease expiry contradicts claim timestamp"),
+    ("owner_empty", "claimed without an owner"),
+    ("owner_integer", "claimed without an owner"),
+    ("job_ready", "claimed lease contradicts job lifecycle"),
+    ("job_idle", "claimed lease contradicts job lifecycle"),
 ])
 def test_corrupt_fenced_lease_fails_closed_before_reclaim(tmp_path, mutator, reason):
     path = tmp_path / "forged-lease.db"
@@ -581,6 +585,17 @@ def test_corrupt_fenced_lease_fails_closed_before_reclaim(tmp_path, mutator, rea
                 lease.attributes["trigger_id"] = "foreign-stale-trigger"
             elif mutator == "expiry_before_claim":
                 lease.attributes["expires_at"] = lease.updated_at.isoformat()
+            elif mutator == "owner_empty":
+                lease.attributes["owner_id"] = ""
+            elif mutator == "owner_integer":
+                lease.attributes["owner_id"] = 17
+            elif mutator in {"job_ready", "job_idle"}:
+                from dataclasses import replace
+                job = uow.get_job_state("org:A")
+                if mutator == "job_ready":
+                    uow.save_job_state(replace(job, status="ready"))
+                else:
+                    uow.save_job_state(replace(job, phase="idle"))
             uow.save_entity(lease)
         with pytest.raises(ValueError, match=reason):
             claim_od5a_recurring_tick(
@@ -590,6 +605,40 @@ def test_corrupt_fenced_lease_fails_closed_before_reclaim(tmp_path, mutator, rea
                 _wall_clock=lambda: CLOCK + timedelta(seconds=10),
             )
         assert od5a_durable_events(store, job_id="org:A") == ()
+
+
+def test_missing_released_lease_cannot_replay_or_advance_completed_trigger(tmp_path):
+    path = tmp_path / "missing-causal-fence.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        first_trigger = _trigger(store)
+        first = run_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="worker:old",
+            now=CLOCK, lease_duration=LEASE, trigger_id=first_trigger,
+            _wall_clock=lambda: CLOCK,
+        )
+        assert first.action == "advanced"
+        previous_events = od5a_durable_events(store, job_id="org:A")
+        with store.transaction() as uow:
+            key = ("od5a_runner_lease", "org:A")
+            # Deliberately corrupt storage, bypassing public Entity APIs.
+            del uow._working.entities[key]
+            uow._mark_dirty("entities", key)
+        with pytest.raises(ValueError, match="completed trigger lacks released lease"):
+            run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker:new",
+                now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
+                trigger_id=first_trigger,
+                _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+            )
+        with pytest.raises(ValueError, match="completed trigger lacks released lease"):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker:new",
+                now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
+                trigger_id=_trigger(store),
+                _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == previous_events
 
 
 def test_same_owner_can_reclaim_current_live_epoch_without_mutation(tmp_path):
