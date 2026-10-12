@@ -349,6 +349,21 @@ class PostgresPersistence(MemoryPersistence):
             event = after.events[change.position]
             if not event.event_id:
                 raise ValueError("PostgreSQL durable event ID cannot be empty")
+            # Exact deterministic replay is idempotent; a reused identity
+            # with changed causal facts is not. Inspect legacy numeric-key
+            # events in this UoW's snapshot as well as new identity keys.
+            earlier = next(
+                (item for item in before.events if item.event_id == event.event_id),
+                None,
+            )
+            if earlier is not None:
+                if earlier != event:
+                    raise ValueError(
+                        f"conflicting PostgreSQL durable event ID: {event.event_id}"
+                    )
+                continue
+            payload = dumps(event)
+            key = "event:" + event.event_id
             stored = self._connection.execute(
                 sql.SQL(
                     """
@@ -358,13 +373,20 @@ class PostgresPersistence(MemoryPersistence):
                     RETURNING record_key
                     """
                 ).format(self._record_table),
-                ("events", "event:" + event.event_id,
-                 next_position, dumps(event)),
+                ("events", key, next_position, payload),
             ).fetchone()
             if stored is None:
-                raise ValueError(
-                    f"duplicate PostgreSQL durable event ID: {event.event_id}"
-                )
+                original = self._connection.execute(
+                    sql.SQL(
+                        "SELECT payload FROM {} WHERE collection = %s AND record_key = %s"
+                    ).format(self._record_table),
+                    ("events", key),
+                ).fetchone()
+                if original is None or str(original[0]) != payload:
+                    raise ValueError(
+                        f"conflicting PostgreSQL durable event ID: {event.event_id}"
+                    )
+                continue
             next_position += 1
 
     def writer_epoch(self) -> int:
