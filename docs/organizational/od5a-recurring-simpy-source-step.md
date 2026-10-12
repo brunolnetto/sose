@@ -14,6 +14,8 @@ The first recurring adapter must prove that an actual externally invoked `Simula
 - `run_od5a_recurring_tick` is a bounded recurring invocation wrapper. Retrying the latest committed trigger returns `replayed` without another physical stage. Death after claim requires expiration/recover; death before UoW COMMIT rolls back source+checkpoint together; death after COMMIT leaves both intact.
 - No global `SimulationPosition` or simulated global clock; each organization's source Entity owns logical time. Physical reservation arbitration remains the existing authoritative OD-5a reducer. Do not serialize `simpy.Environment`, Process, Event or pending callbacks.
 
+- Once a source organization is bound to its recurring `SimulationJobState`, the standalone public `advance_od5a_durable` entrypoint rejects direct advancement. Fenced recurring advancement uses the private in-UoW source primitive only after verifying the job lease, so two public writer APIs cannot contradict each other by silently bypassing the runner fence.
+
 ## TDD falsification
 
 Five compiled reference arms compare complete physical source state/events/resource leases against the standalone durable reducer. Real OS processes die after claim and after source COMMIT; stale fencing tokens cannot dispatch. Injected exception after job-state staging but before commit verifies source DomainEvent + job checkpoint rollback. Duplicate trigger replay and interleaved independent organization clocks are tested.
