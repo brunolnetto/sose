@@ -543,3 +543,33 @@ def test_noncanonical_stored_boundary_message_cannot_certify_even_with_valid_ack
         assert store.business_effect(receipt.consumer_effect_id) is None
         assert store.command(receipt.consumer_effect_id) is not None
         assert store.command(effect_id) is not None
+
+
+@pytest.mark.parametrize("expiry", ["expired", "missing"])
+def test_forged_expired_or_missing_lease_ack_cannot_materialize_effect(
+    tmp_path, expiry,
+):
+    """Certification must revalidate claim fencing, not trust ACK status."""
+    path = tmp_path / "invalid-lease-ack.db"
+    event, effect_id = _stage(path)
+    with SQLitePersistence(path) as store:
+        with store.transaction() as uow:
+            command = uow.get_command(effect_id)
+            delivery = next(
+                d for d in uow.boundary_deliveries()
+                if d.message_id == command.causation_id
+            )
+            expiry_at = (
+                None if expiry == "missing" else delivery.consumed_at
+            )
+            uow.save_boundary_delivery(
+                replace(delivery, lease_expires_at=expiry_at),
+            )
+        with pytest.raises(ValueError, match="ACK"):
+            apply_od5a_physical_observation(
+                store, effect_id=effect_id,
+                applied_at=event.occurred_at + timedelta(seconds=2),
+            )
+        assert store.entity("od5a_physical_observation", event.event_id) is None
+        assert store.business_effect(effect_id) is None
+        assert store.command(effect_id) is not None
