@@ -13,7 +13,9 @@ from datetime import datetime
 from typing import Any
 
 from sose.composition.effects import BusinessEffectApplied
-from sose.composition.model import BoundaryDelivery, BoundaryMessage, DeliveryStatus
+from sose.composition.model import (
+    BoundaryConsumption, BoundaryDelivery, BoundaryMessage, DeliveryStatus,
+)
 from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
 from sose.domain.entity import Entity
@@ -83,6 +85,12 @@ def _verify_receipt(
     if (
         delivery is None or delivery.status is not DeliveryStatus.CONSUMED
         or delivery.message_id != message.message_id
+        or delivery.destination_domain != message.destination_domain
+        or delivery.contract_name != message.contract_name
+        or delivery.contract_version != message.contract_version
+        or not delivery.claim_owner_id
+        or delivery.claim_epoch <= 0
+        or delivery.attempts != delivery.claim_epoch
         or delivery.consumer_effect_id != effect_id
         or consumption is None
         or consumption.delivery_id != delivery_id
@@ -94,9 +102,15 @@ def _verify_receipt(
         or delivery.consumed_at != consumption.consumed_at
         or delivery.claimed_at is None
         or delivery.claimed_at > consumption.consumed_at
+        or delivery.claimed_at < event.occurred_at
         or delivery.lease_expires_at is None
         or delivery.lease_expires_at <= consumption.consumed_at
         or consumption.consumed_at < event.occurred_at
+        or consumption != BoundaryConsumption.create(
+            delivery=delivery,
+            consumer_effect_id=effect_id,
+            consumed_at=consumption.consumed_at,
+        )
     ):
         raise ValueError("OD-5a physical effect lacks unique accepted boundary ACK")
     return event, expected_payload, message.correlation_id, consumption.consumed_at
