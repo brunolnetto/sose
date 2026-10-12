@@ -341,6 +341,12 @@ def claim_od5a_recurring_tick(
                 ):
                     raise ValueError("OD-5a runner lease trigger contradicts active job")
             if existing.state == "released":
+                # A released fence is created only when an authorized source
+                # step and its job checkpoint commit together. A fabricated
+                # pre-first-tick released epoch must never be laundered by
+                # incrementing it into a new valid claim.
+                if job.run_count < 1 or not job.last_completed_trigger_id:
+                    raise ValueError("released lease requires completed trigger history")
                 if job.active_trigger_id is not None:
                     raise ValueError("released OD-5a runner lease contradicts active job trigger")
                 if existing.attributes.get("trigger_id") != job.last_completed_trigger_id:
