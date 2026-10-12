@@ -75,7 +75,6 @@ def test_foreign_world_cannot_be_executed_under_different_protocol():
     base = build_queue_reference_plan_v1(QueueReferenceDomain())
     # A forged world/protocol binding must fail even if the world itself
     # remains a valid immutable model instance.
-    from sose.organizational.domain_experiment import build_experiment_worlds
     # Reuse protocol-derived worlds from the framework's actual design.
     from sose.organizational.domain_experiment_runtime import run_domain_experiment
     from sose.organizational.experiment import ReplicationPlan
