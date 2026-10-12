@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
+from time import sleep
 from uuid import uuid4
 
 import pytest
@@ -81,7 +82,6 @@ def _claim_worker(dsn, namespace, owner, barrier, reports):
                 store, job_id="org:race", owner_id=owner,
                 now=NOW, lease_duration=LEASE,
                 trigger_id=deterministic_id("od5a-recurring-tick", "org:race", 1),
-                _wall_clock=lambda: NOW,
             )
             reports.put((owner, "claimed", result.epoch))
         except StaleOD5aRunnerClaimError:
@@ -132,9 +132,8 @@ def _kill_after_pg_claim(dsn, namespace):
     with PostgresPersistence(dsn, namespace=namespace) as store:
         claim_od5a_recurring_tick(
             store, job_id="org:race", owner_id="worker:dead",
-            now=NOW, lease_duration=LEASE,
+            now=NOW, lease_duration=timedelta(seconds=3),
             trigger_id=deterministic_id("od5a-recurring-tick", "org:race", 1),
-            _wall_clock=lambda: NOW,
         )
         os._exit(91)
 
@@ -158,18 +157,23 @@ def test_recovery_of_postgres_job_after_real_claimed_worker_death():
                 store, job_id="org:race", owner_id="worker:recovered",
                 now=NOW + timedelta(seconds=1), lease_duration=LEASE,
                 trigger_id=trigger, recover=True,
-                _wall_clock=lambda: NOW + timedelta(seconds=1),
             )
+        # Wait for REAL PostgreSQL clock time to cross the OS-dead worker's
+        # committed lease deadline; do not forge a future client timestamp.
+        with store.transaction() as uow:
+            old_lease = uow.get_entity("od5a_runner_lease", "org:race")
+            expiry = datetime.fromisoformat(old_lease.attributes["expires_at"])
+        remaining = (expiry - store.trusted_utc_now()).total_seconds()
+        if remaining > 0:
+            sleep(remaining + 0.1)
         recovered = claim_od5a_recurring_tick(
             store, job_id="org:race", owner_id="worker:recovered",
             now=NOW + timedelta(seconds=11), lease_duration=LEASE,
             trigger_id=trigger, recover=True,
-            _wall_clock=lambda: NOW + timedelta(seconds=11),
         )
         assert recovered.epoch == 2
         step = execute_od5a_claimed_tick(
             store, claim=recovered, now=NOW + timedelta(seconds=12),
-            _wall_clock=lambda: NOW + timedelta(seconds=12),
         )
         assert step.action == "advanced" and step.logical_tick == 1
         assert len(od5a_durable_events(store, job_id="org:race")) == 1
@@ -269,6 +273,12 @@ def test_server_clock_controls_pg_lease_even_when_worker_clock_is_far_ahead():
                 store, job_id="org:race", owner_id="worker:B",
                 now=fake_future + timedelta(days=1), lease_duration=LEASE,
                 trigger_id=trigger, recover=True,
+            )
+        with pytest.raises(ValueError, match="PostgreSQL trusted lease time"):
+            claim_od5a_recurring_tick(
+                store, job_id="org:race", owner_id="worker:B",
+                now=fake_future, lease_duration=LEASE, trigger_id=trigger,
+                recover=True, _wall_clock=lambda: fake_future,
             )
         with store.transaction() as uow:
             lease = uow.get_entity("od5a_runner_lease", "org:race")
