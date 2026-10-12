@@ -185,42 +185,62 @@ def initialize_od5a_recurring_job(
     store: Persistence, *, job_id: str, arm: OD5aCompiledArm,
     items: tuple[OD5aWorkItem, ...],
 ) -> SimulationJobState:
-    """Bind the registered immutable pilot and one durable per-organization job."""
+    """Atomically commit an immutable source and its owning job checkpoint.
+
+    A foreign SimulationJobState must not leave an orphaned pilot or resource
+    definitions after failed registration. The binder runs inside the SAME
+    authoritative source transaction, protected by the per-organization
+    PostgreSQL guard when available.
+    """
+    registered: list[SimulationJobState] = []
+
+    def bind(uow: UnitOfWork) -> None:
+        registered.append(_register_od5a_job_in_uow(uow, job_id=job_id))
+
     guard = getattr(store, "business_resource_guard", None)
     if callable(guard):
         with guard("od5a:recurring:" + job_id):
-            initialize_od5a_durable(store, job_id=job_id, arm=arm, items=items)
-            return _register_od5a_job(store, job_id=job_id)
-    initialize_od5a_durable(store, job_id=job_id, arm=arm, items=items)
-    return _register_od5a_job(store, job_id=job_id)
-
-
-def _register_od5a_job(store: Persistence, *, job_id: str) -> SimulationJobState:
-    # Call under the per-organization guard when PostgreSQL is used.
-    with store.transaction() as uow:
-        source = uow.get_entity(_KIND, job_id)
-        assert source is not None
-        prior = uow.get_job_state(job_id)
-        if prior is not None:
-            _read_job(uow, job_id)
-            return prior
-        if source.attributes["step"] != 0:
-            raise ValueError("OD-5a recurring job cannot adopt untracked physical history")
-        identity = _config(source)
-        state = SimulationJobState(
-            job_id=job_id,
-            domain_name=_DOMAIN,
-            config_json=dumps(identity, sort_keys=True, separators=(",", ":")),
-            config_revision=1,
-            status="ready",
-            initialized=True,
-            bootstrap_state=identity,
-            logical_time=_time(source.attributes["clock"]),
-            next_tick=source.attributes["step"],
+            initialize_od5a_durable(
+                store, job_id=job_id, arm=arm, items=items, _bind_uow=bind,
+            )
+    else:
+        initialize_od5a_durable(
+            store, job_id=job_id, arm=arm, items=items, _bind_uow=bind,
         )
-        uow.save_job_state(state)
-        return state
+    assert len(registered) == 1
+    return registered[0]
 
+
+def _register_od5a_job_in_uow(
+    uow: UnitOfWork, *, job_id: str,
+) -> SimulationJobState:
+    # Shared transaction with physical source creation, no orphan on failure.
+    source = uow.get_entity(_KIND, job_id)
+    assert source is not None
+    prior = uow.get_job_state(job_id)
+    if prior is not None:
+        if prior.domain_name != _DOMAIN:
+            raise ValueError(
+                "OD-5a organization is owned by another domain's SimulationJobState"
+            )
+        _read_job(uow, job_id)
+        return prior
+    if source.attributes["step"] != 0:
+        raise ValueError("OD-5a recurring job cannot adopt untracked physical history")
+    identity = _config(source)
+    state = SimulationJobState(
+        job_id=job_id,
+        domain_name=_DOMAIN,
+        config_json=dumps(identity, sort_keys=True, separators=(",", ":")),
+        config_revision=1,
+        status="ready",
+        initialized=True,
+        bootstrap_state=identity,
+        logical_time=_time(source.attributes["clock"]),
+        next_tick=source.attributes["step"],
+    )
+    uow.save_job_state(state)
+    return state
 
 def claim_od5a_recurring_tick(
     store: Persistence, *, job_id: str, owner_id: str,
@@ -268,6 +288,20 @@ def claim_od5a_recurring_tick(
                 raise ValueError("OD-5a runner lease is claimed without an owner")
             if previous_owner is not None and existing.state != "claimed":
                 raise ValueError("OD-5a runner lease owner contradicts released state")
+            # Validate the OLD physical fence before a recovering worker can
+            # replace it. Otherwise an expired forged lease is laundered by
+            # the new epoch, hiding its inconsistent causal trigger or clock.
+            if existing.updated_at is None or expiry <= existing.updated_at:
+                raise ValueError("OD-5a runner lease expiry contradicts claim timestamp")
+            if existing.state == "claimed" and (
+                job.active_trigger_id is None
+                or existing.attributes.get("trigger_id") != job.active_trigger_id
+            ):
+                raise ValueError("OD-5a runner lease trigger contradicts active job")
+            if existing.state == "released" and job.active_trigger_id is not None:
+                raise ValueError("released OD-5a runner lease contradicts active job trigger")
+            if trusted_now < existing.updated_at:
+                raise ValueError("trusted time precedes durable OD-5a runner lease timestamp")
             if previous_owner is not None and trusted_now < expiry:
                 if (
                     previous_owner == owner_id
@@ -323,10 +357,11 @@ def execute_od5a_claimed_tick(
             min(actions, key=lambda x: (x["at"], x["seq"]))["at"]
             if actions else source.attributes["clock"]
         )
+        # Capture the COMPLETE committed action, not just at/seq/kind.
+        # Otherwise a changed arrival item or completion resource can cross
+        # the read-side preflight -> ephemeral SimPy dispatch boundary.
         next_action = (
-            (min(actions, key=lambda x: (x["at"], x["seq"]))["at"],
-             min(actions, key=lambda x: (x["at"], x["seq"]))["seq"],
-             min(actions, key=lambda x: (x["at"], x["seq"]))["kind"])
+            dict(min(actions, key=lambda x: (x["at"], x["seq"])))
             if actions else None
         )
     dispatched: list[OD5aRecurringStep] = []
@@ -340,11 +375,7 @@ def execute_od5a_claimed_tick(
             source, job, lease = _assert_claim(uow, claim, commit_at)
             actions = source.attributes["actions"]
             actual = min(actions, key=lambda x: (x["at"], x["seq"])) if actions else None
-            actual_id = (
-                (actual["at"], actual["seq"], actual["kind"])
-                if actual is not None else None
-            )
-            if actual_id != next_action:
+            if actual != next_action:
                 raise StaleOD5aRunnerClaimError("OD-5a scheduled step changed before SimPy dispatch")
             advanced = _advance_od5a_in_uow(uow, job_id=claim.organization_id)
             committed = uow.get_entity(_KIND, claim.organization_id)
