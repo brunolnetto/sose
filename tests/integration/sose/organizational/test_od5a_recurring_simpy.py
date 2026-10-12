@@ -496,6 +496,41 @@ def test_released_lease_trigger_must_match_completed_job_before_reclaim(tmp_path
         assert od5a_durable_events(store, job_id="org:A") == before
 
 
+@pytest.mark.parametrize("entrypoint", ["replay", "claim"])
+def test_released_epoch_cannot_regress_below_completed_run_count(tmp_path, entrypoint):
+    """A completed event history cannot be laundered through a smaller epoch."""
+    path = tmp_path / f"regressed-release-epoch-{entrypoint}.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        completed = None
+        for second in (0, 1):
+            completed = _trigger(store)
+            run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="owner:A",
+                now=CLOCK + timedelta(seconds=second),
+                lease_duration=LEASE, trigger_id=completed,
+                _wall_clock=lambda second=second: CLOCK + timedelta(seconds=second),
+            )
+        checkpoint = store.job_state("org:A")
+        assert checkpoint.run_count == 2
+        before = od5a_durable_events(store, job_id="org:A")
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", "org:A")
+            assert lease.state == "released" and lease.attributes["epoch"] == 2
+            lease.attributes["epoch"] = 1
+            uow.save_entity(lease)
+        with pytest.raises(ValueError, match="completed trigger lacks released lease history"):
+            trigger = completed if entrypoint == "replay" else _trigger(store)
+            run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="owner:B",
+                now=CLOCK + timedelta(seconds=2),
+                lease_duration=LEASE, trigger_id=trigger,
+                _wall_clock=lambda: CLOCK + timedelta(seconds=2),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == before
+        assert store.job_state("org:A").run_count == 2
+
+
 @pytest.mark.parametrize("tamper", [
     {"status": "failed"}, {"phase": "reconcile"},
 ])
