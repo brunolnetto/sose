@@ -449,6 +449,45 @@ def test_released_lease_trigger_must_match_completed_job_before_reclaim(tmp_path
         assert od5a_durable_events(store, job_id="org:A") == before
 
 
+@pytest.mark.parametrize("tamper", [
+    {"status": "failed"}, {"phase": "reconcile"},
+])
+def test_completed_checkpoint_lifecycle_cannot_replay_or_reclaim(tmp_path, tamper):
+    from dataclasses import replace
+
+    path = tmp_path / "completed-checkpoint-corrupt.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        completed_trigger = _trigger(store)
+        first = run_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="owner:A",
+            now=CLOCK, lease_duration=LEASE, trigger_id=completed_trigger,
+            _wall_clock=lambda: CLOCK,
+        )
+        assert first.action == "advanced"
+        before = od5a_durable_events(store, job_id="org:A")
+        with store.transaction() as uow:
+            checkpoint = uow.get_job_state("org:A")
+            assert checkpoint.last_completed_trigger_id == completed_trigger
+            assert checkpoint.active_trigger_id is None
+            uow.save_job_state(replace(checkpoint, **tamper))
+        with pytest.raises(ValueError, match="completed checkpoint lifecycle"):
+            run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="owner:B",
+                now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
+                trigger_id=completed_trigger,
+                _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+            )
+        with pytest.raises(ValueError, match="completed checkpoint lifecycle"):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="owner:B",
+                now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
+                trigger_id=_trigger(store),
+                _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == before
+
+
 def test_future_dated_worker_clock_never_steals_live_claim_or_expires_callback(tmp_path):
     """The caller's 'now' is not evidence of PostgreSQL/SQLite lease time."""
     path = tmp_path / "host-skew.db"
