@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any
 
 from sose.composition.effects import BusinessEffectApplied
-from sose.composition.model import BoundaryDelivery, DeliveryStatus
+from sose.composition.model import BoundaryDelivery, BoundaryMessage, DeliveryStatus
 from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
 from sose.domain.entity import Entity
@@ -38,7 +38,7 @@ def _transaction(store: Persistence):
 
 def _verify_receipt(
     uow: UnitOfWork, *, message_id: str, effect_id: str,
-) -> tuple[DomainEvent, dict[str, Any], str]:
+) -> tuple[DomainEvent, dict[str, Any], str, datetime]:
     message = uow.get_boundary_message(message_id)
     if message is None:
         raise ValueError("OD-5a certification lacks durable source boundary message")
@@ -51,6 +51,21 @@ def _verify_receipt(
         or not message.causation_id
     ):
         raise ValueError("OD-5a certification requires registered physical contract and typed cause")
+    canonical = BoundaryMessage.create(
+        contract_name=message.contract_name,
+        contract_version=message.contract_version,
+        source_domain=message.source_domain,
+        source_identity=message.source_identity,
+        destination_domain=message.destination_domain,
+        occurrence_key=message.occurrence_key,
+        correlation_id=message.correlation_id,
+        causation_id=message.causation_id,
+        causation_kind=message.causation_kind,
+        produced_at=message.produced_at,
+        payload=message.payload(),
+    )
+    if message != canonical:
+        raise ValueError("OD-5a boundary message has noncanonical deterministic identity")
     event, expected_payload = _physical_event(
         uow, job_id=message.correlation_id, event_id=message.causation_id,
     )
@@ -76,14 +91,18 @@ def _verify_receipt(
         or consumption.destination_domain != _DESTINATION
         or consumption.contract_name != message.contract_name
         or consumption.contract_version != message.contract_version
+        or delivery.consumed_at != consumption.consumed_at
+        or delivery.claimed_at is None
+        or delivery.claimed_at > consumption.consumed_at
+        or consumption.consumed_at < event.occurred_at
     ):
         raise ValueError("OD-5a physical effect lacks unique accepted boundary ACK")
-    return event, expected_payload, message.correlation_id
+    return event, expected_payload, message.correlation_id, consumption.consumed_at
 
 
 def _verified_intent(
     uow: UnitOfWork, *, effect_id: str,
-) -> tuple[Command, DomainEvent, dict[str, Any], dict[str, Any]]:
+) -> tuple[Command, DomainEvent, dict[str, Any], dict[str, Any], datetime]:
     command = uow.get_command(effect_id)
     if command is None:
         raise ValueError("OD-5a physical effect lacks pending Command")
@@ -94,7 +113,7 @@ def _verified_intent(
         or not command.correlation_id
     ):
         raise ValueError("OD-5a physical effect has incorrect staged Command")
-    event, physical, job_id = _verify_receipt(
+    event, physical, job_id, ack_at = _verify_receipt(
         uow, message_id=command.causation_id, effect_id=effect_id,
     )
     expected_command_payload = {
@@ -119,11 +138,12 @@ def _verified_intent(
         "effect_id": effect_id,
         "correlation_id": job_id,
     }
-    return command, event, physical, attributes
+    return command, event, physical, attributes, ack_at
 
 
 def _verified_observation(
     uow: UnitOfWork, *, event: DomainEvent, attributes: dict[str, Any],
+    ack_at: datetime,
 ) -> Entity:
     entity = uow.get_entity(_OBSERVATION_TYPE, event.event_id)
     if (
@@ -135,6 +155,7 @@ def _verified_observation(
         or entity.created_at != event.occurred_at
         or entity.updated_at is None
         or entity.updated_at < entity.created_at
+        or entity.updated_at < ack_at
         or entity.attributes != attributes
     ):
         raise ValueError("OD-5a physical observation lacks exact terminal authoritative truth")
@@ -146,7 +167,7 @@ def _verified_prior_certificate(
 ) -> Entity:
     if uow.get_command(effect_id) is not None:
         raise ValueError("certified OD-5a effect still owns a pending Command")
-    event, physical, correlation_id = _verify_receipt(
+    event, physical, correlation_id, ack_at = _verify_receipt(
         uow, message_id=prior.boundary_message_id, effect_id=effect_id,
     )
     attributes = {
@@ -156,7 +177,9 @@ def _verified_prior_certificate(
         "effect_id": effect_id,
         "correlation_id": correlation_id,
     }
-    entity = _verified_observation(uow, event=event, attributes=attributes)
+    entity = _verified_observation(
+        uow, event=event, attributes=attributes, ack_at=ack_at,
+    )
     expected = BusinessEffectApplied.from_applied(
         effect_id=effect_id,
         boundary_message_id=prior.boundary_message_id,
@@ -167,7 +190,12 @@ def _verified_prior_certificate(
         entity_version=entity.version,
         completed_at=prior.completed_at,
     )
-    if prior != expected or prior.completed_at < event.occurred_at:
+    if (
+        prior != expected
+        or prior.completed_at < event.occurred_at
+        or prior.completed_at < ack_at
+        or prior.completed_at < entity.updated_at
+    ):
         raise ValueError("OD-5a certificate contradicts authoritative observation")
     return entity
 
@@ -184,14 +212,14 @@ def apply_od5a_physical_observation(
         prior = uow.get_business_effect(effect_id)
         if prior is not None:
             return _verified_prior_certificate(uow, effect_id=effect_id, prior=prior)
-        _, event, _, attributes = _verified_intent(uow, effect_id=effect_id)
+        _, event, _, attributes, ack_at = _verified_intent(uow, effect_id=effect_id)
         existing = uow.get_entity(_OBSERVATION_TYPE, event.event_id)
         if existing is not None:
             return _verified_observation(
-                uow, event=event, attributes=attributes,
+                uow, event=event, attributes=attributes, ack_at=ack_at,
             )
-        if applied_at < event.occurred_at:
-            raise ValueError("OD-5a physical observation cannot precede its source event")
+        if applied_at < event.occurred_at or applied_at < ack_at:
+            raise ValueError("OD-5a physical observation cannot precede its boundary ACK")
         entity = Entity(
             id=event.event_id,
             entity_type=_OBSERVATION_TYPE,
@@ -217,13 +245,17 @@ def certify_od5a_physical_observation(
         if prior is not None:
             _verified_prior_certificate(uow, effect_id=effect_id, prior=prior)
             return prior
-        command, event, _, attributes = _verified_intent(
+        command, event, _, attributes, ack_at = _verified_intent(
             uow, effect_id=effect_id,
         )
         entity = _verified_observation(
-            uow, event=event, attributes=attributes,
+            uow, event=event, attributes=attributes, ack_at=ack_at,
         )
-        if completed_at < event.occurred_at or completed_at < entity.updated_at:
+        if (
+            completed_at < event.occurred_at
+            or completed_at < ack_at
+            or completed_at < entity.updated_at
+        ):
             raise ValueError("OD-5a physical certificate precedes terminal observation")
         certificate = BusinessEffectApplied.from_applied(
             effect_id=effect_id,
