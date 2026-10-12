@@ -483,6 +483,70 @@ def test_foreign_job_never_consumes_writer_epoch_before_validation(scoped):
         assert store.scoped_writer_epoch("foreign-job") == old_scoped_epoch
 
 
+
+def _die_after_postgres_atomic_recovery_registration(dsn, namespace, scoped):
+    from sose.composition.recovery import TradingCustomerRecoveryRunner
+
+    with PostgresPersistence(dsn, namespace=namespace) as store:
+        method_name = (
+            "claim_scoped_writer_and_register" if scoped
+            else "claim_writer_and_register"
+        )
+        original = getattr(store, method_name)
+
+        def committed_claim(*args, **kwargs):
+            original(*args, **kwargs)
+            os._exit(96)
+
+        setattr(store, method_name, committed_claim)
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store, owner_id="worker:dead", job_id="org:crash",
+            correlation_id="org:crash" if scoped else None,
+            scoped_writer=scoped,
+        )
+        runner.run_trigger(trigger_id="stable-trigger", now=NOW)
+
+
+@pytest.mark.parametrize("scoped", [False, True])
+def test_postgres_death_after_atomic_writer_claim_keeps_recoverable_domain_identity(scoped):
+    from unittest.mock import patch
+    from sose.composition.recovery import TradingCustomerRecoveryRunner
+
+    namespace = _namespace()
+    ctx = get_context("spawn")
+    child = ctx.Process(
+        target=_die_after_postgres_atomic_recovery_registration,
+        args=(DSN, namespace, scoped),
+    )
+    child.start()
+    child.join(timeout=45)
+    if child.is_alive():
+        child.kill()
+        child.join()
+        pytest.fail("PostgreSQL recovery claim-death child hung")
+    assert child.exitcode == 96
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        state = store.job_state("org:crash")
+        assert state is not None
+        assert state.domain_name == "trading_company_composition"
+        assert state.initialized and state.next_tick == 0
+        assert (
+            store.scoped_writer_epoch("org:crash") if scoped else store.writer_epoch()
+        ) == 1
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store, owner_id="worker:recovered", job_id="org:crash",
+            correlation_id="org:crash" if scoped else None,
+            scoped_writer=scoped,
+        )
+        with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
+            result = runner.run_trigger(trigger_id="stable-trigger", now=NOW)
+        assert result.job_id == "org:crash"
+        assert store.job_state("org:crash").last_completed_trigger_id == "stable-trigger"
+        assert (
+            store.scoped_writer_epoch("org:crash") if scoped else store.writer_epoch()
+        ) == 2
+
+
 def test_server_clock_controls_pg_lease_even_when_worker_clock_is_far_ahead():
     """No host-clock skew can prematurely grant a second PostgreSQL epoch."""
     namespace = _namespace()
