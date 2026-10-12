@@ -77,3 +77,103 @@ def test_sqlite_independent_job_registration_is_not_globally_serialized(tmp_path
                     child.kill()
                 child.join(timeout=15)
             assert child.exitcode == 0
+
+
+def _sqlite_recovery_claim_racer(path, reached_claim, release_claim, results):
+    from datetime import datetime, timezone
+    from unittest.mock import patch
+    from sose.composition.recovery import TradingCustomerRecoveryRunner
+
+    with SQLiteIncrementalPersistence(path) as store:
+        real_claim = store.claim_writer
+
+        def delayed_claim(*args, **kwargs):
+            reached_claim.set()
+            if not release_claim.wait(timeout=25):
+                raise TimeoutError("test did not release pre-claim recovery worker")
+            return real_claim(*args, **kwargs)
+
+        store.claim_writer = delayed_claim
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store, job_id="race:job", owner_id="recovery",
+        )
+        try:
+            with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
+                runner.run_trigger(
+                    trigger_id="occurrence:1",
+                    now=datetime(2026, 10, 12, tzinfo=timezone.utc),
+                )
+            results.put(("recovery", "accepted"))
+        except (ValueError, RuntimeError) as error:
+            results.put(("recovery", "rejected", str(error)))
+
+
+def _sqlite_generic_registrar(path, ready, results):
+    from sose.backends.simpy import SimPyBackend
+    from sose.examples.catalog import builtin_catalog
+    from sose.jobs.runner import SimulationJob
+
+    with SQLiteIncrementalPersistence(path) as store:
+        ready.set()
+        job = SimulationJob(
+            job_id="race:job", persistence=store,
+            definition=builtin_catalog().get("tutorial_job"),
+            backend_factory=lambda origin: SimPyBackend(origin=origin),
+        )
+        try:
+            job.initialize()
+            results.put(("generic", "accepted"))
+        except (ValueError, RuntimeError) as error:
+            results.put(("generic", "rejected", str(error)))
+
+
+def test_sqlite_recovery_claim_and_generic_registration_share_one_cross_process_fence(tmp_path):
+    """A generic job cannot slip between PC6 domain preflight and writer claim."""
+    path = str(tmp_path / "recovery-race.db")
+    ctx = get_context("spawn")
+    reached_claim, release_claim, generic_ready = ctx.Event(), ctx.Event(), ctx.Event()
+    results = ctx.Queue()
+    processes = [
+        ctx.Process(
+            target=_sqlite_recovery_claim_racer,
+            args=(path, reached_claim, release_claim, results),
+        ),
+        ctx.Process(
+            target=_sqlite_generic_registrar,
+            args=(path, generic_ready, results),
+        ),
+    ]
+    with SQLiteIncrementalPersistence(path) as store:
+        initial_epoch = store.writer_epoch()
+    try:
+        processes[0].start()
+        assert reached_claim.wait(timeout=25), "recovery never reached post-preflight claim"
+        processes[1].start()
+        assert generic_ready.wait(timeout=25)
+        # A competing creator must remain excluded until the original
+        # recovery commits its domain identity, not just its preflight read.
+        assert results.empty(), "foreign creator completed during preflight/claim gap"
+        release_claim.set()
+        for process in processes:
+            process.join(timeout=35)
+            if process.is_alive():
+                process.kill()
+                process.join()
+                pytest.fail("registration racer deadlocked")
+            assert process.exitcode == 0
+        outcome = {record[0]: record[1] for record in (
+            results.get(timeout=10), results.get(timeout=10),
+        )}
+        assert outcome == {"recovery": "accepted", "generic": "rejected"}
+        with SQLiteIncrementalPersistence(path) as store:
+            state = store.job_state("race:job")
+            assert state.domain_name == "trading_company_composition"
+            assert store.writer_epoch() == initial_epoch + 1
+    finally:
+        release_claim.set()
+        for process in processes:
+            if process.is_alive():
+                process.kill()
+                process.join()
+        results.close()
+        results.join_thread()
