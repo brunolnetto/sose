@@ -103,6 +103,7 @@ def _read_job(
         or not job.initialized
         or job.config_revision != 1
         or job.next_tick != source.attributes["step"]
+        or job.run_count != source.attributes["step"]
         or job.logical_time != _time(source.attributes["clock"])
     ):
         raise ValueError("OD-5a recurring checkpoint contradicts authoritative organization")
@@ -196,10 +197,12 @@ def _assert_claim(
     if lease is not None and lease.state == "claimed":
         stored_epoch = lease.attributes.get("epoch")
         if (
-            isinstance(stored_epoch, int)
-            and not isinstance(stored_epoch, bool)
-            and stored_epoch < job.run_count + 1
+            not isinstance(stored_epoch, int)
+            or isinstance(stored_epoch, bool)
+            or stored_epoch < 1
         ):
+            raise ValueError("invalid durable OD-5a runner epoch")
+        if stored_epoch < job.run_count + 1:
             raise ValueError("OD-5a claimed lease epoch predates next run")
     if (
         lease is None
