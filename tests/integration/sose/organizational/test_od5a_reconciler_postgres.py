@@ -212,16 +212,17 @@ def _claim_racer(dsn, namespace, owner, ready, start, signals, release, result):
         ready.put(owner)
         if not start.wait(timeout=30):
             raise RuntimeError("racer start barrier timed out")
+        backend_pid = store._connection.execute("SELECT pg_backend_pid()").fetchone()[0]
         original = store.boundary_transaction
 
         @contextmanager
         def intercepted(**kwargs):
             if owner == "worker-B":
-                signals.put(("attempting_sql_lock", owner))
+                signals.put(("attempting_sql_lock", owner, backend_pid))
             with original(**kwargs) as uow:
                 if owner == "worker-A":
                     # The exclusive PostgreSQL advisory transaction lock is held.
-                    signals.put(("holding_sql_lock", owner))
+                    signals.put(("holding_sql_lock", owner, backend_pid))
                     if not release.wait(timeout=30):
                         raise RuntimeError("claim lock release gate timed out")
                 yield uow
@@ -259,9 +260,14 @@ def test_two_postgres_processes_compete_for_same_fenced_claim():
     try:
         assert {ready.get(timeout=30) for _ in (a, b)} == {"worker-A", "worker-B"}
         start_a.set()
-        assert signals.get(timeout=30) == ("holding_sql_lock", "worker-A")
+        holding = signals.get(timeout=30)
+        assert holding[:2] == ("holding_sql_lock", "worker-A")
+        a_pid = holding[2]
         start_b.set()
-        assert signals.get(timeout=30) == ("attempting_sql_lock", "worker-B")
+        attempting = signals.get(timeout=30)
+        assert attempting[:2] == ("attempting_sql_lock", "worker-B")
+        b_pid = attempting[2]
+        assert a_pid != b_pid
         # Establish actual server-side contention: a distinct backend must
         # be waiting on a NOT-GRANTED advisory lock, not merely queued by
         # Python's scheduler after announcing an attempted call.
@@ -276,18 +282,26 @@ def test_two_postgres_processes_compete_for_same_fenced_claim():
             while monotonic() < deadline:
                 row = observer.execute(
                     """
-                    SELECT count(*) FROM pg_locks AS l
-                    JOIN pg_stat_activity AS a ON a.pid = l.pid
-                    WHERE a.datname = current_database()
-                      AND l.locktype = 'advisory'
-                      AND l.granted = false
-                    """
+                    SELECT count(*)
+                    FROM pg_locks AS waiting
+                    JOIN pg_locks AS held
+                      ON waiting.database IS NOT DISTINCT FROM held.database
+                     AND waiting.classid = held.classid
+                     AND waiting.objid = held.objid
+                     AND waiting.objsubid = held.objsubid
+                    WHERE waiting.pid = %s AND held.pid = %s
+                      AND waiting.locktype = 'advisory'
+                      AND held.locktype = 'advisory'
+                      AND waiting.granted = false
+                      AND held.granted = true
+                    """,
+                    (b_pid, a_pid),
                 ).fetchone()
                 if row and row[0] >= 1:
                     waiting = True
                     break
                 sleep(0.05)
-            assert waiting, "worker B never reached a PostgreSQL advisory-lock wait"
+            assert waiting, "worker B never waited for the specific advisory lock held by worker A"
         with pytest.raises(queue.Empty):
             responses.get(timeout=0.5)
     finally:
