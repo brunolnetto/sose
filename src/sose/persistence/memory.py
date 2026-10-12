@@ -289,6 +289,10 @@ class MemoryUnitOfWork:
         self._working.entities[key] = deepcopy(entity)
         self._mark_dirty("entities", key)
 
+    def events(self) -> tuple[DomainEvent, ...]:
+        """Return the entire event DAG from THIS UoW snapshot, including staged events."""
+        return tuple(deepcopy(self._working.events))
+
     def get_event(self, event_id: str) -> DomainEvent | None:
         matches = [event for event in self._working.events if event.event_id == event_id]
         if any(event != matches[0] for event in matches[1:]):
