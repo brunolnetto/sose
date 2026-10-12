@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import re
 from typing import Iterator
 
@@ -168,6 +169,19 @@ class PostgresPersistence(MemoryPersistence):
 
         self._revision = -1
         self._refresh_from_db(force=True)
+
+    def trusted_utc_now(self) -> datetime:
+        """Return authoritative database wall time for cross-host lease fencing.
+
+        SELECT clock_timestamp() is evaluated at the call, not the beginning
+        of a possibly long-lived transaction, unlike transaction_timestamp().
+        Call while holding the job-scoped advisory guard immediately before
+        validating or writing lease expiry. Worker-supplied clocks are ignored.
+        """
+        record = self._connection.execute("SELECT clock_timestamp()").fetchone()
+        if record is None or not isinstance(record[0], datetime):
+            raise RuntimeError("PostgreSQL trusted clock unavailable")
+        return record[0].astimezone(timezone.utc)
 
     @contextmanager
     def business_resource_guard(
