@@ -252,6 +252,71 @@ def test_postgres_source_advance_cannot_race_recurring_ownership_transfer():
         reports.join_thread()
 
 
+
+def _domain_registration_worker(dsn, namespace, domain, started, finished, results):
+    from sose.backends.simpy import SimPyBackend
+    from sose.examples.catalog import builtin_catalog
+    from sose.jobs.runner import SimulationJob
+
+    try:
+        with PostgresPersistence(dsn, namespace=namespace) as store:
+            started.set()
+            if domain == "od5a":
+                initialize_od5a_recurring_job(
+                    store, job_id="org:race", arm=_arm(),
+                    items=(OD5aWorkItem(
+                        "one", 0.0, (("a", 0.2), ("b", 0.2), ("c", 0.1)),
+                    ),),
+                )
+            else:
+                job = SimulationJob(
+                    job_id="org:race",
+                    definition=builtin_catalog().get("tutorial_job"),
+                    persistence=store,
+                    backend_factory=lambda origin: SimPyBackend(origin=origin),
+                )
+                job.initialize()
+        results.put((domain, "accepted"))
+    except ValueError:
+        results.put((domain, "rejected"))
+    finally:
+        finished.set()
+
+
+@pytest.mark.parametrize("domain", ["od5a", "tutorial"])
+def test_postgres_job_registration_respects_shared_identity_guard(domain):
+    """Every job-state creator must acquire the SAME job identity guard."""
+    namespace = _namespace()
+    ctx = get_context("spawn")
+    started, finished, reports = ctx.Event(), ctx.Event(), ctx.Queue()
+    process = ctx.Process(
+        target=_domain_registration_worker,
+        args=(DSN, namespace, domain, started, finished, reports),
+    )
+    try:
+        with PostgresPersistence(DSN, namespace=namespace) as store:
+            with store.business_resource_guard("sose:job-registration:org:race"):
+                process.start()
+                assert started.wait(timeout=30), "worker did not reach initialization"
+                sleep(0.25)
+                assert not finished.is_set(), (
+                    f"{domain} initialization ignored shared job registration guard"
+                )
+        process.join(timeout=40)
+        if process.is_alive():
+            process.kill()
+            process.join()
+            pytest.fail("registration worker hung after guard release")
+        assert process.exitcode == 0
+        assert reports.get(timeout=5) == (domain, "accepted")
+    finally:
+        if process.is_alive():
+            process.kill()
+            process.join()
+        reports.close()
+        reports.join_thread()
+
+
 def test_server_clock_controls_pg_lease_even_when_worker_clock_is_far_ahead():
     """No host-clock skew can prematurely grant a second PostgreSQL epoch."""
     namespace = _namespace()
