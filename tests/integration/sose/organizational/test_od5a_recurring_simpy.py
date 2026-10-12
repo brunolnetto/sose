@@ -647,3 +647,119 @@ def test_claim_denies_wrong_trigger_paused_checkpoint_and_expired_reclaim_withou
                 _wall_clock=lambda: CLOCK + timedelta(seconds=6),
             )
         assert od5a_durable_events(store, job_id="org:A") == ()
+
+
+@pytest.mark.parametrize("corruption,error", [
+    ("missing_active", "matching lease"),
+    ("wrong_reservation", "truth differs"),
+    ("deleted_reservation", "disappeared before completion"),
+    ("regressed_clock", "clock regressed"),
+    ("unknown_action", "unknown scheduled durable action"),
+    ("empty_actions_pending", "pending physical allocations"),
+    ("empty_actions_unfinished", "without completing every item"),
+])
+def test_source_reducer_refuses_corrupt_physical_and_causal_recovery(tmp_path, corruption, error):
+    """The durable reducer must reject forged physical facts atomically."""
+    path = tmp_path / "bad-physical-world.db"
+    with SQLitePersistence(path) as store:
+        initialize_od5a_durable(
+            store, job_id="org:A", arm=_arms()["baseline"], items=_items(),
+        )
+        if corruption not in ("empty_actions_pending", "empty_actions_unfinished"):
+            assert advance_od5a_durable(store, job_id="org:A")
+        with store.transaction() as uow:
+            source = uow.get_entity("od5a_durable_pilot", "org:A")
+            state = source.attributes
+            if corruption == "missing_active":
+                state["active"].pop("execution:0")
+            elif corruption == "wrong_reservation":
+                state["resources"]["execution:0"] = "foreign-reservation"
+            elif corruption == "deleted_reservation":
+                reservation_id = state["active"]["execution:0"]["reservation_id"]
+                uow.delete_resource_reservation(reservation_id)
+            elif corruption == "regressed_clock":
+                state["clock"] = 100.0
+            elif corruption == "unknown_action":
+                next_action = min(state["actions"], key=lambda x: (x["at"], x["seq"]))
+                next_action["kind"] = "phantom_action"
+            elif corruption == "empty_actions_pending":
+                state["actions"] = []
+                state["pending_execution"] = [{
+                    "item": "item:A", "source": "a", "target": "a", "causes": [],
+                }]
+            elif corruption == "empty_actions_unfinished":
+                state["actions"] = []
+            uow.save_entity(source)
+        before_events = od5a_durable_events(store, job_id="org:A")
+        before_source = od5a_durable_state(store, job_id="org:A")
+        before_reservations = store.resource_reservations()
+        with pytest.raises(RuntimeError, match=error):
+            advance_od5a_durable(store, job_id="org:A")
+        assert od5a_durable_events(store, job_id="org:A") == before_events
+        assert od5a_durable_state(store, job_id="org:A") == before_source
+        assert store.resource_reservations() == before_reservations
+
+
+@pytest.mark.parametrize("conflict,error", [
+    ("duplicate_active", "double allocation"),
+    ("external_reservation", "capacity exhausted"),
+    ("repeated_stage", "stage requested twice"),
+])
+def test_source_grant_and_stage_identity_are_authoritative(tmp_path, conflict, error):
+    """A committed arrival must not grant on top of a foreign physical lease."""
+    from sose.core.runtime import ResourceReservation
+
+    path = tmp_path / "foreign-physical-lease.db"
+    with SQLitePersistence(path) as store:
+        initialize_od5a_durable(
+            store, job_id="org:A", arm=_arms()["baseline"], items=_items(),
+        )
+        with store.transaction() as uow:
+            source = uow.get_entity("od5a_durable_pilot", "org:A")
+            if conflict == "duplicate_active":
+                source.attributes["active"]["execution:0"] = {
+                    "kind": "execution", "reservation_id": "external",
+                }
+            elif conflict == "external_reservation":
+                uow.save_resource_reservation(ResourceReservation(
+                    reservation_id="external", request_id="foreign-request",
+                    resource_name="org:A/execution:0",
+                    acquired_at=datetime(2000, 1, 1, tzinfo=timezone.utc),
+                    sequence=0,
+                ))
+            else:
+                source.attributes["requested"].append(
+                    deterministic_id("od5a-durable-stage", "item:A", "a")
+                )
+            uow.save_entity(source)
+        initial_events = od5a_durable_events(store, job_id="org:A")
+        initial_state = od5a_durable_state(store, job_id="org:A")
+        initial_reservations = store.resource_reservations()
+        with pytest.raises(RuntimeError, match=error):
+            advance_od5a_durable(store, job_id="org:A")
+        assert od5a_durable_events(store, job_id="org:A") == initial_events
+        assert od5a_durable_state(store, job_id="org:A") == initial_state
+        assert store.resource_reservations() == initial_reservations
+
+
+@pytest.mark.parametrize("invalid_items", [
+    (),
+    (_items()[0], _items()[0]),
+    (OD5aWorkItem("bad", 0.0, (("a", 0.1), ("b", 0.2))),),
+])
+def test_source_workload_rejects_missing_duplicate_and_incomplete_identity(tmp_path, invalid_items):
+    path = tmp_path / "invalid-pilot.db"
+    with SQLitePersistence(path) as store:
+        with pytest.raises(ValueError):
+            initialize_od5a_durable(
+                store, job_id="org:A", arm=_arms()["baseline"], items=invalid_items,
+            )
+        assert store.events() == ()
+        assert store.entity("od5a_durable_pilot", "org:A") is None
+
+
+def test_source_unknown_org_rejected_without_creating_synthetic_events(tmp_path):
+    with SQLitePersistence(tmp_path / "unknown-reducer.db") as store:
+        with pytest.raises(KeyError):
+            advance_od5a_durable(store, job_id="unknown:org")
+        assert store.events() == ()
