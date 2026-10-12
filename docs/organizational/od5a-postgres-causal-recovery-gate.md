@@ -63,3 +63,8 @@ transaction barrier: schema bootstrap takes an exclusive namespace advisory
 lock, which can legitimately block a just-starting process while another
 transaction owns a shared namespace writer lock. Mixing that bootstrap wait
 with live-delivery contention produces a false proof of claim fencing.
+
+For the contested claim, both workers publish their real `pg_backend_pid()`.
+The observer checks A holds the namespace advisory lock AND that B has a
+non-granted `pg_locks` entry matching A's `database/classid/objid/objsubid`.
+The test does not count another connection's unrelated advisory wait.
