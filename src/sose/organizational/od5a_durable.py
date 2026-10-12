@@ -382,8 +382,19 @@ def _advance_od5a_in_uow(uow: Any, *, job_id: str) -> bool:
 
 
 def advance_od5a_durable(store: Persistence, *, job_id: str) -> bool:
-    """One atomic semantic event; reopen same store to resume without replay."""
+    """One atomic reference step, unless a fenced recurring job owns the source.
+
+    The source reducer remains the independent reference oracle, but may not
+    mutate a source owned by a recurring SimulationJobState without that job's
+    lease and checkpoint committing in the same UoW. The recurring adapter
+    uses _advance_od5a_in_uow after validating its epoch inside the UoW.
+    """
     with store.transaction() as uow:
+        owning_job = uow.get_job_state(job_id)
+        if owning_job is not None and owning_job.domain_name == "od5a":
+            raise RuntimeError(
+                "OD-5a recurring source requires fenced job advancement"
+            )
         return _advance_od5a_in_uow(uow, job_id=job_id)
 
 
