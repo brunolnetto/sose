@@ -446,3 +446,204 @@ def test_future_dated_worker_clock_never_steals_live_claim_or_expires_callback(t
         assert legitimate.action == "advanced"
         assert store.job_state("org:A").last_completed_trigger_id == trigger
         assert len(od5a_durable_events(store, job_id="org:A")) == 1
+
+
+# Adversarial coverage gate: every durable guard below is a business-level
+# fail-closed contract. These are not pragma exclusions or coverage cosmetics.
+@pytest.mark.parametrize("tamper", [
+    {"domain_name": "cross-domain"},
+    {"config_json": "{}"},
+    {"bootstrap_state": {"pilot_identity": "forged"}},
+    {"initialized": False},
+    {"config_revision": 2},
+    {"next_tick": 99},
+    {"logical_time": CLOCK},
+])
+def test_recurring_rejects_divergent_authoritative_checkpoint(tmp_path, tamper):
+    from dataclasses import replace
+
+    path = tmp_path / "checkpoint-tamper.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        before = od5a_durable_events(store, job_id="org:A")
+        with store.transaction() as uow:
+            state = uow.get_job_state("org:A")
+            uow.save_job_state(replace(state, **tamper))
+        with pytest.raises(ValueError, match="checkpoint contradicts"):
+            run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker",
+                now=CLOCK, lease_duration=LEASE,
+                trigger_id=deterministic_id("od5a-recurring-tick", "org:A", 1),
+                _wall_clock=lambda: CLOCK,
+            )
+        assert od5a_durable_events(store, job_id="org:A") == before
+
+
+@pytest.mark.parametrize("bad_owner,bad_trigger,bad_time,bad_lease", [
+    ("", "valid", CLOCK, LEASE),
+    ("owner", "", CLOCK, LEASE),
+    ("owner", "valid", CLOCK.replace(tzinfo=None), LEASE),
+    ("owner", "valid", CLOCK, timedelta(0)),
+    ("owner", "valid", CLOCK, timedelta(seconds=-1)),
+])
+def test_claim_validates_external_trigger_worker_and_lease(tmp_path, bad_owner, bad_trigger, bad_time, bad_lease):
+    path = tmp_path / "invalid-claim-input.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        with pytest.raises(ValueError):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id=bad_owner,
+                now=bad_time, lease_duration=bad_lease, trigger_id=bad_trigger,
+                _wall_clock=lambda: CLOCK,
+            )
+        assert od5a_durable_events(store, job_id="org:A") == ()
+
+
+@pytest.mark.parametrize("mutator,reason", [
+    ("epoch_zero", "invalid durable"),
+    ("epoch_bool", "invalid durable"),
+    ("expiry_missing", "invalid expiry"),
+    ("invalid_state", "invalid durable lifecycle"),
+    ("owner_missing", "claimed without an owner"),
+    ("released_owned", "owner contradicts released"),
+])
+def test_corrupt_fenced_lease_fails_closed_before_reclaim(tmp_path, mutator, reason):
+    path = tmp_path / "forged-lease.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        trigger = _trigger(store)
+        claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="owner:A", now=CLOCK,
+            lease_duration=LEASE, trigger_id=trigger,
+            _wall_clock=lambda: CLOCK,
+        )
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", "org:A")
+            if mutator == "epoch_zero":
+                lease.attributes["epoch"] = 0
+            elif mutator == "epoch_bool":
+                lease.attributes["epoch"] = True
+            elif mutator == "expiry_missing":
+                lease.attributes["expires_at"] = None
+            elif mutator == "invalid_state":
+                lease.state = "invented"
+            elif mutator == "owner_missing":
+                lease.attributes["owner_id"] = None
+            elif mutator == "released_owned":
+                lease.state = "released"
+            uow.save_entity(lease)
+        with pytest.raises(ValueError, match=reason):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="owner:B",
+                now=CLOCK + timedelta(seconds=10),
+                lease_duration=LEASE, trigger_id=trigger, recover=True,
+                _wall_clock=lambda: CLOCK + timedelta(seconds=10),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == ()
+
+
+def test_same_owner_can_reclaim_current_live_epoch_without_mutation(tmp_path):
+    path = tmp_path / "same-owner.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        trigger = _trigger(store)
+        old = claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="owner:A",
+            now=CLOCK, lease_duration=LEASE, trigger_id=trigger,
+            _wall_clock=lambda: CLOCK,
+        )
+        again = claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="owner:A",
+            now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
+            trigger_id=trigger, _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+        )
+        assert again == old
+        assert store.job_state("org:A").next_tick == 0
+        assert od5a_durable_events(store, job_id="org:A") == ()
+
+
+def test_untracked_standalone_history_cannot_be_bound_to_new_recurring_job(tmp_path):
+    path = tmp_path / "untracked-source.db"
+    with SQLitePersistence(path) as store:
+        initialize_od5a_durable(
+            store, job_id="org:A", arm=_arms()["baseline"], items=_items(),
+        )
+        assert advance_od5a_durable(store, job_id="org:A")
+        prior = od5a_durable_events(store, job_id="org:A")
+        with pytest.raises(ValueError, match="untracked physical history"):
+            initialize_od5a_recurring_job(
+                store, job_id="org:A",
+                arm=_arms()["baseline"], items=_items(),
+            )
+        assert store.job_state("org:A") is None
+        assert od5a_durable_events(store, job_id="org:A") == prior
+
+
+def test_recurring_registration_is_idempotent_and_immutably_bound(tmp_path):
+    path = tmp_path / "register-twice.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        first = store.job_state("org:A")
+        repeat = initialize_od5a_recurring_job(
+            store, job_id="org:A", arm=_arms()["baseline"], items=_items(),
+        )
+        assert repeat == first
+        assert store.job_state("org:A") == first
+        with pytest.raises(ValueError, match="identity conflicts"):
+            initialize_od5a_recurring_job(
+                store, job_id="org:A", arm=_arms()["capacity_only"],
+                items=_items(),
+            )
+
+
+def test_fenced_claim_does_not_accept_untrusted_naive_wall_time(tmp_path):
+    path = tmp_path / "invalid-clock.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        with pytest.raises(ValueError, match="timezone-aware"):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker",
+                now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+                _wall_clock=lambda: CLOCK.replace(tzinfo=None),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == ()
+
+
+def test_claim_denies_wrong_trigger_paused_checkpoint_and_expired_reclaim_without_opt_in(tmp_path):
+    from dataclasses import replace
+
+    path = tmp_path / "claim-gates.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        with pytest.raises(ValueError, match="next deterministic step"):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker",
+                now=CLOCK, lease_duration=LEASE, trigger_id="wrong",
+                _wall_clock=lambda: CLOCK,
+            )
+        with store.transaction() as uow:
+            job = uow.get_job_state("org:A")
+            uow.save_job_state(replace(job, status="paused"))
+        with pytest.raises(ValueError, match="paused"):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker",
+                now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+                _wall_clock=lambda: CLOCK,
+            )
+        with store.transaction() as uow:
+            job = uow.get_job_state("org:A")
+            uow.save_job_state(replace(job, status="ready"))
+        trigger = _trigger(store)
+        claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="worker:A",
+            now=CLOCK, lease_duration=LEASE, trigger_id=trigger,
+            _wall_clock=lambda: CLOCK,
+        )
+        with pytest.raises(StaleOD5aRunnerClaimError, match="explicit recovery"):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker:B",
+                now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
+                trigger_id=trigger, recover=False,
+                _wall_clock=lambda: CLOCK + timedelta(seconds=6),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == ()
