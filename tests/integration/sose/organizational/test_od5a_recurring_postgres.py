@@ -246,3 +246,31 @@ def test_postgres_source_advance_cannot_race_recurring_ownership_transfer():
                 proc.join()
         reports.close()
         reports.join_thread()
+
+
+def test_server_clock_controls_pg_lease_even_when_worker_clock_is_far_ahead():
+    """No host-clock skew can prematurely grant a second PostgreSQL epoch."""
+    namespace = _namespace()
+    _init(namespace)
+    trigger = deterministic_id("od5a-recurring-tick", "org:race", 1)
+    fake_future = datetime.now(timezone.utc) + timedelta(days=365)
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        server_before = store.trusted_utc_now()
+        original = claim_od5a_recurring_tick(
+            store, job_id="org:race", owner_id="worker:A",
+            now=fake_future, lease_duration=LEASE, trigger_id=trigger,
+        )
+        server_after = store.trusted_utc_now()
+        assert server_before + LEASE <= original.lease_expires_at
+        assert original.lease_expires_at <= server_after + LEASE
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        with pytest.raises(StaleOD5aRunnerClaimError):
+            claim_od5a_recurring_tick(
+                store, job_id="org:race", owner_id="worker:B",
+                now=fake_future + timedelta(days=1), lease_duration=LEASE,
+                trigger_id=trigger, recover=True,
+            )
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", "org:race")
+            assert lease.attributes["owner_id"] == "worker:A"
+            assert lease.attributes["epoch"] == 1
