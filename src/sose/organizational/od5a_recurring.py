@@ -167,6 +167,8 @@ def _assert_completed_released_lease(
     """
     if job.last_completed_trigger_id is None or job.active_trigger_id is not None:
         return
+    if job.status != "ready" or job.phase != "idle":
+        raise ValueError("OD-5a completed checkpoint lifecycle contradicts idle released lease")
     lease = uow.get_entity(_LEASE_KIND, job.job_id)
     if (
         lease is None
