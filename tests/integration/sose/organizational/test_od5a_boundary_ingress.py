@@ -107,6 +107,8 @@ def test_restarted_publication_claim_ack_command_preserves_real_cause(tmp_path, 
             command = uow.get_command(ack.consumer_effect_id)
             assert command is not None
             assert command.name == "od5a.stage_physical_completion.v1"
+            assert command.entity_type == "od5a_physical_observation"
+            assert command.entity_id == event.event_id
             assert command.correlation_id == "org:a"
             assert command.causation_id == receipt.message_id
             assert command.payload["event_id"] == event.event_id
