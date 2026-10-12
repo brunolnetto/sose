@@ -120,16 +120,24 @@ def _trusted_now(
 ) -> datetime:
     """Take an independent trusted timestamp AFTER obtaining the job lock.
 
-    PostgreSQL uses its database server clock across contending hosts. Other
-    stores use the local UTC system clock. The optional injected clock is
-    strictly a deterministic test seam; never allow caller-supplied 'now'
-    to influence fencing or the lease-expiry calculation.
+    PostgreSQL ALWAYS uses its database server clock across contending hosts.
+    The optional injected clock is permitted ONLY on non-PostgreSQL reference
+    stores; callers cannot override a production database's fencing clock.
+    Never allow caller-supplied 'now' to influence lease expiry.
     """
-    if wall_clock is not None:
+    db_clock = getattr(store, "trusted_utc_now", None)
+    if callable(db_clock):
+        # Production PostgreSQL fencing MUST use the authoritative server
+        # clock, with no caller-controlled escape hatch. Even a private test
+        # injection could permit a fast host to steal a live epoch.
+        if wall_clock is not None:
+            raise ValueError("PostgreSQL trusted lease time cannot be overridden")
+        observed = db_clock()
+    elif wall_clock is not None:
+        # Test-only deterministic time is available on reference adapters.
         observed = wall_clock()
     else:
-        db_clock = getattr(store, "trusted_utc_now", None)
-        observed = db_clock() if callable(db_clock) else datetime.now(timezone.utc)
+        observed = datetime.now(timezone.utc)
     _require_wall_clock(observed)
     return observed.astimezone(timezone.utc)
 
