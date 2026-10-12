@@ -632,12 +632,14 @@ class TradingCustomerRecoveryRunner:
         # Preflight BEFORE any scoped/global writer claim: a failed foreign
         # registration must not advance epochs or bind a correlation.
         with job_registration_guard(self.persistence, self.job_id):
-            with self.persistence.transaction() as preflight:
-                prior = preflight.get_job_state(self.job_id)
-                if prior is not None and prior.domain_name != "trading_company_composition":
-                    raise ValueError("recovery job identity already belongs to another domain")
-                if prior is not None and prior.config_json != config_json:
-                    raise ValueError("recovery job's durable organizational binding changed")
+            # PostgreSQL job_state() refreshes the authoritative revision.
+            # Do not open an unfenced transaction here: an existing global
+            # writer epoch intentionally rejects such transactions.
+            prior = self.persistence.job_state(self.job_id)
+            if prior is not None and prior.domain_name != "trading_company_composition":
+                raise ValueError("recovery job identity already belongs to another domain")
+            if prior is not None and prior.config_json != config_json:
+                raise ValueError("recovery job's durable organizational binding changed")
             if self.scoped_writer:
                 lease = self.persistence.claim_scoped_writer(
                     self.job_id, self.owner_id,
