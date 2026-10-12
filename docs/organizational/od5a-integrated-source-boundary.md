@@ -48,6 +48,9 @@ and runner checkpoint commit in the same fenced UoW.
   within the same transaction that increments `source.step`, persists the
   event, and advances the recurring `run_count`. Therefore the invariant is
   `run_count == source.step` in **both** active and completed organizations.
+  An authoritative terminal source can **never** retain an active
+  runner trigger; the shared checkpoint reader rejects any such forged
+  lifecycle before read-side reconciliation or replay.
   That action returns `advanced`; later queries using the last committed
   deterministic trigger return `replayed`, while a next-trigger completion
   probe returns `complete` **without committing or consuming** a new trigger.
