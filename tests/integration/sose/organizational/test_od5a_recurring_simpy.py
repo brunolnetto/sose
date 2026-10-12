@@ -26,6 +26,7 @@ from sose.organizational.od5a_recurring import (
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.memory import MemoryUnitOfWork
 from sose.core.identity import deterministic_id
+from sose.domain.entity import Entity
 
 
 CLOCK = datetime(2026, 10, 12, tzinfo=timezone.utc)
@@ -422,6 +423,52 @@ def test_released_or_wrong_trigger_lease_cannot_authorize_physical_step(tmp_path
 
 
 @pytest.mark.parametrize("forged_trigger", [None, "alien-trigger"])
+@pytest.mark.parametrize("entrypoint", ["claim", "runner"])
+def test_new_job_rejects_forged_released_lease_without_completed_history(
+    tmp_path, entrypoint,
+):
+    """A released epoch before the first tick cannot be adopted as causal truth."""
+    path = tmp_path / f"impossible-first-release-{entrypoint}.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        with store.transaction() as uow:
+            lease = Entity(
+                id="org:A", entity_type="od5a_runner_lease",
+                state="released",
+                attributes={
+                    "owner_id": None, "epoch": 1,
+                    "trigger_id": None,
+                    "expires_at": (CLOCK + LEASE).isoformat(),
+                },
+            )
+            lease.touch(CLOCK)
+            uow.save_entity(lease)
+
+        def claim_or_run():
+            kwargs = dict(
+                job_id="org:A", owner_id="worker:new",
+                now=CLOCK + timedelta(seconds=1),
+                lease_duration=LEASE, trigger_id=_trigger(store),
+                _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+            )
+            if entrypoint == "claim":
+                return claim_od5a_recurring_tick(store, **kwargs)
+            return run_od5a_recurring_tick(store, **kwargs)
+
+        with pytest.raises(ValueError, match="released lease requires completed trigger history"):
+            claim_or_run()
+        with store.transaction() as uow:
+            saved = uow.get_entity("od5a_runner_lease", "org:A")
+            job = uow.get_job_state("org:A")
+            assert saved.state == "released"
+            assert saved.attributes["epoch"] == 1
+            assert saved.attributes["trigger_id"] is None
+            assert job.run_count == 0
+            assert job.last_completed_trigger_id is None
+            assert job.active_trigger_id is None
+        assert od5a_durable_events(store, job_id="org:A") == ()
+
+
 def test_released_lease_trigger_must_match_completed_job_before_reclaim(tmp_path, forged_trigger):
     path = tmp_path / "released-trigger-corruption.db"
     _init(path)
