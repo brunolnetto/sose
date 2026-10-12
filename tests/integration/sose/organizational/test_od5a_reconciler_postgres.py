@@ -19,6 +19,8 @@ from sose.organizational.od5a_durable import (
     advance_od5a_durable, initialize_od5a_durable,
 )
 from sose.organizational.od5a_mechanisms import OD5aWorkItem
+from sose.organizational.od5a_boundary import consume_od5a_physical_completion
+from sose.composition.boundary import BoundaryLease, StaleBoundaryClaimError
 from sose.organizational.od5a_reconciler import reconcile_od5a_boundary_step
 from sose.persistence.postgres import PostgresPersistence
 
@@ -112,28 +114,25 @@ def _truth(dsn, namespace, organizations):
             deliveries = tuple(sorted(
                 uow.boundary_deliveries(), key=lambda d: d.delivery_id,
             ))
+            # Enumerate complete UoW collections, not only IDs reachable
+            # from delivered messages. An orphan must fail this oracle.
+            records = uow._working
+            messages = tuple(sorted(records.boundary_messages.values(), key=lambda m: m.message_id))
+            consumptions = tuple(sorted(records.boundary_consumptions.values(), key=lambda c: c.delivery_id))
+            observations = tuple(sorted((e for e in records.entities.values()
+                if e.entity_type == "od5a_physical_observation"), key=lambda e: e.id))
+            commands = tuple(sorted(records.commands.values(), key=lambda c: c.command_id))
             data = {
                 "events": events,
                 "source": tuple(
                     uow.get_entity("od5a_durable_pilot", org)
                     for org in sorted(organizations)
                 ),
-                "messages": tuple(
-                    uow.get_boundary_message(d.message_id) for d in deliveries
-                ),
+                "messages": messages,
                 "deliveries": deliveries,
-                "consumptions": tuple(
-                    uow.get_boundary_consumption(d.delivery_id)
-                    for d in deliveries
-                ),
-                "observations": tuple(
-                    uow.get_entity("od5a_physical_observation", e.event_id)
-                    for e in physical
-                ),
-                "commands": tuple(
-                    uow.get_command(d.consumer_effect_id)
-                    for d in deliveries if d.consumer_effect_id
-                ),
+                "consumptions": consumptions,
+                "observations": observations,
+                "commands": commands,
                 "certificates": tuple(sorted(
                     uow.business_effects(), key=lambda c: c.effect_id,
                 )),
@@ -144,12 +143,14 @@ def _truth(dsn, namespace, organizations):
         data["reservations"] = tuple(sorted(
             store.resource_reservations(), key=lambda r: r.reservation_id,
         ))
-        assert all(v is not None for v in data["observations"])
+        assert {e.id for e in data["observations"]} == {e.event_id for e in physical}
+        assert {m.message_id for m in data["messages"]} == {d.message_id for d in data["deliveries"]}
+        assert {c.delivery_id for c in data["consumptions"]} == {d.delivery_id for d in data["deliveries"]}
         assert len(data["certificates"]) == len(physical)
         assert len(data["messages"]) == len(physical)
         assert len(data["deliveries"]) == len(physical)
         assert len(data["consumptions"]) == len(physical)
-        assert all(v is None for v in data["commands"])
+        assert not data["commands"]
         assert not data["reservations"]
         return data
 
@@ -308,4 +309,48 @@ def test_two_postgres_organizations_recover_independently_after_worker_death():
             break
     else:
         pytest.fail("two organizations failed to recover on PostgreSQL")
+    assert _truth(DSN, interrupted, jobs) == _truth(DSN, reference, jobs)
+
+
+def test_killed_postgres_claim_requires_new_epoch_and_rejects_stale_owner():
+    """An orphan may never ACK as its dead worker merely because the lease lives."""
+    jobs = {"org:alpha": "baseline"}
+    reference, interrupted = _namespace(), _namespace()
+    _seed(DSN, reference, jobs)
+    _seed(DSN, interrupted, jobs)
+    assert _step(DSN, reference).action == "published"
+    assert _step(DSN, interrupted).action == "published"
+    assert _step(DSN, reference).action == "claimed"
+    child = get_context("spawn").Process(
+        target=_killed_organization_worker,
+        args=(DSN, interrupted, "org:alpha", "worker-A"),
+    )
+    child.start()
+    child.join(timeout=40)
+    if child.is_alive():
+        child.kill()
+        child.join()
+        pytest.fail("claiming PostgreSQL worker deadlocked")
+    assert child.exitcode == 84
+    with PostgresPersistence(DSN, namespace=interrupted) as store:
+        with store.transaction() as uow:
+            d = next(iter(uow.boundary_deliveries()))
+            stale = BoundaryLease(
+                delivery_id=d.delivery_id, message_id=d.message_id,
+                owner_id=d.claim_owner_id, epoch=d.claim_epoch,
+                lease_expires_at=d.lease_expires_at,
+            )
+            assert stale.epoch == 1
+    now = NOW + LEASE
+    assert _step(DSN, reference, owner="worker-B", now=now).action == "claimed"
+    assert _step(DSN, interrupted, owner="worker-B", now=now).action == "claimed"
+    with PostgresPersistence(DSN, namespace=interrupted) as store:
+        with store.transaction() as uow:
+            d = next(iter(uow.boundary_deliveries()))
+            assert d.claim_epoch == d.attempts == 2
+            assert d.claim_owner_id == "worker-B"
+        with pytest.raises(StaleBoundaryClaimError):
+            consume_od5a_physical_completion(store, lease=stale, now=now)
+    assert _drain(DSN, reference, owner="worker-B", now=now)[-1] == "complete"
+    assert _drain(DSN, interrupted, owner="worker-B", now=now)[-1] == "complete"
     assert _truth(DSN, interrupted, jobs) == _truth(DSN, reference, jobs)
