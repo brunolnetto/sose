@@ -11,6 +11,7 @@ from sose.domain.warehouse import DomainMutation
 from sose.core.identity import deterministic_id
 from sose.domain.warehouse import DomainWarehouse
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
+from sose.jobs.registration import job_registration_guard
 from sose.persistence.base import Persistence
 from sose.sinks.base import SinkBinding
 from sose.sinks.outbox import SinkOutbox
@@ -181,31 +182,51 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         self,
         config: ConfigT | dict[str, object] | None = None,
     ) -> SimulationJobState:
-        existing = self.state()
-        if existing is not None:
-            if existing.domain_name != self.definition.name:
-                raise ValueError(
-                    f"job {self.job_id} already belongs to "
-                    f"{existing.domain_name!r}"
-                )
-            if not existing.initialized:
-                return self._finish_initialization(existing)
-            return existing
+        # A domain-specific OD-5a source and an ordinary SimulationJobState
+        # cannot independently claim the same identity. Hold the SAME
+        # registration fence across inspection, creation and initialization,
+        # rather than an OD-5a-only lock (Postgres upsert is last-writer-wins).
+        with job_registration_guard(self.persistence, self.job_id):
+            existing = self.state()
+            if existing is not None:
+                if existing.domain_name != self.definition.name:
+                    raise ValueError(
+                        f"job {self.job_id} already belongs to "
+                        f"{existing.domain_name!r}"
+                    )
+                if not existing.initialized:
+                    return self._finish_initialization(existing)
+                return existing
 
-        resolved = self.definition.parse_config(config)
-        pending = SimulationJobState(
-            job_id=self.job_id,
-            domain_name=self.definition.name,
-            config_json=resolved.model_dump_json(),
-            config_revision=1,
-            status="ready",
-            initialized=False,
-            logical_time=resolved.start_at,
-            next_tick=0,
-        )
-        with self.persistence.transaction() as uow:
-            uow.save_job_state(pending)
-        return self._finish_initialization(pending)
+            resolved = self.definition.parse_config(config)
+            pending = SimulationJobState(
+                job_id=self.job_id,
+                domain_name=self.definition.name,
+                config_json=resolved.model_dump_json(),
+                config_revision=1,
+                status="ready",
+                initialized=False,
+                logical_time=resolved.start_at,
+                next_tick=0,
+            )
+            with self.persistence.transaction() as uow:
+                # SQLite callers have no PostgreSQL advisory guard. The
+                # authoritative UoW must recheck the identity under its
+                # native write transaction instead of trusting the earlier
+                # snapshot from state().
+                concurrent = uow.get_job_state(self.job_id)
+                if concurrent is not None:
+                    if concurrent.domain_name != self.definition.name:
+                        raise ValueError(
+                            f"job {self.job_id} already belongs to "
+                            f"{concurrent.domain_name!r}"
+                        )
+                    pending = concurrent
+                else:
+                    uow.save_job_state(pending)
+            if pending.initialized:
+                return pending
+            return self._finish_initialization(pending)
 
     def _finish_initialization(
         self,
