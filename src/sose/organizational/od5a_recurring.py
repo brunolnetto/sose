@@ -22,6 +22,7 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.identity import deterministic_id
 from sose.domain.entity import Entity
 from sose.jobs.model import SimulationJobState
+from sose.jobs.registration import job_registration_guard
 from sose.persistence.base import Persistence, UnitOfWork
 
 from .od5a_admission import OD5aCompiledArm
@@ -197,16 +198,20 @@ def initialize_od5a_recurring_job(
     def bind(uow: UnitOfWork) -> None:
         registered.append(_register_od5a_job_in_uow(uow, job_id=job_id))
 
-    guard = getattr(store, "business_resource_guard", None)
-    if callable(guard):
-        with guard("od5a:recurring:" + job_id):
+    # First claim the job identity across ALL domain creators; only then
+    # enter the OD-5a physical/source fence. Fixed acquisition order prevents
+    # the generic runner from racing a foreign job into this registration.
+    with job_registration_guard(store, job_id):
+        guard = getattr(store, "business_resource_guard", None)
+        if callable(guard):
+            with guard("od5a:recurring:" + job_id):
+                initialize_od5a_durable(
+                    store, job_id=job_id, arm=arm, items=items, _bind_uow=bind,
+                )
+        else:
             initialize_od5a_durable(
                 store, job_id=job_id, arm=arm, items=items, _bind_uow=bind,
             )
-    else:
-        initialize_od5a_durable(
-            store, job_id=job_id, arm=arm, items=items, _bind_uow=bind,
-        )
     assert len(registered) == 1
     return registered[0]
 
