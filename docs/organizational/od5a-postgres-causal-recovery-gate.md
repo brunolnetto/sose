@@ -28,7 +28,8 @@ The explicit PostgreSQL CI step runs:
   connections per phase, kill by `os._exit` before and after each of the five
   durable boundary operations, two independent processes racing for a fenced
   claim with PostgreSQL \`pg_try_advisory_xact_lock\` evidence of a waiting advisory
-  lock, stale claim rejection after an expired lease is taken over by a new
+  lock (with both SQL connections already bootstrapped before contention), stale
+  claim rejection after an expired lease is taken over by a new
   owner at a strictly higher fencing epoch, and two organizations progressing
   in the same namespace after an actual process death.
 
@@ -56,3 +57,9 @@ clock. Tests reject duplicate or missing certificates.
   Manufacturing/O2C/MRO v1 scientific freezes must remain untouched.
 - The independent execution freeze remains `NOT_ADMITTED`; never launch
   OD-5a confirmatory DOE from this operational check.
+
+The adversarial claim test pre-opens both PostgreSQL connections before the
+transaction barrier: schema bootstrap takes an exclusive namespace advisory
+lock, which can legitimately block a just-starting process while another
+transaction owns a shared namespace writer lock. Mixing that bootstrap wait
+with live-delivery contention produces a false proof of claim fencing.
