@@ -193,6 +193,14 @@ def _assert_claim(
 ) -> tuple[Entity, SimulationJobState, Entity]:
     source, job = _read_job(uow, claim.organization_id)
     lease = uow.get_entity(_LEASE_KIND, claim.organization_id)
+    if lease is not None and lease.state == "claimed":
+        stored_epoch = lease.attributes.get("epoch")
+        if (
+            isinstance(stored_epoch, int)
+            and not isinstance(stored_epoch, bool)
+            and stored_epoch < job.run_count + 1
+        ):
+            raise ValueError("OD-5a claimed lease epoch predates next run")
     if (
         lease is None
         or lease.state != "claimed"
@@ -334,6 +342,8 @@ def claim_od5a_recurring_tick(
             if existing.updated_at is None or expiry <= existing.updated_at:
                 raise ValueError("OD-5a runner lease expiry contradicts claim timestamp")
             if existing.state == "claimed":
+                if epoch < job.run_count + 1:
+                    raise ValueError("OD-5a claimed lease epoch predates next run")
                 if job.status != "running" or job.phase != "advance":
                     raise ValueError("OD-5a claimed lease contradicts job lifecycle")
                 if (
