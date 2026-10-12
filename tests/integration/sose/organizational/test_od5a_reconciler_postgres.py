@@ -193,9 +193,10 @@ def test_real_postgres_os_kill_recovers_exact_causal_and_physical_truth(phase, w
     assert _truth(DSN, interrupted, jobs) == _truth(DSN, reference, jobs)
 
 
-def _claim_racer(dsn, namespace, owner, gate, result):
+def _claim_racer(dsn, namespace, owner, ready, gate, result):
     # Connect before the barrier: genuinely independent live SQL sessions.
     with PostgresPersistence(dsn, namespace=namespace) as store:
+        ready.put(owner)
         if not gate.wait(timeout=20):
             raise RuntimeError("concurrent claim start barrier timed out")
         step = reconcile_od5a_boundary_step(
@@ -214,15 +215,17 @@ def test_two_postgres_processes_compete_for_same_fenced_claim():
     ctx = get_context("spawn")
     gate = ctx.Event()
     responses = ctx.Queue()
+    ready = ctx.Queue()
     workers = [
         ctx.Process(
             target=_claim_racer,
-            args=(DSN, contended, owner, gate, responses),
+            args=(DSN, contended, owner, ready, gate, responses),
         )
         for owner in ("worker-A", "worker-B")
     ]
     for worker in workers:
         worker.start()
+    assert {ready.get(timeout=30) for _ in workers} == {"worker-A", "worker-B"}
     gate.set()
     for worker in workers:
         worker.join(timeout=40)
@@ -260,6 +263,11 @@ def test_postgres_five_arms_have_complete_event_keyed_certificates(treatment):
     assert _drain(DSN, namespace) == ["complete"]
 
 
+def _killed_organization_worker(dsn, namespace, organization, owner):
+    action = _step(dsn, namespace, organization, owner).action
+    os._exit(84 if action == "claimed" else 85)
+
+
 def test_two_postgres_organizations_recover_independently_after_worker_death():
     jobs = {"org:a": "baseline", "org:b": "capacity_only"}
     reference, interrupted = _namespace(), _namespace()
@@ -268,13 +276,19 @@ def test_two_postgres_organizations_recover_independently_after_worker_death():
     for job in jobs:
         assert _drain(DSN, reference, organization=job, owner=job)[-1] == "complete"
     assert _step(DSN, interrupted, "org:a", "org:a").action == "published"
-    # Kill an organization's worker after committing its fenced claim.
-    def _kill_claim(dsn, namespace):
-        os._exit(84 if _step(dsn, namespace, "org:a", "org:a").action == "claimed" else 85)
-    # Spawn requires an importable module-level entrypoint; use existing
-    # OS-kill helper with the default organization only in the single-org matrix.
-    # For the two-org case exercise explicit connection replacement after claim.
-    assert _step(DSN, interrupted, "org:a", "org:a").action == "claimed"
+    # A real OS-killed worker keeps its committed claim; another process
+    # reopens the same PostgreSQL namespace and finishes both organizations.
+    child = get_context("spawn").Process(
+        target=_killed_organization_worker,
+        args=(DSN, interrupted, "org:a", "org:a"),
+    )
+    child.start()
+    child.join(timeout=40)
+    if child.is_alive():
+        child.kill()
+        child.join()
+        pytest.fail("organization worker deadlocked")
+    assert child.exitcode == 84
     for _ in range(250):
         actions = {
             job: _step(DSN, interrupted, organization=job, owner=job).action
