@@ -8,6 +8,7 @@ This is NOT the confirmatory OD-5a execution engine or independent freeze.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from copy import deepcopy
 from decimal import Decimal
 from datetime import datetime, timedelta, timezone
@@ -267,6 +268,27 @@ def _transition(uow: Any, state: dict[str, Any], job_id: str) -> bool:
     return True
 
 
+
+@contextmanager
+def _source_transaction(store: Persistence, job_id: str):
+    """Serialize source ownership transfer and standalone advances per job.
+
+    PostgresPersistence uses last-writer-wins record updates. Its existing
+    per-resource advisory session lock serializes the single organization
+    through the transaction; separate organizations never share this lock.
+    The recurring runner uses the EXACT SAME lock key before binding the
+    SimulationJobState or advancing physical source truth.
+    """
+    guard = getattr(store, "business_resource_guard", None)
+    if callable(guard):
+        with guard("od5a:recurring:" + job_id):
+            with store.transaction() as uow:
+                yield uow
+    else:
+        with store.transaction() as uow:
+            yield uow
+
+
 def initialize_od5a_durable(
     store: Persistence, *, job_id: str, arm: OD5aCompiledArm,
     items: tuple[OD5aWorkItem, ...],
@@ -327,7 +349,7 @@ def initialize_od5a_durable(
     })
     resources = {f"execution:{i}": None for i in range(raw_slots)}
     resources["coordination:0"] = None
-    with store.transaction() as uow:
+    with _source_transaction(store, job_id) as uow:
         previous = uow.get_entity(_KIND, job_id)
         if previous is not None:
             if previous.attributes["identity"] != identity:
@@ -389,7 +411,7 @@ def advance_od5a_durable(store: Persistence, *, job_id: str) -> bool:
     lease and checkpoint committing in the same UoW. The recurring adapter
     uses _advance_od5a_in_uow after validating its epoch inside the UoW.
     """
-    with store.transaction() as uow:
+    with _source_transaction(store, job_id) as uow:
         owning_job = uow.get_job_state(job_id)
         if owning_job is not None and owning_job.domain_name == "od5a":
             raise RuntimeError(
