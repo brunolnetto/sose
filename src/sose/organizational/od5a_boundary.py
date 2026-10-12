@@ -20,6 +20,8 @@ from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
 from sose.persistence.base import Persistence, UnitOfWork
 
+from .od5a_durable import _event_id, _key, _time_us
+
 
 _KIND = "od5a_durable_pilot"
 _SOURCE = "od5a_durable"
@@ -71,6 +73,68 @@ def _physical_event(
         or event.occurred_at != _ORIGIN + timedelta(microseconds=int(end_us))
     ):
         raise ValueError("OD-5a physical event time contradicts durable clock")
+    # A durable row alone cannot attest that the scheduler performed work.
+    # Require the deterministic _emit identity and its committed stage witness.
+    state = entity.attributes
+    item_id, source, target = (
+        payload.get("item_id"), payload.get("source"), payload.get("target")
+    )
+    if (
+        not all(isinstance(x, str) and x for x in (item_id, source, target))
+        or item_id not in state["services"]
+        or source not in state["stations"]
+        or target not in state["stations"]
+    ):
+        raise ValueError("OD-5a physical event refers to unadmitted item or station")
+    if event.event_id != _event_id(
+        job_id, payload["kind"], item_id, source, target,
+    ):
+        raise ValueError("OD-5a physical event canonical identity mismatch")
+    if (
+        isinstance(event.tick, bool)
+        or not isinstance(event.tick, int)
+        or not (0 < event.tick <= state["step"])
+        or event.occurred_at > _ORIGIN + timedelta(
+            microseconds=_time_us(state["clock"], "durable clock"),
+        )
+    ):
+        raise ValueError("OD-5a physical event exceeds durable scheduler clock")
+    if payload["kind"] == "execution":
+        if (
+            source != target
+            or _key(item_id, target) not in state["finished"]
+            or end_us - start_us != _time_us(
+                state["services"][item_id][target], "service duration",
+            )
+        ):
+            raise ValueError("OD-5a execution event has no authoritative finished trail")
+    else:
+        incoming = state["incoming"][target]
+        received = state["received"].get(_key(item_id, target), {})
+        if (
+            source == target or source not in incoming
+            or received.get(source) != event.event_id
+            or end_us - start_us != _time_us(
+                state["coordination_latency"], "coordination latency",
+            )
+        ):
+            raise ValueError("OD-5a coordination event has no authoritative received trail")
+    causes = payload.get("causes")
+    if not isinstance(causes, list) or not all(
+        isinstance(parent, str) and parent for parent in causes
+    ) or len(causes) != len(set(causes)):
+        raise ValueError("OD-5a physical event has invalid causal parent trail")
+    if event.causation_id != (sorted(causes)[-1] if causes else None):
+        raise ValueError("OD-5a physical event causal parent identity mismatch")
+    for parent_id in causes:
+        parent = uow.get_event(parent_id)
+        if (
+            parent is None or parent.entity_type != _KIND
+            or parent.entity_id != job_id or parent.correlation_id != job_id
+            or parent.occurred_at > event.occurred_at
+            or parent.tick is None or parent.tick >= event.tick
+        ):
+            raise ValueError("OD-5a physical event has missing or future causal parent")
     return event, {
         "event_id": event.event_id,
         "model_spec_hash": entity.attributes["model_spec_hash"],
