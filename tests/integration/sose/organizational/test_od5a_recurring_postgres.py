@@ -268,6 +268,18 @@ def _domain_registration_worker(dsn, namespace, domain, started, finished, resul
                         "one", 0.0, (("a", 0.2), ("b", 0.2), ("c", 0.1)),
                     ),),
                 )
+            elif domain == "composition":
+                from unittest.mock import patch
+                from sose.composition.recovery import TradingCustomerRecoveryRunner
+                runner = TradingCustomerRecoveryRunner(
+                    persistence=store, owner_id="worker:composition",
+                    job_id="org:race", correlation_id="org:race",
+                    scoped_writer=True,
+                )
+                # Isolate its real registration/fencing transaction from the
+                # unrelated customer boundary/drain business effect.
+                with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
+                    runner.run_trigger(trigger_id="registration", now=NOW)
             else:
                 job = SimulationJob(
                     job_id="org:race",
@@ -283,7 +295,7 @@ def _domain_registration_worker(dsn, namespace, domain, started, finished, resul
         finished.set()
 
 
-@pytest.mark.parametrize("domain", ["od5a", "tutorial"])
+@pytest.mark.parametrize("domain", ["od5a", "tutorial", "composition"])
 def test_postgres_job_registration_respects_shared_identity_guard(domain):
     """Every job-state creator must acquire the SAME job identity guard."""
     namespace = _namespace()
@@ -333,6 +345,18 @@ def _competing_domain_registrar(dsn, namespace, domain, barrier, results):
                         "one", 0.0, (("a", 0.2), ("b", 0.2), ("c", 0.1)),
                     ),),
                 )
+            elif domain == "composition":
+                from unittest.mock import patch
+                from sose.composition.recovery import TradingCustomerRecoveryRunner
+                runner = TradingCustomerRecoveryRunner(
+                    persistence=store, owner_id="worker:composition",
+                    job_id="org:race", correlation_id="org:race",
+                    scoped_writer=True,
+                )
+                # Isolate its real registration/fencing transaction from the
+                # unrelated customer boundary/drain business effect.
+                with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
+                    runner.run_trigger(trigger_id="registration", now=NOW)
             else:
                 job = SimulationJob(
                     job_id="org:race",
@@ -346,7 +370,8 @@ def _competing_domain_registrar(dsn, namespace, domain, barrier, results):
         results.put((domain, "rejected"))
 
 
-def test_postgres_cross_domain_registration_has_one_authoritative_owner():
+@pytest.mark.parametrize("opponent", ["tutorial", "composition"])
+def test_postgres_cross_domain_registration_has_one_authoritative_owner(opponent):
     namespace = _namespace()
     ctx = get_context("spawn")
     barrier, reports = ctx.Barrier(2), ctx.Queue()
@@ -355,7 +380,7 @@ def test_postgres_cross_domain_registration_has_one_authoritative_owner():
             target=_competing_domain_registrar,
             args=(DSN, namespace, domain, barrier, reports),
         )
-        for domain in ("od5a", "tutorial")
+        for domain in ("od5a", opponent)
     ]
     try:
         for proc in processes:
@@ -375,7 +400,10 @@ def test_postgres_cross_domain_registration_has_one_authoritative_owner():
             state = store.job_state("org:race")
             assert state is not None and state.initialized
             assert state.domain_name == (
-                "od5a" if winner == "od5a" else "tutorial_job"
+                "od5a" if winner == "od5a" else (
+                    "trading_company_composition" if winner == "composition"
+                    else "tutorial_job"
+                )
             )
             with store.transaction() as uow:
                 pilot = uow.get_entity("od5a_durable_pilot", "org:race")
