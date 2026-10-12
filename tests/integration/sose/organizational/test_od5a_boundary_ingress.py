@@ -264,3 +264,72 @@ def test_cross_class_physical_resource_event_never_becomes_a_boundary_message(
             )
         with store.transaction() as uow:
             assert uow.boundary_deliveries() == ()
+
+
+@pytest.mark.parametrize("forgery", [
+    "invented_event_id",
+    "canonical_but_unfinished_station",
+    "fabricated_item",
+])
+def test_same_class_forged_event_without_authoritative_stage_trail_is_rejected(
+    tmp_path, forgery,
+):
+    """Persisting a plausible DomainEvent alone cannot invent physical work."""
+    from dataclasses import replace
+    from sose.core.identity import deterministic_id
+
+    path = tmp_path / "unearned-physical.db"
+    authentic = _seed(path)
+    if forgery == "invented_event_id":
+        fake = replace(authentic, event_id=authentic.event_id + ":forged")
+    else:
+        item = (authentic.payload["item_id"] if forgery == "canonical_but_unfinished_station"
+                else "unadmitted-item")
+        station = "b" if forgery == "canonical_but_unfinished_station" else "a"
+        fake = replace(
+            authentic,
+            event_id=deterministic_id(
+                "od5a-durable-event", "org:a", "execution", item, station, station,
+            ),
+            payload={
+                **authentic.payload, "item_id": item,
+                "source": station, "target": station,
+            },
+        )
+    with SQLitePersistence(path) as store:
+        with store.transaction() as uow:
+            uow.append_event(fake)
+        with pytest.raises(ValueError, match="identity|trail|unadmitted"):
+            publish_od5a_physical_completion(
+                store, job_id="org:a", event_id=fake.event_id,
+            )
+        with store.transaction() as uow:
+            assert uow.boundary_deliveries() == ()
+
+
+def test_committed_coordination_event_has_authoritative_received_trail(tmp_path):
+    path = tmp_path / "real-coordination.db"
+    _seed(path)
+    with SQLitePersistence(path) as store:
+        for _ in range(20):
+            if any(e.payload["kind"] == "coordination"
+                   for e in od5a_durable_events(store, job_id="org:a")):
+                break
+            assert advance_od5a_durable(store, job_id="org:a")
+        coordination = next(
+            e for e in od5a_durable_events(store, job_id="org:a")
+            if e.payload["kind"] == "coordination"
+        )
+        receipt = publish_od5a_physical_completion(
+            store, job_id="org:a", event_id=coordination.event_id,
+        )
+        lease = claim_od5a_physical_completion(
+            store, job_id="org:a", owner_id="coord-worker",
+            now=coordination.occurred_at + timedelta(seconds=1),
+            lease_duration=timedelta(seconds=30),
+        )
+        assert lease is not None
+        result = consume_od5a_physical_completion(
+            store, lease=lease, now=coordination.occurred_at + timedelta(seconds=1),
+        )
+        assert result.message_id == receipt.message_id
