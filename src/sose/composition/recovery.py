@@ -644,6 +644,8 @@ class TradingCustomerRecoveryRunner:
         with job_registration_guard(self.persistence, self.job_id):
             with store.transaction() as uow:
                 current = uow.get_job_state(self.job_id)
+                if current is not None and current.domain_name != "trading_company_composition":
+                    raise ValueError("recovery job identity already belongs to another domain")
                 if current is not None and current.config_json != config_json:
                     raise ValueError('recovery job\'s durable organizational binding changed')
                 if current is None:
