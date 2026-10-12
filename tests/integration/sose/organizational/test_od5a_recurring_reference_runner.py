@@ -110,13 +110,19 @@ def _truth(path, jobs):
                         if (m := uow.get_boundary_message(d.message_id)) is not None
                         and m.correlation_id == job
                     )),
+                    # Pending certificates are part of the audit as None,
+                    # including the ACK -> materialization -> cert gap.
                     tuple(sorted(
-                        (uow.get_business_effect(d.consumer_effect_id)
-                         for d in uow.boundary_deliveries()
-                         if d.consumer_effect_id is not None
-                         and (m := uow.get_boundary_message(d.message_id)) is not None
-                         and m.correlation_id == job),
-                        key=lambda x: x.effect_id,
+                        (
+                            effect_id,
+                            uow.get_business_effect(effect_id),
+                        )
+                        for d in uow.boundary_deliveries()
+                        if (m := uow.get_boundary_message(d.message_id)) is not None
+                        and m.correlation_id == job
+                        for effect_id in (
+                            deterministic_id("od5a-physical-command", m.message_id),
+                        )
                     )),
                     # A certificate is not sufficient: assert the independent
                     # terminal entity survives restart with its exact attributes.
