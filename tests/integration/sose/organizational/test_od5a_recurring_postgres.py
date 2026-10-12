@@ -9,6 +9,8 @@ from __future__ import annotations
 import os
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from time import sleep
 from uuid import uuid4
 
@@ -25,6 +27,7 @@ from sose.organizational.od5a_recurring import (
 )
 from sose.organizational.od5a_durable import od5a_durable_events
 from sose.persistence.postgres import PostgresPersistence
+from sose.persistence.memory import MemoryUnitOfWork
 
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
@@ -579,3 +582,70 @@ def test_server_clock_controls_pg_lease_even_when_worker_clock_is_far_ahead():
             lease = uow.get_entity("od5a_runner_lease", "org:race")
             assert lease.attributes["owner_id"] == "worker:A"
             assert lease.attributes["epoch"] == 1
+
+
+
+def test_two_organizations_append_events_without_overwriting_each_other(
+    monkeypatch,
+):
+    """Two committed checkpoints imply two distinct durable event identities.
+
+    Force both workers to append after reading the same global event count.
+    Locking only each job cannot defend index-keyed PostgreSQL event records.
+    """
+    namespace = _namespace()
+    items = (OD5aWorkItem(
+        "one", 0.0, (("a", 0.2), ("b", 0.2), ("c", 0.1)),
+    ),)
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        for organization in ("org:A", "org:B"):
+            initialize_od5a_recurring_job(
+                store, job_id=organization, arm=_arm(), items=items,
+            )
+        claims = {
+            organization: claim_od5a_recurring_tick(
+                store, job_id=organization, owner_id="owner:" + organization,
+                now=NOW, lease_duration=timedelta(seconds=45),
+                trigger_id=deterministic_id(
+                    "od5a-recurring-tick", organization, 1,
+                ),
+            )
+            for organization in ("org:A", "org:B")
+        }
+        assert store.events() == ()
+
+    barrier = Barrier(2)
+    original = MemoryUnitOfWork.append_event
+
+    def synchronize_append(uow, event):
+        original(uow, event)
+        if event.name.startswith("od5a."):
+            barrier.wait(timeout=25)
+
+    monkeypatch.setattr(MemoryUnitOfWork, "append_event", synchronize_append)
+
+    def execute(organization):
+        with PostgresPersistence(DSN, namespace=namespace) as worker:
+            return execute_od5a_claimed_tick(
+                worker, claim=claims[organization], now=NOW,
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        futures = [
+            executor.submit(execute, organization)
+            for organization in ("org:A", "org:B")
+        ]
+        steps = [future.result(timeout=40) for future in futures]
+    assert [step.action for step in steps] == ["advanced", "advanced"]
+
+    with PostgresPersistence(DSN, namespace=namespace) as restored:
+        events = restored.events()
+        assert len(events) == 2
+        assert len({event.event_id for event in events}) == 2
+        assert {event.entity_id for event in events} == {"org:A", "org:B"}
+        for organization in ("org:A", "org:B"):
+            state = restored.job_state(organization)
+            assert state.run_count == 1 and state.next_tick == 1
+            assert state.active_trigger_id is None
+            org_events = od5a_durable_events(restored, job_id=organization)
+            assert len(org_events) == 1
