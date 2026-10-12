@@ -303,3 +303,24 @@ def test_two_organizations_advance_local_clocks_and_fences_in_one_store(tmp_path
         }
         assert store.simulation_position() is None
         assert not store.resource_reservations()
+
+
+def test_public_reference_reducer_cannot_bypass_recurring_job_fence(tmp_path):
+    """A second writer cannot mutate an organization outside its runner lease."""
+    path = tmp_path / "writer-bypass.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        with pytest.raises(RuntimeError, match="recurring.*fenced|fenced.*recurring"):
+            advance_od5a_durable(store, job_id="org:A")
+        assert od5a_durable_events(store, job_id="org:A") == ()
+        claim = claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="legitimate",
+            now=CLOCK, lease_duration=LEASE,
+        )
+        with pytest.raises(RuntimeError, match="recurring.*fenced|fenced.*recurring"):
+            advance_od5a_durable(store, job_id="org:A")
+        assert od5a_durable_events(store, job_id="org:A") == ()
+        legitimate = execute_od5a_claimed_tick(
+            store, claim=claim, now=CLOCK,
+        )
+        assert legitimate.action == "advanced"
