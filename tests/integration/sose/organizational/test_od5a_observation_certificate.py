@@ -573,3 +573,42 @@ def test_forged_expired_or_missing_lease_ack_cannot_materialize_effect(
         assert store.entity("od5a_physical_observation", event.event_id) is None
         assert store.business_effect(effect_id) is None
         assert store.command(effect_id) is not None
+
+
+@pytest.mark.parametrize("invalid_claim", [
+    "missing_owner", "zero_epoch", "zero_attempts",
+    "inconsistent_epoch", "claim_before_event",
+])
+def test_consumed_ack_without_actual_fenced_claim_cannot_certify(
+    tmp_path, invalid_claim,
+):
+    """Consumed status alone is not a legitimate fenced transport transition."""
+    path = tmp_path / "forged-claim.db"
+    event, effect_id = _stage(path)
+    with SQLitePersistence(path) as store:
+        with store.transaction() as uow:
+            command = uow.get_command(effect_id)
+            delivery = next(
+                d for d in uow.boundary_deliveries()
+                if d.message_id == command.causation_id
+            )
+            corrupted = {
+                "missing_owner": {"claim_owner_id": None},
+                "zero_epoch": {"claim_epoch": 0},
+                "zero_attempts": {"attempts": 0},
+                "inconsistent_epoch": {"claim_epoch": delivery.attempts + 1},
+                "claim_before_event": {
+                    "claimed_at": event.occurred_at - timedelta(seconds=1)
+                },
+            }
+            uow.save_boundary_delivery(replace(
+                delivery, **corrupted[invalid_claim],
+            ))
+        with pytest.raises(ValueError, match="ACK"):
+            apply_od5a_physical_observation(
+                store, effect_id=effect_id,
+                applied_at=event.occurred_at + timedelta(seconds=2),
+            )
+        assert store.entity("od5a_physical_observation", event.event_id) is None
+        assert store.business_effect(effect_id) is None
+        assert store.command(effect_id) is not None
