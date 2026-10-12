@@ -421,6 +421,32 @@ def test_postgres_cross_domain_registration_has_one_authoritative_owner(opponent
         reports.join_thread()
 
 
+
+def test_composition_recovery_rejects_foreign_job_with_matching_config():
+    from unittest.mock import patch
+    from sose.composition.recovery import TradingCustomerRecoveryRunner
+    from sose.jobs.model import SimulationJobState
+
+    namespace = _namespace()
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        with store.transaction() as uow:
+            uow.save_job_state(SimulationJobState(
+                job_id="org:race", domain_name="foreign-domain",
+                config_json='{"correlation_id":"org:race"}',
+                config_revision=1, status="ready", initialized=True,
+                logical_time=NOW, next_tick=0,
+            ))
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store, owner_id="worker:composition",
+            job_id="org:race", correlation_id="org:race",
+            scoped_writer=True,
+        )
+        with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
+            with pytest.raises(ValueError, match="already belongs to another domain"):
+                runner.run_trigger(trigger_id="registration", now=NOW)
+        assert store.job_state("org:race").domain_name == "foreign-domain"
+
+
 def test_server_clock_controls_pg_lease_even_when_worker_clock_is_far_ahead():
     """No host-clock skew can prematurely grant a second PostgreSQL epoch."""
     namespace = _namespace()
