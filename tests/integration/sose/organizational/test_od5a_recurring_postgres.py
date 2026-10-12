@@ -117,7 +117,7 @@ def test_distinct_postgres_connections_cannot_claim_same_step_epoch():
                 winner = next(owner for owner, status, _ in outcome if status == "claimed")
                 assert lease.attributes["owner_id"] == winner
                 assert lease.attributes["epoch"] == 1
-                assert not od5a_durable_events(store, job_id="org:race")
+            assert not od5a_durable_events(store, job_id="org:race")
     finally:
         for process in processes:
             if process.is_alive():
