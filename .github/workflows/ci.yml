@@ -602,6 +602,13 @@ jobs:
             tests/e2e/sose/persistence/test_postgres_pc6_same_org_fencing.py \
             tests/e2e/sose/persistence/test_postgres_pc6_recurring_organization_recovery.py \
             tests/e2e/sose/persistence/test_postgres_pc6_recurring_causal_equivalence.py
+      - name: Certify OD-5a PostgreSQL physical observation and causal reconciliation
+        run: |
+          # Explicit live-database gate: the Python matrix skips these without
+          # SOSE_TEST_POSTGRES_DSN; a generic PostgreSQL check is not sufficient.
+          python -m pytest -q \
+            tests/integration/sose/organizational/test_od5a_observation_postgres.py \
+            tests/integration/sose/organizational/test_od5a_reconciler_postgres.py
       - name: Run real multidomain recurring recovery integration
         run: python -m pytest -q tests/e2e/sose/persistence/test_postgres_pc6_full_real_domain_recovery.py
       - name: Verify twenty-three real-domain and boundary restart certificates
