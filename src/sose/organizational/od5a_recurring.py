@@ -12,6 +12,7 @@ No SimPy Environment, Process, Event or callback is persisted.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from json import dumps
@@ -33,6 +34,26 @@ from .od5a_mechanisms import OD5aWorkItem
 
 _LEASE_KIND = "od5a_runner_lease"
 _DOMAIN = "od5a"
+
+@contextmanager
+def _job_transaction(store: Persistence, job_id: str):
+    """Serialize same-job PostgreSQL OLTP writes, not unrelated organizations.
+
+    PostgresPersistence has last-writer-wins record updates. Its native
+    business_resource_guard acquires an exclusive session advisory lock on
+    precisely this organization's identity and releases it after the UoW.
+    SQLite retains its own BEGIN IMMEDIATE transaction semantics.
+    """
+    guard = getattr(store, "business_resource_guard", None)
+    if callable(guard):
+        with guard("od5a:recurring:" + job_id):
+            with store.transaction() as uow:
+                yield uow
+    else:
+        with store.transaction() as uow:
+            yield uow
+
+
 
 
 class StaleOD5aRunnerClaimError(RuntimeError):
@@ -114,6 +135,11 @@ def _assert_claim(
     lease = uow.get_entity(_LEASE_KIND, claim.organization_id)
     if (
         lease is None
+        or lease.state != "claimed"
+        or lease.attributes.get("trigger_id") != claim.trigger_id
+        or lease.updated_at is None
+        or now < lease.updated_at
+        or _lease_expiry(lease) <= lease.updated_at
         or job.active_trigger_id != claim.trigger_id
         or job.status != "running"
         or job.phase != "advance"
@@ -133,7 +159,17 @@ def initialize_od5a_recurring_job(
     items: tuple[OD5aWorkItem, ...],
 ) -> SimulationJobState:
     """Bind the registered immutable pilot and one durable per-organization job."""
+    guard = getattr(store, "business_resource_guard", None)
+    if callable(guard):
+        with guard("od5a:recurring:" + job_id):
+            initialize_od5a_durable(store, job_id=job_id, arm=arm, items=items)
+            return _register_od5a_job(store, job_id=job_id)
     initialize_od5a_durable(store, job_id=job_id, arm=arm, items=items)
+    return _register_od5a_job(store, job_id=job_id)
+
+
+def _register_od5a_job(store: Persistence, *, job_id: str) -> SimulationJobState:
+    # Call under the per-organization guard when PostgreSQL is used.
     with store.transaction() as uow:
         source = uow.get_entity(_KIND, job_id)
         assert source is not None
@@ -162,7 +198,7 @@ def initialize_od5a_recurring_job(
 def claim_od5a_recurring_tick(
     store: Persistence, *, job_id: str, owner_id: str,
     now: datetime, lease_duration: timedelta,
-    trigger_id: str | None = None, recover: bool = False,
+    trigger_id: str, recover: bool = False,
 ) -> OD5aRunnerClaim | None:
     """Claim the next exact source-step ID with a durable job-scoped epoch.
 
@@ -171,16 +207,15 @@ def claim_od5a_recurring_tick(
     the prior lease expiry.
     """
     _require_wall_clock(now, lease_duration)
-    if not owner_id or not job_id:
-        raise ValueError("runner owner and organization must be nonempty")
-    with store.transaction() as uow:
+    if not owner_id or not job_id or not trigger_id:
+        raise ValueError("runner owner, organization and stable trigger ID must be nonempty")
+    with _job_transaction(store, job_id) as uow:
         source, job = _read_job(uow, job_id)
-        if trigger_id is not None and job.last_completed_trigger_id == trigger_id:
+        if job.last_completed_trigger_id == trigger_id:
             return None
         expected_id = _next_trigger_id(job)
-        if trigger_id is not None and trigger_id != expected_id:
+        if trigger_id != expected_id:
             raise ValueError("OD-5a runner trigger ID is not the next deterministic step")
-        trigger_id = expected_id
         if source.attributes["done"]:
             if job.active_trigger_id is not None:
                 raise ValueError("completed organization retains active runner trigger")
@@ -198,6 +233,12 @@ def claim_od5a_recurring_tick(
                 raise ValueError("invalid durable OD-5a runner epoch")
             expiry = _lease_expiry(existing)
             previous_owner = existing.attributes.get("owner_id")
+            if existing.state not in {"claimed", "released"}:
+                raise ValueError("OD-5a runner lease has invalid durable lifecycle")
+            if previous_owner is None and existing.state != "released":
+                raise ValueError("OD-5a runner lease is claimed without an owner")
+            if previous_owner is not None and existing.state != "claimed":
+                raise ValueError("OD-5a runner lease owner contradicts released state")
             if previous_owner is not None and now < expiry:
                 if (
                     previous_owner == owner_id
@@ -243,7 +284,7 @@ def execute_od5a_claimed_tick(
     and the physical event inseparable.
     """
     _require_wall_clock(now)
-    with store.transaction() as uow:
+    with _job_transaction(store, claim.organization_id) as uow:
         source, _, _ = _assert_claim(uow, claim, now)
         actions = source.attributes["actions"]
         due = (
@@ -260,7 +301,7 @@ def execute_od5a_claimed_tick(
     backend = SimPyBackend(origin=_ORIGIN)
 
     def commit_source_step() -> None:
-        with store.transaction() as uow:
+        with _job_transaction(store, claim.organization_id) as uow:
             source, job, lease = _assert_claim(uow, claim, now)
             actions = source.attributes["actions"]
             actual = min(actions, key=lambda x: (x["at"], x["seq"])) if actions else None
@@ -305,11 +346,18 @@ def execute_od5a_claimed_tick(
 def run_od5a_recurring_tick(
     store: Persistence, *, job_id: str, owner_id: str,
     now: datetime, lease_duration: timedelta,
-    trigger_id: str | None = None, recover: bool = False,
+    trigger_id: str, recover: bool = False,
 ) -> OD5aRecurringStep:
-    """One bounded recurring source step; ACK/certification are separate jobs."""
+    """One bounded recurring source step; ACK/certification are separate jobs.
+
+    The external scheduler MUST persist and reuse trigger_id on retry; silently
+    deriving it after a lost commit response would skip replay and execute
+    another physical source step.
+    """
     _require_wall_clock(now, lease_duration)
-    with store.transaction() as uow:
+    if not trigger_id:
+        raise ValueError("a stable external recurring trigger ID is required")
+    with _job_transaction(store, job_id) as uow:
         source, job = _read_job(uow, job_id)
         if trigger_id is not None and trigger_id == job.last_completed_trigger_id:
             return OD5aRecurringStep(
@@ -318,7 +366,7 @@ def run_od5a_recurring_tick(
             )
         if source.attributes["done"] and job.active_trigger_id is None:
             return OD5aRecurringStep(
-                job_id, trigger_id or _next_trigger_id(job),
+                job_id, trigger_id,
                 "complete", 0, job.logical_time, job.next_tick,
             )
     claim = claim_od5a_recurring_tick(
@@ -326,10 +374,10 @@ def run_od5a_recurring_tick(
         lease_duration=lease_duration, trigger_id=trigger_id, recover=recover,
     )
     if claim is None:
-        with store.transaction() as uow:
+        with _job_transaction(store, job_id) as uow:
             _, job = _read_job(uow, job_id)
             return OD5aRecurringStep(
-                job_id, trigger_id or _next_trigger_id(job),
+                job_id, trigger_id,
                 "replayed", 0, job.logical_time, job.next_tick,
             )
     return execute_od5a_claimed_tick(store, claim=claim, now=now)
