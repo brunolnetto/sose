@@ -200,6 +200,43 @@ def _assert_completed_released_lease(
 
 
 
+def _assert_active_claimed_lease(
+    uow: UnitOfWork, job: SimulationJobState,
+) -> None:
+    """Prove claimed source fencing *history* before downstream mutations.
+
+    A claimed worker may have died or its lease expired, yet independently
+    committed physical events still need delivery. Therefore validate its
+    immutable claim identity and lifecycle without requiring a live owner or
+    extending the expired lease. Actual source execution still calls
+    `_assert_claim` with the trusted PostgreSQL clock.
+    """
+    if job.active_trigger_id is None:
+        return
+    lease = uow.get_entity(_LEASE_KIND, job.job_id)
+    if (
+        job.status != "running"
+        or job.phase != "advance"
+        or job.active_trigger_id != _next_trigger_id(job)
+        or lease is None
+        or lease.state != "claimed"
+        or lease.attributes.get("trigger_id") != job.active_trigger_id
+        or not isinstance(lease.attributes.get("owner_id"), str)
+        or not lease.attributes.get("owner_id")
+        or lease.updated_at is None
+        or not isinstance(lease.attributes.get("epoch"), int)
+        or isinstance(lease.attributes.get("epoch"), bool)
+        or lease.attributes["epoch"] < job.run_count + 1
+    ):
+        raise ValueError("OD-5a active lease contradicts runner claim history")
+    try:
+        expiry = _lease_expiry(lease)
+    except (TypeError, ValueError) as exc:
+        raise ValueError("OD-5a active lease contradicts runner claim expiry") from exc
+    if expiry <= lease.updated_at:
+        raise ValueError("OD-5a active lease contradicts runner claim expiry")
+
+
 def _assert_claim(
     uow: UnitOfWork, claim: OD5aRunnerClaim, now: datetime,
 ) -> tuple[Entity, SimulationJobState, Entity]:
