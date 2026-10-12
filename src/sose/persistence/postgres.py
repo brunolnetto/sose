@@ -11,7 +11,7 @@ from psycopg import sql
 
 from sose.core.resource_identity import ResourceAddress
 
-from .codec import dumps
+from .codec import dumps, loads
 from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
@@ -352,12 +352,11 @@ class PostgresPersistence(MemoryPersistence):
             # Exact deterministic replay is idempotent; a reused identity
             # with changed causal facts is not. Inspect legacy numeric-key
             # events in this UoW's snapshot as well as new identity keys.
-            earlier = next(
-                (item for item in before.events if item.event_id == event.event_id),
-                None,
+            earlier = tuple(
+                item for item in before.events if item.event_id == event.event_id
             )
-            if earlier is not None:
-                if earlier != event:
+            if earlier:
+                if any(item != event for item in earlier):
                     raise ValueError(
                         f"conflicting PostgreSQL durable event ID: {event.event_id}"
                     )
@@ -382,7 +381,7 @@ class PostgresPersistence(MemoryPersistence):
                     ).format(self._record_table),
                     ("events", key),
                 ).fetchone()
-                if original is None or str(original[0]) != payload:
+                if original is None or loads(str(original[0])) != event:
                     raise ValueError(
                         f"conflicting PostgreSQL durable event ID: {event.event_id}"
                     )
