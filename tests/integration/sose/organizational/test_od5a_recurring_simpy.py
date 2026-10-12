@@ -167,6 +167,7 @@ def test_claim_expiry_and_stale_owner_epoch_cannot_advance_physical_stage(tmp_pa
             store, job_id="org:A", owner_id="owner:new",
             now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
             trigger_id=_trigger(store), recover=True,
+            _wall_clock=lambda: CLOCK + timedelta(seconds=6),
         )
         assert fresh.epoch == 2 and fresh.trigger_id == old.trigger_id
         before = _snapshot(path, "org:A")
