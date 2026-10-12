@@ -42,7 +42,7 @@ def test_observation_serialization_cannot_mutate_source_truth():
 @pytest.mark.parametrize(("value", "reason"), [
     ({"a": inf}, "non-finite JSON"),
     ({"a": [1, nan]}, "non-finite JSON"),
-    ({3: "value"}, "must be a string"),
+    ({"nested": {3: "value"}}, "must be a string"),
     ({"a": {1, 2}}, "not JSON-compatible"),
 ])
 def test_regime_metadata_rejects_unserializable_or_non_finite_truth(value, reason):
@@ -75,22 +75,18 @@ def test_foreign_world_cannot_be_executed_under_different_protocol():
     base = build_queue_reference_plan_v1(QueueReferenceDomain())
     # A forged world/protocol binding must fail even if the world itself
     # remains a valid immutable model instance.
-    # Reuse protocol-derived worlds from the framework's actual design.
-    from sose.organizational.domain_experiment_runtime import run_domain_experiment
-    from sose.organizational.experiment import ReplicationPlan
-    protocol = base.protocol.model_copy(update={
-        "sample_size": 1,
-        "replication_plan": ReplicationPlan(
-            min_replications=2, max_replications=2, target_ci_half_width=0.1,
-        ),
-        "warmup": 3.0, "horizon": 15.0,
-    })
-    plan = DomainExperimentPlan(
-        protocol=protocol, design_seed=base.design_seed, root_seed=base.root_seed,
+    # Construct a real world without executing a simulation: only the
+    # protocol/world identity mismatch is under test here.
+    from sose.organizational.domain_experiment import build_experiment_worlds
+
+    protocol = base.protocol.model_copy(update={"sample_size": 2})
+    worlds = build_experiment_worlds(
+        reference=QueueReferenceDomain(),
+        protocol=protocol,
         agency_configurations=base.agency_configurations,
+        design_seed=base.design_seed,
     )
-    result = run_domain_experiment(reference=QueueReferenceDomain(), plan=plan)
-    forged_world = result.worlds[0].model_copy(update={"protocol_hash": "wrong-protocol"})
+    forged_world = worlds[0].model_copy(update={"protocol_hash": "wrong-protocol"})
     with pytest.raises(ValueError, match="does not belong"):
         DomainExecutionRequest(protocol=protocol, world=forged_world, root_seed=1, replication=0)
 
