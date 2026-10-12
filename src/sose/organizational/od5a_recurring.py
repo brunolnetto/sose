@@ -156,6 +156,35 @@ def _lease_expiry(source: Entity) -> datetime:
     return result
 
 
+
+def _assert_completed_released_lease(
+    uow: UnitOfWork, job: SimulationJobState,
+) -> None:
+    """A completed step without its released fence cannot be safely replayed.
+
+    A newer active trigger legitimately has a *claimed* lease instead;
+    only idle/completed trigger history requires the released record.
+    """
+    if job.last_completed_trigger_id is None or job.active_trigger_id is not None:
+        return
+    lease = uow.get_entity(_LEASE_KIND, job.job_id)
+    if (
+        lease is None
+        or lease.state != "released"
+        or lease.attributes.get("owner_id") is not None
+        or lease.attributes.get("trigger_id") != job.last_completed_trigger_id
+        or job.run_count < 1
+        or lease.updated_at is None
+        or not isinstance(lease.attributes.get("epoch"), int)
+        or isinstance(lease.attributes.get("epoch"), bool)
+        or lease.attributes["epoch"] < 1
+    ):
+        raise ValueError("OD-5a completed trigger lacks released lease history")
+    if _lease_expiry(lease) <= lease.updated_at:
+        raise ValueError("OD-5a completed trigger lacks released lease history")
+
+
+
 def _assert_claim(
     uow: UnitOfWork, claim: OD5aRunnerClaim, now: datetime,
 ) -> tuple[Entity, SimulationJobState, Entity]:
@@ -265,6 +294,7 @@ def claim_od5a_recurring_tick(
     with _job_transaction(store, job_id) as uow:
         trusted_now = _trusted_now(store, _wall_clock)
         source, job = _read_job(uow, job_id)
+        _assert_completed_released_lease(uow, job)
         if job.last_completed_trigger_id == trigger_id:
             return None
         expected_id = _next_trigger_id(job)
@@ -289,8 +319,10 @@ def claim_od5a_recurring_tick(
             previous_owner = existing.attributes.get("owner_id")
             if existing.state not in {"claimed", "released"}:
                 raise ValueError("OD-5a runner lease has invalid durable lifecycle")
-            if previous_owner is None and existing.state != "released":
-                raise ValueError("OD-5a runner lease is claimed without an owner")
+            if existing.state == "claimed" and (
+                not isinstance(previous_owner, str) or not previous_owner
+            ):
+                raise ValueError("OD-5a runner lease is claimed without an owner (nonempty string required)")
             if previous_owner is not None and existing.state != "claimed":
                 raise ValueError("OD-5a runner lease owner contradicts released state")
             # Validate the OLD physical fence before a recovering worker can
@@ -298,11 +330,14 @@ def claim_od5a_recurring_tick(
             # the new epoch, hiding its inconsistent causal trigger or clock.
             if existing.updated_at is None or expiry <= existing.updated_at:
                 raise ValueError("OD-5a runner lease expiry contradicts claim timestamp")
-            if existing.state == "claimed" and (
-                job.active_trigger_id is None
-                or existing.attributes.get("trigger_id") != job.active_trigger_id
-            ):
-                raise ValueError("OD-5a runner lease trigger contradicts active job")
+            if existing.state == "claimed":
+                if job.status != "running" or job.phase != "advance":
+                    raise ValueError("OD-5a claimed lease contradicts job lifecycle")
+                if (
+                    job.active_trigger_id is None
+                    or existing.attributes.get("trigger_id") != job.active_trigger_id
+                ):
+                    raise ValueError("OD-5a runner lease trigger contradicts active job")
             if existing.state == "released":
                 if job.active_trigger_id is not None:
                     raise ValueError("released OD-5a runner lease contradicts active job trigger")
@@ -434,6 +469,7 @@ def run_od5a_recurring_tick(
         raise ValueError("a stable external recurring trigger ID is required")
     with _job_transaction(store, job_id) as uow:
         source, job = _read_job(uow, job_id)
+        _assert_completed_released_lease(uow, job)
         if trigger_id is not None and trigger_id == job.last_completed_trigger_id:
             return OD5aRecurringStep(
                 job_id, trigger_id, "replayed", 0,
