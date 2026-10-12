@@ -193,7 +193,7 @@ def _die_after_source_commit(path, now):
     with SQLitePersistence(path) as store:
         run_od5a_recurring_tick(
             store, job_id="org:A", owner_id="worker:dead",
-            now=now, lease_duration=LEASE,
+            now=now, lease_duration=LEASE, trigger_id=_trigger(store),
         )
         os._exit(94)
 
@@ -285,7 +285,7 @@ def test_same_completed_trigger_cannot_advance_again_after_worker_response_lost(
     with SQLitePersistence(path) as store:
         first = run_od5a_recurring_tick(
             store, job_id="org:A", owner_id="worker",
-            now=CLOCK, lease_duration=LEASE,
+            now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
         )
         before = _snapshot(path, "org:A")
         replay = run_od5a_recurring_tick(
@@ -335,7 +335,7 @@ def test_public_reference_reducer_cannot_bypass_recurring_job_fence(tmp_path):
         assert od5a_durable_events(store, job_id="org:A") == ()
         claim = claim_od5a_recurring_tick(
             store, job_id="org:A", owner_id="legitimate",
-            now=CLOCK, lease_duration=LEASE,
+            now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
         )
         with pytest.raises(RuntimeError, match="recurring.*fenced|fenced.*recurring"):
             advance_od5a_durable(store, job_id="org:A")
