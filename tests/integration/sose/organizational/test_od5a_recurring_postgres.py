@@ -81,6 +81,7 @@ def _claim_worker(dsn, namespace, owner, barrier, reports):
                 store, job_id="org:race", owner_id=owner,
                 now=NOW, lease_duration=LEASE,
                 trigger_id=deterministic_id("od5a-recurring-tick", "org:race", 1),
+                _wall_clock=lambda: NOW,
             )
             reports.put((owner, "claimed", result.epoch))
         except StaleOD5aRunnerClaimError:
@@ -133,6 +134,7 @@ def _kill_after_pg_claim(dsn, namespace):
             store, job_id="org:race", owner_id="worker:dead",
             now=NOW, lease_duration=LEASE,
             trigger_id=deterministic_id("od5a-recurring-tick", "org:race", 1),
+            _wall_clock=lambda: NOW,
         )
         os._exit(91)
 
@@ -156,6 +158,7 @@ def test_recovery_of_postgres_job_after_real_claimed_worker_death():
                 store, job_id="org:race", owner_id="worker:recovered",
                 now=NOW + timedelta(seconds=1), lease_duration=LEASE,
                 trigger_id=trigger, recover=True,
+                _wall_clock=lambda: NOW + timedelta(seconds=1),
             )
         recovered = claim_od5a_recurring_tick(
             store, job_id="org:race", owner_id="worker:recovered",
