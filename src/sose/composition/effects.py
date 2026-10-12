@@ -80,6 +80,11 @@ _CERTIFIED_TERMINALS = {
         "journal_entry", "posted", "accounting.entry_requested.v1",
         "procure_to_pay", "record_to_report", "journal_id",
     ),
+    # Explicit opt-in OD-5a destination effect; transport ACK is not proof.
+    "od5a.stage_physical_completion.v1": (
+        "od5a_physical_observation", "applied", "od5a.physical_completion.v1",
+        "od5a_durable", "od5a_command_staging", "event_id",
+    ),
 }
 
 
@@ -155,6 +160,15 @@ class BusinessEffectService:
             entity = uow.get_entity(pending.entity_type, pending.entity_id)
             if entity is None or entity.state != expected_state:
                 raise ValueError(f"business effect lacks terminal state {expected_state}")
+
+            if pending.name == "od5a.stage_physical_completion.v1":
+                # A state label is insufficient: independently re-check the
+                # source physical event, model, interval, typed ACK and immutable
+                # per-event observation before minting a business certificate.
+                from sose.organizational.od5a_effects import verify_od5a_applied_proof
+                verify_od5a_applied_proof(
+                    uow, effect_id=effect_id, message=message, entity=entity,
+                )
 
             if pending.name == "composition.complete_external_fulfillment":
                 # Invoicing alone is not a collectable payment request.
