@@ -117,7 +117,7 @@ def test_all_arms_ack_apply_certificate_are_distinct_durable_steps(tmp_path, arm
     with SQLitePersistence(path) as store:
         with pytest.raises(ValueError, match="terminal"):
             BusinessEffectService(store).complete(
-                effect_id=effect_id, completed_at=event.occurred_at,
+                effect_id=effect_id, completed_at=event.occurred_at + timedelta(seconds=2),
             )
         with pytest.raises(ValueError, match="observation"):
             certify_od5a_physical_observation(
@@ -172,11 +172,11 @@ def test_both_physical_event_kinds_are_materialized_independently(tmp_path, kind
     event, effect_id = _stage(path, kind=kind)
     with SQLitePersistence(path) as store:
         obs = apply_od5a_physical_observation(
-            store, effect_id=effect_id, applied_at=event.occurred_at,
+            store, effect_id=effect_id, applied_at=event.occurred_at + timedelta(seconds=2),
         )
         assert obs.attributes["kind"] == kind
         cert = certify_od5a_physical_observation(
-            store, effect_id=effect_id, completed_at=event.occurred_at,
+            store, effect_id=effect_id, completed_at=event.occurred_at + timedelta(seconds=2),
         )
         assert cert.entity_id == event.event_id
 
@@ -190,7 +190,7 @@ def test_tampered_destination_cannot_be_certified(tmp_path, tamper):
     event, effect_id = _stage(path)
     with SQLitePersistence(path) as store:
         apply_od5a_physical_observation(
-            store, effect_id=effect_id, applied_at=event.occurred_at,
+            store, effect_id=effect_id, applied_at=event.occurred_at + timedelta(seconds=2),
         )
         with store.transaction() as uow:
             obs = uow.get_entity("od5a_physical_observation", event.event_id)
@@ -199,7 +199,7 @@ def test_tampered_destination_cannot_be_certified(tmp_path, tamper):
             uow.save_entity(replace(obs, attributes=attrs))
         with pytest.raises(ValueError, match="observation"):
             certify_od5a_physical_observation(
-                store, effect_id=effect_id, completed_at=event.occurred_at,
+                store, effect_id=effect_id, completed_at=event.occurred_at + timedelta(seconds=2),
             )
         assert store.command(effect_id) is not None
         assert store.business_effect(effect_id) is None
@@ -226,7 +226,7 @@ def test_wrong_command_cannot_materialize_or_certify(tmp_path, tamper):
             uow.save_command(replace(cmd, **{tamper: malicious[tamper]}))
         with pytest.raises(ValueError):
             apply_od5a_physical_observation(
-                store, effect_id=effect_id, applied_at=event.occurred_at,
+                store, effect_id=effect_id, applied_at=event.occurred_at + timedelta(seconds=2),
             )
         assert store.entity("od5a_physical_observation", event.event_id) is None
         assert store.business_effect(effect_id) is None
@@ -244,7 +244,7 @@ def test_preexisting_wrong_version_observation_is_never_overwritten(tmp_path):
             ))
         with pytest.raises(ValueError, match="observation"):
             apply_od5a_physical_observation(
-                store, effect_id=effect_id, applied_at=event.occurred_at,
+                store, effect_id=effect_id, applied_at=event.occurred_at + timedelta(seconds=2),
             )
         assert store.command(effect_id) is not None
         assert store.business_effect(effect_id) is None
@@ -257,7 +257,7 @@ def test_certificate_commit_fault_rolls_back_certificate_and_command_deletion(
     event, effect_id = _stage(path)
     with SQLitePersistence(path) as store:
         apply_od5a_physical_observation(
-            store, effect_id=effect_id, applied_at=event.occurred_at,
+            store, effect_id=effect_id, applied_at=event.occurred_at + timedelta(seconds=2),
         )
         original = MemoryUnitOfWork.save_business_effect
 
@@ -269,12 +269,12 @@ def test_certificate_commit_fault_rolls_back_certificate_and_command_deletion(
             patch.setattr(MemoryUnitOfWork, "save_business_effect", write_then_fail)
             with pytest.raises(RuntimeError, match="before authoritative COMMIT"):
                 certify_od5a_physical_observation(
-                    store, effect_id=effect_id, completed_at=event.occurred_at,
+                    store, effect_id=effect_id, completed_at=event.occurred_at + timedelta(seconds=2),
                 )
         assert store.business_effect(effect_id) is None
         assert store.command(effect_id) is not None
         certificate = certify_od5a_physical_observation(
-            store, effect_id=effect_id, completed_at=event.occurred_at,
+            store, effect_id=effect_id, completed_at=event.occurred_at + timedelta(seconds=2),
         )
         assert store.business_effect(effect_id) == certificate
         assert store.command(effect_id) is None
@@ -332,12 +332,12 @@ def test_independent_organization_certification_does_not_consume_foreign_command
     a, ca = _stage(path, job_id="org:a", arm="baseline")
     b, cb = _stage(path, job_id="org:b", arm="capacity_only")
     with SQLitePersistence(path) as store:
-        apply_od5a_physical_observation(store, effect_id=cb, applied_at=b.occurred_at)
-        certify_od5a_physical_observation(store, effect_id=cb, completed_at=b.occurred_at)
+        apply_od5a_physical_observation(store, effect_id=cb, applied_at=b.occurred_at + timedelta(seconds=2))
+        certify_od5a_physical_observation(store, effect_id=cb, completed_at=b.occurred_at + timedelta(seconds=2))
         assert store.command(ca) is not None
         assert store.business_effect(ca) is None
-        apply_od5a_physical_observation(store, effect_id=ca, applied_at=a.occurred_at)
-        certify_od5a_physical_observation(store, effect_id=ca, completed_at=a.occurred_at)
+        apply_od5a_physical_observation(store, effect_id=ca, applied_at=a.occurred_at + timedelta(seconds=2))
+        certify_od5a_physical_observation(store, effect_id=ca, completed_at=a.occurred_at + timedelta(seconds=2))
         assert store.business_effect(cb).correlation_id == "org:b"
         assert store.business_effect(ca).correlation_id == "org:a"
         assert store.command(ca) is None and store.command(cb) is None
@@ -458,3 +458,88 @@ def test_two_os_workers_racing_same_observation_publish_one_certificate(tmp_path
                 child.join()
         reports.close()
         reports.join_thread()
+
+
+def test_observation_must_not_precede_committed_boundary_ack(tmp_path):
+    path = tmp_path / "backdated-observation.db"
+    event, effect_id = _stage(path)
+    with SQLitePersistence(path) as store:
+        with pytest.raises(ValueError, match="ACK"):
+            apply_od5a_physical_observation(
+                store, effect_id=effect_id, applied_at=event.occurred_at,
+            )
+        assert store.entity("od5a_physical_observation", event.event_id) is None
+        assert store.command(effect_id) is not None
+        assert store.business_effect(effect_id) is None
+
+
+def test_earlier_than_observation_forged_prior_certificate_is_rejected(tmp_path):
+    from sose.composition.effects import BusinessEffectApplied
+
+    path = tmp_path / "early-forged-certificate.db"
+    event, effect_id = _stage(path)
+    applied_at = event.occurred_at + timedelta(seconds=2)
+    with SQLitePersistence(path) as store:
+        observation = apply_od5a_physical_observation(
+            store, effect_id=effect_id, applied_at=applied_at,
+        )
+        with store.transaction() as uow:
+            command = uow.get_command(effect_id)
+            prior = BusinessEffectApplied.from_applied(
+                effect_id=effect_id,
+                boundary_message_id=command.causation_id,
+                correlation_id=command.correlation_id,
+                entity_type=observation.entity_type,
+                entity_id=observation.id,
+                terminal_state=observation.state,
+                entity_version=observation.version,
+                # After the ACK at t+1 but BEFORE observed terminal state at t+2.
+                completed_at=event.occurred_at + timedelta(seconds=1),
+            )
+            uow.save_business_effect(prior)
+            uow.delete_command(effect_id)
+        with pytest.raises(ValueError, match="certificate"):
+            apply_od5a_physical_observation(
+                store, effect_id=effect_id, applied_at=applied_at,
+            )
+        with pytest.raises(ValueError, match="certificate"):
+            certify_od5a_physical_observation(
+                store, effect_id=effect_id,
+                completed_at=event.occurred_at + timedelta(seconds=3),
+            )
+
+
+def test_noncanonical_stored_boundary_message_cannot_certify_even_with_valid_ack(
+    tmp_path,
+):
+    from sose.composition.boundary import BoundaryService
+
+    path = tmp_path / "noncanonical-message.db"
+    event, effect_id = _stage(path)
+    with SQLitePersistence(path) as store:
+        with store.transaction() as uow:
+            pending = uow.get_command(effect_id)
+            canonical = uow.get_boundary_message(pending.causation_id)
+        malicious = replace(
+            canonical, message_id="forged:" + canonical.message_id,
+        )
+        forged_delivery = BoundaryService(store).publish(malicious)
+        now = event.occurred_at + timedelta(seconds=2)
+        lease = BoundaryService(store).claim_next(
+            owner_id="malicious-worker", now=now,
+            lease_duration=timedelta(seconds=30),
+            message_id=malicious.message_id,
+        )
+        assert lease is not None
+        receipt = consume_od5a_physical_completion(
+            store, lease=lease, now=now,
+        )
+        assert receipt.delivery_id == forged_delivery.delivery_id
+        with pytest.raises(ValueError, match="canonical"):
+            apply_od5a_physical_observation(
+                store, effect_id=receipt.consumer_effect_id,
+                applied_at=now,
+            )
+        assert store.business_effect(receipt.consumer_effect_id) is None
+        assert store.command(receipt.consumer_effect_id) is not None
+        assert store.command(effect_id) is not None
