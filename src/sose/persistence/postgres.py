@@ -344,6 +344,27 @@ class PostgresPersistence(MemoryPersistence):
                 )
             return WriterLease(owner_id=owner_id, epoch=int(row[0]))
 
+    def claim_writer_and_register(
+        self, owner_id: str, *, expected_epoch: int, initial_job,
+    ) -> WriterLease:
+        """Atomically fence the writer AND persist a previously absent job ID.
+
+        A crash after this call may leave a pending job, but never an orphaned
+        positive writer epoch with no authoritative domain identity.
+        """
+        with self._connection.transaction():
+            lease = self.claim_writer(owner_id, expected_epoch=expected_epoch)
+            with self.transaction(owner_epoch=lease.epoch) as uow:
+                prior = uow.get_job_state(initial_job.job_id)
+                if prior is not None:
+                    if prior.domain_name != initial_job.domain_name:
+                        raise ValueError("recovery job identity already belongs to another domain")
+                    if prior.config_json != initial_job.config_json:
+                        raise ValueError("recovery job's durable organizational binding changed")
+                else:
+                    uow.save_job_state(initial_job)
+            return lease
+
     def scoped_writer_epoch(self, scope: str) -> int:
         if not scope:
             raise ValueError("writer scope must be nonempty")
@@ -423,6 +444,27 @@ class PostgresPersistence(MemoryPersistence):
                 (scope, owner_id, current + 1),
             )
             return ScopedWriterLease(owner_id, current + 1, scope)
+
+    def claim_scoped_writer_and_register(
+        self, scope: str, owner_id: str, *, expected_epoch: int,
+        correlation_id: str | None, initial_job,
+    ) -> ScopedWriterLease:
+        """Commit scoped claim/correlation reservation and job ID together."""
+        with self._connection.transaction():
+            lease = self.claim_scoped_writer(
+                scope, owner_id, expected_epoch=expected_epoch,
+                correlation_id=correlation_id,
+            )
+            with self.transaction(owner_epoch=lease.epoch, writer_scope=scope) as uow:
+                prior = uow.get_job_state(initial_job.job_id)
+                if prior is not None:
+                    if prior.domain_name != initial_job.domain_name:
+                        raise ValueError("recovery job identity already belongs to another domain")
+                    if prior.config_json != initial_job.config_json:
+                        raise ValueError("recovery job's durable organizational binding changed")
+                else:
+                    uow.save_job_state(initial_job)
+            return lease
 
     @contextmanager
     def boundary_transaction(
