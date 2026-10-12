@@ -115,6 +115,25 @@ def _require_wall_clock(now: datetime, lease_duration: timedelta | None = None) 
         raise ValueError("OD-5a runner lease must be positive")
 
 
+def _trusted_now(
+    store: Persistence, wall_clock: Callable[[], datetime] | None,
+) -> datetime:
+    """Take an independent trusted timestamp AFTER obtaining the job lock.
+
+    PostgreSQL uses its database server clock across contending hosts. Other
+    stores use the local UTC system clock. The optional injected clock is
+    strictly a deterministic test seam; never allow caller-supplied 'now'
+    to influence fencing or the lease-expiry calculation.
+    """
+    if wall_clock is not None:
+        observed = wall_clock()
+    else:
+        db_clock = getattr(store, "trusted_utc_now", None)
+        observed = db_clock() if callable(db_clock) else datetime.now(timezone.utc)
+    _require_wall_clock(observed)
+    return observed.astimezone(timezone.utc)
+
+
 def _next_trigger_id(job: SimulationJobState) -> str:
     return deterministic_id("od5a-recurring-tick", job.job_id, job.run_count + 1)
 
@@ -199,6 +218,7 @@ def claim_od5a_recurring_tick(
     store: Persistence, *, job_id: str, owner_id: str,
     now: datetime, lease_duration: timedelta,
     trigger_id: str, recover: bool = False,
+    _wall_clock: Callable[[], datetime] | None = None,
 ) -> OD5aRunnerClaim | None:
     """Claim the next exact source-step ID with a durable job-scoped epoch.
 
@@ -210,6 +230,7 @@ def claim_od5a_recurring_tick(
     if not owner_id or not job_id or not trigger_id:
         raise ValueError("runner owner, organization and stable trigger ID must be nonempty")
     with _job_transaction(store, job_id) as uow:
+        trusted_now = _trusted_now(store, _wall_clock)
         source, job = _read_job(uow, job_id)
         if job.last_completed_trigger_id == trigger_id:
             return None
@@ -239,7 +260,7 @@ def claim_od5a_recurring_tick(
                 raise ValueError("OD-5a runner lease is claimed without an owner")
             if previous_owner is not None and existing.state != "claimed":
                 raise ValueError("OD-5a runner lease owner contradicts released state")
-            if previous_owner is not None and now < expiry:
+            if previous_owner is not None and trusted_now < expiry:
                 if (
                     previous_owner == owner_id
                     and job.active_trigger_id == trigger_id
@@ -254,7 +275,7 @@ def claim_od5a_recurring_tick(
         elif job.active_trigger_id is not None:
             raise StaleOD5aRunnerClaimError("unfinished source trigger lost authoritative lease")
 
-        expires_at = now + lease_duration
+        expires_at = trusted_now + lease_duration
         lease = existing or Entity(
             id=job_id, entity_type=_LEASE_KIND, state="released",
         )
@@ -265,11 +286,11 @@ def claim_od5a_recurring_tick(
             "expires_at": expires_at.isoformat(),
             "trigger_id": trigger_id,
         }
-        lease.touch(now)
+        lease.touch(trusted_now)
         uow.save_entity(lease)
         uow.save_job_state(replace(
             job, status="running", phase="advance", active_trigger_id=trigger_id,
-            last_triggered_at=now, last_error=None,
+            last_triggered_at=trusted_now, last_error=None,
         ))
         return OD5aRunnerClaim(job_id, trigger_id, owner_id, epoch, expires_at)
 
@@ -286,7 +307,9 @@ def execute_od5a_claimed_tick(
     """
     _require_wall_clock(now)
     with _job_transaction(store, claim.organization_id) as uow:
-        source, _, _ = _assert_claim(uow, claim, now)
+        source, _, _ = _assert_claim(
+            uow, claim, _trusted_now(store, _wall_clock),
+        )
         actions = source.attributes["actions"]
         due = (
             min(actions, key=lambda x: (x["at"], x["seq"]))["at"]
@@ -303,19 +326,9 @@ def execute_od5a_claimed_tick(
 
     def commit_source_step() -> None:
         with _job_transaction(store, claim.organization_id) as uow:
-            # The callback may have waited for a real OS/Pg advisory lock.
-            # A caller's earlier 'now' is NOT a durable validity proof.
-            # Read a fresh UTC wall clock after acquiring the lock. The
-            # injection hook permits deterministic faults only in tests.
-            observed_at = (
-                datetime.now(timezone.utc)
-                if _wall_clock is None else _wall_clock()
-            )
-            _require_wall_clock(observed_at)
-            commit_at = max(
-                now.astimezone(timezone.utc),
-                observed_at.astimezone(timezone.utc),
-            )
+            # Re-read the trusted clock AFTER the lock. Neither invocation
+            # time nor the worker host's clock can extend/stale the fence.
+            commit_at = _trusted_now(store, _wall_clock)
             source, job, lease = _assert_claim(uow, claim, commit_at)
             actions = source.attributes["actions"]
             actual = min(actions, key=lambda x: (x["at"], x["seq"])) if actions else None
@@ -387,6 +400,7 @@ def run_od5a_recurring_tick(
     claim = claim_od5a_recurring_tick(
         store, job_id=job_id, owner_id=owner_id, now=now,
         lease_duration=lease_duration, trigger_id=trigger_id, recover=recover,
+        _wall_clock=_wall_clock,
     )
     if claim is None:
         with _job_transaction(store, job_id) as uow:
