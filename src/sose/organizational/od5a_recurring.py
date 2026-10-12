@@ -298,8 +298,11 @@ def claim_od5a_recurring_tick(
                 or existing.attributes.get("trigger_id") != job.active_trigger_id
             ):
                 raise ValueError("OD-5a runner lease trigger contradicts active job")
-            if existing.state == "released" and job.active_trigger_id is not None:
-                raise ValueError("released OD-5a runner lease contradicts active job trigger")
+            if existing.state == "released":
+                if job.active_trigger_id is not None:
+                    raise ValueError("released OD-5a runner lease contradicts active job trigger")
+                if existing.attributes.get("trigger_id") != job.last_completed_trigger_id:
+                    raise ValueError("released OD-5a runner lease trigger contradicts completed job")
             if trusted_now < existing.updated_at:
                 raise ValueError("trusted time precedes durable OD-5a runner lease timestamp")
             if previous_owner is not None and trusted_now < expiry:
