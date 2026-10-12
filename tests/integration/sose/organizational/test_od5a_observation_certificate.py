@@ -341,3 +341,120 @@ def test_independent_organization_certification_does_not_consume_foreign_command
         assert store.business_effect(cb).correlation_id == "org:b"
         assert store.business_effect(ca).correlation_id == "org:a"
         assert store.command(ca) is None and store.command(cb) is None
+
+
+def _die_during_uncommitted_write(path: str, effect_id: str, at, stage: str):
+    """Kill the OS process *after* a UoW mutation but before its COMMIT."""
+    import os
+
+    with SQLitePersistence(path) as store:
+        if stage == "apply":
+            original = MemoryUnitOfWork.save_entity
+
+            def killed_entity_write(self, entity):
+                original(self, entity)
+                if entity.entity_type == "od5a_physical_observation":
+                    os._exit(96)
+
+            MemoryUnitOfWork.save_entity = killed_entity_write
+            apply_od5a_physical_observation(
+                store, effect_id=effect_id, applied_at=at,
+            )
+        else:
+            original = MemoryUnitOfWork.save_business_effect
+
+            def killed_certificate_write(self, certificate):
+                original(self, certificate)
+                os._exit(96)
+
+            MemoryUnitOfWork.save_business_effect = killed_certificate_write
+            certify_od5a_physical_observation(
+                store, effect_id=effect_id, completed_at=at,
+            )
+
+
+@pytest.mark.parametrize("kill_point", ["apply", "certify"])
+def test_real_os_death_inside_uncommitted_transaction_rolls_back_and_recovers(
+    tmp_path, kill_point,
+):
+    path = tmp_path / "uncommitted.db"
+    event, effect_id = _stage(path)
+    at = event.occurred_at + timedelta(seconds=2)
+    if kill_point == "certify":
+        with SQLitePersistence(path) as store:
+            apply_od5a_physical_observation(
+                store, effect_id=effect_id, applied_at=at,
+            )
+    before = _snapshot(path, "org:alpha", event.event_id, effect_id)
+    worker = get_context("spawn").Process(
+        target=_die_during_uncommitted_write,
+        args=(str(path), effect_id, at, kill_point),
+    )
+    worker.start()
+    worker.join(timeout=30)
+    if worker.is_alive():
+        worker.kill()
+        worker.join()
+        pytest.fail("worker did not terminate in uncommitted UoW")
+    assert worker.exitcode == 96
+    assert _snapshot(path, "org:alpha", event.event_id, effect_id) == before
+    with SQLitePersistence(path) as store:
+        apply_od5a_physical_observation(store, effect_id=effect_id, applied_at=at)
+        cert = certify_od5a_physical_observation(
+            store, effect_id=effect_id, completed_at=at,
+        )
+    assert _snapshot(path, "org:alpha", event.event_id, effect_id)[2] == cert
+
+
+def _parallel_certificate_worker(path: str, effect_id: str, at, barrier, reports):
+    """Separate independent SQLite connection and process: same event-keyed effect."""
+    with SQLitePersistence(path) as store:
+        barrier.wait(timeout=30)
+        observation = apply_od5a_physical_observation(
+            store, effect_id=effect_id, applied_at=at,
+        )
+        certificate = certify_od5a_physical_observation(
+            store, effect_id=effect_id, completed_at=at,
+        )
+        reports.put((observation.version, certificate.receipt_id))
+
+
+def test_two_os_workers_racing_same_observation_publish_one_certificate(tmp_path):
+    path = tmp_path / "concurrent-certification.db"
+    event, effect_id = _stage(path)
+    at = event.occurred_at + timedelta(seconds=2)
+    context = get_context("spawn")
+    barrier = context.Barrier(2)
+    reports = context.Queue()
+    children = [
+        context.Process(
+            target=_parallel_certificate_worker,
+            args=(str(path), effect_id, at, barrier, reports),
+        ) for _ in range(2)
+    ]
+    try:
+        for child in children:
+            child.start()
+        for child in children:
+            child.join(timeout=40)
+            if child.is_alive():
+                child.kill()
+                child.join()
+                pytest.fail("concurrent OD-5a worker deadlock")
+            assert child.exitcode == 0
+        outcomes = [reports.get(timeout=5) for _ in children]
+        assert outcomes[0] == outcomes[1]
+        assert outcomes[0][0] == 1
+        observation, command, proof, _ = _snapshot(
+            path, "org:alpha", event.event_id, effect_id,
+        )
+        assert observation.version == 1
+        assert command is None
+        assert proof.receipt_id == outcomes[0][1]
+    finally:
+        for child in children:
+            if child.is_alive():
+                child.kill()
+                child.join()
+        reports.close()
+        reports.join_thread()
