@@ -88,19 +88,23 @@ def _plan_one(
     store: Persistence, *, job_id: str, owner_id: str, now: datetime,
 ) -> _Plan:
     """Observe only authoritative committed facts, never transient processes."""
-    # Immutable event identities are a read-side candidate index; every
-    # candidate is revalidated under the authoritative UoW before mutation.
-    candidates = sorted(
-        (event for event in store.events()
-         if event.entity_type == "od5a_durable_pilot"
-         and event.entity_id == job_id
-         and event.name in _PHYSICAL_NAMES),
-        key=lambda event: (event.tick if event.tick is not None else -1, event.event_id),
-    )
     with store.transaction() as uow:
         source = uow.get_entity("od5a_durable_pilot", job_id)
         if source is None:
             raise KeyError(f"unknown OD-5a durable organization: {job_id}")
+        # The physical DAG and the scheduler's done bit MUST come from the
+        # same authoritative transaction snapshot. Otherwise a real source
+        # COMMIT between store.events() and transaction() can make us report
+        # false completion while its last physical event was never published.
+        candidates = sorted(
+            (event for event in uow.events()
+             if event.entity_type == "od5a_durable_pilot"
+             and event.entity_id == job_id
+             and event.name in _PHYSICAL_NAMES),
+            key=lambda event: (
+                event.tick if event.tick is not None else -1, event.event_id,
+            ),
+        )
         for candidate in candidates:
             event, physical = _physical_event(
                 uow, job_id=job_id, event_id=candidate.event_id,
@@ -133,12 +137,16 @@ def _plan_one(
                 "effect_id": effect_id,
             }
             if delivery.status is DeliveryStatus.PENDING:
+                if delivery.attempts != delivery.claim_epoch:
+                    raise ValueError("OD-5a pending delivery has inconsistent fencing counters")
                 if (
                     uow.get_boundary_consumption(delivery_id) is not None
                     or uow.get_command(effect_id) is not None
                     or uow.get_business_effect(effect_id) is not None
                 ):
                     raise ValueError("OD-5a pending delivery has impossible downstream truth")
+                if now < event.occurred_at:
+                    return _Plan("blocked", **base, retry_at=event.occurred_at)
                 return _Plan("claimed", **base)
             if delivery.status is DeliveryStatus.CLAIMED:
                 if (
@@ -154,6 +162,8 @@ def _plan_one(
                     or uow.get_business_effect(effect_id) is not None
                 ):
                     raise ValueError("OD-5a claimed delivery has invalid durable fence")
+                if now < delivery.claimed_at:
+                    return _Plan("blocked", **base, retry_at=delivery.claimed_at)
                 if delivery.lease_expires_at <= now:
                     return _Plan("claimed", **base)
                 if delivery.claim_owner_id != owner_id:
@@ -192,12 +202,16 @@ def _plan_one(
             _command, physical_event, _data, attrs, ack_at = _verified_intent(
                 uow, effect_id=effect_id,
             )
+            if now < ack_at:
+                return _Plan("blocked", **base, retry_at=ack_at)
             entity = uow.get_entity("od5a_physical_observation", physical_event.event_id)
             if entity is None:
                 return _Plan("materialized", **base)
             _verified_observation(
                 uow, event=physical_event, attributes=attrs, ack_at=ack_at,
             )
+            if now < entity.updated_at:
+                return _Plan("blocked", **base, retry_at=entity.updated_at)
             return _Plan("certified", **base)
         return _Plan("complete" if source.attributes["done"] else "idle")
 
