@@ -7,8 +7,6 @@ transactions suffice to protect several consecutive commits.
 from __future__ import annotations
 
 from multiprocessing import get_context
-from queue import Empty
-
 import pytest
 
 from sose.jobs.registration import job_registration_guard
@@ -35,26 +33,26 @@ def test_sqlite_registration_excludes_same_job_across_real_processes(tmp_path, a
     ctx = get_context("spawn")
     ready, acquired = ctx.Event(), ctx.Event()
     with _ADAPTERS[adapter](path) as store:
-        with job_registration_guard(store, "shared-job"):
-            child = ctx.Process(
-                target=_enter_registration,
-                args=(path, adapter, "shared-job", ready, acquired),
-            )
-            child.start()
-            try:
+        child = ctx.Process(
+            target=_enter_registration,
+            args=(path, adapter, "shared-job", ready, acquired),
+        )
+        try:
+            with job_registration_guard(store, "shared-job"):
+                child.start()
                 assert ready.wait(timeout=20), "child never attempted registration"
                 assert not acquired.wait(timeout=0.5), (
                     "different connection entered same job registration while locked"
                 )
-            finally:
-                pass
-        child.join(timeout=20)
-        if child.is_alive():
-            child.kill()
-            child.join()
-            pytest.fail("SQLite cross-process registration guard deadlocked")
-        assert child.exitcode == 0
-        assert acquired.is_set()
+            child.join(timeout=20)
+            if child.is_alive():
+                pytest.fail("SQLite cross-process registration guard deadlocked")
+            assert child.exitcode == 0
+            assert acquired.is_set()
+        finally:
+            if child.is_alive():
+                child.kill()
+                child.join(timeout=15)
 
 
 @pytest.mark.parametrize("adapter", tuple(_ADAPTERS))
