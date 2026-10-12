@@ -360,21 +360,31 @@ def initialize_od5a_durable(
         ))
 
 
+def _advance_od5a_in_uow(uow: Any, *, job_id: str) -> bool:
+    """Advance physical truth inside a caller-owned authoritative UoW.
+
+    The recurring adapter couples its fenced job checkpoint and the physical
+    event/resource transaction with this same transaction, never a second
+    post-commit write. The standalone reference reducer calls it unchanged.
+    """
+    entity = uow.get_entity(_KIND, job_id)
+    if entity is None:
+        raise KeyError(f"unknown OD-5a durable pilot: {job_id}")
+    state = deepcopy(entity.attributes)
+    if state["done"]:
+        return False
+    advanced = _transition(uow, state, job_id)
+    entity.attributes = state
+    entity.state = "done" if state["done"] else "running"
+    entity.touch(_time(state["clock"]))
+    uow.save_entity(entity)
+    return advanced
+
+
 def advance_od5a_durable(store: Persistence, *, job_id: str) -> bool:
     """One atomic semantic event; reopen same store to resume without replay."""
     with store.transaction() as uow:
-        entity = uow.get_entity(_KIND, job_id)
-        if entity is None:
-            raise KeyError(f"unknown OD-5a durable pilot: {job_id}")
-        state = deepcopy(entity.attributes)
-        if state["done"]:
-            return False
-        advanced = _transition(uow, state, job_id)
-        entity.attributes = state
-        entity.state = "done" if state["done"] else "running"
-        entity.touch(_time(state["clock"]))
-        uow.save_entity(entity)
-    return advanced
+        return _advance_od5a_in_uow(uow, job_id=job_id)
 
 
 def od5a_durable_state(store: Persistence, *, job_id: str) -> dict[str, Any]:
