@@ -32,12 +32,15 @@ and runner checkpoint commit in the same fenced UoW.
   externally persisted source trigger, epoch, expiry, recovery and
   `SimulationJobState`; it is invoked only when reconciliation yields `idle`.
   A caller must replay the same source trigger after ambiguous COMMIT.
-- A terminal no-action source transition sets `done` without incrementing
-  physical `source.step`, but it commits a separate runner occurrence and
-  consumes its deterministic trigger. Its checkpoint must reflect precisely
-  `run_count == source.step + 1` at terminal state, whereas every active
-  physical source must maintain `run_count == source.step`. A completed
-  ID always agrees with runner `run_count` and survives replay.
+- The reducer marks `done` during the **last real physical action**,
+  within the same transaction that increments `source.step`, persists the
+  event, and advances the recurring `run_count`. Therefore the invariant is
+  `run_count == source.step` in **both** active and completed organizations.
+  That action returns `advanced`; later queries using the last committed
+  deterministic trigger return `replayed`, while a next-trigger completion
+  probe returns `complete` **without committing or consuming** a new trigger.
+  A reconstructed worker verifies this history before processing downstream
+  facts, without inventing a terminal SimPy callback or physical event.
 - `blocked` does not authorize new source progress.
 
 ## TDD and admission gates
