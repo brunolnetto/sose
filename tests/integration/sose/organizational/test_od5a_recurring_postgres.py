@@ -441,10 +441,46 @@ def test_composition_recovery_rejects_foreign_job_with_matching_config():
             job_id="org:race", correlation_id="org:race",
             scoped_writer=True,
         )
+        writer_epoch_before = store.writer_epoch()
+        scoped_epoch_before = store.scoped_writer_epoch("org:race")
         with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
             with pytest.raises(ValueError, match="already belongs to another domain"):
                 runner.run_trigger(trigger_id="registration", now=NOW)
         assert store.job_state("org:race").domain_name == "foreign-domain"
+        assert store.writer_epoch() == writer_epoch_before
+        assert store.scoped_writer_epoch("org:race") == scoped_epoch_before
+        # Rejected registration cannot poison the unique correlation binding.
+        lease = store.claim_scoped_writer(
+            "legitimate-recovery", "owner:legitimate", expected_epoch=0,
+            correlation_id="org:race",
+        )
+        assert lease.epoch == 1
+
+
+@pytest.mark.parametrize("scoped", [True, False])
+def test_foreign_job_never_consumes_writer_epoch_before_validation(scoped):
+    from sose.composition.recovery import TradingCustomerRecoveryRunner
+    from sose.jobs.model import SimulationJobState
+
+    namespace = _namespace()
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        with store.transaction() as uow:
+            uow.save_job_state(SimulationJobState(
+                job_id="foreign-job", domain_name="foreign-domain",
+                config_json="{}", config_revision=1, status="ready",
+                initialized=True, logical_time=NOW, next_tick=0,
+            ))
+        old_global_epoch = store.writer_epoch()
+        old_scoped_epoch = store.scoped_writer_epoch("foreign-job")
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store, owner_id="intruder", job_id="foreign-job",
+            correlation_id="tenant:foreign" if scoped else None,
+            scoped_writer=scoped,
+        )
+        with pytest.raises(ValueError, match="already belongs to another domain"):
+            runner.run_trigger(trigger_id="attempt", now=NOW)
+        assert store.writer_epoch() == old_global_epoch
+        assert store.scoped_writer_epoch("foreign-job") == old_scoped_epoch
 
 
 def test_server_clock_controls_pg_lease_even_when_worker_clock_is_far_ahead():
