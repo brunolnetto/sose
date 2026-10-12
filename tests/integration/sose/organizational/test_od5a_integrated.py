@@ -334,3 +334,123 @@ def test_integrated_reconciliation_refuses_malformed_released_source_fence(
             )
         assert _truth(store, (job_id,)) == before
         assert store.job_state(job_id) == prior_job
+
+@pytest.mark.parametrize("adapter", ["sqlite", "postgres"])
+@pytest.mark.parametrize("tampering", [
+    "missing_claim", "wrong_trigger", "missing_owner", "wrong_epoch",
+    "invalid_expiry", "wrong_lifecycle",
+])
+def test_integrated_reconciliation_rejects_corrupt_active_source_fence(
+    tmp_path, adapter, tampering,
+):
+    """A claimed but corrupt runner lease cannot authorize downstream ACK."""
+    if adapter == "postgres" and not DSN:
+        pytest.skip("live PostgreSQL DSN required")
+    from sose.organizational.od5a_recurring import claim_od5a_recurring_tick
+
+    with (
+        PostgresPersistence(DSN, namespace="od5a_active_" + uuid4().hex[:12])
+        if adapter == "postgres" else
+        SQLitePersistence(tmp_path / "active-lease.sqlite")
+    ) as store:
+        job_id = "org:active"
+        initialize_od5a_recurring_job(
+            store, job_id=job_id, arm=_arm(), items=_items(job_id),
+        )
+        # A physical event and its publication must be independently durable
+        # *before* the next physical source claim becomes active.
+        for _ in range(80):
+            job = store.job_state(job_id)
+            trigger = deterministic_id(
+                "od5a-recurring-tick", job_id, job.run_count + 1,
+            )
+            step = advance_od5a_integrated_occurrence(
+                store, job_id=job_id, owner_id="worker",
+                now=NOW, lease_duration=LEASE, source_trigger_id=trigger,
+            )
+            if step.action == "published":
+                break
+        else:
+            pytest.fail("no physical event publication available to falsify")
+
+        job = store.job_state(job_id)
+        next_trigger = deterministic_id(
+            "od5a-recurring-tick", job_id, job.run_count + 1,
+        )
+        claim = claim_od5a_recurring_tick(
+            store, job_id=job_id, owner_id="worker",
+            now=NOW, lease_duration=LEASE, trigger_id=next_trigger,
+        )
+        assert claim is not None
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", job_id)
+            assert lease is not None and lease.state == "claimed"
+            if tampering == "missing_claim":
+                lease.state = "released"
+            elif tampering == "wrong_trigger":
+                lease.attributes["trigger_id"] = "fabricated"
+            elif tampering == "missing_owner":
+                lease.attributes["owner_id"] = None
+            elif tampering == "wrong_epoch":
+                lease.attributes["epoch"] = 0
+            elif tampering == "invalid_expiry":
+                lease.attributes["expires_at"] = lease.updated_at.isoformat()
+            else:
+                from dataclasses import replace
+                active = uow.get_job_state(job_id)
+                uow.save_job_state(replace(active, phase="idle"))
+            uow.save_entity(lease)
+        before = _truth(store, (job_id,))
+        job_before = store.job_state(job_id)
+        with pytest.raises(
+            (ValueError, RuntimeError),
+            match="active lease|runner claim|claimed lease|runner epoch",
+        ):
+            advance_od5a_integrated_occurrence(
+                store, job_id=job_id, owner_id="reconciler",
+                now=NOW, lease_duration=LEASE, source_trigger_id=next_trigger,
+            )
+        assert _truth(store, (job_id,)) == before
+        assert store.job_state(job_id) == job_before
+
+
+def test_postgres_integrated_boundary_uses_job_scoped_writer_epoch(tmp_path, monkeypatch):
+    """No legacy exclusive namespace-wide boundary lock for integrated jobs."""
+    if not DSN:
+        pytest.skip("live PostgreSQL DSN required")
+    from contextlib import contextmanager
+
+    namespace = "od5a_scoped_" + uuid4().hex[:12]
+    org = "org:scoped"
+    captured = []
+    original = PostgresPersistence.boundary_transaction
+
+    @contextmanager
+    def instrument(self, *, owner_epoch=None, writer_scope=None):
+        captured.append((owner_epoch, writer_scope))
+        with original(
+            self, owner_epoch=owner_epoch, writer_scope=writer_scope,
+        ) as uow:
+            yield uow
+
+    monkeypatch.setattr(PostgresPersistence, "boundary_transaction", instrument)
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        initialize_od5a_recurring_job(
+            store, job_id=org, arm=_arm(), items=_items(org),
+        )
+        for _ in range(40):
+            job = store.job_state(org)
+            trigger = deterministic_id(
+                "od5a-recurring-tick", org, job.run_count + 1,
+            )
+            step = advance_od5a_integrated_occurrence(
+                store, job_id=org, owner_id="worker",
+                now=NOW, lease_duration=LEASE, source_trigger_id=trigger,
+            )
+            if step.action == "published":
+                break
+        else:
+            pytest.fail("integrated source did not publish a physical event")
+    assert captured
+    assert all(epoch is not None and epoch > 0 for epoch, scope in captured)
+    assert set(scope for _, scope in captured) == {"od5a:boundary:" + org}
