@@ -17,6 +17,8 @@ from uuid import uuid4
 import pytest
 
 from sose.core.identity import deterministic_id
+from sose.core.events import DomainEvent
+from dataclasses import replace
 from sose.organizational.model_spec import EvidenceClass, ModelSpec
 from sose.organizational.od5a_admission import OD5aChargedCost, compile_od5a_arms
 from sose.organizational.od5a_mechanisms import OD5aWorkItem
@@ -649,3 +651,24 @@ def test_two_organizations_append_events_without_overwriting_each_other(
             assert state.active_trigger_id is None
             org_events = od5a_durable_events(restored, job_id=organization)
             assert len(org_events) == 1
+
+
+
+def test_postgres_repeated_identical_domain_event_is_idempotent_but_conflicts_fail():
+    """Do not mistake exact replay for a conflicting event identity."""
+    namespace = _namespace()
+    event = DomainEvent(
+        event_id="fixed-causal-event", name="audit.test",
+        entity_type="shipment", entity_id="shipment:A",
+        occurred_at=NOW, payload={"stage": "received"},
+    )
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        with store.transaction() as uow:
+            uow.append_event(event)
+        with store.transaction() as uow:
+            uow.append_event(event)
+        assert store.events() == (event,)
+        with pytest.raises(ValueError, match="conflicting PostgreSQL durable event ID"):
+            with store.transaction() as uow:
+                uow.append_event(replace(event, payload={"stage": "tampered"}))
+        assert store.events() == (event,)
