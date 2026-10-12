@@ -104,14 +104,10 @@ def _read_job(
         or job.config_revision != 1
         or job.next_tick != source.attributes["step"]
         or type(job.run_count) is not int
-        # A terminal no-action source transition commits 'done' without
-        # incrementing the physical event step. Its fenced recurring
-        # occurrence nevertheless completes and consumes one trigger ID.
-        # Accept precisely that one extra occurrence when source is done,
-        # never an arbitrary skew in an active physical organization.
-        or job.run_count != (
-            source.attributes["step"] + (1 if source.attributes["done"] else 0)
-        )
+        # The last real physical action marks the source done in the same
+        # transaction that advances its step and the recurring run_count.
+        # A subsequent completion query consumes no trigger or source step.
+        or job.run_count != source.attributes["step"]
         # Bind the committed trigger identity to the authoritative run count.
         # Equality with a released lease alone is insufficient: forged job
         # and lease IDs could otherwise authorize an invalid replay.
