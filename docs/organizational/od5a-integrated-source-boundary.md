@@ -19,7 +19,10 @@ and runner checkpoint commit in the same fenced UoW.
 ## Technical design
 
 - `advance_od5a_integrated_occurrence` validates the current source/job
-  checkpoint before allowing **any** boundary or physical mutation.
+  checkpoint **and its completed released source lease** before allowing any
+  boundary or physical mutation. Active unfinished claims are handled by the
+  separately fenced source runner. Thus downstream certification cannot
+  launder missing or forged completed source history.
 - On PostgreSQL it holds the existing scoped per-organization advisory **session**
   lock across plan→one step, reusing the exact `od5a:recurring:<job_id>`
   key used by standalone source and recurring checkpoint writes. No global
@@ -41,6 +44,9 @@ and runner checkpoint commit in the same fenced UoW.
   probe returns `complete` **without committing or consuming** a new trigger.
   A reconstructed worker verifies this history before processing downstream
   facts, without inventing a terminal SimPy callback or physical event.
+  Once all boundary events are certified, retrying the **last committed**
+  source trigger returns `source_replayed`; only the **next deterministic**
+  trigger returns `complete`. Arbitrary terminal trigger IDs are rejected.
 - `blocked` does not authorize new source progress.
 
 ## TDD and admission gates
