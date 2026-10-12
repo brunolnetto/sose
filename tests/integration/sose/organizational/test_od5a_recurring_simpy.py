@@ -550,6 +550,8 @@ def test_claim_validates_external_trigger_worker_and_lease(
     ("invalid_state", "invalid durable lifecycle"),
     ("owner_missing", "claimed without an owner"),
     ("released_owned", "owner contradicts released"),
+    ("wrong_active_trigger", "lease trigger contradicts active job"),
+    ("expiry_before_claim", "lease expiry contradicts claim timestamp"),
 ])
 def test_corrupt_fenced_lease_fails_closed_before_reclaim(tmp_path, mutator, reason):
     path = tmp_path / "forged-lease.db"
@@ -575,6 +577,10 @@ def test_corrupt_fenced_lease_fails_closed_before_reclaim(tmp_path, mutator, rea
                 lease.attributes["owner_id"] = None
             elif mutator == "released_owned":
                 lease.state = "released"
+            elif mutator == "wrong_active_trigger":
+                lease.attributes["trigger_id"] = "foreign-stale-trigger"
+            elif mutator == "expiry_before_claim":
+                lease.attributes["expires_at"] = lease.updated_at.isoformat()
             uow.save_entity(lease)
         with pytest.raises(ValueError, match=reason):
             claim_od5a_recurring_tick(
