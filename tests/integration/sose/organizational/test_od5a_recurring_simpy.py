@@ -421,6 +421,34 @@ def test_released_or_wrong_trigger_lease_cannot_authorize_physical_step(tmp_path
         assert od5a_durable_events(store, job_id="org:A") == ()
 
 
+@pytest.mark.parametrize("forged_trigger", [None, "alien-trigger"])
+def test_released_lease_trigger_must_match_completed_job_before_reclaim(tmp_path, forged_trigger):
+    path = tmp_path / "released-trigger-corruption.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        first = _trigger(store)
+        result = run_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="worker:A",
+            now=CLOCK, lease_duration=LEASE, trigger_id=first,
+            _wall_clock=lambda: CLOCK,
+        )
+        assert result.action == "advanced"
+        before = od5a_durable_events(store, job_id="org:A")
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", "org:A")
+            assert lease.state == "released"
+            lease.attributes["trigger_id"] = forged_trigger
+            uow.save_entity(lease)
+        with pytest.raises(ValueError, match="released.*trigger"):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker:B",
+                now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
+                trigger_id=_trigger(store),
+                _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == before
+
+
 def test_future_dated_worker_clock_never_steals_live_claim_or_expires_callback(tmp_path):
     """The caller's 'now' is not evidence of PostgreSQL/SQLite lease time."""
     path = tmp_path / "host-skew.db"
