@@ -70,11 +70,13 @@ def test_sqlite_independent_job_registration_is_not_globally_serialized(tmp_path
             try:
                 assert ready.wait(timeout=20)
                 assert acquired.wait(timeout=5), "independent organization was serialized"
+                child.join(timeout=15)
+                assert not child.is_alive(), "independent registration worker did not finish"
+                assert child.exitcode == 0
             finally:
                 if child.is_alive():
                     child.kill()
-                child.join(timeout=15)
-            assert child.exitcode == 0
+                    child.join(timeout=15)
 
 
 def _sqlite_recovery_claim_racer(path, reached_claim, release_claim, results):
