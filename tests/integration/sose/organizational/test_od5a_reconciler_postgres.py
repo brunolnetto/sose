@@ -159,8 +159,14 @@ def _killed_worker(dsn, namespace, phase, when):
     # Each call opens an independent PostgreSQL connection.
     if when == "before":
         os._exit(81)
-    action = _step(dsn, namespace).action
-    os._exit(82 if action == phase else 83)
+    # Keep the SQL connection open: the OS, not __exit__, tears it down.
+    # The inner reconciler UoW has committed before it returns.
+    with PostgresPersistence(dsn, namespace=namespace) as store:
+        action = reconcile_od5a_boundary_step(
+            store, job_id="org:alpha", owner_id="worker-A",
+            now=NOW, lease_duration=LEASE,
+        ).action
+        os._exit(82 if action == phase else 83)
 
 
 def _spawn_kill(dsn, namespace, phase, when):
@@ -264,8 +270,12 @@ def test_postgres_five_arms_have_complete_event_keyed_certificates(treatment):
 
 
 def _killed_organization_worker(dsn, namespace, organization, owner):
-    action = _step(dsn, namespace, organization, owner).action
-    os._exit(84 if action == "claimed" else 85)
+    with PostgresPersistence(dsn, namespace=namespace) as store:
+        action = reconcile_od5a_boundary_step(
+            store, job_id=organization, owner_id=owner,
+            now=NOW, lease_duration=LEASE,
+        ).action
+        os._exit(84 if action == "claimed" else 85)
 
 
 def test_two_postgres_organizations_recover_independently_after_worker_death():
