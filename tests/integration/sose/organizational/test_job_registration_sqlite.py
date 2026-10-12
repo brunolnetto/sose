@@ -85,7 +85,7 @@ def _sqlite_recovery_claim_racer(path, reached_claim, release_claim, results):
     from sose.composition.recovery import TradingCustomerRecoveryRunner
 
     with SQLiteIncrementalPersistence(path) as store:
-        real_claim = store.claim_writer
+        real_claim = store.claim_writer_and_register
 
         def delayed_claim(*args, **kwargs):
             reached_claim.set()
@@ -93,7 +93,7 @@ def _sqlite_recovery_claim_racer(path, reached_claim, release_claim, results):
                 raise TimeoutError("test did not release pre-claim recovery worker")
             return real_claim(*args, **kwargs)
 
-        store.claim_writer = delayed_claim
+        store.claim_writer_and_register = delayed_claim
         runner = TradingCustomerRecoveryRunner(
             persistence=store, job_id="race:job", owner_id="recovery",
         )
@@ -187,13 +187,13 @@ def _die_after_global_writer_claim(path):
     from sose.composition.recovery import TradingCustomerRecoveryRunner
 
     with SQLiteIncrementalPersistence(path) as store:
-        original_claim = store.claim_writer
+        original_claim = store.claim_writer_and_register
 
         def committed_claim(*args, **kwargs):
             original_claim(*args, **kwargs)
             os._exit(87)
 
-        store.claim_writer = committed_claim
+        store.claim_writer_and_register = committed_claim
         runner = TradingCustomerRecoveryRunner(
             persistence=store, job_id="crash:job", owner_id="worker:dead",
         )
