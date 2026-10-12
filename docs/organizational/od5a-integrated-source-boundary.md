@@ -18,11 +18,20 @@ and runner checkpoint commit in the same fenced UoW.
 
 ## Technical design
 
-- `advance_od5a_integrated_occurrence` validates the current source/job
-  checkpoint **and its completed released source lease** before allowing any
-  boundary or physical mutation. Active unfinished claims are handled by the
-  separately fenced source runner. Thus downstream certification cannot
-  launder missing or forged completed source history.
+- `advance_od5a_integrated_occurrence` validates source/job
+  checkpoint and **both** lifecycle forms of source lease **before**
+  downstream mutations: a released fence for the last completed occurrence,
+  or the claimed fence for a still-active occurrence. Active history must
+  preserve deterministic next-trigger identity, epoch, owner, expiry and
+  job phase, but an expired historical claim does not prevent delivery of
+  previously committed physical events. Actual physical source advancement
+  independently checks its live claim with trusted database time.
+- PostgreSQL boundary phases use `FencedEnginePersistence` with a fresh
+  scoped writer epoch for `od5a:boundary:<organization>`, obtained under the
+  same organization guard. These take shared namespace causal boundary
+  locks plus per-organization locks; independent organizations do **not**
+  acquire the legacy exclusive namespace-wide causal lock. Legacy unscoped
+  boundary operations remain mutually exclusive with scoped operations.
 - On PostgreSQL it holds the existing scoped per-organization advisory **session**
   lock across plan→one step, reusing the exact `od5a:recurring:<job_id>`
   key used by standalone source and recurring checkpoint writes. No global
