@@ -622,26 +622,33 @@ class TradingCustomerRecoveryRunner:
     ) -> RecoveryTriggerResult:
         if not trigger_id:
             raise ValueError("trigger_id must be nonempty")
-        if self.scoped_writer:
-            lease = self.persistence.claim_scoped_writer(
-                self.job_id, self.owner_id,
-                expected_epoch=self.persistence.scoped_writer_epoch(self.job_id),
-                correlation_id=self.correlation_id,
-            )
-        else:
-            lease = self.persistence.claim_writer(
-                self.owner_id, expected_epoch=self.persistence.writer_epoch(),
-            )
-        store = FencedEnginePersistence(self.persistence, lease)
         config = {}
         if self.scoped_writer:
             config['correlation_id'] = self.correlation_id
             if self.resource_organizations is not None:
                 config['organization_id'] = self.resource_organizations[self.correlation_id]
         config_json = json.dumps(config, sort_keys=True, separators=(',', ':'))
-        # Scoped writer fencing is not a substitute for a shared job-ID
-        # registration fence: another domain may race this first write.
+        # Enroll all creation paths behind one job-scoped identity fence.
+        # Preflight BEFORE any scoped/global writer claim: a failed foreign
+        # registration must not advance epochs or bind a correlation.
         with job_registration_guard(self.persistence, self.job_id):
+            with self.persistence.transaction() as preflight:
+                prior = preflight.get_job_state(self.job_id)
+                if prior is not None and prior.domain_name != "trading_company_composition":
+                    raise ValueError("recovery job identity already belongs to another domain")
+                if prior is not None and prior.config_json != config_json:
+                    raise ValueError("recovery job's durable organizational binding changed")
+            if self.scoped_writer:
+                lease = self.persistence.claim_scoped_writer(
+                    self.job_id, self.owner_id,
+                    expected_epoch=self.persistence.scoped_writer_epoch(self.job_id),
+                    correlation_id=self.correlation_id,
+                )
+            else:
+                lease = self.persistence.claim_writer(
+                    self.owner_id, expected_epoch=self.persistence.writer_epoch(),
+                )
+            store = FencedEnginePersistence(self.persistence, lease)
             with store.transaction() as uow:
                 current = uow.get_job_state(self.job_id)
                 if current is not None and current.domain_name != "trading_company_composition":
