@@ -180,6 +180,7 @@ def _assert_completed_released_lease(
         or not isinstance(lease.attributes.get("epoch"), int)
         or isinstance(lease.attributes.get("epoch"), bool)
         or lease.attributes["epoch"] < 1
+        or lease.attributes["epoch"] < job.run_count
     ):
         raise ValueError("OD-5a completed trigger lacks released lease history")
     if _lease_expiry(lease) <= lease.updated_at:
