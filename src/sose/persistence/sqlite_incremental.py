@@ -332,6 +332,69 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             self._connection.rollback()
             raise
 
+    def claim_writer_and_register(
+        self, owner_id: str, *, expected_epoch: int, initial_job,
+    ) -> WriterLease:
+        """One BEGIN IMMEDIATE commits the global fencing epoch and job ID.
+
+        Unlike separate claim_writer()/transaction() commits, a real worker
+        crash immediately after this method cannot orphan a writer epoch.
+        """
+        if not owner_id:
+            raise ValueError("owner_id cannot be empty")
+        if expected_epoch < 0:
+            raise ValueError("expected_epoch must be >= 0")
+
+        self._connection.execute("BEGIN IMMEDIATE")
+        before = None
+        try:
+            cursor = self._connection.execute(
+                f"""
+                UPDATE {self._meta_table}
+                SET owner_id = ?, owner_epoch = owner_epoch + 1
+                WHERE singleton = 1 AND owner_epoch = ?
+                """,
+                (owner_id, expected_epoch),
+            )
+            if cursor.rowcount != 1:
+                raise StaleWriterError(
+                    f"writer claim lost: expected epoch {expected_epoch}"
+                )
+            row = self._connection.execute(
+                f"SELECT owner_epoch FROM {self._meta_table} WHERE singleton = 1"
+            ).fetchone()
+            if row is None:
+                raise RuntimeError("writer metadata disappeared")
+            epoch = int(row[0])
+            self._refresh_from_db()
+            before = self._state
+            uow = MemoryUnitOfWork(fork_state(self._state), self)
+            prior = uow.get_job_state(initial_job.job_id)
+            if prior is not None:
+                if prior.domain_name != initial_job.domain_name:
+                    raise ValueError("recovery job identity already belongs to another domain")
+                if prior.config_json != initial_job.config_json:
+                    raise ValueError("recovery job's durable organizational binding changed")
+            else:
+                uow.save_job_state(initial_job)
+            uow.commit()
+            changed = self._apply_changes(before, self._state, uow.dirty_records)
+            next_revision = self._revision
+            if changed:
+                next_revision += 1
+                self._connection.execute(
+                    f"UPDATE {self._meta_table} SET revision = ? WHERE singleton = 1",
+                    (next_revision,),
+                )
+            self._connection.commit()
+            self._revision = next_revision
+            return WriterLease(owner_id=owner_id, epoch=epoch)
+        except Exception:
+            self._connection.rollback()
+            if before is not None:
+                self._state = before
+            raise
+
     @contextmanager
     def transaction(
         self,
