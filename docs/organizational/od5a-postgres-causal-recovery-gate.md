@@ -27,7 +27,7 @@ The explicit PostgreSQL CI step runs:
 - `test_od5a_reconciler_postgres.py`: all five interventions, fresh SQL
   connections per phase, kill by `os._exit` before and after each of the five
   durable boundary operations, two independent processes racing for a fenced
-  claim with PostgreSQL \`pg_stat_activity\` evidence of a waiting advisory
+  claim with PostgreSQL \`pg_try_advisory_xact_lock\` evidence of a waiting advisory
   lock, stale claim rejection after an expired lease is taken over by a new
   owner at a strictly higher fencing epoch, and two organizations progressing
   in the same namespace after an actual process death.
