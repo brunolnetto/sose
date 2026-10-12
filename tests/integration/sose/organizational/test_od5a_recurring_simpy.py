@@ -25,6 +25,7 @@ from sose.organizational.od5a_recurring import (
 )
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.memory import MemoryUnitOfWork
+from sose.core.identity import deterministic_id
 
 
 CLOCK = datetime(2026, 10, 12, tzinfo=timezone.utc)
@@ -72,6 +73,12 @@ def _init(path, *, job_id="org:A", arm="baseline"):
         )
 
 
+def _trigger(store, job_id="org:A"):
+    state = store.job_state(job_id)
+    assert state is not None
+    return deterministic_id("od5a-recurring-tick", job_id, state.run_count + 1)
+
+
 def _snapshot(path, job_id):
     with SQLitePersistence(path) as store:
         return (
@@ -88,7 +95,7 @@ def _drain(path, *, job_id="org:A", owner="worker:A"):
             result = run_od5a_recurring_tick(
                 store, job_id=job_id, owner_id=owner,
                 now=CLOCK + timedelta(seconds=tick),
-                lease_duration=LEASE,
+                lease_duration=LEASE, trigger_id=_trigger(store, job_id),
             )
             actions.append(result.action)
             if result.action == "complete":
@@ -144,19 +151,19 @@ def test_claim_expiry_and_stale_owner_epoch_cannot_advance_physical_stage(tmp_pa
     with SQLitePersistence(path) as store:
         old = claim_od5a_recurring_tick(
             store, job_id="org:A", owner_id="owner:old",
-            now=CLOCK, lease_duration=LEASE,
+            now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
         )
         assert old.epoch == 1
         with pytest.raises(StaleOD5aRunnerClaimError):
             claim_od5a_recurring_tick(
                 store, job_id="org:A", owner_id="owner:new",
                 now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
-                recover=True,
+                trigger_id=_trigger(store), recover=True,
             )
         fresh = claim_od5a_recurring_tick(
             store, job_id="org:A", owner_id="owner:new",
             now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
-            recover=True,
+            trigger_id=_trigger(store), recover=True,
         )
         assert fresh.epoch == 2 and fresh.trigger_id == old.trigger_id
         before = _snapshot(path, "org:A")
@@ -176,7 +183,7 @@ def _die_after_claim(path, now):
     with SQLitePersistence(path) as store:
         claim_od5a_recurring_tick(
             store, job_id="org:A", owner_id="worker:dead",
-            now=now, lease_duration=LEASE,
+            now=now, lease_duration=LEASE, trigger_id=_trigger(store),
         )
         os._exit(93)
 
@@ -207,6 +214,19 @@ def test_real_os_process_death_recovery_preserves_exact_source_events(tmp_path, 
         child.join()
         pytest.fail("worker deadlocked")
     assert child.exitcode == code
+    if when == "committed":
+        # Exactly the same external occurrence is retried after the process
+        # committed but its response was lost. No second physical step.
+        with SQLitePersistence(path) as store:
+            previously_committed = od5a_durable_events(store, job_id="org:A")
+            prior_trigger = deterministic_id("od5a-recurring-tick", "org:A", 1)
+            replay = run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="recovered",
+                now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
+                trigger_id=prior_trigger, recover=True,
+            )
+            assert replay.action == "replayed"
+            assert od5a_durable_events(store, job_id="org:A") == previously_committed
     if when == "claimed":
         with SQLitePersistence(path) as store:
             assert not od5a_durable_events(store, job_id="org:A")
@@ -214,12 +234,12 @@ def test_real_os_process_death_recovery_preserves_exact_source_events(tmp_path, 
                 run_od5a_recurring_tick(
                     store, job_id="org:A", owner_id="recovered",
                     now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
-                    recover=True,
+                    trigger_id=_trigger(store), recover=True,
                 )
             result = run_od5a_recurring_tick(
                 store, job_id="org:A", owner_id="recovered",
                 now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
-                recover=True,
+                trigger_id=_trigger(store), recover=True,
             )
             assert result.action == "advanced"
     _drain(path, owner="recovered")
@@ -244,7 +264,7 @@ def test_physical_event_and_job_checkpoint_rollback_together_before_commit(tmp_p
             with pytest.raises(RuntimeError, match="pre-COMMIT"):
                 run_od5a_recurring_tick(
                     store, job_id="org:A", owner_id="first",
-                    now=CLOCK, lease_duration=LEASE,
+                    now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
                 )
         assert _snapshot(path, "org:A") == before
         stalled = store.job_state("org:A")
@@ -254,7 +274,7 @@ def test_physical_event_and_job_checkpoint_rollback_together_before_commit(tmp_p
         after = run_od5a_recurring_tick(
             store, job_id="org:A", owner_id="recovered",
             now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
-            recover=True,
+            trigger_id=_trigger(store), recover=True,
         )
         assert after.action == "advanced"
 
@@ -287,7 +307,7 @@ def test_two_organizations_advance_local_clocks_and_fences_in_one_store(tmp_path
                 result = run_od5a_recurring_tick(
                     store, job_id=job, owner_id="worker:" + job,
                     now=CLOCK + timedelta(seconds=tick),
-                    lease_duration=LEASE,
+                    lease_duration=LEASE, trigger_id=_trigger(store, job),
                 )
                 assert result.organization_id == job
             if all(od5a_durable_state(store, job_id=j)["done"]
