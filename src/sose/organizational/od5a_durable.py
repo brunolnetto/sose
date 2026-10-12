@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from math import isfinite
 import json
-from typing import Any
+from typing import Any, Callable
 
 from sose.core.events import DomainEvent
 from sose.core.identity import deterministic_id
@@ -292,8 +292,13 @@ def _source_transaction(store: Persistence, job_id: str):
 def initialize_od5a_durable(
     store: Persistence, *, job_id: str, arm: OD5aCompiledArm,
     items: tuple[OD5aWorkItem, ...],
+    _bind_uow: Callable[[Any], None] | None = None,
 ) -> None:
-    """Idempotent identity-bound start; every mutation is one durable UoW."""
+    """Idempotent physical start; optional owner checkpoint binds in SAME UoW.
+
+    The recurring adapter uses this private binder to atomically enroll its
+    SimulationJobState. Standalone reference sources have no owner binder.
+    """
     if not job_id or arm.arm_id not in ALL_ARMS or not items:
         raise ValueError("registered arm, job ID and nonempty workload required")
     # The arm label alone is not scientific admission. Treating hand-made arm
@@ -354,6 +359,8 @@ def initialize_od5a_durable(
         if previous is not None:
             if previous.attributes["identity"] != identity:
                 raise ValueError("immutable OD-5a pilot workload/model identity conflicts")
+            if _bind_uow is not None:
+                _bind_uow(uow)
             return
         for resource in resources:
             uow.save_resource_definition(ResourceDefinition(f"{job_id}/{resource}", 1))
@@ -380,6 +387,8 @@ def initialize_od5a_durable(
             created_at=_ORIGIN, updated_at=_ORIGIN,
             attributes=state,
         ))
+        if _bind_uow is not None:
+            _bind_uow(uow)
 
 
 def _advance_od5a_in_uow(uow: Any, *, job_id: str) -> bool:
