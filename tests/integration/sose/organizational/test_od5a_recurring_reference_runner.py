@@ -1,11 +1,13 @@
 """Bounded recurring *reference* runner, explicitly not production SimPy promotion."""
 from __future__ import annotations
 
+from collections import Counter
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
 
 import pytest
 
+from sose.core.identity import deterministic_id
 from sose.organizational.model_spec import EvidenceClass, ModelSpec
 from sose.organizational.od5a_admission import OD5aChargedCost, compile_od5a_arms
 from sose.organizational.od5a_durable import (
@@ -106,12 +108,35 @@ def _truth(path, jobs):
                     tuple(sorted(
                         (uow.get_business_effect(d.consumer_effect_id)
                          for d in uow.boundary_deliveries()
-                         if (m := uow.get_boundary_message(d.message_id)) is not None
+                         if d.consumer_effect_id is not None
+                         and (m := uow.get_boundary_message(d.message_id)) is not None
                          and m.correlation_id == job),
                         key=lambda x: x.effect_id,
                     )),
+                    # A certificate is not sufficient: assert the independent
+                    # terminal entity survives restart with its exact attributes.
+                    tuple(sorted(
+                        (e.event_id, uow.get_entity("od5a_physical_observation", e.event_id))
+                        for e in uow.events()
+                        if e.entity_type == "od5a_durable_pilot"
+                        and e.entity_id == job
+                        and e.name in ("od5a.execution.v1", "od5a.coordination.v1")
+                    )),
+                    # Include pending Commands *and their absence after ACK ->
+                    # observation -> certificate*, keyed by every message.
+                    tuple(sorted(
+                        (
+                            m.message_id,
+                            uow.get_command(deterministic_id(
+                                "od5a-physical-command", m.message_id,
+                            )),
+                        )
+                        for d in uow.boundary_deliveries()
+                        if (m := uow.get_boundary_message(d.message_id)) is not None
+                        and m.correlation_id == job
+                    )),
                 ) for job in jobs
-            }, tuple(store.resource_reservations())
+            }, tuple(store.resource_reservations()), tuple(store.resource_definitions())
 
 
 @pytest.mark.parametrize("arm", [
@@ -146,12 +171,20 @@ def test_reopened_reference_recurrence_equals_uninterrupted_and_simpy_trace(tmp_
     ) for e in expected.events)
 
 
-def _die_after_one_commit(path, job):
+def _die_after_commits(path, job, owner, now, expected_actions):
+    """Use a fresh process and owner for each crash/recovery episode."""
     import os
     with SQLitePersistence(path) as store:
-        step = _advance(store, job)
-        if step.action == "complete":
-            raise RuntimeError("unexpected completed world")
+        for expected_action in expected_actions:
+            step = advance_od5a_reference_occurrence(
+                store, job_id=job, owner_id=owner, now=now,
+                lease_duration=LEASE,
+            )
+            if step.action != expected_action:
+                raise RuntimeError(
+                    f"expected {expected_action}, committed {step.action}"
+                )
+        # Emulate death after the LAST durable commit, before response.
         os._exit(87)
 
 
@@ -160,11 +193,45 @@ def test_worker_death_after_each_bounded_recurring_commit_replays_exactly(tmp_pa
     killed, control = tmp_path / "killed.db", tmp_path / "control.db"
     _seed(killed, jobs)
     _seed(control, jobs)
-    with SQLitePersistence(control) as store:
-        _drain(control, {**jobs, "__store__": store})
-    for _ in range(14):
+    committed_actions = []
+    previous_action = None
+    for attempt in range(100):
+        # A restarted process MUST NOT inherit the dead claimant's identity.
+        # Advance each worker's logical input beyond the previous 30s lease,
+        # so an abandoned claim is reclaimed with a strictly higher epoch.
+        owner = f"worker:{attempt}"
+        now = NOW + (LEASE + timedelta(seconds=1)) * attempt
+        with SQLitePersistence(control) as store:
+            first = advance_od5a_reference_occurrence(
+                store, job_id="org:kill", owner_id=owner,
+                now=now, lease_duration=LEASE,
+            )
+            if first.action == "complete":
+                with SQLitePersistence(killed) as restart:
+                    assert advance_od5a_reference_occurrence(
+                        restart, job_id="org:kill", owner_id=owner,
+                        now=now, lease_duration=LEASE,
+                    ).action == "complete"
+                break
+            assert first.action not in ("idle", "blocked")
+            expected_actions = [first.action]
+            if previous_action == "claimed":
+                # The original process died after claim. A NEW owner must
+                # first reclaim after expiry, then ACK under its own live
+                # fenced claim before dying after that ACK commit. Killing
+                # after every reclaim alone would make progress impossible.
+                assert first.action == "claimed"
+                second = advance_od5a_reference_occurrence(
+                    store, job_id="org:kill", owner_id=owner,
+                    now=now, lease_duration=LEASE,
+                )
+                assert second.action == "acknowledged"
+                expected_actions.append(second.action)
+            previous_action = expected_actions[-1]
+
         worker = get_context("spawn").Process(
-            target=_die_after_one_commit, args=(str(killed), "org:kill"),
+            target=_die_after_commits,
+            args=(str(killed), "org:kill", owner, now, tuple(expected_actions)),
         )
         worker.start()
         worker.join(timeout=30)
@@ -173,7 +240,24 @@ def test_worker_death_after_each_bounded_recurring_commit_replays_exactly(tmp_pa
             worker.join()
             pytest.fail("recurring worker failed to terminate")
         assert worker.exitcode == 87
-    _drain(killed, jobs, reopen_each=True)
+        committed_actions.extend(expected_actions)
+        # Compare every durable commit window, not just a final picture.
+        assert _truth(killed, jobs) == _truth(control, jobs)
+    else:
+        pytest.fail("real-kill occurrence did not reach its terminal phase")
+
+    # Five source reducer commits (arrival + four physical completions), and
+    # each physical event's five boundary commits are exercised under real
+    # deaths. Four extra claims prove abandoned leases were actually fenced.
+    counts = Counter(committed_actions)
+    assert counts == {
+        "source_advanced": 5,
+        "published": 4,
+        "claimed": 8,
+        "acknowledged": 4,
+        "materialized": 4,
+        "certified": 4,
+    }
     assert _truth(killed, jobs) == _truth(control, jobs)
 
 
