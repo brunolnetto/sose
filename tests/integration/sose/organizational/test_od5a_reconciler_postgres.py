@@ -7,6 +7,8 @@ The bounded reconciler remains distinct from the SimPy production runner.
 from __future__ import annotations
 
 import os
+from contextlib import contextmanager
+from time import monotonic, sleep
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
 from uuid import uuid4
@@ -200,12 +202,24 @@ def test_real_postgres_os_kill_recovers_exact_causal_and_physical_truth(phase, w
     assert _truth(DSN, interrupted, jobs) == _truth(DSN, reference, jobs)
 
 
-def _claim_racer(dsn, namespace, owner, ready, gate, result):
-    # Connect before the barrier: genuinely independent live SQL sessions.
+def _claim_racer(dsn, namespace, owner, signals, release, result):
+    """Instrument the actual boundary UoW, not just worker scheduling."""
     with PostgresPersistence(dsn, namespace=namespace) as store:
-        ready.put(owner)
-        if not gate.wait(timeout=20):
-            raise RuntimeError("concurrent claim start barrier timed out")
+        original = store.boundary_transaction
+
+        @contextmanager
+        def intercepted(**kwargs):
+            if owner == "worker-B":
+                signals.put(("attempting_sql_lock", owner))
+            with original(**kwargs) as uow:
+                if owner == "worker-A":
+                    # The exclusive PostgreSQL advisory transaction lock is held.
+                    signals.put(("holding_sql_lock", owner))
+                    if not release.wait(timeout=30):
+                        raise RuntimeError("claim lock release gate timed out")
+                yield uow
+
+        store.boundary_transaction = intercepted
         step = reconcile_od5a_boundary_step(
             store, job_id="org:alpha", owner_id=owner,
             now=NOW, lease_duration=LEASE,
@@ -214,34 +228,60 @@ def _claim_racer(dsn, namespace, owner, ready, gate, result):
 
 
 def test_two_postgres_processes_compete_for_same_fenced_claim():
+    import psycopg
+
     reference, contended = _namespace(), _namespace()
     jobs = {"org:alpha": "baseline"}
     _seed(DSN, reference, jobs)
     _seed(DSN, contended, jobs)
     assert _step(DSN, contended).action == "published"
     ctx = get_context("spawn")
-    gate = ctx.Event()
+    release = ctx.Event()
+    signals = ctx.Queue()
     responses = ctx.Queue()
-    ready = ctx.Queue()
-    workers = [
-        ctx.Process(
-            target=_claim_racer,
-            args=(DSN, contended, owner, ready, gate, responses),
-        )
-        for owner in ("worker-A", "worker-B")
-    ]
-    for worker in workers:
-        worker.start()
-    assert {ready.get(timeout=30) for _ in workers} == {"worker-A", "worker-B"}
-    gate.set()
-    for worker in workers:
-        worker.join(timeout=40)
-        if worker.is_alive():
-            worker.kill()
-            worker.join()
-            pytest.fail("competing real PostgreSQL worker hung")
-        assert worker.exitcode == 0
-    outcomes = [responses.get(timeout=5) for _ in workers]
+    a = ctx.Process(
+        target=_claim_racer,
+        args=(DSN, contended, "worker-A", signals, release, responses),
+    )
+    b = ctx.Process(
+        target=_claim_racer,
+        args=(DSN, contended, "worker-B", signals, release, responses),
+    )
+    a.start()
+    try:
+        assert signals.get(timeout=30) == ("holding_sql_lock", "worker-A")
+        b.start()
+        assert signals.get(timeout=30) == ("attempting_sql_lock", "worker-B")
+        # Verify PostgreSQL itself reports a session blocked on the advisory
+        # lock while A holds the actual claim transaction open.
+        deadline = monotonic() + 10
+        blocked_in_postgres = False
+        with psycopg.connect(DSN, autocommit=True) as observer:
+            while monotonic() < deadline:
+                row = observer.execute(
+                    """
+                    SELECT count(*) FROM pg_stat_activity
+                    WHERE datname = current_database()
+                      AND wait_event_type = 'Lock'
+                      AND wait_event = 'advisory'
+                    """
+                ).fetchone()
+                if row and row[0] >= 1:
+                    blocked_in_postgres = True
+                    break
+                sleep(0.05)
+        assert blocked_in_postgres, "second PostgreSQL session never contended on live advisory lock"
+    finally:
+        release.set()
+        for worker in (a, b):
+            if worker.pid is None:
+                continue
+            worker.join(timeout=40)
+            if worker.is_alive():
+                worker.kill()
+                worker.join()
+    assert a.exitcode == b.exitcode == 0
+    outcomes = [responses.get(timeout=5) for _ in (a, b)]
     winners = [owner for owner, action in outcomes if action == "claimed"]
     assert len(winners) == 1, outcomes
     assert sorted(action for _, action in outcomes) == ["blocked", "claimed"]
@@ -254,7 +294,6 @@ def test_two_postgres_processes_compete_for_same_fenced_claim():
     assert _drain(DSN, contended, owner=winners[0])[-1] == "complete"
     assert _drain(DSN, reference, owner=winners[0])[-1] == "complete"
     assert _truth(DSN, contended, jobs) == _truth(DSN, reference, jobs)
-
 
 @pytest.mark.parametrize("treatment", tuple(_arms()))
 def test_postgres_five_arms_have_complete_event_keyed_certificates(treatment):
