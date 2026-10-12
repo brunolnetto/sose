@@ -496,6 +496,43 @@ def test_released_lease_trigger_must_match_completed_job_before_reclaim(tmp_path
         assert od5a_durable_events(store, job_id="org:A") == before
 
 
+@pytest.mark.parametrize("completed_ticks,forged_run_count", [
+    (1, True), (2, 2.0),
+])
+def test_checkpoint_rejects_bool_or_float_run_count(
+    tmp_path, completed_ticks, forged_run_count,
+):
+    """Numeric equality is not sufficient to admit authoritative job history."""
+    from dataclasses import replace
+
+    path = tmp_path / "forged-count-type.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        for second in range(completed_ticks):
+            run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="owner:A",
+                now=CLOCK + timedelta(seconds=second),
+                lease_duration=LEASE, trigger_id=_trigger(store),
+                _wall_clock=lambda second=second: CLOCK + timedelta(seconds=second),
+            )
+        before = od5a_durable_events(store, job_id="org:A")
+        with store.transaction() as uow:
+            job = uow.get_job_state("org:A")
+            assert job.run_count == completed_ticks
+            uow.save_job_state(replace(job, run_count=forged_run_count))
+        with pytest.raises(ValueError, match="checkpoint contradicts authoritative organization"):
+            run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="owner:B",
+                now=CLOCK + timedelta(seconds=completed_ticks),
+                lease_duration=LEASE, trigger_id=deterministic_id(
+                    "od5a-recurring-tick", "org:A", completed_ticks + 1,
+                ),
+                _wall_clock=lambda: CLOCK + timedelta(seconds=completed_ticks),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == before
+        assert type(store.job_state("org:A").run_count) is type(forged_run_count)
+
+
 @pytest.mark.parametrize("malformed_epoch", [True, 1.0])
 def test_callback_refuses_noninteger_claimed_epoch(tmp_path, malformed_epoch):
     """Python numeric equality must never authorize a corrupt physical fence."""
