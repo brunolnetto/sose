@@ -165,7 +165,80 @@ def test_recovery_of_postgres_job_after_real_claimed_worker_death():
         assert recovered.epoch == 2
         step = execute_od5a_claimed_tick(
             store, claim=recovered, now=NOW + timedelta(seconds=12),
+            _wall_clock=lambda: NOW + timedelta(seconds=12),
         )
         assert step.action == "advanced" and step.logical_tick == 1
         assert len(od5a_durable_events(store, job_id="org:race")) == 1
         assert store.job_state("org:race").last_completed_trigger_id == trigger
+
+
+def _standalone_source_seed(namespace):
+    from sose.organizational.od5a_durable import initialize_od5a_durable
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        initialize_od5a_durable(
+            store, job_id="org:race", arm=_arm(),
+            items=(OD5aWorkItem(
+                "one", 0.0, (("a", 0.2), ("b", 0.2), ("c", 0.1)),
+            ),),
+        )
+
+
+def _ownership_racer(dsn, namespace, kind, barrier, results):
+    from sose.organizational.od5a_durable import advance_od5a_durable
+    with PostgresPersistence(dsn, namespace=namespace) as store:
+        barrier.wait(timeout=30)
+        try:
+            if kind == "binding":
+                initialize_od5a_recurring_job(
+                    store, job_id="org:race", arm=_arm(),
+                    items=(OD5aWorkItem(
+                        "one", 0.0, (("a", 0.2), ("b", 0.2), ("c", 0.1)),
+                    ),),
+                )
+            else:
+                advance_od5a_durable(store, job_id="org:race")
+            results.put((kind, "committed"))
+        except (ValueError, RuntimeError) as exc:
+            results.put((kind, "rejected"))
+
+
+def test_postgres_source_advance_cannot_race_recurring_ownership_transfer():
+    """Either the standalone step or the job bind commits, never a split pair."""
+    namespace = _namespace()
+    _standalone_source_seed(namespace)
+    ctx = get_context("spawn")
+    barrier, reports = ctx.Barrier(2), ctx.Queue()
+    procs = [
+        ctx.Process(
+            target=_ownership_racer,
+            args=(DSN, namespace, kind, barrier, reports),
+        )
+        for kind in ("binding", "advance")
+    ]
+    try:
+        for proc in procs:
+            proc.start()
+        for proc in procs:
+            proc.join(timeout=45)
+            if proc.is_alive():
+                proc.kill()
+                proc.join()
+                pytest.fail("PostgreSQL ownership-transfer racer hung")
+            assert proc.exitcode == 0
+        outcomes = dict(reports.get(timeout=10) for _ in procs)
+        assert sorted(outcomes.values()) == ["committed", "rejected"]
+        with PostgresPersistence(DSN, namespace=namespace) as store:
+            state = store.job_state("org:race")
+            with store.transaction() as uow:
+                source = uow.get_entity("od5a_durable_pilot", "org:race")
+            if outcomes["binding"] == "committed":
+                assert state is not None and source.attributes["step"] == state.next_tick == 0
+            else:
+                assert state is None and source.attributes["step"] == 1
+    finally:
+        for proc in procs:
+            if proc.is_alive():
+                proc.kill()
+                proc.join()
+        reports.close()
+        reports.join_thread()
