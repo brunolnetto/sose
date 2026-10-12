@@ -357,3 +357,55 @@ def test_public_reference_reducer_cannot_bypass_recurring_job_fence(tmp_path):
             _wall_clock=lambda: CLOCK,
         )
         assert legitimate.action == "advanced"
+
+
+def test_simpy_callback_rechecks_lease_expiry_after_deferred_execution(tmp_path):
+    """A preflight-valid claim may expire while queued behind DB contention."""
+    path = tmp_path / "expiry-on-callback.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        claim = claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="before-expiry",
+            now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+        )
+        with pytest.raises(StaleOD5aRunnerClaimError):
+            execute_od5a_claimed_tick(
+                store, claim=claim, now=CLOCK + timedelta(seconds=1),
+                _wall_clock=lambda: CLOCK + timedelta(seconds=6),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == ()
+        assert store.job_state("org:A").active_trigger_id == claim.trigger_id
+        recovered = claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="after-expiry",
+            now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
+            trigger_id=_trigger(store), recover=True,
+        )
+        assert recovered.epoch == claim.epoch + 1
+        assert execute_od5a_claimed_tick(
+            store, claim=recovered, now=CLOCK + timedelta(seconds=7),
+            _wall_clock=lambda: CLOCK + timedelta(seconds=7),
+        ).action == "advanced"
+
+
+@pytest.mark.parametrize("tamper", ["lifecycle", "trigger"])
+def test_released_or_wrong_trigger_lease_cannot_authorize_physical_step(tmp_path, tamper):
+    path = tmp_path / "bad-lease.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        claim = claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="worker",
+            now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+        )
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", "org:A")
+            if tamper == "lifecycle":
+                lease.state = "released"
+            else:
+                lease.attributes["trigger_id"] = "not-current-trigger"
+            uow.save_entity(lease)
+        with pytest.raises(StaleOD5aRunnerClaimError):
+            execute_od5a_claimed_tick(
+                store, claim=claim, now=CLOCK + timedelta(seconds=1),
+                _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == ()
