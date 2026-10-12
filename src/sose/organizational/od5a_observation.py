@@ -94,6 +94,8 @@ def _verify_receipt(
         or delivery.consumed_at != consumption.consumed_at
         or delivery.claimed_at is None
         or delivery.claimed_at > consumption.consumed_at
+        or delivery.lease_expires_at is None
+        or delivery.lease_expires_at <= consumption.consumed_at
         or consumption.consumed_at < event.occurred_at
     ):
         raise ValueError("OD-5a physical effect lacks unique accepted boundary ACK")
