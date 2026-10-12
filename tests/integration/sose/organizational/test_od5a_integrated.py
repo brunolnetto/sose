@@ -204,47 +204,59 @@ def test_boundary_backlog_precedes_next_source_step(tmp_path):
 
 
 def test_terminal_source_checkpoint_restarts_without_phantom_step(tmp_path):
-    """A no-action terminal source commit consumes exactly one trigger."""
+    """The final physical action commits done and run_count in the SAME UoW."""
     from sose.organizational.od5a_recurring import run_od5a_recurring_tick
 
-    with SQLitePersistence(tmp_path / "terminal.sqlite") as store:
-        job_id = "org:terminal"
+    path = tmp_path / "terminal.sqlite"
+    job_id = "org:terminal"
+    with SQLitePersistence(path) as store:
         initialize_od5a_recurring_job(
             store, job_id=job_id, arm=_arm(), items=_items(job_id),
         )
         for _ in range(100):
             job = store.job_state(job_id)
-            trigger_id = deterministic_id(
+            completed_trigger_id = deterministic_id(
                 "od5a-recurring-tick", job_id, job.run_count + 1,
             )
             result = run_od5a_recurring_tick(
                 store, job_id=job_id, owner_id="worker",
-                now=NOW, lease_duration=LEASE, trigger_id=trigger_id,
+                now=NOW, lease_duration=LEASE,
+                trigger_id=completed_trigger_id,
             )
-            if result.action == "complete":
+            with store.transaction() as uow:
+                source = uow.get_entity("od5a_durable_pilot", job_id)
+            # The terminal source is *already* marked done by the last actual
+            # physical event, so the final committed callback says advanced.
+            assert result.action == "advanced"
+            if source.attributes["done"]:
                 break
         else:
-            pytest.fail("source did not commit the no-action terminal occurrence")
-
+            pytest.fail("source did not finish its physical DAG")
         job = store.job_state(job_id)
-        with store.transaction() as uow:
-            source = uow.get_entity("od5a_durable_pilot", job_id)
-        assert source.attributes["done"]
-        assert job.run_count == source.attributes["step"] + 1
-        assert job.last_completed_trigger_id == trigger_id
+        assert job.run_count == source.attributes["step"]
+        assert job.next_tick == source.attributes["step"]
+        assert job.active_trigger_id is None
+        assert job.last_completed_trigger_id == completed_trigger_id
         before = _truth(store, (job_id,))
+
+    # Reconstruct solely from persisted truth, not live SimPy or prior handles.
+    with SQLitePersistence(path) as recovered:
+        assert _truth(recovered, (job_id,)) == before
         replay = run_od5a_recurring_tick(
-            store, job_id=job_id, owner_id="other",
-            now=NOW, lease_duration=LEASE, trigger_id=trigger_id,
+            recovered, job_id=job_id, owner_id="other",
+            now=NOW, lease_duration=LEASE,
+            trigger_id=completed_trigger_id,
         )
         assert replay.action == "replayed"
-        ignored = run_od5a_recurring_tick(
-            store, job_id=job_id, owner_id="other",
-            now=NOW, lease_duration=LEASE,
-            trigger_id=deterministic_id(
-                "od5a-recurring-tick", job_id, job.run_count + 1,
-            ),
+        future_trigger_id = deterministic_id(
+            "od5a-recurring-tick", job_id, job.run_count + 1,
         )
-        assert ignored.action == "complete"
-        assert _truth(store, (job_id,)) == before
-        assert store.job_state(job_id) == job
+        for _ in range(2):
+            completed = run_od5a_recurring_tick(
+                recovered, job_id=job_id, owner_id="other",
+                now=NOW, lease_duration=LEASE,
+                trigger_id=future_trigger_id,
+            )
+            assert completed.action == "complete"
+        assert _truth(recovered, (job_id,)) == before
+        assert recovered.job_state(job_id) == job
