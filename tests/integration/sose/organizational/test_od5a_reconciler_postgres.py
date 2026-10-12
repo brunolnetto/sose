@@ -7,8 +7,8 @@ The bounded reconciler remains distinct from the SimPy production runner.
 from __future__ import annotations
 
 import os
+import queue
 from contextlib import contextmanager
-from time import monotonic, sleep
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
 from uuid import uuid4
@@ -252,25 +252,20 @@ def test_two_postgres_processes_compete_for_same_fenced_claim():
         assert signals.get(timeout=30) == ("holding_sql_lock", "worker-A")
         b.start()
         assert signals.get(timeout=30) == ("attempting_sql_lock", "worker-B")
-        # Verify PostgreSQL itself reports a session blocked on the advisory
-        # lock while A holds the actual claim transaction open.
-        deadline = monotonic() + 10
-        blocked_in_postgres = False
+        # Prove A still holds the actual transaction-scoped SQL lock
+        # through an unrelated SQL session, rather than inferring it from
+        # scheduling or pg_stat_activity's timing-dependent wait samples.
         with psycopg.connect(DSN, autocommit=True) as observer:
-            while monotonic() < deadline:
-                row = observer.execute(
-                    """
-                    SELECT count(*) FROM pg_stat_activity
-                    WHERE datname = current_database()
-                      AND wait_event_type = 'Lock'
-                      AND wait_event = 'advisory'
-                    """
-                ).fetchone()
-                if row and row[0] >= 1:
-                    blocked_in_postgres = True
-                    break
-                sleep(0.05)
-        assert blocked_in_postgres, "second PostgreSQL session never contended on live advisory lock"
+            lock_key = contended + ":causal-boundary"
+            try_lock = observer.execute(
+                "SELECT pg_try_advisory_xact_lock(hashtext(%s))",
+                (lock_key,),
+            ).fetchone()
+            assert try_lock == (False,), "A is not holding the PostgreSQL boundary lock"
+        # B announced its attempt before acquiring the SQL transaction;
+        # it cannot finish its claim while A's transaction is still open.
+        with pytest.raises(queue.Empty):
+            responses.get(timeout=0.5)
     finally:
         release.set()
         for worker in (a, b):
