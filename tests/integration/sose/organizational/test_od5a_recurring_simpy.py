@@ -153,6 +153,7 @@ def test_claim_expiry_and_stale_owner_epoch_cannot_advance_physical_stage(tmp_pa
         old = claim_od5a_recurring_tick(
             store, job_id="org:A", owner_id="owner:old",
             now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+            _wall_clock=lambda: CLOCK,
         )
         assert old.epoch == 1
         with pytest.raises(StaleOD5aRunnerClaimError):
@@ -160,6 +161,7 @@ def test_claim_expiry_and_stale_owner_epoch_cannot_advance_physical_stage(tmp_pa
                 store, job_id="org:A", owner_id="owner:new",
                 now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
                 trigger_id=_trigger(store), recover=True,
+                _wall_clock=lambda: CLOCK + timedelta(seconds=1),
             )
         fresh = claim_od5a_recurring_tick(
             store, job_id="org:A", owner_id="owner:new",
@@ -187,6 +189,7 @@ def _die_after_claim(path, now):
         claim_od5a_recurring_tick(
             store, job_id="org:A", owner_id="worker:dead",
             now=now, lease_duration=LEASE, trigger_id=_trigger(store),
+            _wall_clock=lambda: now,
         )
         os._exit(93)
 
@@ -348,6 +351,7 @@ def test_public_reference_reducer_cannot_bypass_recurring_job_fence(tmp_path):
         claim = claim_od5a_recurring_tick(
             store, job_id="org:A", owner_id="legitimate",
             now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+            _wall_clock=lambda: CLOCK,
         )
         with pytest.raises(RuntimeError, match="recurring.*fenced|fenced.*recurring"):
             advance_od5a_durable(store, job_id="org:A")
@@ -367,6 +371,7 @@ def test_simpy_callback_rechecks_lease_expiry_after_deferred_execution(tmp_path)
         claim = claim_od5a_recurring_tick(
             store, job_id="org:A", owner_id="before-expiry",
             now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+            _wall_clock=lambda: CLOCK,
         )
         with pytest.raises(StaleOD5aRunnerClaimError):
             execute_od5a_claimed_tick(
@@ -379,6 +384,7 @@ def test_simpy_callback_rechecks_lease_expiry_after_deferred_execution(tmp_path)
             store, job_id="org:A", owner_id="after-expiry",
             now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
             trigger_id=_trigger(store), recover=True,
+            _wall_clock=lambda: CLOCK + timedelta(seconds=6),
         )
         assert recovered.epoch == claim.epoch + 1
         assert execute_od5a_claimed_tick(
@@ -395,6 +401,7 @@ def test_released_or_wrong_trigger_lease_cannot_authorize_physical_step(tmp_path
         claim = claim_od5a_recurring_tick(
             store, job_id="org:A", owner_id="worker",
             now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+            _wall_clock=lambda: CLOCK,
         )
         with store.transaction() as uow:
             lease = uow.get_entity("od5a_runner_lease", "org:A")
