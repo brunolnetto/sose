@@ -417,3 +417,32 @@ def test_released_or_wrong_trigger_lease_cannot_authorize_physical_step(tmp_path
                 _wall_clock=lambda: CLOCK + timedelta(seconds=1),
             )
         assert od5a_durable_events(store, job_id="org:A") == ()
+
+
+def test_future_dated_worker_clock_never_steals_live_claim_or_expires_callback(tmp_path):
+    """The caller's 'now' is not evidence of PostgreSQL/SQLite lease time."""
+    path = tmp_path / "host-skew.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        trigger = _trigger(store)
+        original = claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="owner:A", now=CLOCK,
+            lease_duration=LEASE, trigger_id=trigger,
+            _wall_clock=lambda: CLOCK,
+        )
+        # This future worker-local clock must NEVER grant a fenced takeover.
+        future = CLOCK + timedelta(days=100)
+        with pytest.raises(StaleOD5aRunnerClaimError):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="owner:B",
+                now=future, lease_duration=LEASE, trigger_id=trigger,
+                recover=True, _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+            )
+        # A preflight-skewed invocation cannot force early expiration either.
+        legitimate = execute_od5a_claimed_tick(
+            store, claim=original, now=future,
+            _wall_clock=lambda: CLOCK + timedelta(seconds=2),
+        )
+        assert legitimate.action == "advanced"
+        assert store.job_state("org:A").last_completed_trigger_id == trigger
+        assert len(od5a_durable_events(store, job_id="org:A")) == 1
