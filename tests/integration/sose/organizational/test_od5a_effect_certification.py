@@ -147,6 +147,72 @@ def test_unacknowledged_or_cross_organization_intent_cannot_be_applied(tmp_path)
             apply_od5a_physical_observation(
                 store, effect_id="unknown-command", applied_at=now,
             )
+        from dataclasses import replace
+
         with store.transaction() as uow:
             command = uow.get_command(ack.consumer_effect_id)
-            command.correlation_id = "org:wrong"  # dataclass frozen -> use replace below
+            assert command is not None
+            uow.save_command(replace(
+                command, command_id="forged-cross-org-command",
+                correlation_id="org:wrong",
+            ))
+        with pytest.raises(ValueError, match="correlation"):
+            apply_od5a_physical_observation(
+                store, effect_id="forged-cross-org-command", applied_at=now,
+            )
+        assert store.entity("od5a_physical_observation", event.event_id) is None
+        assert store.command(ack.consumer_effect_id) == command
+
+
+def test_counterfeit_applied_entity_does_not_get_a_certificate(tmp_path):
+    """An entity state label alone cannot certify contradictory physical truth."""
+    from sose.domain.entity import Entity
+
+    path = tmp_path / "counterfeit.db"
+    event, publication, ack, now = _committed_physical_ingress(path, "org:alpha")
+    with SQLitePersistence(path) as store:
+        with store.transaction() as uow:
+            counterfeit = Entity(
+                id=event.event_id, entity_type="od5a_physical_observation",
+                state="applied", created_at=now, updated_at=now, version=1,
+                attributes={
+                    "source_event_id": event.event_id,
+                    "correlation_id": "org:alpha",
+                    "boundary_message_id": publication.message_id,
+                    "model_spec_hash": "WRONG",
+                    "config_epoch": 0,
+                    "resource": event.payload["resource"],
+                    "start_us": 0, "end_us": 0,
+                },
+            )
+            uow.save_entity(counterfeit)
+        with pytest.raises(ValueError, match="source|model|physical"):
+            BusinessEffectService(store).complete(
+                effect_id=ack.consumer_effect_id, completed_at=now,
+            )
+        assert store.business_effect(ack.consumer_effect_id) is None
+        assert store.command(ack.consumer_effect_id) is not None
+
+
+def test_independent_organizations_do_not_alias_applied_event_certificates(tmp_path):
+    path = tmp_path / "organizations.db"
+    alpha, _, ack_a, at_a = _committed_physical_ingress(path, "org:alpha")
+    beta, _, ack_b, at_b = _committed_physical_ingress(path, "org:beta")
+    assert alpha.event_id != beta.event_id
+    with SQLitePersistence(path) as store:
+        applied_b = apply_od5a_physical_observation(
+            store, effect_id=ack_b.consumer_effect_id, applied_at=at_b,
+        )
+        applied_a = apply_od5a_physical_observation(
+            store, effect_id=ack_a.consumer_effect_id, applied_at=at_a,
+        )
+        assert applied_a.id != applied_b.id
+        certified = BusinessEffectService(store)
+        cb = certified.complete(effect_id=ack_b.consumer_effect_id, completed_at=at_b)
+        ca = certified.complete(effect_id=ack_a.consumer_effect_id, completed_at=at_a)
+        assert cb.correlation_id == "org:beta"
+        assert ca.correlation_id == "org:alpha"
+        assert cb.receipt_id != ca.receipt_id
+        assert store.business_effects() == tuple(
+            sorted((ca, cb), key=lambda e: e.receipt_id)
+        ) or set(store.business_effects()) == {ca, cb}
