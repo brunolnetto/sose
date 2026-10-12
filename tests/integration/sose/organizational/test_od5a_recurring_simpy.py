@@ -479,21 +479,26 @@ def test_recurring_rejects_divergent_authoritative_checkpoint(tmp_path, tamper):
         assert od5a_durable_events(store, job_id="org:A") == before
 
 
-@pytest.mark.parametrize("bad_owner,bad_trigger,bad_time,bad_lease", [
-    ("", "valid", CLOCK, LEASE),
-    ("owner", "", CLOCK, LEASE),
-    ("owner", "valid", CLOCK.replace(tzinfo=None), LEASE),
-    ("owner", "valid", CLOCK, timedelta(0)),
-    ("owner", "valid", CLOCK, timedelta(seconds=-1)),
+@pytest.mark.parametrize("bad_owner,bad_trigger,bad_time,bad_lease,reason", [
+    ("", None, CLOCK, LEASE, "stable trigger ID must be nonempty"),
+    ("owner", "", CLOCK, LEASE, "stable trigger ID must be nonempty"),
+    ("owner", None, CLOCK.replace(tzinfo=None), LEASE, "timezone-aware"),
+    ("owner", None, CLOCK, timedelta(0), "lease must be positive"),
+    ("owner", None, CLOCK, timedelta(seconds=-1), "lease must be positive"),
 ])
-def test_claim_validates_external_trigger_worker_and_lease(tmp_path, bad_owner, bad_trigger, bad_time, bad_lease):
+def test_claim_validates_external_trigger_worker_and_lease(
+    tmp_path, bad_owner, bad_trigger, bad_time, bad_lease, reason,
+):
     path = tmp_path / "invalid-claim-input.db"
     _init(path)
     with SQLitePersistence(path) as store:
-        with pytest.raises(ValueError):
+        # Keep every other input valid, so removing the intended guard
+        # cannot still produce a false-green ValueError downstream.
+        trigger = _trigger(store) if bad_trigger is None else bad_trigger
+        with pytest.raises(ValueError, match=reason):
             claim_od5a_recurring_tick(
                 store, job_id="org:A", owner_id=bad_owner,
-                now=bad_time, lease_duration=bad_lease, trigger_id=bad_trigger,
+                now=bad_time, lease_duration=bad_lease, trigger_id=trigger,
                 _wall_clock=lambda: CLOCK,
             )
         assert od5a_durable_events(store, job_id="org:A") == ()
@@ -763,3 +768,128 @@ def test_source_unknown_org_rejected_without_creating_synthetic_events(tmp_path)
         with pytest.raises(KeyError):
             advance_od5a_durable(store, job_id="unknown:org")
         assert store.events() == ()
+
+
+@pytest.mark.parametrize("forgery,reason", [
+    ("wrong_trigger", "lease trigger contradicts"),
+    ("expiry_not_after_claim", "lease expiry contradicts"),
+])
+def test_expired_claim_cannot_launder_forged_authoritative_lease(tmp_path, forgery, reason):
+    """Reclaim must reject corruption BEFORE writing a fresh epoch over it."""
+    path = tmp_path / "forged-reclaim.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        trigger = _trigger(store)
+        claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="worker:old", now=CLOCK,
+            lease_duration=LEASE, trigger_id=trigger,
+            _wall_clock=lambda: CLOCK,
+        )
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", "org:A")
+            if forgery == "wrong_trigger":
+                lease.attributes["trigger_id"] = "forged-event"
+            else:
+                lease.attributes["expires_at"] = lease.updated_at.isoformat()
+            uow.save_entity(lease)
+        before = od5a_durable_state(store, job_id="org:A")
+        with pytest.raises(ValueError, match=reason):
+            claim_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker:new",
+                now=CLOCK + timedelta(seconds=10),
+                lease_duration=LEASE, trigger_id=trigger, recover=True,
+                _wall_clock=lambda: CLOCK + timedelta(seconds=10),
+            )
+        assert od5a_durable_state(store, job_id="org:A") == before
+        assert store.job_state("org:A").active_trigger_id == trigger
+        assert od5a_durable_events(store, job_id="org:A") == ()
+
+
+def test_foreign_domain_job_collision_rolls_back_source_and_resources(tmp_path):
+    from sose.jobs.model import SimulationJobState
+
+    path = tmp_path / "foreign-job.db"
+    with SQLitePersistence(path) as store:
+        foreign = SimulationJobState(
+            job_id="org:A", domain_name="foreign-domain",
+            config_json="{}", config_revision=1, status="ready",
+            initialized=True, logical_time=CLOCK, next_tick=0,
+        )
+        with store.transaction() as uow:
+            uow.save_job_state(foreign)
+        with pytest.raises(ValueError, match="another domain"):
+            initialize_od5a_recurring_job(
+                store, job_id="org:A", arm=_arms()["baseline"], items=_items(),
+            )
+        assert store.job_state("org:A") == foreign
+        assert store.entity("od5a_durable_pilot", "org:A") is None
+        assert store.resource_definitions() == ()
+        assert store.events() == ()
+
+
+def test_registration_failure_rolls_back_source_in_same_authoritative_uow(tmp_path, monkeypatch):
+    """Physical source creation and owner SimulationJobState are one commit."""
+    path = tmp_path / "atomic-register.db"
+    original = MemoryUnitOfWork.save_job_state
+
+    def fail_once(self, state):
+        if state.job_id == "org:A" and state.domain_name == "od5a":
+            raise RuntimeError("registration fault before COMMIT")
+        return original(self, state)
+
+    with SQLitePersistence(path) as store:
+        with monkeypatch.context() as patch:
+            patch.setattr(MemoryUnitOfWork, "save_job_state", fail_once)
+            with pytest.raises(RuntimeError, match="registration fault"):
+                initialize_od5a_recurring_job(
+                    store, job_id="org:A", arm=_arms()["baseline"], items=_items(),
+                )
+        assert store.job_state("org:A") is None
+        assert store.entity("od5a_durable_pilot", "org:A") is None
+        assert store.resource_definitions() == ()
+        assert store.events() == ()
+        initialize_od5a_recurring_job(
+            store, job_id="org:A", arm=_arms()["baseline"], items=_items(),
+        )
+        assert store.job_state("org:A") is not None
+
+
+def test_full_scheduled_action_identity_is_rechecked_inside_simpy_callback(
+    tmp_path, monkeypatch,
+):
+    """Same time/sequence/kind but another item must not be dispatched."""
+    from sose.backends.simpy import SimPyBackend
+
+    path = tmp_path / "causal-swap.db"
+    _init(path)
+    original_run_until = SimPyBackend.run_until
+    injected = []
+
+    def swap_after_preflight(self, end):
+        if not injected:
+            with SQLitePersistence(path) as writer:
+                with writer.transaction() as uow:
+                    source = uow.get_entity("od5a_durable_pilot", "org:A")
+                    action = min(
+                        source.attributes["actions"],
+                        key=lambda item: (item["at"], item["seq"]),
+                    )
+                    assert action["kind"] == "arrival"
+                    action["item"] = "item:B"
+                    uow.save_entity(source)
+            injected.append(True)
+        return original_run_until(self, end)
+
+    with SQLitePersistence(path) as store:
+        with monkeypatch.context() as patch:
+            patch.setattr(SimPyBackend, "run_until", swap_after_preflight)
+            with pytest.raises(StaleOD5aRunnerClaimError, match="scheduled step changed"):
+                run_od5a_recurring_tick(
+                    store, job_id="org:A", owner_id="worker",
+                    now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+                    _wall_clock=lambda: CLOCK,
+                )
+        assert injected == [True]
+        assert od5a_durable_events(store, job_id="org:A") == ()
+        assert store.job_state("org:A").next_tick == 0
+        assert store.job_state("org:A").active_trigger_id is not None
