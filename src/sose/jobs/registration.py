@@ -42,9 +42,23 @@ def _sqlite_job_guard(store: Persistence, job_id: str) -> Iterator[None]:
             import fcntl
             fcntl.flock(fd, fcntl.LOCK_EX)
         elif os.name == "nt":
+            import errno
             import msvcrt
-            os.lseek(fd, 0, os.SEEK_SET)
-            msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+            from time import sleep
+
+            # LK_LOCK retries only ~10 times, then raises, even when another
+            # healthy process simply needs longer to finish registration.
+            # Retry only lock-contention errors; fail closed on real IO errors.
+            while True:
+                try:
+                    os.lseek(fd, 0, os.SEEK_SET)
+                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+                    break
+                except OSError as exc:
+                    if (getattr(exc, "winerror", None) not in {33, 36}
+                        and exc.errno not in {errno.EACCES, errno.EAGAIN}):
+                        raise
+                    sleep(0.05)
         else:
             raise RuntimeError("no OS-process-safe SQLite job registration lock")
         acquired = True
