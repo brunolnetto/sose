@@ -164,6 +164,7 @@ def test_recovery_of_postgres_job_after_real_claimed_worker_death():
             store, job_id="org:race", owner_id="worker:recovered",
             now=NOW + timedelta(seconds=11), lease_duration=LEASE,
             trigger_id=trigger, recover=True,
+            _wall_clock=lambda: NOW + timedelta(seconds=11),
         )
         assert recovered.epoch == 2
         step = execute_od5a_claimed_tick(
