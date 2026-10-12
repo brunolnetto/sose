@@ -317,6 +317,82 @@ def test_postgres_job_registration_respects_shared_identity_guard(domain):
         reports.join_thread()
 
 
+
+def _competing_domain_registrar(dsn, namespace, domain, barrier, results):
+    from sose.backends.simpy import SimPyBackend
+    from sose.examples.catalog import builtin_catalog
+    from sose.jobs.runner import SimulationJob
+
+    try:
+        with PostgresPersistence(dsn, namespace=namespace) as store:
+            barrier.wait(timeout=30)
+            if domain == "od5a":
+                initialize_od5a_recurring_job(
+                    store, job_id="org:race", arm=_arm(),
+                    items=(OD5aWorkItem(
+                        "one", 0.0, (("a", 0.2), ("b", 0.2), ("c", 0.1)),
+                    ),),
+                )
+            else:
+                job = SimulationJob(
+                    job_id="org:race",
+                    definition=builtin_catalog().get("tutorial_job"),
+                    persistence=store,
+                    backend_factory=lambda origin: SimPyBackend(origin=origin),
+                )
+                job.initialize()
+        results.put((domain, "accepted"))
+    except ValueError:
+        results.put((domain, "rejected"))
+
+
+def test_postgres_cross_domain_registration_has_one_authoritative_owner():
+    namespace = _namespace()
+    ctx = get_context("spawn")
+    barrier, reports = ctx.Barrier(2), ctx.Queue()
+    processes = [
+        ctx.Process(
+            target=_competing_domain_registrar,
+            args=(DSN, namespace, domain, barrier, reports),
+        )
+        for domain in ("od5a", "tutorial")
+    ]
+    try:
+        for proc in processes:
+            proc.start()
+        for proc in processes:
+            proc.join(timeout=45)
+            if proc.is_alive():
+                proc.kill()
+                proc.join()
+                pytest.fail("cross-domain job registration deadlocked")
+            assert proc.exitcode == 0
+        outcomes = dict(reports.get(timeout=10) for _ in processes)
+        assert sorted(outcomes.values()) == ["accepted", "rejected"]
+        winner = next(domain for domain, outcome in outcomes.items()
+                      if outcome == "accepted")
+        with PostgresPersistence(DSN, namespace=namespace) as store:
+            state = store.job_state("org:race")
+            assert state is not None and state.initialized
+            assert state.domain_name == (
+                "od5a" if winner == "od5a" else "tutorial_job"
+            )
+            with store.transaction() as uow:
+                pilot = uow.get_entity("od5a_durable_pilot", "org:race")
+                if winner == "od5a":
+                    assert pilot is not None
+                    assert pilot.attributes["step"] == state.next_tick == 0
+                else:
+                    assert pilot is None
+    finally:
+        for proc in processes:
+            if proc.is_alive():
+                proc.kill()
+                proc.join()
+        reports.close()
+        reports.join_thread()
+
+
 def test_server_clock_controls_pg_lease_even_when_worker_clock_is_far_ahead():
     """No host-clock skew can prematurely grant a second PostgreSQL epoch."""
     namespace = _namespace()
