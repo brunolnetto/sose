@@ -17,10 +17,11 @@ from typing import Literal
 
 from sose.core.identity import deterministic_id
 from sose.persistence.base import Persistence
+from sose.persistence.ownership import FencedEnginePersistence
 
 from .od5a_recurring import (
-    _assert_completed_released_lease, _read_job, _require_wall_clock,
-    run_od5a_recurring_tick,
+    _assert_active_claimed_lease, _assert_completed_released_lease,
+    _read_job, _require_wall_clock, run_od5a_recurring_tick,
 )
 from .od5a_reconciler import reconcile_od5a_boundary_step
 
@@ -83,8 +84,25 @@ def advance_od5a_integrated_occurrence(
             # or forged released source fence. This validation precedes every
             # read-side publication, claim, ACK, observation and certificate.
             _assert_completed_released_lease(uow, job)
+            _assert_active_claimed_lease(uow, job)
+
+        # Scoped PostgreSQL boundary transactions use a *shared* namespace
+        # causal lock plus their own organization lock, not the legacy
+        # exclusive namespace-wide lock. Claim a fresh per-organization
+        # writer epoch under the same physical-source guard so no concurrent
+        # worker can observe an unfenced publication/ACK/certificate.
+        boundary_store = store
+        scoped_epoch = getattr(store, "scoped_writer_epoch", None)
+        scoped_claim = getattr(store, "claim_scoped_writer", None)
+        if callable(scoped_epoch) and callable(scoped_claim):
+            scope = "od5a:boundary:" + job_id
+            lease = scoped_claim(
+                scope, owner_id, expected_epoch=scoped_epoch(scope),
+                correlation_id=job_id,
+            )
+            boundary_store = FencedEnginePersistence(store, lease)
         step = reconcile_od5a_boundary_step(
-            store, job_id=job_id, owner_id=owner_id,
+            boundary_store, job_id=job_id, owner_id=owner_id,
             now=now, lease_duration=lease_duration,
         )
         if step.action == "complete":
