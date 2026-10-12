@@ -138,8 +138,8 @@ def _stage_physical_command(
     command = Command(
         command_id=effect_id,
         name="od5a.stage_physical_completion.v1",
-        entity_type=_KIND,
-        entity_id=message.correlation_id,
+        entity_type="od5a_physical_observation",
+        entity_id=event.event_id,
         due_at=message.produced_at,
         issued_at=message.produced_at,
         payload={
