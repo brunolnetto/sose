@@ -108,7 +108,7 @@ def _sqlite_recovery_claim_racer(path, reached_claim, release_claim, results):
             results.put(("recovery", "rejected", str(error)))
 
 
-def _sqlite_generic_registrar(path, ready, results):
+def _sqlite_generic_registrar(path, ready, done, results):
     from sose.backends.simpy import SimPyBackend
     from sose.examples.catalog import builtin_catalog
     from sose.jobs.runner import SimulationJob
@@ -125,13 +125,15 @@ def _sqlite_generic_registrar(path, ready, results):
             results.put(("generic", "accepted"))
         except (ValueError, RuntimeError) as error:
             results.put(("generic", "rejected", str(error)))
+        finally:
+            done.set()
 
 
 def test_sqlite_recovery_claim_and_generic_registration_share_one_cross_process_fence(tmp_path):
     """A generic job cannot slip between PC6 domain preflight and writer claim."""
     path = str(tmp_path / "recovery-race.db")
     ctx = get_context("spawn")
-    reached_claim, release_claim, generic_ready = ctx.Event(), ctx.Event(), ctx.Event()
+    reached_claim, release_claim, generic_ready, generic_done = (ctx.Event() for _ in range(4))
     results = ctx.Queue()
     processes = [
         ctx.Process(
@@ -140,7 +142,7 @@ def test_sqlite_recovery_claim_and_generic_registration_share_one_cross_process_
         ),
         ctx.Process(
             target=_sqlite_generic_registrar,
-            args=(path, generic_ready, results),
+            args=(path, generic_ready, generic_done, results),
         ),
     ]
     with SQLiteIncrementalPersistence(path) as store:
@@ -152,7 +154,7 @@ def test_sqlite_recovery_claim_and_generic_registration_share_one_cross_process_
         assert generic_ready.wait(timeout=25)
         # A competing creator must remain excluded until the original
         # recovery commits its domain identity, not just its preflight read.
-        assert results.empty(), "foreign creator completed during preflight/claim gap"
+        assert not generic_done.wait(timeout=0.5), "foreign creator bypassed shared job registration guard"
         release_claim.set()
         for process in processes:
             process.join(timeout=35)
