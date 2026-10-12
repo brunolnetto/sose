@@ -173,6 +173,28 @@ def test_integrated_occurrences_match_reference_at_every_commit(
                 assert state.run_count == source.attributes["step"]
                 assert state.next_tick == source.attributes["step"]
                 assert state.active_trigger_id is None
+            # Once every boundary phase is certified, a lost response for the
+            # final persisted trigger MUST remain distinguishable from a
+            # subsequent no-op completion probe.
+            before_replay = _truth(integrated, organizations)
+            last_trigger = integrated.job_state(job_id).last_completed_trigger_id
+            assert last_trigger is not None
+            replay = advance_od5a_integrated_occurrence(
+                integrated, job_id=job_id, owner_id="recovered:" + job_id,
+                now=NOW, lease_duration=LEASE, source_trigger_id=last_trigger,
+            )
+            assert replay.action == "source_replayed"
+            assert replay.source_trigger_id == last_trigger
+            future_trigger = deterministic_id(
+                "od5a-recurring-tick", job_id, state.run_count + 1,
+            )
+            finished = advance_od5a_integrated_occurrence(
+                integrated, job_id=job_id, owner_id="recovered:" + job_id,
+                now=NOW, lease_duration=LEASE, source_trigger_id=future_trigger,
+            )
+            assert finished.action == "complete"
+            assert _truth(integrated, organizations) == before_replay
+            assert integrated.job_state(job_id) == state
 
 
 def test_boundary_backlog_precedes_next_source_step(tmp_path):
@@ -260,3 +282,55 @@ def test_terminal_source_checkpoint_restarts_without_phantom_step(tmp_path):
             assert completed.action == "complete"
         assert _truth(recovered, (job_id,)) == before
         assert recovered.job_state(job_id) == job
+
+
+@pytest.mark.parametrize("adapter", ["sqlite", "postgres"])
+@pytest.mark.parametrize("tampering", ["forged_trigger", "forged_owner"])
+def test_integrated_reconciliation_refuses_malformed_released_source_fence(
+    tmp_path, adapter, tampering,
+):
+    """Do not turn a corrupt source fence into an apparently valid ACK."""
+    if adapter == "postgres" and not DSN:
+        pytest.skip("live PostgreSQL DSN required")
+    with (
+        PostgresPersistence(
+            DSN, namespace="od5a_lease_" + uuid4().hex[:12],
+        ) if adapter == "postgres" else
+        SQLitePersistence(tmp_path / "corrupt-lease.sqlite")
+    ) as store:
+        job_id = "org:lease"
+        initialize_od5a_recurring_job(
+            store, job_id=job_id, arm=_arm(), items=_items(job_id),
+        )
+        # Reach an already committed physical event with an actual pending
+        # delivery. The next phase would normally be a durable claim.
+        for _ in range(100):
+            job = store.job_state(job_id)
+            next_trigger = deterministic_id(
+                "od5a-recurring-tick", job_id, job.run_count + 1,
+            )
+            step = advance_od5a_integrated_occurrence(
+                store, job_id=job_id, owner_id="publisher",
+                now=NOW, lease_duration=LEASE, source_trigger_id=next_trigger,
+            )
+            if step.action == "published":
+                break
+        else:
+            pytest.fail("physical source never reached boundary publication")
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", job_id)
+            assert lease is not None and lease.state == "released"
+            if tampering == "forged_trigger":
+                lease.attributes["trigger_id"] = "forged"
+            else:
+                lease.attributes["owner_id"] = "ghost"
+            uow.save_entity(lease)
+        before = _truth(store, (job_id,))
+        prior_job = store.job_state(job_id)
+        with pytest.raises(ValueError, match="released lease history"):
+            advance_od5a_integrated_occurrence(
+                store, job_id=job_id, owner_id="consumer",
+                now=NOW, lease_duration=LEASE, source_trigger_id=next_trigger,
+            )
+        assert _truth(store, (job_id,)) == before
+        assert store.job_state(job_id) == prior_job
