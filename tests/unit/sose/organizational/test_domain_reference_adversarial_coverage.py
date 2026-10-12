@@ -20,6 +20,18 @@ from sose.organizational.synthetic_queue_reference import QueueReferenceDomain
 
 
 def _capability_payload(level):
+    # The queue reference intentionally implements only A0/A1. Build an
+    # explicit valid A2 specification to falsify its contract-ID uniqueness.
+    if level is AgencyLevel.A2:
+        return {
+            "level": AgencyLevel.A2,
+            "capability_id": "synthetic-a2",
+            "parameter_ranges": {},
+            "defaults": {},
+            "compatibility_constraints": (),
+            "observation_contract_ids": ("observed",),
+            "action_contract_ids": ("actuated",),
+        }
     cap = next(
         item for item in QueueReferenceDomain().descriptor.agency_capabilities
         if item.level == level
