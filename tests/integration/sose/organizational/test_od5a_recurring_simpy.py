@@ -88,10 +88,10 @@ def _snapshot(path, job_id):
         )
 
 
-def _drain(path, *, job_id="org:A", owner="worker:A"):
+def _drain(path, *, job_id="org:A", owner="worker:A", start_tick=0):
     actions = []
     with SQLitePersistence(path) as store:
-        for tick in range(150):
+        for tick in range(start_tick, start_tick + 150):
             result = run_od5a_recurring_tick(
                 store, job_id=job_id, owner_id=owner,
                 now=CLOCK + timedelta(seconds=tick),
@@ -253,7 +253,9 @@ def test_real_os_process_death_recovery_preserves_exact_source_events(tmp_path, 
                 _wall_clock=lambda: CLOCK + timedelta(seconds=6),
             )
             assert result.action == "advanced"
-    _drain(path, owner="recovered")
+    # Recovery already persisted a lease at CLOCK+6; a fresh callback may
+    # never rewind the trusted lease clock to CLOCK, even in synthetic tests.
+    _drain(path, owner="recovered", start_tick=7)
     _drain(continuous)
     assert _snapshot(path, "org:A") == _snapshot(continuous, "org:A")
 
@@ -466,6 +468,15 @@ def test_recurring_rejects_divergent_authoritative_checkpoint(tmp_path, tamper):
     _init(path)
     with SQLitePersistence(path) as store:
         before = od5a_durable_events(store, job_id="org:A")
+        if "domain_name" in tamper:
+            # The authoritative UoW rejects changing the job domain before
+            # a contradictory checkpoint can reach the recurring reader.
+            with pytest.raises(ValueError, match="job domain cannot change"):
+                with store.transaction() as uow:
+                    state = uow.get_job_state("org:A")
+                    uow.save_job_state(replace(state, **tamper))
+            assert od5a_durable_events(store, job_id="org:A") == before
+            return
         with store.transaction() as uow:
             state = uow.get_job_state("org:A")
             uow.save_job_state(replace(state, **tamper))
