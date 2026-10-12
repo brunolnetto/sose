@@ -496,6 +496,66 @@ def test_released_lease_trigger_must_match_completed_job_before_reclaim(tmp_path
         assert od5a_durable_events(store, job_id="org:A") == before
 
 
+@pytest.mark.parametrize("malformed_epoch", [True, 1.0])
+def test_callback_refuses_noninteger_claimed_epoch(tmp_path, malformed_epoch):
+    """Python numeric equality must never authorize a corrupt physical fence."""
+    path = tmp_path / "noninteger-fenced-epoch.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        claimed = claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="owner:A",
+            now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+            _wall_clock=lambda: CLOCK,
+        )
+        before = od5a_durable_events(store, job_id="org:A")
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", "org:A")
+            lease.attributes["epoch"] = malformed_epoch
+            uow.save_entity(lease)
+        with pytest.raises(ValueError, match="invalid durable OD-5a runner epoch"):
+            execute_od5a_claimed_tick(
+                store, claim=claimed, now=CLOCK + timedelta(seconds=1),
+                _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == before
+        assert store.job_state("org:A").run_count == 0
+
+
+@pytest.mark.parametrize("corrupt_count", [1, 3])
+def test_checkpoint_run_count_cannot_diverge_from_source_step(tmp_path, corrupt_count):
+    """Scheduled occurrence numbering is bound to durable physical progress."""
+    from dataclasses import replace
+
+    path = tmp_path / "regressed-run-count.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        for second in (0, 1):
+            run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="owner:A",
+                now=CLOCK + timedelta(seconds=second),
+                lease_duration=LEASE, trigger_id=_trigger(store),
+                _wall_clock=lambda second=second: CLOCK + timedelta(seconds=second),
+            )
+        claim = claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="owner:A",
+            now=CLOCK + timedelta(seconds=2), lease_duration=LEASE,
+            trigger_id=_trigger(store),
+            _wall_clock=lambda: CLOCK + timedelta(seconds=2),
+        )
+        before = od5a_durable_events(store, job_id="org:A")
+        with store.transaction() as uow:
+            job = uow.get_job_state("org:A")
+            assert job.next_tick == job.run_count == 2
+            uow.save_job_state(replace(job, run_count=corrupt_count))
+        with pytest.raises(ValueError, match="checkpoint contradicts authoritative organization"):
+            execute_od5a_claimed_tick(
+                store, claim=claim, now=CLOCK + timedelta(seconds=3),
+                _wall_clock=lambda: CLOCK + timedelta(seconds=3),
+            )
+        assert od5a_durable_events(store, job_id="org:A") == before
+        assert store.job_state("org:A").run_count == corrupt_count
+
+
 @pytest.mark.parametrize("entrypoint", ["execute", "reclaim"])
 def test_claimed_epoch_cannot_regress_below_next_run_count(tmp_path, entrypoint):
     """An active lease cannot lose its committed epoch history."""
