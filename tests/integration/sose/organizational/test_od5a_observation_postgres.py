@@ -115,7 +115,32 @@ def _sequence(factory):
             assert message.causation_id == event.event_id
             assert message.correlation_id == job_id
             assert uow.get_boundary_consumption(receipt.delivery_id) == receipt
-    return event, observation, certificate
+            deliveries = uow.boundary_deliveries()
+            assert len(deliveries) == 1
+            # Compare the *entire relevant durable truth*, not only returned
+            # receipts. This catches adapter divergence in claim fencing,
+            # canonical causation, physical grants and residual Commands.
+            snapshot = {
+                "event_history": tuple(store.events()),
+                "source_entity": uow.get_entity("od5a_durable_pilot", job_id),
+                "resource_definitions": tuple(store.resource_definitions()),
+                "resource_reservations": tuple(store.resource_reservations()),
+                "boundary_messages": tuple(
+                    uow.get_boundary_message(d.message_id) for d in deliveries
+                ),
+                "boundary_deliveries": deliveries,
+                "boundary_consumptions": tuple(
+                    uow.get_boundary_consumption(d.delivery_id) for d in deliveries
+                ),
+                "source_physical_event": event,
+                "observation": uow.get_entity("od5a_physical_observation", event.event_id),
+                "pending_command": uow.get_command(receipt.consumer_effect_id),
+                "certificates": uow.business_effects(),
+            }
+            assert snapshot["observation"] == observation
+            assert snapshot["certificates"] == (certificate,)
+            assert snapshot["pending_command"] is None
+    return snapshot
 
 
 def test_postgres_exact_domain_and_certificate_truth_matches_sqlite_after_restarts(
