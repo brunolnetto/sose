@@ -62,10 +62,10 @@ def _advance(store, job, owner="owner"):
 
 
 def _drain(path, jobs, *, reopen_each=False):
-    actions = {job: [] for job in jobs}
+    actions = {job: [] for job in jobs if job != "__store__"}
     for _ in range(500):
         advanced = False
-        for job in jobs:
+        for job in actions:
             if reopen_each:
                 with SQLitePersistence(path) as store:
                     result = _advance(store, job)
