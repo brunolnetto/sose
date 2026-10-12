@@ -202,9 +202,15 @@ def test_real_postgres_os_kill_recovers_exact_causal_and_physical_truth(phase, w
     assert _truth(DSN, interrupted, jobs) == _truth(DSN, reference, jobs)
 
 
-def _claim_racer(dsn, namespace, owner, signals, release, result):
+def _claim_racer(dsn, namespace, owner, ready, start, signals, release, result):
     """Instrument the actual boundary UoW, not just worker scheduling."""
     with PostgresPersistence(dsn, namespace=namespace) as store:
+        # PostgresPersistence bootstrap serializes schema initialization using
+        # a namespace advisory lock. Both workers must establish connections
+        # BEFORE the contested boundary transaction is deliberately held.
+        ready.put(owner)
+        if not start.wait(timeout=30):
+            raise RuntimeError("racer start barrier timed out")
         original = store.boundary_transaction
 
         @contextmanager
@@ -237,20 +243,23 @@ def test_two_postgres_processes_compete_for_same_fenced_claim():
     assert _step(DSN, contended).action == "published"
     ctx = get_context("spawn")
     release = ctx.Event()
-    signals = ctx.Queue()
-    responses = ctx.Queue()
+    start_a, start_b = ctx.Event(), ctx.Event()
+    ready, signals, responses = ctx.Queue(), ctx.Queue(), ctx.Queue()
     a = ctx.Process(
         target=_claim_racer,
-        args=(DSN, contended, "worker-A", signals, release, responses),
+        args=(DSN, contended, "worker-A", ready, start_a, signals, release, responses),
     )
     b = ctx.Process(
         target=_claim_racer,
-        args=(DSN, contended, "worker-B", signals, release, responses),
+        args=(DSN, contended, "worker-B", ready, start_b, signals, release, responses),
     )
     a.start()
+    b.start()
     try:
+        assert {ready.get(timeout=30) for _ in (a, b)} == {"worker-A", "worker-B"}
+        start_a.set()
         assert signals.get(timeout=30) == ("holding_sql_lock", "worker-A")
-        b.start()
+        start_b.set()
         assert signals.get(timeout=30) == ("attempting_sql_lock", "worker-B")
         # Prove A still holds the actual transaction-scoped SQL lock
         # through an unrelated SQL session, rather than inferring it from
