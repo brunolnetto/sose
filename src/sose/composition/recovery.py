@@ -640,7 +640,39 @@ class TradingCustomerRecoveryRunner:
                 raise ValueError("recovery job identity already belongs to another domain")
             if prior is not None and prior.config_json != config_json:
                 raise ValueError("recovery job's durable organizational binding changed")
-            if self.scoped_writer:
+            if prior is None:
+                # The writer epoch and the first durable domain identity must
+                # become visible in ONE OLTP commit. A real os._exit directly
+                # after the claim cannot leave an ownerless fenced namespace.
+                initial = SimulationJobState(
+                    job_id=self.job_id,
+                    domain_name="trading_company_composition",
+                    config_json=config_json,
+                    config_revision=1,
+                    status="ready",
+                    initialized=True,
+                    logical_time=now,
+                    next_tick=0,
+                )
+                if self.scoped_writer:
+                    atomic_claim = getattr(self.persistence, "claim_scoped_writer_and_register", None)
+                    if not callable(atomic_claim):
+                        raise TypeError("scoped recovery requires atomic claim+registration")
+                    lease = atomic_claim(
+                        self.job_id, self.owner_id,
+                        expected_epoch=self.persistence.scoped_writer_epoch(self.job_id),
+                        correlation_id=self.correlation_id, initial_job=initial,
+                    )
+                else:
+                    atomic_claim = getattr(self.persistence, "claim_writer_and_register", None)
+                    if not callable(atomic_claim):
+                        raise TypeError("recovery requires atomic claim+registration")
+                    lease = atomic_claim(
+                        self.owner_id,
+                        expected_epoch=self.persistence.writer_epoch(),
+                        initial_job=initial,
+                    )
+            elif self.scoped_writer:
                 lease = self.persistence.claim_scoped_writer(
                     self.job_id, self.owner_id,
                     expected_epoch=self.persistence.scoped_writer_epoch(self.job_id),
@@ -658,16 +690,7 @@ class TradingCustomerRecoveryRunner:
                 if current is not None and current.config_json != config_json:
                     raise ValueError('recovery job\'s durable organizational binding changed')
                 if current is None:
-                    current = SimulationJobState(
-                        job_id=self.job_id,
-                        domain_name="trading_company_composition",
-                        config_json=config_json,
-                        config_revision=1,
-                        status="ready",
-                        initialized=True,
-                        logical_time=now,
-                        next_tick=0,
-                    )
+                    raise RuntimeError("recovery writer claim lacks atomic durable job identity")
                 if current.last_completed_trigger_id == trigger_id or any(
                     record.trigger_id == trigger_id
                     for record in current.completed_batch_triggers
