@@ -610,7 +610,8 @@ jobs:
             tests/integration/sose/organizational/test_od5a_observation_postgres.py \
             tests/integration/sose/organizational/test_od5a_reconciler_postgres.py \
             tests/integration/sose/organizational/test_od5a_recurring_postgres.py \
-            tests/integration/sose/organizational/test_od5a_completed_trigger_history.py
+            tests/integration/sose/organizational/test_od5a_completed_trigger_history.py \
+            tests/integration/sose/organizational/test_od5a_integrated.py
       - name: Run real multidomain recurring recovery integration
         run: python -m pytest -q tests/e2e/sose/persistence/test_postgres_pc6_full_real_domain_recovery.py
       - name: Verify twenty-three real-domain and boundary restart certificates
