@@ -14,9 +14,9 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from json import dumps
-from typing import Literal
+from typing import Callable, Literal
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.identity import deterministic_id
@@ -276,6 +276,7 @@ def claim_od5a_recurring_tick(
 
 def execute_od5a_claimed_tick(
     store: Persistence, *, claim: OD5aRunnerClaim, now: datetime,
+    _wall_clock: Callable[[], datetime] | None = None,
 ) -> OD5aRecurringStep:
     """Use a fresh ephemeral SimPy dispatch to commit exactly one source step.
 
@@ -302,7 +303,20 @@ def execute_od5a_claimed_tick(
 
     def commit_source_step() -> None:
         with _job_transaction(store, claim.organization_id) as uow:
-            source, job, lease = _assert_claim(uow, claim, now)
+            # The callback may have waited for a real OS/Pg advisory lock.
+            # A caller's earlier 'now' is NOT a durable validity proof.
+            # Read a fresh UTC wall clock after acquiring the lock. The
+            # injection hook permits deterministic faults only in tests.
+            observed_at = (
+                datetime.now(timezone.utc)
+                if _wall_clock is None else _wall_clock()
+            )
+            _require_wall_clock(observed_at)
+            commit_at = max(
+                now.astimezone(timezone.utc),
+                observed_at.astimezone(timezone.utc),
+            )
+            source, job, lease = _assert_claim(uow, claim, commit_at)
             actions = source.attributes["actions"]
             actual = min(actions, key=lambda x: (x["at"], x["seq"])) if actions else None
             actual_id = (
@@ -325,7 +339,7 @@ def execute_od5a_claimed_tick(
             uow.save_job_state(job)
             lease.state = "released"
             lease.attributes = {**lease.attributes, "owner_id": None}
-            lease.touch(now)
+            lease.touch(commit_at)
             uow.save_entity(lease)
             dispatched.append(OD5aRecurringStep(
                 claim.organization_id, claim.trigger_id,
@@ -347,6 +361,7 @@ def run_od5a_recurring_tick(
     store: Persistence, *, job_id: str, owner_id: str,
     now: datetime, lease_duration: timedelta,
     trigger_id: str, recover: bool = False,
+    _wall_clock: Callable[[], datetime] | None = None,
 ) -> OD5aRecurringStep:
     """One bounded recurring source step; ACK/certification are separate jobs.
 
@@ -380,7 +395,9 @@ def run_od5a_recurring_tick(
                 job_id, trigger_id,
                 "replayed", 0, job.logical_time, job.next_tick,
             )
-    return execute_od5a_claimed_tick(store, claim=claim, now=now)
+    return execute_od5a_claimed_tick(
+        store, claim=claim, now=now, _wall_clock=_wall_clock,
+    )
 
 
 __all__ = [
