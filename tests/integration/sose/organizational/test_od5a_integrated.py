@@ -454,3 +454,69 @@ def test_postgres_integrated_boundary_uses_job_scoped_writer_epoch(tmp_path, mon
     assert captured
     assert all(epoch is not None and epoch > 0 for epoch, scope in captured)
     assert set(scope for _, scope in captured) == {"od5a:boundary:" + org}
+
+
+@pytest.mark.parametrize("adapter", ["sqlite", "postgres"])
+def test_terminal_source_rejects_forged_active_claim_before_publication(
+    tmp_path, adapter,
+):
+    """Reject a mutually impossible terminal source + newly active lease."""
+    if adapter == "postgres" and not DSN:
+        pytest.skip("live PostgreSQL DSN required")
+    from dataclasses import replace
+    from sose.organizational.od5a_recurring import run_od5a_recurring_tick
+
+    with (
+        PostgresPersistence(DSN, namespace="od5a_done_" + uuid4().hex[:12])
+        if adapter == "postgres" else
+        SQLitePersistence(tmp_path / "terminal-forged.sqlite")
+    ) as store:
+        job_id = "org:terminal-forged"
+        initialize_od5a_recurring_job(
+            store, job_id=job_id, arm=_arm(), items=_items(job_id),
+        )
+        for _ in range(100):
+            job = store.job_state(job_id)
+            trigger = deterministic_id(
+                "od5a-recurring-tick", job_id, job.run_count + 1,
+            )
+            result = run_od5a_recurring_tick(
+                store, job_id=job_id, owner_id="worker",
+                now=NOW, lease_duration=LEASE, trigger_id=trigger,
+            )
+            assert result.action == "advanced"
+            with store.transaction() as uow:
+                source = uow.get_entity("od5a_durable_pilot", job_id)
+            if source.attributes["done"]:
+                break
+        else:
+            pytest.fail("no terminal physical action")
+        # No physical boundary publication has occurred. The forged active
+        # claim must be rejected before publishing its pending final event.
+        with store.transaction() as uow:
+            job = uow.get_job_state(job_id)
+            lease = uow.get_entity("od5a_runner_lease", job_id)
+            assert job and lease and lease.state == "released"
+            next_trigger = deterministic_id(
+                "od5a-recurring-tick", job_id, job.run_count + 1,
+            )
+            uow.save_job_state(replace(
+                job, active_trigger_id=next_trigger,
+                status="running", phase="advance",
+            ))
+            lease.state = "claimed"
+            lease.attributes = {
+                **lease.attributes, "owner_id": "fabricated-worker",
+                "trigger_id": next_trigger,
+                "epoch": lease.attributes["epoch"] + 1,
+            }
+            uow.save_entity(lease)
+        before = _truth(store, (job_id,))
+        with pytest.raises(ValueError, match="checkpoint contradicts"):
+            advance_od5a_integrated_occurrence(
+                store, job_id=job_id, owner_id="reconciler",
+                now=NOW, lease_duration=LEASE,
+                source_trigger_id=next_trigger,
+            )
+        assert _truth(store, (job_id,)) == before
+        assert store.job_state(job_id).active_trigger_id == next_trigger
