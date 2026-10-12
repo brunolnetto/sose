@@ -179,3 +179,61 @@ def test_sqlite_recovery_claim_and_generic_registration_share_one_cross_process_
                 process.join()
         results.close()
         results.join_thread()
+
+
+def _die_after_global_writer_claim(path):
+    import os
+    from datetime import datetime, timezone
+    from sose.composition.recovery import TradingCustomerRecoveryRunner
+
+    with SQLiteIncrementalPersistence(path) as store:
+        original_claim = store.claim_writer
+
+        def committed_claim(*args, **kwargs):
+            original_claim(*args, **kwargs)
+            os._exit(87)
+
+        store.claim_writer = committed_claim
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store, job_id="crash:job", owner_id="worker:dead",
+        )
+        runner.run_trigger(
+            trigger_id="stable-occurrence",
+            now=datetime(2026, 10, 12, tzinfo=timezone.utc),
+        )
+
+
+def test_sqlite_worker_death_after_writer_claim_preserves_domain_identity(tmp_path):
+    """A committed owner epoch can never exist without the owning job identity."""
+    from datetime import datetime, timezone
+    from unittest.mock import patch
+    from sose.composition.recovery import TradingCustomerRecoveryRunner
+
+    path = str(tmp_path / "writer-claim-death.db")
+    ctx = get_context("spawn")
+    child = ctx.Process(target=_die_after_global_writer_claim, args=(path,))
+    child.start()
+    child.join(timeout=30)
+    if child.is_alive():
+        child.kill()
+        child.join()
+        pytest.fail("writer-claim death worker hung")
+    assert child.exitcode == 87
+
+    with SQLiteIncrementalPersistence(path) as store:
+        assert store.writer_epoch() == 1
+        prior = store.job_state("crash:job")
+        assert prior is not None
+        assert prior.domain_name == "trading_company_composition"
+        assert prior.initialized and prior.next_tick == 0
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store, job_id="crash:job", owner_id="worker:recovered",
+        )
+        with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
+            result = runner.run_trigger(
+                trigger_id="stable-occurrence",
+                now=datetime(2026, 10, 12, tzinfo=timezone.utc),
+            )
+        assert result.job_id == "crash:job"
+        assert store.writer_epoch() == 2
+        assert store.job_state("crash:job").last_completed_trigger_id == "stable-occurrence"
