@@ -27,13 +27,15 @@ The explicit PostgreSQL CI step runs:
 - `test_od5a_reconciler_postgres.py`: all five interventions, fresh SQL
   connections per phase, kill by `os._exit` before and after each of the five
   durable boundary operations, two independent processes racing for a fenced
-  claim, and two organizations progressing in the same namespace after
-  an actual process death.
+  claim with PostgreSQL \`pg_stat_activity\` evidence of a waiting advisory
+  lock, stale claim rejection after an expired lease is taken over by a new
+  owner at a strictly higher fencing epoch, and two organizations progressing
+  in the same namespace after an actual process death.
 
 The cross-run oracle compares event history and typed causes, source entities,
-physical resource definitions/reservations, boundary messages/deliveries,
-claim epochs and owners, consumptions, terminal observation entities, pending
-Commands and immutable effect certificates. The asserted reference is the
+physical resource definitions/reservations, all persisted boundary messages/deliveries/consumptions (including
+orphan detection), claim epochs and owners, every terminal observation and
+pending Command and immutable effect certificates. The asserted reference is the
 uninterrupted run with identical exogenous input, worker identity and
 clock. Tests reject duplicate or missing certificates.
 
@@ -42,7 +44,7 @@ clock. Tests reject duplicate or missing certificates.
 - Reuse the existing PostgreSQL transaction and boundary locking semantics.
   Do not add a global organization clock or persist any SimPy object.
 - The OS-kill matrix proves committed PostgreSQL state survives **client
-  process** death and fresh-connection recovery; it does **not** simulate
+  process** death with the SQL session still open and fresh-connection recovery; it does **not** simulate
   `pg_ctl stop`, PostgreSQL WAL failure, an actual network partition, or
   unknown-commit acknowledgment at the server boundary.
 - Concurrent claim tests detect double ownership. They do not yet prove
