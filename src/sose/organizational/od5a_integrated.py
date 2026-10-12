@@ -15,10 +15,12 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Literal
 
+from sose.core.identity import deterministic_id
 from sose.persistence.base import Persistence
 
 from .od5a_recurring import (
-    _read_job, _require_wall_clock, run_od5a_recurring_tick,
+    _assert_completed_released_lease, _read_job, _require_wall_clock,
+    run_od5a_recurring_tick,
 )
 from .od5a_reconciler import reconcile_od5a_boundary_step
 
@@ -76,11 +78,32 @@ def advance_od5a_integrated_occurrence(
         # Corrupt source/checkpoint history must not be laundered by an ACK
         # or a certificate before the source admission check can reject it.
         with store.transaction() as uow:
-            _read_job(uow, job_id)
+            _, job = _read_job(uow, job_id)
+            # Completed physical effects cannot be certified from a missing
+            # or forged released source fence. This validation precedes every
+            # read-side publication, claim, ACK, observation and certificate.
+            _assert_completed_released_lease(uow, job)
         step = reconcile_od5a_boundary_step(
             store, job_id=job_id, owner_id=owner_id,
             now=now, lease_duration=lease_duration,
         )
+        if step.action == "complete":
+            # Reconciliation has drained the source DAG. Preserve the
+            # externally persisted trigger's lost-response replay semantics:
+            # replaying the LAST committed source occurrence is distinct from
+            # probing completion using the NEXT deterministic occurrence.
+            if source_trigger_id == job.last_completed_trigger_id:
+                return OD5aIntegratedOccurrence(
+                    organization_id=job_id, action="source_replayed",
+                    source_trigger_id=source_trigger_id,
+                    logical_tick=job.next_tick,
+                )
+            if source_trigger_id != deterministic_id(
+                "od5a-recurring-tick", job_id, job.run_count + 1,
+            ):
+                raise ValueError(
+                    "OD-5a terminal trigger ID contradicts deterministic progress"
+                )
         if step.action != "idle":
             return OD5aIntegratedOccurrence(
                 organization_id=job_id, action=step.action,
