@@ -103,6 +103,7 @@ def _read_job(
         or not job.initialized
         or job.config_revision != 1
         or job.next_tick != source.attributes["step"]
+        or type(job.run_count) is not int
         or job.run_count != source.attributes["step"]
         or job.logical_time != _time(source.attributes["clock"])
     ):
