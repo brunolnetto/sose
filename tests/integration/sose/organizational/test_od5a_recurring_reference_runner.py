@@ -98,12 +98,17 @@ def _truth(path, jobs):
                          if (m := uow.get_boundary_message(d.message_id)) is not None
                          and m.correlation_id == job), key=lambda x: x.delivery_id,
                     )),
+                    # Include missing receipts explicitly while the worker is
+                    # killed between publish, claim and ACK. Sorting by a
+                    # nullable consumption's fields would mask this window.
                     tuple(sorted(
-                        (uow.get_boundary_consumption(d.delivery_id)
-                         for d in uow.boundary_deliveries()
-                         if (m := uow.get_boundary_message(d.message_id)) is not None
-                         and m.correlation_id == job),
-                        key=lambda x: x.delivery_id,
+                        (
+                            d.delivery_id,
+                            uow.get_boundary_consumption(d.delivery_id),
+                        )
+                        for d in uow.boundary_deliveries()
+                        if (m := uow.get_boundary_message(d.message_id)) is not None
+                        and m.correlation_id == job
                     )),
                     tuple(sorted(
                         (uow.get_business_effect(d.consumer_effect_id)
