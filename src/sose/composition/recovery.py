@@ -25,6 +25,7 @@ from sose.examples.order_to_cash import simulation as o2c
 from sose.examples.cards_payments import simulation as payments
 from sose.examples.record_to_report import simulation as r2r
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
+from sose.jobs.registration import job_registration_guard
 from sose.persistence.base import Persistence
 from sose.persistence.ownership import FencedEnginePersistence
 
@@ -638,43 +639,46 @@ class TradingCustomerRecoveryRunner:
             if self.resource_organizations is not None:
                 config['organization_id'] = self.resource_organizations[self.correlation_id]
         config_json = json.dumps(config, sort_keys=True, separators=(',', ':'))
-        with store.transaction() as uow:
-            current = uow.get_job_state(self.job_id)
-            if current is not None and current.config_json != config_json:
-                raise ValueError('recovery job\'s durable organizational binding changed')
-            if current is None:
-                current = SimulationJobState(
-                    job_id=self.job_id,
-                    domain_name="trading_company_composition",
-                    config_json=config_json,
-                    config_revision=1,
-                    status="ready",
-                    initialized=True,
+        # Scoped writer fencing is not a substitute for a shared job-ID
+        # registration fence: another domain may race this first write.
+        with job_registration_guard(self.persistence, self.job_id):
+            with store.transaction() as uow:
+                current = uow.get_job_state(self.job_id)
+                if current is not None and current.config_json != config_json:
+                    raise ValueError('recovery job\'s durable organizational binding changed')
+                if current is None:
+                    current = SimulationJobState(
+                        job_id=self.job_id,
+                        domain_name="trading_company_composition",
+                        config_json=config_json,
+                        config_revision=1,
+                        status="ready",
+                        initialized=True,
+                        logical_time=now,
+                        next_tick=0,
+                    )
+                if current.last_completed_trigger_id == trigger_id or any(
+                    record.trigger_id == trigger_id
+                    for record in current.completed_batch_triggers
+                ):
+                    return RecoveryTriggerResult(self.job_id, trigger_id, 0)
+                if now < current.logical_time:
+                    raise ValueError("composition trigger cannot rewind durable logical time")
+                if current.active_trigger_id not in (None, trigger_id):
+                    raise RuntimeError("another recovery occurrence is still active")
+                if current.active_trigger_id is None and (
+                    current.active_effect_ids or current.active_boundary_message_ids
+                    or current.active_publication_message_ids
+                ):
+                    raise RuntimeError("completed recovery job has orphaned work enrollment")
+                uow.save_job_state(replace(
+                    current,
+                    status="running",
+                    phase="reconcile",
+                    active_trigger_id=trigger_id,
                     logical_time=now,
-                    next_tick=0,
-                )
-            if current.last_completed_trigger_id == trigger_id or any(
-                record.trigger_id == trigger_id
-                for record in current.completed_batch_triggers
-            ):
-                return RecoveryTriggerResult(self.job_id, trigger_id, 0)
-            if now < current.logical_time:
-                raise ValueError("composition trigger cannot rewind durable logical time")
-            if current.active_trigger_id not in (None, trigger_id):
-                raise RuntimeError("another recovery occurrence is still active")
-            if current.active_trigger_id is None and (
-                current.active_effect_ids or current.active_boundary_message_ids
-                or current.active_publication_message_ids
-            ):
-                raise RuntimeError("completed recovery job has orphaned work enrollment")
-            uow.save_job_state(replace(
-                current,
-                status="running",
-                phase="reconcile",
-                active_trigger_id=trigger_id,
-                logical_time=now,
-                last_triggered_at=now,
-            ))
+                    last_triggered_at=now,
+                ))
 
         lease_clock = observed_at if observed_at is not None else now
         if self.resource_policies is None:
