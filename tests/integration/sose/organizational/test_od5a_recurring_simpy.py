@@ -496,6 +496,58 @@ def test_released_lease_trigger_must_match_completed_job_before_reclaim(tmp_path
         assert od5a_durable_events(store, job_id="org:A") == before
 
 
+@pytest.mark.parametrize("entrypoint", ["execute", "reclaim"])
+def test_claimed_epoch_cannot_regress_below_next_run_count(tmp_path, entrypoint):
+    """An active lease cannot lose its committed epoch history."""
+    from dataclasses import replace
+
+    path = tmp_path / f"regressed-active-epoch-{entrypoint}.db"
+    _init(path)
+    with SQLitePersistence(path) as store:
+        for second in (0, 1):
+            run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="owner:A",
+                now=CLOCK + timedelta(seconds=second),
+                lease_duration=LEASE, trigger_id=_trigger(store),
+                _wall_clock=lambda second=second: CLOCK + timedelta(seconds=second),
+            )
+        assert store.job_state("org:A").run_count == 2
+        trigger = _trigger(store)
+        claimed = claim_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="owner:A",
+            now=CLOCK + timedelta(seconds=2), lease_duration=LEASE,
+            trigger_id=trigger,
+            _wall_clock=lambda: CLOCK + timedelta(seconds=2),
+        )
+        assert claimed.epoch == 3
+        before = od5a_durable_events(store, job_id="org:A")
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", "org:A")
+            assert lease.state == "claimed"
+            lease.attributes["epoch"] = 1
+            uow.save_entity(lease)
+
+        with pytest.raises(ValueError, match="claimed lease epoch predates next run"):
+            if entrypoint == "execute":
+                execute_od5a_claimed_tick(
+                    store, claim=replace(claimed, epoch=1),
+                    now=CLOCK + timedelta(seconds=3),
+                    _wall_clock=lambda: CLOCK + timedelta(seconds=3),
+                )
+            else:
+                claim_od5a_recurring_tick(
+                    store, job_id="org:A", owner_id="owner:B",
+                    now=CLOCK + timedelta(seconds=9),
+                    lease_duration=LEASE, trigger_id=trigger, recover=True,
+                    _wall_clock=lambda: CLOCK + timedelta(seconds=9),
+                )
+        assert od5a_durable_events(store, job_id="org:A") == before
+        assert store.job_state("org:A").run_count == 2
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", "org:A")
+            assert lease.state == "claimed" and lease.attributes["epoch"] == 1
+
+
 @pytest.mark.parametrize("entrypoint", ["replay", "claim"])
 def test_released_epoch_cannot_regress_below_completed_run_count(tmp_path, entrypoint):
     """A completed event history cannot be laundered through a smaller epoch."""
