@@ -11,6 +11,7 @@ from psycopg import sql
 
 from sose.core.resource_identity import ResourceAddress
 
+from .codec import dumps
 from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
@@ -273,7 +274,13 @@ class PostgresPersistence(MemoryPersistence):
         dirty_records,
     ) -> int:
         changes = changes_for_dirty_records(before, after, dirty_records)
+        event_appends = tuple(change for change in changes if change.collection == "events")
         for change in changes:
+            if change.collection == "events":
+                # Appends live in one shared log even when source/job fences
+                # belong to independent organizations. Their index in the
+                # UoW snapshot is NOT a globally unique record key.
+                continue
             if change.operation == "delete":
                 self._connection.execute(
                     sql.SQL(
@@ -305,7 +312,60 @@ class PostgresPersistence(MemoryPersistence):
                 raise RuntimeError(
                     f"unknown state record operation: {change.operation}"
                 )
+        if event_appends:
+            self._append_postgres_events(before, after, event_appends)
         return len(changes)
+
+    def _append_postgres_events(
+        self, before: _State, after: _State, changes,
+    ) -> None:
+        """Linearize only the shared event-log tail, never organizational work.
+
+        Separate organization transactions may read the same event count.
+        The PostgreSQL append critical section allocates monotonically
+        increasing positions at COMMIT; record identity is the event ID.
+        A failed/duplicate append aborts its enclosing source+checkpoint UoW.
+        """
+        self._connection.execute(
+            "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+            (self.namespace, "durable:event-append"),
+        )
+        row = self._connection.execute(
+            sql.SQL(
+                "SELECT COALESCE(MAX(position), -1) FROM {} WHERE collection = %s"
+            ).format(self._record_table),
+            ("events",),
+        ).fetchone()
+        assert row is not None
+        next_position = int(row[0]) + 1
+        for change in sorted(changes, key=lambda item: item.position):
+            if (
+                change.operation != "upsert"
+                or change.position is None
+                or change.position < len(before.events)
+                or change.position >= len(after.events)
+            ):
+                raise ValueError("PostgreSQL durable events are append-only")
+            event = after.events[change.position]
+            if not event.event_id:
+                raise ValueError("PostgreSQL durable event ID cannot be empty")
+            stored = self._connection.execute(
+                sql.SQL(
+                    """
+                    INSERT INTO {}(collection, record_key, position, payload)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT(collection, record_key) DO NOTHING
+                    RETURNING record_key
+                    """
+                ).format(self._record_table),
+                ("events", "event:" + event.event_id,
+                 next_position, dumps(event)),
+            ).fetchone()
+            if stored is None:
+                raise ValueError(
+                    f"duplicate PostgreSQL durable event ID: {event.event_id}"
+                )
+            next_position += 1
 
     def writer_epoch(self) -> int:
         row = self._connection.execute(
