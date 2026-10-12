@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import queue
 from contextlib import contextmanager
+from time import monotonic, sleep
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
 from uuid import uuid4
@@ -261,18 +262,32 @@ def test_two_postgres_processes_compete_for_same_fenced_claim():
         assert signals.get(timeout=30) == ("holding_sql_lock", "worker-A")
         start_b.set()
         assert signals.get(timeout=30) == ("attempting_sql_lock", "worker-B")
-        # Prove A still holds the actual transaction-scoped SQL lock
-        # through an unrelated SQL session, rather than inferring it from
-        # scheduling or pg_stat_activity's timing-dependent wait samples.
+        # Establish actual server-side contention: a distinct backend must
+        # be waiting on a NOT-GRANTED advisory lock, not merely queued by
+        # Python's scheduler after announcing an attempted call.
         with psycopg.connect(DSN, autocommit=True) as observer:
             lock_key = contended + ":causal-boundary"
-            try_lock = observer.execute(
+            assert observer.execute(
                 "SELECT pg_try_advisory_xact_lock(hashtext(%s))",
                 (lock_key,),
-            ).fetchone()
-            assert try_lock == (False,), "A is not holding the PostgreSQL boundary lock"
-        # B announced its attempt before acquiring the SQL transaction;
-        # it cannot finish its claim while A's transaction is still open.
+            ).fetchone() == (False,), "A is not holding the PostgreSQL boundary lock"
+            deadline = monotonic() + 8
+            waiting = False
+            while monotonic() < deadline:
+                row = observer.execute(
+                    """
+                    SELECT count(*) FROM pg_locks AS l
+                    JOIN pg_stat_activity AS a ON a.pid = l.pid
+                    WHERE a.datname = current_database()
+                      AND l.locktype = 'advisory'
+                      AND l.granted = false
+                    """
+                ).fetchone()
+                if row and row[0] >= 1:
+                    waiting = True
+                    break
+                sleep(0.05)
+            assert waiting, "worker B never reached a PostgreSQL advisory-lock wait"
         with pytest.raises(queue.Empty):
             responses.get(timeout=0.5)
     finally:
