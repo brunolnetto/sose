@@ -108,6 +108,11 @@ def _read_job(
         # transaction that advances its step and the recurring run_count.
         # A subsequent completion query consumes no trigger or source step.
         or job.run_count != source.attributes["step"]
+        # The reducer commits terminal source truth with the last real step.
+        # A terminal physical organization can never hold a new active claim.
+        # Enforce this in the common checkpoint reader (before any source
+        # replay OR downstream boundary reconciliation).
+        or (source.attributes["done"] and job.active_trigger_id is not None)
         # Bind the committed trigger identity to the authoritative run count.
         # Equality with a released lease alone is insufficient: forged job
         # and lease IDs could otherwise authorize an invalid replay.
