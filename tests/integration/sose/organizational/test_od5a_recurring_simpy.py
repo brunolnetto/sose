@@ -197,7 +197,7 @@ def _die_after_source_commit(path, now):
         run_od5a_recurring_tick(
             store, job_id="org:A", owner_id="worker:dead",
             now=now, lease_duration=LEASE, trigger_id=_trigger(store),
-            _wall_clock=lambda: now, lease_duration=LEASE, trigger_id=_trigger(store),
+            _wall_clock=lambda: now,
         )
         os._exit(94)
 
@@ -228,7 +228,7 @@ def test_real_os_process_death_recovery_preserves_exact_source_events(tmp_path, 
                 store, job_id="org:A", owner_id="recovered",
                 now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
                 trigger_id=prior_trigger, recover=True,
-                _wall_clock=lambda: CLOCK + timedelta(seconds=6), lease_duration=LEASE,
+                _wall_clock=lambda: CLOCK + timedelta(seconds=6),
             )
             assert replay.action == "replayed"
             assert od5a_durable_events(store, job_id="org:A") == previously_committed
@@ -240,13 +240,13 @@ def test_real_os_process_death_recovery_preserves_exact_source_events(tmp_path, 
                     store, job_id="org:A", owner_id="recovered",
                     now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
                     trigger_id=_trigger(store), recover=True,
-                    _wall_clock=lambda: CLOCK + timedelta(seconds=1), lease_duration=LEASE,
+                    _wall_clock=lambda: CLOCK + timedelta(seconds=1),
                 )
             result = run_od5a_recurring_tick(
                 store, job_id="org:A", owner_id="recovered",
                 now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
                 trigger_id=_trigger(store), recover=True,
-                _wall_clock=lambda: CLOCK + timedelta(seconds=6), lease_duration=LEASE,
+                _wall_clock=lambda: CLOCK + timedelta(seconds=6),
             )
             assert result.action == "advanced"
     _drain(path, owner="recovered")
@@ -272,7 +272,7 @@ def test_physical_event_and_job_checkpoint_rollback_together_before_commit(tmp_p
                 run_od5a_recurring_tick(
                     store, job_id="org:A", owner_id="first",
                     now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
-                    _wall_clock=lambda: CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+                    _wall_clock=lambda: CLOCK,
                 )
         assert _snapshot(path, "org:A") == before
         stalled = store.job_state("org:A")
@@ -283,7 +283,7 @@ def test_physical_event_and_job_checkpoint_rollback_together_before_commit(tmp_p
             store, job_id="org:A", owner_id="recovered",
             now=CLOCK + timedelta(seconds=6), lease_duration=LEASE,
             trigger_id=_trigger(store), recover=True,
-            _wall_clock=lambda: CLOCK + timedelta(seconds=6), lease_duration=LEASE,
+            _wall_clock=lambda: CLOCK + timedelta(seconds=6),
         )
         assert after.action == "advanced"
 
@@ -295,14 +295,14 @@ def test_same_completed_trigger_cannot_advance_again_after_worker_response_lost(
         first = run_od5a_recurring_tick(
             store, job_id="org:A", owner_id="worker",
             now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
-            _wall_clock=lambda: CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+            _wall_clock=lambda: CLOCK,
         )
         before = _snapshot(path, "org:A")
         replay = run_od5a_recurring_tick(
             store, job_id="org:A", owner_id="worker",
             now=CLOCK + timedelta(seconds=1), lease_duration=LEASE,
             trigger_id=first.trigger_id,
-            _wall_clock=lambda: CLOCK + timedelta(seconds=1), lease_duration=LEASE,
+            _wall_clock=lambda: CLOCK + timedelta(seconds=1),
         )
         assert replay.action == "replayed"
         assert _snapshot(path, "org:A") == before
