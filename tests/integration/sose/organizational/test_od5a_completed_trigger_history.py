@@ -21,7 +21,7 @@ from sose.organizational.od5a_recurring import (
     initialize_od5a_recurring_job,
     claim_od5a_recurring_tick,
     execute_od5a_claimed_tick,
-    run_od5a_recurring_tick,
+    run_od5a_recurring_tick, _read_job,
 )
 from sose.persistence.postgres import PostgresPersistence
 from sose.persistence.sqlite import SQLitePersistence
@@ -125,46 +125,20 @@ def test_idle_completed_history_cannot_be_laundered_by_replay(store, forged):
             lease.attributes["trigger_id"] = value
             uow.save_entity(lease)
     before = _facts(store)
-    # Registration revalidation is an authoritative checkpoint read: even a
-    # cleared history must be rejected before a caller attempts to replay.
-    with pytest.raises(ValueError, match="checkpoint contradicts"):
-        initialize_od5a_recurring_job(
-            store, job_id=JOB,
-            arm=_arm_for_retry(), items=_items_for_retry(),
-        )
+    # The shared reader must reject corruption even when a later lease check
+    # would happen to reject this specific call by another route.
+    with store.transaction() as uow:
+        with pytest.raises(ValueError, match="checkpoint contradicts"):
+            _read_job(uow, JOB)
+    if forged == "replaced":
+        # Forging both sides of the released-lease comparison previously
+        # authorized a false idempotent replay without validating run_count.
+        with pytest.raises(ValueError, match="checkpoint contradicts"):
+            run_od5a_recurring_tick(
+                store, job_id=JOB, owner_id="worker:B", now=NOW,
+                lease_duration=LEASE, trigger_id="fabricated",
+            )
     assert _facts(store) == before
-
-
-def _items_for_retry():
-    return (OD5aWorkItem(
-        "one", 0.0, (("a", 0.2), ("b", 0.2), ("c", 0.1)),
-    ),)
-
-
-def _arm_for_retry():
-    spec = ModelSpec(
-        stations={"a": {}, "b": {}, "c": {}},
-        routing={"dependency_edges": [["a", "b"], ["b", "c"]]},
-        demand={"arrival_process": "exogenous"},
-        parameters={
-            "arrival_rate": 0.5, "execution_slots": 1,
-            "coordination_latency": 0.1, "service_cv": 0.5,
-        },
-        parameter_evidence={
-            key: EvidenceClass.ASSUMED for key in
-            ("arrival_rate", "execution_slots", "coordination_latency", "service_cv")
-        },
-    )
-    return compile_od5a_arms(
-        baseline=spec, expanded_capacity=2,
-        removed_dependency_edges=(("a", "b"),),
-        reduced_coordination_latency=0.05,
-        declared_costs={
-            key: OD5aChargedCost(8, 1, 1, 1)
-            for key in ("capacity_only", "topology_only",
-                        "coordination_only", "structural_combined")
-        },
-    )[0]
 
 
 @pytest.mark.parametrize("forged", ["replaced", "cleared"])
