@@ -268,3 +268,114 @@ def test_reconciler_never_advances_a_not_yet_committed_source_job(tmp_path):
         ).action == "idle"
         assert store.entity("od5a_durable_pilot", "org:a") == before
         assert store.events() == ()
+
+
+
+def test_no_false_complete_when_final_event_commits_before_authoritative_read(tmp_path):
+    """Falsify stale candidate enumeration racing the final physical commit."""
+    from sose.composition.model import DeliveryStatus
+
+    reference = tmp_path / "source-reference.db"
+    path = tmp_path / "source-race.db"
+    expected_source = _seed(reference, {"org:alpha": "baseline"})
+    physical_total = sum(
+        e.name in {"od5a.execution.v1", "od5a.coordination.v1"}
+        for e in expected_source
+    )
+    with SQLitePersistence(path) as store:
+        initialize_od5a_durable(
+            store, job_id="org:alpha", arm=_arms()["baseline"],
+            items=(OD5aWorkItem(
+                item_id="item:org:alpha", arrival_at=0.0,
+                service_by_station=(("a", 0.2), ("b", 0.3), ("c", 0.1)),
+            ),),
+        )
+        for _ in range(100):
+            current = od5a_durable_events(store, job_id="org:alpha")
+            count = sum(e.name in {"od5a.execution.v1", "od5a.coordination.v1"}
+                        for e in current)
+            if count == physical_total - 1:
+                break
+            assert advance_od5a_durable(store, job_id="org:alpha")
+        else:
+            pytest.fail("could not position source before last physical event")
+        assert not store.entity("od5a_durable_pilot", "org:alpha").attributes["done"]
+    assert _drain(path)[-1] == "idle"
+
+    with SQLitePersistence(path) as reader:
+        transaction = reader.transaction
+        invoked = False
+
+        def inject_one_real_source_commit():
+            nonlocal invoked
+            if not invoked:
+                invoked = True
+                with SQLitePersistence(path) as writer:
+                    assert advance_od5a_durable(writer, job_id="org:alpha")
+                    assert writer.entity(
+                        "od5a_durable_pilot", "org:alpha",
+                    ).attributes["done"]
+            return transaction()
+
+        reader.transaction = inject_one_real_source_commit
+        result = reconcile_od5a_boundary_step(
+            reader, job_id="org:alpha", owner_id="worker-A",
+            now=NOW, lease_duration=LEASE,
+        )
+        assert invoked
+        assert result.action == "published", (
+            "a current done state must never certify a stale physical-event index"
+        )
+        assert result.event_id not in {
+            e.event_id for e in expected_source
+            if e.name == "od5a.arrival.v1"
+        }
+        with transaction() as uow:
+            delivery = next(
+                d for d in uow.boundary_deliveries()
+                if d.message_id == result.boundary_message_id
+            )
+            assert delivery.status is DeliveryStatus.PENDING
+    assert _drain(path)[-1] == "complete"
+    with SQLitePersistence(path) as store:
+        physical = [
+            event for event in store.events()
+            if event.name in {"od5a.execution.v1", "od5a.coordination.v1"}
+        ]
+        assert len(store.business_effects()) == len(physical)
+
+
+def test_future_dated_physical_event_waits_without_persisting_invalid_claim(tmp_path):
+    from sose.composition.model import DeliveryStatus
+
+    path = tmp_path / "future-event.db"
+    _seed(path, {"org:alpha": "baseline"})
+    before_event = datetime(1999, 12, 31, tzinfo=timezone.utc)
+    assert _step(path, now=before_event).action == "published"
+    blocked = _step(path, now=before_event)
+    assert blocked.action == "blocked" and blocked.retry_at is not None
+    with SQLitePersistence(path) as store:
+        with store.transaction() as uow:
+            delivery = next(iter(uow.boundary_deliveries()))
+            assert delivery.status is DeliveryStatus.PENDING
+            assert delivery.attempts == 0 and delivery.claim_epoch == 0
+    assert _drain(path)[-1] == "complete"
+
+
+def test_regressed_worker_clock_cannot_ack_before_its_actual_claim(tmp_path):
+    from sose.composition.model import DeliveryStatus
+
+    path = tmp_path / "regressed-time.db"
+    _seed(path, {"org:alpha": "baseline"})
+    assert _step(path).action == "published"
+    assert _step(path).action == "claimed"
+    rejected = _step(path, now=NOW - timedelta(seconds=1))
+    assert rejected.action == "blocked"
+    assert rejected.retry_at == NOW
+    with SQLitePersistence(path) as store:
+        with store.transaction() as uow:
+            delivery = next(iter(uow.boundary_deliveries()))
+            assert delivery.status is DeliveryStatus.CLAIMED
+            assert uow.get_boundary_consumption(delivery.delivery_id) is None
+    assert _step(path).action == "acknowledged"
+    assert _drain(path)[-1] == "complete"
