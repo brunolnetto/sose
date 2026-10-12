@@ -249,3 +249,145 @@ def test_analysis_rejects_duplicate_regime_reference_before_mapping() -> None:
         assert "exactly one regime reference" in str(exc)
     else:
         raise AssertionError("expected duplicate regime-reference rejection")
+
+
+# Scientific-inference falsification matrix: a forged summary may have a
+# perfectly valid digest yet still violate its registered eligibility/CRN
+# invariants. These cases explicitly exercise missing analytical branches.
+
+import pytest
+
+from sose.organizational.domain_experiment_analysis import (
+    ComparisonEligibility, ExperimentEffect,
+    _build_effect, _runs_by_world, _worlds_by_key,
+    _student_t_cdf, _student_t_critical, _regularized_incomplete_beta,
+)
+
+
+@pytest.fixture(scope="module")
+def analysis_evidence():
+    return _small_result()
+
+
+@pytest.mark.parametrize(("payload", "error"), [
+    ({"eligible": True, "basis": ("structure",), "reason": "inadmissible"}, "eligible comparison"),
+    ({"eligible": False, "basis": ("structure",), "reason": None}, "ineligible comparison"),
+    ({"eligible": True, "basis": ("same", "same"), "reason": None}, "unique"),
+])
+def test_eligibility_is_non_circular_and_explained(payload, error):
+    with pytest.raises(ValueError, match=error):
+        ComparisonEligibility.model_validate(payload)
+    assert ComparisonEligibility(eligible=True, basis=("physical",)).canonical_payload() == {
+        "eligible": True, "basis": ["physical"], "reason": None,
+    }
+
+
+@pytest.mark.parametrize(("corruption", "reason"), [
+    ({"paired": False}, "paired CRN"),
+    ({"eligible": True, "ineligibility_reason": "invalid"}, "eligible effect"),
+    ({"eligible": False, "ineligibility_reason": None}, "ineligible effect"),
+    ({"ci_low": 1e99}, "confidence interval"),
+    ({"ci_high": -1e99}, "confidence interval"),
+    ({"direction": 0, "favorable": True}, "null-region"),
+])
+def test_report_effect_refuses_unpaired_or_contradictory_inference(
+    analysis_evidence, corruption, reason,
+):
+    reference, result = analysis_evidence
+    effect = analyze_domain_experiment(reference=reference, result=result).effects[0]
+    forged = {**effect.model_dump(), **corruption}
+    with pytest.raises(ValueError, match=reason):
+        ExperimentEffect.model_validate(forged)
+
+
+@pytest.mark.parametrize(("field", "value", "reason"), [
+    ("plan_hash", "forged-plan", "plan binding"),
+    ("protocol_hash", "forged-protocol", "protocol binding"),
+    ("world_count", -1, "world-count binding"),
+    ("run_count", -1, "run-count binding"),
+    ("domain_reference_hash", "forged-domain", "domain reference binding"),
+])
+def test_manifest_binding_must_match_authoritative_experiment(
+    analysis_evidence, field, value, reason,
+):
+    reference, result = analysis_evidence
+    forged = result.model_copy(update={
+        "manifest": result.manifest.model_copy(update={field: value}),
+    })
+    with pytest.raises(ValueError, match=reason):
+        analyze_domain_experiment(reference=reference, result=forged)
+
+
+def test_duplicate_world_key_is_not_treated_as_an_independent_observation(analysis_evidence):
+    _, result = analysis_evidence
+    with pytest.raises(ValueError, match="duplicate experiment world identity"):
+        _worlds_by_key((*result.worlds, result.worlds[0]))
+
+
+def test_replications_reject_unknown_worlds_and_duplicate_sample_identity(analysis_evidence):
+    _, result = analysis_evidence
+    bogus = result.runs[0].model_copy(update={"world_hash": "unknown-world"})
+    with pytest.raises(ValueError, match="unknown world"):
+        _runs_by_world(worlds=result.worlds, runs=(*result.runs, bogus), replications=2)
+    with pytest.raises(ValueError, match="duplicate replication"):
+        _runs_by_world(
+            worlds=result.worlds,
+            runs=(*result.runs, result.runs[0]),
+            replications=2,
+        )
+
+
+@pytest.mark.parametrize(("bad_control", "bad_treatment", "reason"), [
+    ("alien-crn", None, "shared CRN"),
+    (None, "wrong-replication", "replication identities"),
+    (None, "missing-preregistered-metric", "preregistered metric"),
+])
+def test_effect_builder_rejects_causal_or_measurement_mismatch(
+    analysis_evidence, bad_control, bad_treatment, reason,
+):
+    reference, result = analysis_evidence
+    world = result.worlds[0]
+    control = world
+    treatment = world.model_copy(update={"crn_group": "alien-crn"}) if bad_control else world
+    all_runs = {
+        run.replication: run for run in result.runs if run.world_hash == world.world_hash
+    }
+    treat_runs = dict(all_runs)
+    if bad_treatment == "wrong-replication":
+        treat_runs = {100 + k: v for k, v in all_runs.items()}
+    with pytest.raises(ValueError, match=reason):
+        _build_effect(
+            kind=ComparisonKind.INTERVENTION,
+            metric_name="nonexistent-metric" if bad_treatment == "missing-preregistered-metric" else "lead_time",
+            direction=None,
+            equivalence_margin=1.,
+            confidence_level=0.95,
+            control=control, treatment=treatment,
+            control_runs=all_runs, treatment_runs=treat_runs,
+            control_regime=result.references[0],
+            treatment_regime=result.references[0], reference=reference,
+        )
+
+
+@pytest.mark.parametrize(("level", "df", "reason"), [
+    (0.0, 2, "confidence_level"), (1.0, 2, "confidence_level"),
+    (0.95, 0, "degrees_freedom"),
+])
+def test_student_t_rejects_invalid_confidence_or_sample_size(level, df, reason):
+    with pytest.raises(ValueError, match=reason):
+        _student_t_critical(confidence_level=level, degrees_freedom=df)
+
+
+def test_student_t_cdf_is_symmetric_including_zero():
+    assert _student_t_cdf(0.0, 4) == 0.5
+    positive = _student_t_cdf(2.0, 4)
+    assert 0.5 < positive < 1.0
+    assert _student_t_cdf(-2.0, 4) == pytest.approx(1.0 - positive)
+
+
+def test_beta_boundary_conditions_preserve_probability_extremes():
+    assert _regularized_incomplete_beta(-1.0, 2.0, 3.0) == 0.0
+    assert _regularized_incomplete_beta(0.0, 2.0, 3.0) == 0.0
+    assert _regularized_incomplete_beta(1.0, 2.0, 3.0) == 1.0
+    assert _regularized_incomplete_beta(2.0, 2.0, 3.0) == 1.0
+    assert 0.0 < _regularized_incomplete_beta(0.5, 2.0, 3.0) < 1.0
