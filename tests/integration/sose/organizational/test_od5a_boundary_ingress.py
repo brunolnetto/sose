@@ -24,8 +24,8 @@ from sose.persistence.sqlite import SQLitePersistence
 
 def _arms():
     model = ModelSpec(
-        stations={"a": {}, "b": {}},
-        routing={"dependency_edges": [["a", "b"]]},
+        stations={"a": {}, "b": {}, "c": {}},
+        routing={"dependency_edges": [["a", "b"], ["b", "c"]]},
         demand={"arrival_process": "exogenous"},
         parameters={
             "arrival_rate": 0.8, "execution_slots": 1,
@@ -58,7 +58,7 @@ def _seed(path, job_id="org:a", arm="baseline"):
             store, job_id=job_id, arm=_arms()[arm],
             items=(OD5aWorkItem(
                 item_id=f"item:{job_id}", arrival_at=0.0,
-                service_by_station=(("a", 0.2), ("b", 0.3)),
+                service_by_station=(("a", 0.2), ("b", 0.3), ("c", 0.1)),
             ),),
         )
         advance_od5a_durable(store, job_id=job_id)  # committed arrival
