@@ -422,7 +422,6 @@ def test_released_or_wrong_trigger_lease_cannot_authorize_physical_step(tmp_path
         assert od5a_durable_events(store, job_id="org:A") == ()
 
 
-@pytest.mark.parametrize("forged_trigger", [None, "alien-trigger"])
 @pytest.mark.parametrize("entrypoint", ["claim", "runner"])
 def test_new_job_rejects_forged_released_lease_without_completed_history(
     tmp_path, entrypoint,
@@ -469,6 +468,7 @@ def test_new_job_rejects_forged_released_lease_without_completed_history(
         assert od5a_durable_events(store, job_id="org:A") == ()
 
 
+@pytest.mark.parametrize("forged_trigger", [None, "alien-trigger"])
 def test_released_lease_trigger_must_match_completed_job_before_reclaim(tmp_path, forged_trigger):
     path = tmp_path / "released-trigger-corruption.db"
     _init(path)
