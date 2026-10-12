@@ -672,3 +672,81 @@ def test_postgres_repeated_identical_domain_event_is_idempotent_but_conflicts_fa
             with store.transaction() as uow:
                 uow.append_event(replace(event, payload={"stage": "tampered"}))
         assert store.events() == (event,)
+
+
+
+def test_postgres_legacy_duplicate_event_identity_conflicts_fail_closed():
+    """Every old numeric-key row must agree before replay is considered safe."""
+    from psycopg import sql
+    from sose.persistence.codec import dumps
+
+    namespace = _namespace()
+    event = DomainEvent(
+        event_id="shared-legacy-event", name="audit.test",
+        entity_type="shipment", entity_id="shipment:A", occurred_at=NOW,
+        payload={"stage": "received"},
+    )
+    conflicting = replace(event, payload={"stage": "dispatched"})
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        with store._connection.transaction():
+            for index, value in enumerate((event, conflicting)):
+                store._connection.execute(
+                    sql.SQL(
+                        "INSERT INTO {}(collection, record_key, position, payload) "
+                        "VALUES (%s, %s, %s, %s)"
+                    ).format(store._record_table),
+                    ("events", str(index), index, dumps(value)),
+                )
+            store._increment_revision()
+
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        assert len(store.events()) == 2
+        with pytest.raises(ValueError, match="conflicting PostgreSQL durable event ID"):
+            with store.transaction() as uow:
+                uow.append_event(event)
+        assert store.events() == (event, conflicting)
+
+
+def test_postgres_concurrent_equal_events_with_distinct_codec_bytes_are_idempotent(
+    monkeypatch,
+):
+    """An identity race compares decoded event truth, not JSON byte order."""
+    from datetime import timezone, timedelta
+    namespace = _namespace()
+    event = DomainEvent(
+        event_id="concurrent-semantic-event", name="audit.test",
+        entity_type="shipment", entity_id="shipment:A", occurred_at=NOW,
+        payload={"first": 1, "second": 2},
+    )
+    equivalent = replace(
+        event,
+        occurred_at=NOW.astimezone(timezone(timedelta(hours=-3))),
+        payload={"second": 2, "first": 1},
+    )
+    assert equivalent == event
+    from sose.persistence.codec import dumps
+    assert dumps(equivalent) != dumps(event)
+
+    barrier = Barrier(2)
+    original = MemoryUnitOfWork.append_event
+
+    def concurrent_append(uow, append):
+        original(uow, append)
+        if append.event_id == event.event_id:
+            barrier.wait(timeout=25)
+
+    monkeypatch.setattr(MemoryUnitOfWork, "append_event", concurrent_append)
+
+    def writer(value):
+        with PostgresPersistence(DSN, namespace=namespace) as store:
+            with store.transaction() as uow:
+                uow.append_event(value)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(writer, value) for value in (event, equivalent)]
+        for future in futures:
+            future.result(timeout=40)
+
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        assert len(store.events()) == 1
+        assert store.events()[0] == event
