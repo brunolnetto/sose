@@ -105,6 +105,13 @@ def _read_job(
         or job.next_tick != source.attributes["step"]
         or type(job.run_count) is not int
         or job.run_count != source.attributes["step"]
+        # Bind the committed trigger identity to the authoritative run count.
+        # Equality with a released lease alone is insufficient: forged job
+        # and lease IDs could otherwise authorize an invalid replay.
+        or job.last_completed_trigger_id != (
+            deterministic_id("od5a-recurring-tick", job_id, job.run_count)
+            if job.run_count else None
+        )
         or job.logical_time != _time(source.attributes["clock"])
     ):
         raise ValueError("OD-5a recurring checkpoint contradicts authoritative organization")
