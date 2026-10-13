@@ -34,10 +34,12 @@ Each invocation creates a unique timestamp/UUID subdirectory under `--out`;
 previous logs and the previous `summary.json` are never overwritten.
 
 Outputs (inside that invocation subdirectory):
-- `run-<id>.log` contains pytest traceback and—on worker exception—a read-only
-  reopened committed-state diagnostic.
+- `run-<id>.log` contains pytest traceback and—on worker exception—a single-transaction PostgreSQL **REPEATABLE READ, READ ONLY**
+  snapshot through direct SQL. The collector NEVER constructs
+  `PostgresPersistence`, creating/migrating no namespace rows.
 - `summary.json` lists all runs, pass/fail/timeout status and log path.
-- A failure or timeout returns nonzero. **A pass is not evidence of absence of
+- Worker exceptions **and downstream verification failures** carry the same
+  committed snapshot annotation. A failure or timeout returns nonzero. **A pass is not evidence of absence of
   races**, and no automatic retry normalizes a failed run into a green result.
 
 No credentials are written to the summary. The diagnostic snapshot lists only
