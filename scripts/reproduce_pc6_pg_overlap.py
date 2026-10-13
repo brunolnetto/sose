@@ -53,21 +53,34 @@ def capture_first_worker_failure_once(
             "flow": flow,
             "error": repr(error),
             "traceback": "".join(traceback.format_exception(error))[-4000:],
-            "snapshot": snapshot(),
+            "snapshot": {"status": "pending-read-only-snapshot"},
         }
         captured.append(record)
         if evidence_path is not None:
-            # Out-of-process forensics: pytest may remain blocked waiting for
-            # the surviving peer and the subprocess may hit its hard timeout.
-            # Preserve this first committed snapshot independently of stderr.
-            # Refuse to overwrite an earlier failure from another worker.
-            import os
+            # Write and fsync the original worker exception BEFORE the PG
+            # snapshot, which may block on a lock or connection failure.
             fd = os.open(evidence_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
             with os.fdopen(fd, "w", encoding="utf-8") as handle:
                 json.dump(record, handle, sort_keys=True, default=str)
                 handle.write("\n")
                 handle.flush()
                 os.fsync(handle.fileno())
+        try:
+            record["snapshot"] = snapshot()
+        except Exception as snapshot_error:
+            record["snapshot"] = {"snapshot_error": repr(snapshot_error)}
+        if evidence_path is not None:
+            # Atomic replacement preserves the first fsynced exception even
+            # if the process dies while serializing the completed snapshot.
+            temporary = evidence_path.with_name(
+                evidence_path.name + "." + uuid4().hex + ".tmp"
+            )
+            with temporary.open("x", encoding="utf-8") as handle:
+                json.dump(record, handle, sort_keys=True, default=str)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, evidence_path)
 
 
 def create_invocation_directory(parent: Path) -> Path:
