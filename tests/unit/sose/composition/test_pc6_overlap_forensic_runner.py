@@ -140,3 +140,24 @@ def test_atomic_replacement_keeps_first_failure_sidecar_private(tmp_path):
     finally:
         os.umask(old_umask)
     assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
+
+
+def test_reproducer_logs_and_summary_are_private_under_shared_umask(tmp_path, monkeypatch):
+    import os
+    import stat
+    from types import SimpleNamespace
+    from scripts import reproduce_pc6_pg_overlap as forensic
+
+    monkeypatch.setattr(
+        forensic.subprocess, "run",
+        lambda *args, **kwargs: SimpleNamespace(returncode=1, stdout="failure", stderr="trace"),
+    )
+    old_umask = os.umask(0o022)
+    try:
+        run_directory = forensic.create_invocation_directory(tmp_path)
+        result = forensic.run_one(1, timeout=3, out=run_directory)
+        log_mode = stat.S_IMODE((run_directory / "run-001.log").stat().st_mode)
+    finally:
+        os.umask(old_umask)
+    assert result["status"] == "FAIL"
+    assert log_mode == 0o600
