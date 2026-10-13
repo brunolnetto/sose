@@ -159,8 +159,48 @@ class OrganizationDefinition:
 
     def fingerprint(self) -> str:
         """Canonical configuration fingerprint, not an execution/commit digest."""
+        # These fields encode sets of named components/edges, not execution
+        # sequences. Canonicalize by identity rather than preserving caller
+        # tuple order; changing physical/job/contract topology still changes
+        # the digest while mere input reordering does not.
+        payload = {
+            "organization_id": self.organization_id,
+            "version": self.version,
+            "config_epoch": self.config_epoch,
+            "components": sorted(
+                (
+                    {
+                        **asdict(component),
+                        "statechart_types": sorted(component.statechart_types),
+                    }
+                    for component in self.components
+                ),
+                key=lambda value: value["component_id"],
+            ),
+            "boundaries": sorted(
+                (asdict(boundary) for boundary in self.boundaries),
+                key=lambda value: (
+                    value["producer_id"], value["consumer_id"],
+                    value["contract_name"], value["contract_version"],
+                ),
+            ),
+            "jobs": sorted(
+                (asdict(job) for job in self.jobs),
+                key=lambda value: value["job_id"],
+            ),
+            "physical_pools": sorted(
+                (
+                    {
+                        **asdict(pool),
+                        "consumer_ids": sorted(pool.consumer_ids),
+                    }
+                    for pool in self.physical_pools
+                ),
+                key=lambda value: value["pool_id"],
+            ),
+        }
         canonical = json.dumps(
-            asdict(self), sort_keys=True, separators=(",", ":"),
+            payload, sort_keys=True, separators=(",", ":"),
             ensure_ascii=False, allow_nan=False,
         )
         return sha256(canonical.encode("utf-8")).hexdigest()
