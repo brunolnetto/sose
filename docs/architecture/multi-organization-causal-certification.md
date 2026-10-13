@@ -27,7 +27,8 @@ SimPy arbitration, or declare five-arm scientific admissibility.
 - persisted definitions and occupied resource reservations;
 - **all** typed boundary messages enumerated independently of deliveries (including
   orphan publications), all scoped deliveries and **nullable** ACK consumptions;
-- **nullable** staged Commands, event-keyed materialized observations, and
+- **nullable** expected staged Commands **plus every organization-correlated pending Command**
+  (including wrong-key extra executable intents), event-keyed materialized observations, and
   **nullable** immutable BusinessEffectApplied certificates.
 
 Missing evidence remains explicit `None`; totals and terminal throughput are
