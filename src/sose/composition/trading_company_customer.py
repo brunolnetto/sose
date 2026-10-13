@@ -676,6 +676,18 @@ def _execute_intent(
                     raise RuntimeError("logistics origin-hub handling failed")
 
             if current_state() in {"at_origin_hub", "in_transfer"}:
+                # A pre-existing grant cannot prove progress across a stale
+                # reconcile False. Snapshot exact resource request identities
+                # *before* the reconciliation window, distinguishing a new
+                # concurrent grant from an already-held reservation.
+                waiting_resources = (
+                    ("transfer_vehicle", f"transfer-vehicle:{shipment_id}"),
+                    ("destination_dock", f"destination-dock:{shipment_id}"),
+                )
+                preexisting_grants = {
+                    request_id: engine.resources.reservation_for(request_id)
+                    for _, request_id in waiting_resources
+                }
                 if not logistics.reconcile_transfer(
                     persistence, engine, backend, entities=fixtures.logistics,
                 ):
@@ -684,16 +696,16 @@ def _execute_intent(
                     # queue dequeue, or destination store backpressure. Keep
                     # the existing Command and immutable causal identity for
                     # the recurring worker instead of recording terminal error.
-                    waiting_resources = (
-                        ("transfer_vehicle", f"transfer-vehicle:{shipment_id}"),
-                        ("destination_dock", f"destination-dock:{shipment_id}"),
-                    )
                     for resource_name, request_id in waiting_resources:
-                        # A concurrent worker may grant the durable demand
-                        # after reconcile_transfer() returned False. Both a
-                        # pending demand and its exact committed reservation
-                        # require replay of this same Command, not failure.
-                        if engine.resources.has_request(request_id):
+                        # A pending resource demand remains genuine capacity
+                        # contention. A completed grant only proves a race if
+                        # it was absent before reconciliation started.
+                        # Otherwise an arbitrary False could defer forever.
+                        current_grant = engine.resources.reservation_for(request_id)
+                        if engine.resources.has_request(request_id) and (
+                            current_grant is None
+                            or preexisting_grants[request_id] is None
+                        ):
                             raise DurableResourceWait(resource_name, request_id)
                     waiting_stores = (
                         (
