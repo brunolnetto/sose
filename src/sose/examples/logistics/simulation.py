@@ -414,7 +414,20 @@ def reconcile_transfer(
         )
         backend.run_until(backend.now)
 
-    if not any(item.item_id == item_id for item in persistence.store_items()):
+    # A consumer can remove the destination item immediately after the
+    # backend confirms the put. A durable GET receipt for this exact item is
+    # authoritative proof of handoff; absence from the live queue alone is
+    # not a failed or pending transfer.
+    destination_available = any(
+        item.item_id == item_id and item.store_name == "destination_hub_queue"
+        for item in persistence.store_items()
+    )
+    destination_consumed = any(
+        result.item.item_id == item_id
+        and result.store_name == "destination_hub_queue"
+        for result in persistence.store_get_results()
+    )
+    if not destination_available and not destination_consumed:
         return False
 
     shipment = _shipment(persistence, entities)
