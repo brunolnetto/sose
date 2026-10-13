@@ -4,6 +4,8 @@
 
 Normative roadmap for promoting SOSE business examples from semantic reference slices into complete, durable, observable, and composable process simulations.
 
+**Extension (2026-10-13):** [Organizational StateChart Composition roadmap](organizational-composition-roadmap.md) defines how already-owned PC6 processes and StateCharts may be assembled into versioned organizations with independent jobs, typed causal boundaries, finite resources, and read-only organizational projections. It does **not** replace the PC0–PC6 maturity model or impose O2C/MRO heterogeneity as a new prerequisite for OD-5a.
+
 ## Why this roadmap exists
 
 SOSE already has broad domain coverage. The next architectural problem is not adding more sectors; it is making process depth consistent across the existing business-domain catalog.
