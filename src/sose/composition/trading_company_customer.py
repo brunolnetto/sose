@@ -710,8 +710,25 @@ def _execute_intent(
                             for intent in intents
                         ):
                             raise DurableResourceWait(store_name, request_id)
-                    # No durable request or queue backpressure proves a
-                    # temporary wait: do not hide a true transition defect.
+                    # A competing worker can atomically remove the pending
+                    # origin dequeue and commit its receipt *after* the local
+                    # reconcile returned False. A stale pending-request read
+                    # then sees nothing. The exact matching durable receipt
+                    # proves progress and requires replaying the original
+                    # command, not falsely declaring permanent failure.
+                    if current_state() == "at_origin_hub":
+                        origin_request = f"origin-dequeue:{shipment_id}"
+                        selection = engine.stores.selection(origin_request)
+                        if (
+                            selection is not None
+                            and selection.store_name == "origin_hub_queue"
+                            and selection.item.item_id == f"origin-queue:{shipment_id}"
+                        ):
+                            raise DurableResourceWait(
+                                "origin_hub_queue", origin_request,
+                            )
+                    # An unsubstantiated false result remains a genuine
+                    # transition defect; never synthesize a queue receipt.
                     raise RuntimeError("logistics transfer failed")
 
             if current_state() in {"at_destination_hub", "delayed_destination_hub"}:
