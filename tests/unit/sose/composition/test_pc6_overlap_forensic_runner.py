@@ -161,3 +161,32 @@ def test_reproducer_logs_and_summary_are_private_under_shared_umask(tmp_path, mo
         os.umask(old_umask)
     assert result["status"] == "FAIL"
     assert log_mode == 0o600
+
+
+def test_forensic_summary_is_private_even_with_umask_022(tmp_path, monkeypatch):
+    import json
+    import os
+    import stat
+    from scripts import reproduce_pc6_pg_overlap as forensic
+
+    monkeypatch.setenv("SOSE_TEST_POSTGRES_DSN", "postgresql://dummy")
+    monkeypatch.setattr(
+        forensic, "run_one",
+        lambda index, *, timeout, out: {
+            "run": index, "status": "PASS", "exit_code": 0,
+            "log": str(out / "private.log"), "first_failure_evidence": None,
+        },
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["reproducer", "--runs", "1", "--parallel", "1", "--out", str(tmp_path)],
+    )
+    old_umask = os.umask(0o022)
+    try:
+        assert forensic.main() == 0
+        summaries = list(tmp_path.glob("*/summary.json"))
+        assert len(summaries) == 1
+        assert stat.S_IMODE(summaries[0].stat().st_mode) == 0o600
+        assert json.loads(summaries[0].read_text())["runs"] == 1
+    finally:
+        os.umask(old_umask)
