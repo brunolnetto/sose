@@ -402,7 +402,10 @@ def reconcile_transfer(
 
     item_id = f"destination-queue:{shipment.id}"
     if not any(item.item_id == item_id for item in persistence.store_items()):
-        engine.stores.put(
+        # A previous retry may have left one durable StorePutIntent while
+        # the finite destination hub queue was full. Reuse that exact intent
+        # instead of creating a duplicate or failing the original Command.
+        engine.stores.ensure_put(
             backend,
             store_name="destination_hub_queue",
             item_id=item_id,
