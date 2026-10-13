@@ -41,7 +41,14 @@ def _read_first_failure_snapshot(dsn: str, namespace: str) -> dict[str, object]:
     table; a failed bootstrap remains failed instead of being reinitialized.
     """
     try:
-        with psycopg.connect(dsn, autocommit=True) as connection:
+        # Forensic reads must be bounded independently of the production
+        # workers. Never hold the original exception hostage to a table lock.
+        with psycopg.connect(
+            dsn,
+            autocommit=True,
+            connect_timeout=3,
+            options="-c lock_timeout=1500 -c statement_timeout=3000",
+        ) as connection:
             with connection.transaction():
                 connection.execute(
                     "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY"
