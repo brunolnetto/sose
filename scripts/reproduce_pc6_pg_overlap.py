@@ -56,31 +56,49 @@ def capture_first_worker_failure_once(
             "snapshot": {"status": "pending-read-only-snapshot"},
         }
         captured.append(record)
+        sidecar_written = False
         if evidence_path is not None:
-            # Write and fsync the original worker exception BEFORE the PG
-            # snapshot, which may block on a lock or connection failure.
-            fd = os.open(evidence_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(record, handle, sort_keys=True, default=str)
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
+            # The primary worker exception always wins over diagnostic I/O.
+            try:
+                fd = os.open(
+                    evidence_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(record, handle, sort_keys=True, default=str)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                sidecar_written = True
+            except OSError as io_error:
+                error.add_note(f"forensic initial sidecar write failed: {io_error!r}")
         try:
             record["snapshot"] = snapshot()
         except Exception as snapshot_error:
             record["snapshot"] = {"snapshot_error": repr(snapshot_error)}
-        if evidence_path is not None:
-            # Atomic replacement preserves the first fsynced exception even
-            # if the process dies while serializing the completed snapshot.
+        if evidence_path is not None and sidecar_written:
+            # A failed replacement leaves the FIRST durable exception intact.
+            # Never exchange its private inode for an umask-permissive temp.
             temporary = evidence_path.with_name(
                 evidence_path.name + "." + uuid4().hex + ".tmp"
             )
-            with temporary.open("x", encoding="utf-8") as handle:
-                json.dump(record, handle, sort_keys=True, default=str)
-                handle.write("\n")
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temporary, evidence_path)
+            try:
+                fd = os.open(
+                    temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
+                )
+                with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                    json.dump(record, handle, sort_keys=True, default=str)
+                    handle.write("\n")
+                    handle.flush()
+                    os.fsync(handle.fileno())
+                os.replace(temporary, evidence_path)
+            except OSError as io_error:
+                error.add_note(
+                    f"forensic snapshot sidecar replacement failed: {io_error!r}"
+                )
+                try:
+                    temporary.unlink(missing_ok=True)
+                except OSError:
+                    pass
 
 
 def create_invocation_directory(parent: Path) -> Path:
