@@ -55,7 +55,12 @@ def capture_causal_certificate(
             ),
             key=lambda item: item.delivery_id,
         ))
-        messages = tuple(uow.get_boundary_message(d.message_id) for d in deliveries)
+        # Enumerate every scoped publication independently of deliveries:
+        # an orphan message with no delivery is itself causal corruption.
+        messages = tuple(sorted(
+            (m for m in uow.boundary_messages() if m.correlation_id in orgs),
+            key=lambda m: m.message_id,
+        ))
         physical = (event for event in events if event.name in physical_event_names)
         commands = tuple(
             (m.message_id, uow.get_command(deterministic_id(
