@@ -281,6 +281,44 @@ class PostgresPersistence(MemoryPersistence):
                 # belong to independent organizations. Their index in the
                 # UoW snapshot is NOT a globally unique record key.
                 continue
+            if (
+                change.collection == "scheduled_work_owners"
+                and change.operation == "upsert"
+            ):
+                # Immutable routing identity: independent workers may read
+                # the same absent owner before either commits. An ordinary
+                # ON CONFLICT DO UPDATE would silently steal a callback.
+                # PostgreSQL's unique key serializes ONLY this work_id; no
+                # namespace-wide lock or artificial organization clock.
+                assert change.payload is not None
+                assert change.position is not None
+                inserted = self._connection.execute(
+                    sql.SQL(
+                        """
+                        INSERT INTO {}(collection, record_key, position, payload)
+                        VALUES (%s, %s, %s, %s)
+                        ON CONFLICT(collection, record_key) DO NOTHING
+                        RETURNING payload
+                        """
+                    ).format(self._record_table),
+                    (
+                        change.collection, change.key,
+                        change.position, change.payload,
+                    ),
+                ).fetchone()
+                if inserted is None:
+                    existing = self._connection.execute(
+                        sql.SQL(
+                            "SELECT payload FROM {} "
+                            "WHERE collection = %s AND record_key = %s FOR UPDATE"
+                        ).format(self._record_table),
+                        (change.collection, change.key),
+                    ).fetchone()
+                    if existing is None or str(existing[0]) != change.payload:
+                        raise ValueError(
+                            f"scheduled work already bound: {change.key}"
+                        )
+                continue
             if change.operation == "delete":
                 self._connection.execute(
                     sql.SQL(
