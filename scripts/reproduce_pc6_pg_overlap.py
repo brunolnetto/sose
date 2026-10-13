@@ -186,9 +186,12 @@ def main() -> int:
         "results": results,
         "note": "No failure observed is NOT a proof of concurrency correctness.",
     }
-    (run_directory / "summary.json").write_text(
-        json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8",
-    )
+    summary_path = run_directory / "summary.json"
+    fd = os.open(summary_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(json.dumps(summary, sort_keys=True, indent=2) + "\n")
+        handle.flush()
+        os.fsync(handle.fileno())
     print(json.dumps(summary, sort_keys=True, indent=2))
     return 0 if summary["failed"] == 0 and summary["timed_out"] == 0 else 1
 
