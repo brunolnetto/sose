@@ -10,7 +10,6 @@ from contextlib import contextmanager
 from datetime import timedelta
 from multiprocessing import get_context
 import os
-from queue import Empty
 from uuid import uuid4
 
 import pytest
