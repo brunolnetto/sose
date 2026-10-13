@@ -1,0 +1,67 @@
+name: PC6 PostgreSQL overlap forensics
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/pc6-postgres-overlap-forensics.yml"
+      - "scripts/reproduce_pc6_pg_overlap.py"
+      - "tests/e2e/sose/persistence/test_postgres_pc6_concurrent_real_statecharts.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  real-two-worker-stress:
+    name: Real PC6 PostgreSQL overlap (bounded)
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sose
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sose"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip check
+
+      - name: Reproduce real worker overlap without retries
+        run: |
+          python scripts/reproduce_pc6_pg_overlap.py \
+            --runs 12 --parallel 3 --timeout 120 \
+            --out pc6-overlap-forensics
+
+      - name: Upload all forensic runs even if contention fails
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pc6-overlap-forensics
+          path: pc6-overlap-forensics/
+          if-no-files-found: warn
+          retention-days: 14
