@@ -284,7 +284,45 @@ class PostgresPersistence(MemoryPersistence):
             if (
                 change.collection == "scheduled_work_owners"
                 and change.operation == "upsert"
+            ) or (
+                change.collection == "scheduled_work"
+                and change.operation == "delete"
             ):
+                # Serialize ONLY the physical work identity, not the namespace.
+                # Both binding and deletion acquire the same per-work lock
+                # after staging their UoWs. The SQL below revalidates durable
+                # existence against other committed workers.
+                self._connection.execute(
+                    "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                    (self.namespace, "work-owner:" + change.key),
+                )
+            if (
+                change.collection == "scheduled_work"
+                and change.operation == "delete"
+            ):
+                # A deleter's earlier snapshot may predate a concurrently
+                # committed owner. Remove the binding unconditionally.
+                self._connection.execute(
+                    sql.SQL(
+                        "DELETE FROM {} WHERE collection = %s AND record_key = %s"
+                    ).format(self._record_table),
+                    ("scheduled_work_owners", change.key),
+                )
+            if (
+                change.collection == "scheduled_work_owners"
+                and change.operation == "upsert"
+            ):
+                work_is_durable = self._connection.execute(
+                    sql.SQL(
+                        "SELECT 1 FROM {} "
+                        "WHERE collection = %s AND record_key = %s FOR UPDATE"
+                    ).format(self._record_table),
+                    ("scheduled_work", change.key),
+                ).fetchone()
+                if work_is_durable is None:
+                    raise ValueError(
+                        f"cannot bind deleted scheduled work: {change.key}"
+                    )
                 # Immutable routing identity: independent workers may read
                 # the same absent owner before either commits. An ordinary
                 # ON CONFLICT DO UPDATE would silently steal a callback.
