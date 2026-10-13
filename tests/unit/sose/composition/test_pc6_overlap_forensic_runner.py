@@ -98,3 +98,45 @@ def test_first_error_is_fsynced_before_potentially_blocking_pg_snapshot(tmp_path
     assert len(observed) == 1
     final = json.loads(sidecar.read_text(encoding="utf-8"))
     assert final["snapshot"] == {"durable_clock": "before"}
+
+
+
+def test_sidecar_io_failure_never_masks_primary_worker_error(tmp_path, monkeypatch):
+    import os
+    original_open = os.open
+    target = tmp_path / "unwritable.json"
+
+    def fail_sidecar_open(path, *args, **kwargs):
+        if str(path) == str(target):
+            raise OSError("simulated forensic volume failure")
+        return original_open(path, *args, **kwargs)
+
+    monkeypatch.setattr(os, "open", fail_sidecar_open)
+    root = RuntimeError("ORIGINAL WORKER FAILURE")
+    captured = []
+    capture_first_worker_failure_once(
+        captured, Lock(), flow="customer-b", error=root,
+        snapshot=lambda: {"valid_snapshot": True}, evidence_path=target,
+    )
+    assert captured[0]["error"] == repr(root)
+    assert "ORIGINAL WORKER FAILURE" in str(root)
+    assert any(
+        "forensic" in note.lower()
+        for note in getattr(root, "__notes__", ())
+    )
+
+
+def test_atomic_replacement_keeps_first_failure_sidecar_private(tmp_path):
+    import os
+    import stat
+
+    sidecar = tmp_path / "private-snapshot.json"
+    old_umask = os.umask(0o022)
+    try:
+        capture_first_worker_failure_once(
+            [], Lock(), flow="customer-a", error=RuntimeError("private"),
+            snapshot=lambda: {"state": "durable"}, evidence_path=sidecar,
+        )
+    finally:
+        os.umask(old_umask)
+    assert stat.S_IMODE(sidecar.stat().st_mode) == 0o600
