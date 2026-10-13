@@ -51,6 +51,29 @@ class ScheduledWork:
 
 
 @dataclass(frozen=True, slots=True)
+class ScheduledWorkOwnerBinding:
+    """Immutable authoritative owner of one scheduled-work occurrence.
+
+    This is a durable routing contract, not yet an owner-scoped clock, runner,
+    or worker-fencing implementation. Correlation and entity type cannot be
+    substituted for organization/job identity.
+    """
+
+    work_id: str
+    organization_id: str
+    job_id: str
+
+    def __post_init__(self) -> None:
+        for label, value in (
+            ("work_id", self.work_id),
+            ("organization_id", self.organization_id),
+            ("job_id", self.job_id),
+        ):
+            if not isinstance(value, str) or not value.strip():
+                raise ValueError(f"{label} must be a nonempty string")
+
+
+@dataclass(frozen=True, slots=True)
 class SimulationPosition:
     """Durable recovery boundary for logical time, tick, and execution ordering."""
 
