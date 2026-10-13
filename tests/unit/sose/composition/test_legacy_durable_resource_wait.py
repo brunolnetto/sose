@@ -228,3 +228,74 @@ def test_origin_dequeue_committed_between_reconcile_and_classification_is_retrya
     assert len(tuple(results)) == 1
     effects = result.persistence.business_effects()
     assert len(effects) == len({effect.effect_id for effect in effects})
+
+
+
+def test_transfer_grant_committed_after_stale_false_remains_retryable(monkeypatch):
+    """A granted finite vehicle is progress, not evidence the demand disappeared."""
+    original = customer.logistics.reconcile_transfer
+    attempts = []
+
+    def granted_after_reconcile_read(persistence, engine, backend, *, entities):
+        attempts.append(entities.shipment_id)
+        if len(attempts) == 1:
+            request_id = f"transfer-vehicle:{entities.shipment_id}"
+            granted = engine.resources.ensure_requested(
+                backend, resource_name="transfer_vehicle",
+                request_id=request_id, requested_at=backend.now,
+            )
+            assert granted is not None
+            assert engine.resources.reservation_for(request_id) is not None
+            assert not any(
+                demand.request_id == request_id
+                for demand in persistence.resource_demands()
+            )
+            # The earlier false result was from before this durable grant.
+            return False
+        return original(persistence, engine, backend, entities=entities)
+
+    monkeypatch.setattr(customer.logistics, "reconcile_transfer", granted_after_reconcile_read)
+    result = customer.run_customer_demand_path()
+    assert len(attempts) >= 2
+    assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
+    effects = result.persistence.business_effects()
+    assert len(effects) == len({effect.effect_id for effect in effects})
+
+
+def test_destination_put_committed_after_false_and_intent_removed_is_retryable(monkeypatch):
+    """A concurrent accepted destination put must never become terminal failure."""
+    original = customer.logistics.reconcile_transfer
+    attempts = []
+
+    def complete_pending_put_after_false(persistence, engine, backend, *, entities):
+        attempts.append(entities.shipment_id)
+        if len(attempts) == 1:
+            engine.stores.put(
+                backend, store_name="destination_hub_queue",
+                item_id="destination-queue:blocker",
+                value={"shipment_id": "blocker"},
+                requested_at=backend.now,
+            )
+            backend.run_until(backend.now)
+            assert original(persistence, engine, backend, entities=entities) is False
+            item_id = f"destination-queue:{entities.shipment_id}"
+            assert any(intent.item_id == item_id for intent in persistence.store_put_intents())
+            received = engine.stores.ensure_selection(
+                backend, store_name="destination_hub_queue",
+                request_id="drain-destination-blocker",
+                requested_at=backend.now,
+            )
+            assert received is not None
+            backend.run_until(backend.now)
+            # A different worker's callback has completed the pending put.
+            assert any(item.item_id == item_id for item in persistence.store_items())
+            assert not any(intent.item_id == item_id for intent in persistence.store_put_intents())
+            return False
+        return original(persistence, engine, backend, entities=entities)
+
+    monkeypatch.setattr(customer.logistics, "reconcile_transfer", complete_pending_put_after_false)
+    result = customer.run_customer_demand_path()
+    assert len(attempts) >= 2
+    assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
+    events = result.persistence.events()
+    assert len(events) == len({event.event_id for event in events})
