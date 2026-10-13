@@ -1,5 +1,7 @@
 # SOSE Roadmap
 
+**Current integrated roadmap (2026-10-13):** [Organizational StateChart Composition, concurrent PG hardening, native SimPy physical promotion, heterogeneous O2C/MRO, and separately gated OD-5a](architecture/organizational-composition-roadmap.md). This extension documents the newer operational/scientific program without rewriting the historical kernel phases below.
+
 ## Synthetic Operational System Engine
 
 SOSE is a framework for simulating operational systems with:
