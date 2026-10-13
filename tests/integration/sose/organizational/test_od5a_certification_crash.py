@@ -317,3 +317,31 @@ def test_certificate_falsifies_unpaired_organization_message(tmp_path):
         assert after.deliveries == ()
         assert after.messages == (message,)
         assert original != after
+
+
+def test_certificate_falsifies_unexpected_organization_command(tmp_path):
+    """An excess executable intent must be visible even if no message points to it."""
+    from sose.core.events import Command
+
+    org = "org:extra-command"
+    with SQLitePersistence(tmp_path / "orphan-command.db") as store:
+        initialize_od5a_recurring_job(
+            store, job_id=org, arm=_arm(), items=_items(org),
+        )
+        original = _certificate(store, (org,))
+        forged = Command(
+            command_id="forged-od5a-command",
+            name="od5a.stage_physical_completion.v1",
+            entity_type="od5a_physical_observation",
+            entity_id="forged-observation",
+            due_at=NOW,
+            causation_id="forged-message",
+            correlation_id=org,
+        )
+        with store.transaction() as uow:
+            uow.save_command(forged)
+        after = _certificate(store, (org,))
+        assert original.commands == after.commands == ()
+        assert original.all_commands == ()
+        assert after.all_commands == (forged,)
+        assert original != after
