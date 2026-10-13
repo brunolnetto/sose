@@ -95,3 +95,42 @@ def test_pg_conflicting_concurrent_work_owners_cannot_last_writer_win():
         assert reopened.scheduled_work_owner(work_id) == ScheduledWorkOwnerBinding(
             work_id, accepted, "job",
         )
+
+
+
+def test_pg_bind_racing_scheduled_delete_never_leaves_orphan_owner():
+    """Independent connections stage both operations before either commits."""
+    assert DSN is not None
+    namespace = "pc6_owner_delete_" + uuid4().hex[:12]
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        seed_reference(store)
+        work_id = store.scheduled_work()[0].work_id
+
+    ready = Barrier(2)
+    binding = ScheduledWorkOwnerBinding(work_id, "org-a", "job-a")
+
+    def bind():
+        try:
+            with PostgresPersistence(DSN, namespace=namespace) as store:
+                with store.transaction() as uow:
+                    uow.bind_scheduled_work_owner(binding)
+                    ready.wait(timeout=10)
+            return "bound"
+        except (ValueError, KeyError):
+            return "rejected"
+
+    def delete():
+        with PostgresPersistence(DSN, namespace=namespace) as store:
+            with store.transaction() as uow:
+                uow.delete_scheduled_work(work_id)
+                ready.wait(timeout=10)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(bind)
+        second = pool.submit(delete)
+        assert first.result(timeout=20) in {"bound", "rejected"}
+        second.result(timeout=20)
+
+    with PostgresPersistence(DSN, namespace=namespace) as reopened:
+        assert all(work.work_id != work_id for work in reopened.scheduled_work())
+        assert reopened.scheduled_work_owner(work_id) is None
