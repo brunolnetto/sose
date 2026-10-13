@@ -39,6 +39,7 @@ def capture_first_worker_failure_once(
     flow: str,
     error: Exception,
     snapshot: Callable[[], dict[str, object]],
+    evidence_path: Path | None = None,
 ) -> None:
     """Record committed state on first worker exception, not after wait(ALL_COMPLETED).
 
@@ -48,12 +49,25 @@ def capture_first_worker_failure_once(
     with capture_lock:
         if captured:
             return
-        captured.append({
+        record = {
             "flow": flow,
             "error": repr(error),
             "traceback": "".join(traceback.format_exception(error))[-4000:],
             "snapshot": snapshot(),
-        })
+        }
+        captured.append(record)
+        if evidence_path is not None:
+            # Out-of-process forensics: pytest may remain blocked waiting for
+            # the surviving peer and the subprocess may hit its hard timeout.
+            # Preserve this first committed snapshot independently of stderr.
+            # Refuse to overwrite an earlier failure from another worker.
+            import os
+            fd = os.open(evidence_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(record, handle, sort_keys=True, default=str)
+                handle.write("\n")
+                handle.flush()
+                os.fsync(handle.fileno())
 
 
 def create_invocation_directory(parent: Path) -> Path:
