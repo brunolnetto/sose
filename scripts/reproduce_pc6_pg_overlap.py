@@ -83,9 +83,15 @@ def create_invocation_directory(parent: Path) -> Path:
 
 def run_one(run_index: int, *, timeout: int, out: Path) -> dict[str, object]:
     command = [sys.executable, "-m", "pytest", "-q", TARGET, "--tb=long", "-x"]
+    # A hung peer may prevent pytest from flushing its captured exception.
+    # Give each subprocess a unique durable sidecar for its *first* failure.
+    evidence_path = out / f"run-{run_index:03d}.first-failure.json"
+    env = dict(os.environ)
+    env["SOSE_PC6_FIRST_FAILURE_SNAPSHOT"] = str(evidence_path)
     try:
         process = subprocess.run(
-            command, capture_output=True, text=True, timeout=timeout, check=False,
+            command, capture_output=True, text=True, timeout=timeout,
+            check=False, env=env,
         )
         exit_code, output = process.returncode, process.stdout + "\n" + process.stderr
         status = "PASS" if exit_code == 0 else "FAIL"
@@ -105,6 +111,7 @@ def run_one(run_index: int, *, timeout: int, out: Path) -> dict[str, object]:
         "status": status,
         "exit_code": exit_code,
         "log": str(logfile),
+        "first_failure_evidence": str(evidence_path) if evidence_path.exists() else None,
     }
 
 
