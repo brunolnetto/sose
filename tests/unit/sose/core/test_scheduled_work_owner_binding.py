@@ -78,3 +78,34 @@ def test_scheduled_owner_binding_is_immutable_and_durable():
 def test_scheduled_work_owner_refuses_empty_identity(organization_id, job_id):
     with pytest.raises(ValueError):
         ScheduledWorkOwnerBinding("work-1", organization_id, job_id)
+
+
+def test_owner_binding_survives_real_sqlite_restart(tmp_path):
+    from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+
+    database = tmp_path / "owner-scoped-work.sqlite"
+    binding = None
+    with SQLiteIncrementalPersistence(database) as store:
+        seed_reference(store, instance_key="owner-sqlite")
+        work = store.scheduled_work()[0]
+        binding = ScheduledWorkOwnerBinding(
+            work_id=work.work_id,
+            organization_id="organization-sqlite",
+            job_id="job-sqlite",
+        )
+        with store.transaction() as uow:
+            uow.bind_scheduled_work_owner(binding)
+    assert binding is not None
+    with SQLiteIncrementalPersistence(database) as recovered:
+        assert recovered.scheduled_work_owner(binding.work_id) == binding
+        owned = recovered.scheduled_work_for_owner(
+            binding.organization_id, binding.job_id,
+        )
+        assert len(owned) == 1 and owned[0].work_id == binding.work_id
+        with recovered.transaction() as uow:
+            uow.delete_scheduled_work(binding.work_id)
+    with SQLiteIncrementalPersistence(database) as reopened:
+        assert reopened.scheduled_work_owner(binding.work_id) is None
+        assert reopened.scheduled_work_for_owner(
+            "organization-sqlite", "job-sqlite"
+        ) == ()
