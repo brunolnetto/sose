@@ -21,9 +21,11 @@ class CausalCertificate:
     messages: tuple[Any, ...]
     deliveries: tuple[Any, ...]
     consumptions: tuple[Any, ...]
+    all_consumptions: tuple[Any, ...]
     commands: tuple[Any, ...]
     all_commands: tuple[Any, ...]
     observations: tuple[Any, ...]
+    all_observations: tuple[Any, ...]
     effects: tuple[Any, ...]
     all_effects: tuple[Any, ...]
 
@@ -45,7 +47,8 @@ def capture_causal_certificate(
         sources = tuple(uow.get_entity(source_type, name) for name in orgs)
         events = tuple(sorted(
             (event for event in uow.events()
-             if event.entity_type == source_type and event.entity_id in orgs),
+             if event.correlation_id in orgs
+             or (event.entity_type == source_type and event.entity_id in orgs)),
             key=lambda item: item.event_id,
         ))
         deliveries = tuple(sorted(
@@ -63,6 +66,8 @@ def capture_causal_certificate(
             key=lambda m: m.message_id,
         ))
         physical = (event for event in events if event.name in physical_event_names)
+        scoped_message_ids = frozenset(m.message_id for m in messages)
+        scoped_delivery_ids = frozenset(d.delivery_id for d in deliveries)
         commands = tuple(
             (m.message_id, uow.get_command(deterministic_id(
                 command_identity_namespace, m.message_id,
@@ -94,6 +99,12 @@ def capture_causal_certificate(
                 (d.delivery_id, uow.get_boundary_consumption(d.delivery_id))
                 for d in deliveries
             ),
+            all_consumptions=tuple(sorted(
+                (receipt for receipt in uow.boundary_consumptions()
+                 if receipt.message_id in scoped_message_ids
+                 or receipt.delivery_id in scoped_delivery_ids),
+                key=lambda receipt: (receipt.delivery_id, receipt.consumption_id),
+            )),
             commands=commands,
             # An unexpected staged command is executable domain intent, not
             # merely a missing transport receipt. Preserve the nullable
@@ -107,6 +118,12 @@ def capture_causal_certificate(
                 (e.event_id, uow.get_entity(observation_type, e.event_id))
                 for e in physical
             ),
+            all_observations=tuple(sorted(
+                (entity for entity in uow.entities()
+                 if entity.entity_type == observation_type
+                 and entity.attributes.get("correlation_id") in orgs),
+                key=lambda entity: entity.id,
+            )),
             effects=effects,
             # Enumerate *every* scoped immutable effect, not only those
             # reachable through an expected message ID. An extra or
