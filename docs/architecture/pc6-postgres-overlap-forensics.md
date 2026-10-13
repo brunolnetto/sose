@@ -39,9 +39,14 @@ Outputs (inside that invocation subdirectory):
   **REPEATABLE READ, READ ONLY** committed snapshot through direct SQL. The
   collector NEVER constructs `PostgresPersistence`, creating/migrating no
   namespace rows. Failure-reporting locks do not serialize healthy workers.
-- The first worker's evidence is retained **before** the concurrent peer is
-  awaited; an additional post-worker snapshot is explicitly labeled and must
-  not overwrite this first-failure record.
+- The first worker's original error and bounded traceback are written to
+  `run-<id>.first-failure.json` and fsynced **before** attempting any PostgreSQL
+  snapshot. Connection timeout (3s), lock timeout (1.5s), and statement timeout
+  (3s) bound the read-only collector, independently of production workers.
+  When the snapshot finishes, an atomic sidecar replacement adds its committed
+  MVCC state or explicit snapshot error, preserving the original exception.
+  An additional post-worker snapshot is labeled separately, never substituted
+  for the first failure.
 - `summary.json` lists all runs, pass/fail/timeout status and log path.
 - Downstream verification failures receive a separate post-worker committed
   snapshot annotation. A failure or timeout returns nonzero. **A pass is not
