@@ -72,17 +72,18 @@ def _read_first_failure_snapshot(dsn: str, namespace: str) -> dict[str, object]:
                     )
                     for row in rows
                 )
+                identity_sample: list[tuple[str, str, int]] = []
+                counts: dict[str, int] = {}
+                for collection, record_key, record_position, _payload in rows:
+                    key = str(collection)
+                    if counts.get(key, 0) < 5:
+                        identity_sample.append((key, str(record_key), int(record_position)))
+                    counts[key] = counts.get(key, 0) + 1
                 position = state.simulation_position
                 events = state.events
                 return {
                     "namespace": namespace,
-                    "record_identities": [
-                        (str(row[0]), str(row[1]), int(row[2]))
-                        for collection in sorted({str(r[0]) for r in rows})
-                        for row in (r for r in rows if str(r[0]) == collection)
-                        if sum(1 for r in rows if str(r[0]) == collection and
-                               (int(r[2]), str(r[1])) < (int(row[2]), str(row[1]))) < 5
-                    ],
+                    "record_identities": identity_sample,
                     "record_identity_count": len(rows),
                     "position": None if position is None else asdict(position),
                     "entities": sorted(
