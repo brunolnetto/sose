@@ -318,6 +318,17 @@ class MemoryUnitOfWork:
         value = self._working.commands.get(command_id)
         return deepcopy(value) if value else None
 
+    def commands(self) -> tuple[Command, ...]:
+        """Enumerate pending Commands in one authoritative UoW snapshot.
+
+        Required to audit extra executable intents not linked to an expected
+        boundary message. Preserve complete values and deterministic order.
+        """
+        return tuple(
+            deepcopy(self._working.commands[key])
+            for key in sorted(self._working.commands)
+        )
+
     def save_command(self, command: Command) -> None:
         self._working.commands[command.command_id] = deepcopy(command)
         self._mark_dirty("commands", command.command_id)
