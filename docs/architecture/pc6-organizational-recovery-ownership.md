@@ -13,8 +13,14 @@ can commit a later position between another worker's position read and
 reconstruction. The current `scheduled_work_filter` checks that the registry
 supports the command's entity *type*, not which organization/job owns it.
 
-The same-type PostgreSQL RED test forces A(read) → B(advance+commit) →
-A(rebuild) without timing luck. Advancing B must not advance A.
+The initial same-type PostgreSQL RED test forces A(read) →
+B(advance+commit) → A(rebuild) without timing luck, **within one legacy
+unscoped namespace**. It demonstrates that the legacy clock can change between
+the position sample and rebuild. It does NOT yet demonstrate two independent
+organizations: `instance_key` differentiates entity IDs, and fixed
+`flow_correlation_id()` is not an organization binding. The second gate
+requires persisting explicit org/job ownership and constructing each runtime
+through its scoped view before owner-isolation assertions are meaningful.
 
 ## Ownership contract
 
@@ -72,9 +78,10 @@ establishes a unique owner for each existing work item. Do not silently map
 
 ## TDD and promotion gates
 
-- #505 RED: forced two-connection, same-type PG interleaving, no timeout/retry
-  disguising the failing boundary; owner A must rebuild at its own clock and
-  only load owner A callbacks.
+- #505 first RED: forced two-connection, same-type PG interleaving, no
+  timeout/retry disguising the global-clock hazard. Before GREEN, replace the
+  *unscoped* synthetic fixture with explicit durable owner/job bindings.
+  Owner A must then rebuild at its own clock and load only A callbacks.
 - Follow-up RED: same-owner stale epoch/revision conflicts; different owners
   advance without serialization; mixed namespace rejects safely.
 - Forced worker deaths at publication, claim, ACK, Command, physical
