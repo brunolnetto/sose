@@ -24,6 +24,7 @@ class CausalCertificate:
     commands: tuple[Any, ...]
     observations: tuple[Any, ...]
     effects: tuple[Any, ...]
+    all_effects: tuple[Any, ...]
 
 
 def capture_causal_certificate(
@@ -93,4 +94,12 @@ def capture_causal_certificate(
                 for e in physical
             ),
             effects=effects,
+            # Enumerate *every* scoped immutable effect, not only those
+            # reachable through an expected message ID. An extra or
+            # mis-keyed certificate must falsify causal equivalence.
+            all_effects=tuple(sorted(
+                (effect for effect in uow.business_effects()
+                 if effect.correlation_id in orgs),
+                key=lambda effect: (effect.effect_id, effect.receipt_id),
+            )),
         )
