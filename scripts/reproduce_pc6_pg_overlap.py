@@ -20,12 +20,24 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+from uuid import uuid4
 
 
 TARGET = (
     "tests/e2e/sose/persistence/test_postgres_pc6_concurrent_real_statecharts.py"
     "::test_pg_two_real_customer_statecharts_overlap_without_business_aliasing"
 )
+
+
+def create_invocation_directory(parent: Path) -> Path:
+    """Never overwrite earlier forensic evidence, even under concurrent invocations."""
+    parent.mkdir(parents=True, exist_ok=True)
+    directory = parent / (
+        datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+        + "-" + uuid4().hex[:10]
+    )
+    directory.mkdir(parents=False, exist_ok=False)
+    return directory
 
 
 def run_one(run_index: int, *, timeout: int, out: Path) -> dict[str, object]:
@@ -67,11 +79,11 @@ def main() -> int:
     if not os.environ.get("SOSE_TEST_POSTGRES_DSN"):
         parser.error("SOSE_TEST_POSTGRES_DSN is required; skipped tests are not evidence")
 
-    args.out.mkdir(parents=True, exist_ok=True)
+    run_directory = create_invocation_directory(args.out)
     started = datetime.now(timezone.utc).isoformat()
     with ThreadPoolExecutor(max_workers=min(args.parallel, args.runs)) as executor:
         futures = {
-            executor.submit(run_one, i, timeout=args.timeout, out=args.out): i
+            executor.submit(run_one, i, timeout=args.timeout, out=run_directory): i
             for i in range(1, args.runs + 1)
         }
         results = [f.result() for f in as_completed(futures)]
@@ -81,6 +93,7 @@ def main() -> int:
         "issue": 468,
         "started_at": started,
         "test": TARGET,
+        "run_directory": str(run_directory),
         "runs": args.runs,
         "parallel": min(args.parallel, args.runs),
         "timeout_seconds": args.timeout,
@@ -90,7 +103,7 @@ def main() -> int:
         "results": results,
         "note": "No failure observed is NOT a proof of concurrency correctness.",
     }
-    (args.out / "summary.json").write_text(
+    (run_directory / "summary.json").write_text(
         json.dumps(summary, sort_keys=True, indent=2) + "\n", encoding="utf-8",
     )
     print(json.dumps(summary, sort_keys=True, indent=2))
