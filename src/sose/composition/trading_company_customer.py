@@ -679,6 +679,39 @@ def _execute_intent(
                 if not logistics.reconcile_transfer(
                     persistence, engine, backend, entities=fixtures.logistics,
                 ):
+                    # Transfer's False result includes legitimate finite
+                    # contention: pending vehicle/dock reservations, origin
+                    # queue dequeue, or destination store backpressure. Keep
+                    # the existing Command and immutable causal identity for
+                    # the recurring worker instead of recording terminal error.
+                    waiting_resources = (
+                        ("transfer_vehicle", f"transfer-vehicle:{shipment_id}"),
+                        ("destination_dock", f"destination-dock:{shipment_id}"),
+                    )
+                    for resource_name, request_id in waiting_resources:
+                        if (
+                            engine.resources.has_request(request_id)
+                            and engine.resources.reservation_for(request_id) is None
+                        ):
+                            raise DurableResourceWait(resource_name, request_id)
+                    waiting_stores = (
+                        (
+                            "origin_hub_queue", f"origin-dequeue:{shipment_id}",
+                            persistence.store_get_requests(), "request_id",
+                        ),
+                        (
+                            "destination_hub_queue", f"destination-queue:{shipment_id}",
+                            persistence.store_put_intents(), "item_id",
+                        ),
+                    )
+                    for store_name, request_id, intents, identity_field in waiting_stores:
+                        if any(
+                            getattr(intent, identity_field) == request_id
+                            for intent in intents
+                        ):
+                            raise DurableResourceWait(store_name, request_id)
+                    # No durable request or queue backpressure proves a
+                    # temporary wait: do not hide a true transition defect.
                     raise RuntimeError("logistics transfer failed")
 
             if current_state() in {"at_destination_hub", "delayed_destination_hub"}:
