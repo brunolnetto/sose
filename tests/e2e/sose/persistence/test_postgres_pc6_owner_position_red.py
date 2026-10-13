@@ -3,11 +3,12 @@
 Two PostgreSQL connections force A to sample a shared SimulationPosition,
 B to advance the namespace clock, then A to rebuild at the old timestamp.
 
-IMPORTANT: `instance_key` isolates entity IDs, NOT organization/job ownership.
-The legacy runtime persists neither owner binding nor owner-scoped clock here.
-This test demonstrates the *global-clock hazard*, not two autonomous
-organizations; its desired owner-specific assertion cannot pass until the
-fixture is rebuilt using future durable organization/job bindings (#504).
+The fixture now persists explicit organization/job bindings on BOTH
+shipment ScheduledWork items. Owner A uses a scoped RuntimeRebuilder, which
+must eventually see only its own callback. Owner B still advances via the
+legacy unscoped Engine, exposing the missing owner-scoped clock update:
+binding callbacks alone cannot isolate the global SimulationPosition.
+This is not yet a complete owner-scoped Engine or fencing conformance test.
 No timing luck, process-wide lock, or retry hides the interleaving.
 """
 from concurrent.futures import ThreadPoolExecutor
@@ -72,10 +73,9 @@ def test_unscoped_same_type_pg_clock_alias_is_red_for_future_owner_binding():
             backend = SimPyBackend(origin=sampled.logical_time)
             first_owner_sampled.set()
             assert second_owner_committed.wait(15), "other owner did not commit"
-            # The legacy runtime sees the namespace clock B just advanced.
-            # This initial RED intentionally has NO owner binding yet.
-            # Complete the fixture by persisting explicit org/job ownership,
-            # then route A's backend through its scoped cursor and callbacks.
+            # Owner bindings now exist and this rebuilder is scoped,
+            # but the single namespace-global SimulationPosition was still
+            # overwritten by B's legacy Engine.advance_tick().
             return RuntimeRebuilder(
                 store, owner_key=("org-a", "job-a"),
             ).rebuild(backend, on_due=lambda item: None)
@@ -104,7 +104,6 @@ def test_unscoped_same_type_pg_clock_alias_is_red_for_future_owner_binding():
         assert committed.logical_time == ORIGIN + timedelta(minutes=5)
         attached_a = a.result(timeout=20)
 
-    # This future assertion is NOT a presently-valid legacy expectation:
-    # the unscoped registry sees two shipment callbacks. It becomes an
-    # executable conformance gate only with persisted A/B owner bindings.
+    # Scoped work-owner bindings already exclude B's same-type callback.
+    # This is reached only after the global-clock RED is repaired.
     assert attached_a == 1
