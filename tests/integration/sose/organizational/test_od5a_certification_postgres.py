@@ -187,46 +187,38 @@ def test_two_organizations_recover_on_separate_postgres_processes_equal_oracle()
             if not active:
                 break
             now = NOW + timedelta(seconds=index)
-            # Issue two independent OS-process commands before waiting for
-            # either: their physical and boundary commits may interleave.
+            # G2 separately demonstrates actual simultaneous PostgreSQL
+            # boundary critical sections. G3 must instead check after EACH
+            # committed transition, not only after a pair that might mask
+            # a transient cross-organization mutation. Both OS workers stay
+            # independent; the observer lets only one commit at a time.
             for org in active:
                 requests[org].put(("owner:" + org, now))
-            results = {
-                org: answers[org].get(timeout=50) for org in active
-            }
-            for org in active:
-                action, error = results[org]
+                action, error = answers[org].get(timeout=50)
                 assert error is None, error
                 with PostgresPersistence(DSN, namespace=ref_ns) as oracle:
                     reference = advance_od5a_reference_occurrence(
                         oracle, job_id=org, owner_id="owner:" + org,
                         now=now, lease_duration=LEASE,
                     )
-                assert action == (
-                    "source_advanced" if reference.action == "source_advanced"
-                    else reference.action
-                )
+                assert action == reference.action
                 action_traces[org].append(action)
                 if action == "complete":
                     completed.add(org)
-            # Physical/source DAG, per-organization clocks, durable pool
-            # reservations, messages, ACK receipts, Commands, observations,
-            # and certificates are compared by full immutable identity
-            # after EACH concurrent pair of durable transitions.
-            with (
-                PostgresPersistence(DSN, namespace=ref_ns) as oracle,
-                PostgresPersistence(DSN, namespace=run_ns) as actual,
-            ):
-                expected = _certificate(oracle, ORGS)
-                observed = _certificate(actual, ORGS)
-                assert observed == expected
-                for org in ORGS:
-                    checkpoint = actual.job_state(org)
-                    with actual.transaction() as uow:
-                        source = uow.get_entity("od5a_durable_pilot", org)
-                    assert checkpoint.run_count == source.attributes["step"]
-                    assert checkpoint.next_tick == source.attributes["step"]
-                    assert checkpoint.logical_time == source.updated_at
+                with (
+                    PostgresPersistence(DSN, namespace=ref_ns) as oracle,
+                    PostgresPersistence(DSN, namespace=run_ns) as actual,
+                ):
+                    assert _certificate(actual, ORGS) == _certificate(oracle, ORGS)
+                    for independent_org in ORGS:
+                        checkpoint = actual.job_state(independent_org)
+                        with actual.transaction() as uow:
+                            source = uow.get_entity(
+                                "od5a_durable_pilot", independent_org,
+                            )
+                        assert checkpoint.run_count == source.attributes["step"]
+                        assert checkpoint.next_tick == source.attributes["step"]
+                        assert checkpoint.logical_time == source.updated_at
         else:
             pytest.fail("independent PostgreSQL organization processes did not converge")
         assert completed == set(ORGS)
