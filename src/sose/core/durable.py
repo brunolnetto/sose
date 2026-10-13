@@ -219,11 +219,18 @@ class RuntimeRebuilder:
         context=None,
         participants: tuple[RecoveryParticipant, ...] = (),
         scheduled_work_filter: Callable[[DurableScheduledItem], bool] | None = None,
+        owner_key: tuple[str, str] | None = None,
     ) -> None:
+        if owner_key is not None and (
+            len(owner_key) != 2
+            or any(not isinstance(part, str) or not part.strip() for part in owner_key)
+        ):
+            raise ValueError("owner_key must be a nonempty (organization_id, job_id)")
         self._persistence = persistence
         self._context = context
         self._participants = tuple(participants)
         self._scheduled_work_filter = scheduled_work_filter
+        self._owner_key = owner_key
 
     @property
     def phase_names(self) -> tuple[str, ...]:
@@ -282,6 +289,14 @@ class RuntimeRebuilder:
 
         boundary = position.logical_time if position is not None else backend.now
         items = DurableScheduler(self._persistence).pending()
+        if self._owner_key is not None:
+            # Require a COMPLETE durable work-owner mapping. Never infer
+            # ownership from entity_type, correlation_id or command payload.
+            owned = {
+                work.work_id
+                for work in self._persistence.scheduled_work_for_owner(*self._owner_key)
+            }
+            items = tuple(item for item in items if item.work.work_id in owned)
         if self._scheduled_work_filter is not None:
             # Validate only work this domain is authorized to dispatch.
             # Foreign commands are authoritative persisted work: neither
