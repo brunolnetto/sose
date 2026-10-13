@@ -23,12 +23,15 @@ SimPy arbitration, or declare five-arm scientific admissibility.
 `tests/support/causal_certificate.py` captures a **full-value** projection:
 
 - authoritative source entities (including clocks and causal state) and all
-  matching DomainEvents (full DAG and tick);
+  matching **or organization-correlated** DomainEvents (including wrong-key source
+  entity identities, full DAG and tick);
 - persisted definitions and occupied resource reservations;
 - **all** typed boundary messages enumerated independently of deliveries (including
-  orphan publications), all scoped deliveries and **nullable** ACK consumptions;
+  orphan publications), all scoped deliveries, **nullable** delivery-linked ACK
+  consumptions and **every** scoped receipt (including mismatched delivery IDs);
 - **nullable** expected staged Commands **plus every organization-correlated pending Command**
-  (including wrong-key extra executable intents), event-keyed materialized observations, and
+  (including wrong-key extra executable intents), **nullable** event-keyed
+  observations and **every** correlated observation entity, and
   **nullable** immutable BusinessEffectApplied certificates.
 
 Missing evidence remains explicit `None`; totals and terminal throughput are
