@@ -282,8 +282,15 @@ class RuntimeRebuilder:
 
         boundary = position.logical_time if position is not None else backend.now
         items = DurableScheduler(self._persistence).pending()
+        if self._scheduled_work_filter is not None:
+            # Validate only work this domain is authorized to dispatch.
+            # Foreign commands are authoritative persisted work: neither
+            # suppress nor consume them, and never advance their lifecycles.
+            items = tuple(
+                item for item in items if self._scheduled_work_filter(item)
+            )
 
-        # Validate the complete recovery plan before mutating context/backend.
+        # Validate this domain's complete recovery plan before any mutation.
         self._validate_scheduled_items(items=items, boundary=boundary)
         for participant in self._participants:
             participant.validate()
