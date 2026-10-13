@@ -201,3 +201,35 @@ def test_integrated_real_os_deaths_before_after_every_boundary_commit(tmp_path):
         assert _certificate(recovered, (org,)) == _certificate(oracle, (org,))
         assert recovered.job_state(org).active_trigger_id is None
         assert recovered.resource_reservations() == ()
+
+
+def test_certificate_falsifies_unexpected_well_formed_effect(tmp_path):
+    """Correct expected receipts must not mask an additional bogus receipt."""
+    from sose.composition.effects import BusinessEffectApplied
+
+    path = tmp_path / "extra-effect.db"
+    org = "org:extra-effect"
+    with SQLitePersistence(path) as store:
+        initialize_od5a_recurring_job(
+            store, job_id=org, arm=_arm(), items=_items(org),
+        )
+        before = _certificate(store, (org,))
+        with store.transaction() as uow:
+            # The generic OLTP layer can persist malformed domain history;
+            # this injected excess certificate must be visible to the
+            # *auditor* even though no expected boundary message points to it.
+            uow.save_business_effect(BusinessEffectApplied.from_applied(
+                effect_id="forged-extra-effect",
+                boundary_message_id="forged-message",
+                correlation_id=org,
+                entity_type="od5a_physical_observation",
+                entity_id="forged-observation",
+                terminal_state="observed",
+                entity_version=1,
+                completed_at=NOW,
+            ))
+        after = _certificate(store, (org,))
+        assert before.effects == after.effects == ()
+        assert before.all_effects == ()
+        assert len(after.all_effects) == 1
+        assert before != after
