@@ -26,7 +26,10 @@ destination dock or hub-queue request.
    `logistics.reconcile_transfer` uses `engine.stores.ensure_put` to reuse the
    **same item identity**, never calls `put` again and never duplicates a
    physical arrival or shipment DomainEvent. Multiple blocked retries remain
-   pending until capacity is released.
+   pending until capacity is released. If a waiting destination consumer
+   immediately GETs the newly accepted item, the matching durable
+   `StoreGetResult` is accepted as authoritative completion of that item
+   rather than incorrectly interpreting an empty destination queue as failure.
 5. The reference synchronous demo retries the typed wait within its
    preexisting bounded window; recurring production recovery defers the
    **same command identity** to its next slot, without repeated ACK,
