@@ -136,7 +136,11 @@ def run_one(run_index: int, *, timeout: int, out: Path) -> dict[str, object]:
             stderr.decode(errors="replace") if isinstance(stderr, bytes) else stderr
         )
     logfile = out / f"run-{run_index:03d}.log"
-    logfile.write_text(output, encoding="utf-8")
+    fd = os.open(logfile, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        handle.write(output)
+        handle.flush()
+        os.fsync(handle.fileno())
     return {
         "run": run_index,
         "status": status,
