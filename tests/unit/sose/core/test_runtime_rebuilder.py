@@ -456,3 +456,48 @@ def test_recovery_participant_validate_and_rebuild_normalize_return_type():
     assert manager.validated is True
     assert rebuilt == 0
     assert len(manager.rebuilt) == 1
+
+
+def test_rebuilder_filters_foreign_scheduled_work_without_consuming_it():
+    store = MemoryPersistence()
+    scheduler = DurableScheduler(store)
+    own = Command("own-mro", "release", "work_order", "wo-1", ORIGIN + timedelta(hours=2))
+    foreign = Command("foreign-shipment", "schedule_pickup", "shipment", "s-1",
+                      ORIGIN + timedelta(hours=1))
+    own_work = scheduler.schedule(own)
+    foreign_work = scheduler.schedule(foreign)
+
+    backend = RecordingBackend(ORIGIN)
+    observed = []
+    rebuilt = RuntimeRebuilder(
+        store, scheduled_work_filter=lambda item: item.command.entity_type == "work_order",
+    ).rebuild(backend, on_due=lambda item: observed.append(item.command.command_id))
+
+    assert rebuilt == 1
+    assert [entry[2] for entry in backend.calls] == [
+        ("durable-work", own_work.work_id),
+    ]
+    backend.calls[0][3]()
+    assert observed == ["own-mro"]
+    assert set(store.scheduled_work()) == {own_work, foreign_work}
+    assert store.command(foreign.command_id) == foreign
+
+
+def test_rebuilder_filters_foreign_earlier_work_before_own_recovery_boundary_validation():
+    store = MemoryPersistence()
+    scheduler = DurableScheduler(store)
+    foreign = scheduler.schedule(Command("older-foreign", "pickup", "shipment", "s-1", ORIGIN))
+    own = scheduler.schedule(Command(
+        "current-own", "release", "work_order", "wo-1", ORIGIN + timedelta(hours=2),
+    ))
+    with store.transaction() as uow:
+        uow.set_simulation_position(SimulationPosition(
+            logical_time=ORIGIN + timedelta(hours=1), execution_sequence=1,
+            committed_sequence=1,
+        ))
+    backend = RecordingBackend(ORIGIN + timedelta(hours=1))
+    assert RuntimeRebuilder(
+        store, scheduled_work_filter=lambda item: item.command.entity_type == "work_order",
+    ).rebuild(backend, on_due=lambda _: None) == 1
+    assert backend.calls[0][2] == ("durable-work", own.work_id)
+    assert foreign in store.scheduled_work()
