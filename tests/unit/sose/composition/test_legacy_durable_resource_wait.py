@@ -270,23 +270,40 @@ def test_destination_put_committed_after_false_and_intent_removed_is_retryable(m
     def complete_pending_put_after_false(persistence, engine, backend, *, entities):
         attempts.append(entities.shipment_id)
         if len(attempts) == 1:
-            engine.stores.put(
-                backend, store_name="destination_hub_queue",
-                item_id="destination-queue:blocker",
-                value={"shipment_id": "blocker"},
-                requested_at=backend.now,
+            queue_capacity = next(
+                definition.capacity
+                for definition in persistence.store_definitions()
+                if definition.name == "destination_hub_queue"
             )
-            backend.run_until(backend.now)
+            assert queue_capacity is not None
+            assert not any(
+                item.store_name == "destination_hub_queue"
+                for item in persistence.store_items()
+            )
+            # The composed fixture uses a finite queue larger than one.
+            # Occupy every slot; a single blocker cannot force backpressure.
+            for ordinal in range(queue_capacity):
+                engine.stores.put(
+                    backend, store_name="destination_hub_queue",
+                    item_id=f"destination-queue:blocker:{ordinal}",
+                    value={"shipment_id": f"blocker:{ordinal}"},
+                    requested_at=backend.now,
+                )
+                backend.run_until(backend.now)
             assert original(persistence, engine, backend, entities=entities) is False
             item_id = f"destination-queue:{entities.shipment_id}"
             assert any(intent.item_id == item_id for intent in persistence.store_put_intents())
-            received = engine.stores.ensure_selection(
-                backend, store_name="destination_hub_queue",
-                request_id="drain-destination-blocker",
-                requested_at=backend.now,
-            )
-            assert received is not None
-            backend.run_until(backend.now)
+            # Drain all blocker identities after the first slot becomes free;
+            # the pending shipment put must commit without being duplicated.
+            for ordinal in range(queue_capacity):
+                received = engine.stores.ensure_selection(
+                    backend, store_name="destination_hub_queue",
+                    request_id=f"drain-destination-blocker:{ordinal}",
+                    requested_at=backend.now,
+                )
+                assert received is not None
+                assert received.item.item_id == f"destination-queue:blocker:{ordinal}"
+                backend.run_until(backend.now)
             # A different worker's callback has completed the pending put.
             assert any(item.item_id == item_id for item in persistence.store_items())
             assert not any(intent.item_id == item_id for intent in persistence.store_put_intents())
