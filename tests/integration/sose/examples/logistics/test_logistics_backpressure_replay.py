@@ -233,3 +233,41 @@ def test_delivery_dispatch_replay_keeps_single_attempt_and_selection():
         tuple(persistence.resource_reservations()),
     )
     assert after == before
+
+
+def test_destination_put_consumed_immediately_still_completes_transfer(monkeypatch):
+    """A durable queue GET receipt is authoritative even after the item disappears."""
+    persistence, entities, engine, backend = _runtime(queue_capacity=2)
+    assert reconcile_pickup(persistence, engine, backend, entities=entities)
+    assert reconcile_origin_hub(persistence, engine, backend, entities=entities)
+
+    original = engine.stores.ensure_put
+    received = []
+
+    def immediately_deliver_to_consumer(*args, **kwargs):
+        item = original(*args, **kwargs)
+        if kwargs["store_name"] == "destination_hub_queue" and item is not None:
+            receipt = engine.stores.ensure_selection(
+                backend,
+                store_name="destination_hub_queue",
+                request_id="destination-receiver:one",
+                requested_at=backend.now,
+            )
+            assert receipt is not None
+            received.append(receipt)
+        return item
+
+    monkeypatch.setattr(engine.stores, "ensure_put", immediately_deliver_to_consumer)
+    assert reconcile_transfer(persistence, engine, backend, entities=entities) is True
+
+    shipment = persistence.entity("shipment", entities.shipment_id)
+    assert shipment is not None and shipment.state == "at_destination_hub"
+    item_id = f"destination-queue:{entities.shipment_id}"
+    assert len(received) == 1
+    assert received[0].item.item_id == item_id
+    assert not any(item.item_id == item_id for item in persistence.store_items())
+    assert not any(intent.item_id == item_id for intent in persistence.store_put_intents())
+
+    before = (tuple(persistence.events()), tuple(persistence.store_get_results()))
+    assert reconcile_transfer(persistence, engine, backend, entities=entities) is True
+    assert (tuple(persistence.events()), tuple(persistence.store_get_results())) == before
