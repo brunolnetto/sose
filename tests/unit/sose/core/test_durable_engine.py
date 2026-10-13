@@ -5,6 +5,7 @@ from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
 from sose.core.durable import DurableScheduler
 from sose.core.engine import Engine
+from sose.core.events import Command
 from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
@@ -532,3 +533,30 @@ def test_pending_reuses_active_sqlite_transaction_without_nested_begin(tmp_path)
                 assert pending[0].work == scheduled
                 assert pending[0].command == command
                 assert uow.get_command(command.command_id) == command
+
+
+def test_rebuilt_domain_engine_never_dispatches_foreign_chart_scheduled_work():
+    now, _, persistence, engine, work_order = build_runtime()
+    own = engine.context.commands.create(
+        "release", target=work_order, due_at=now + timedelta(hours=2),
+        key=("local-mro", work_order.id),
+    )
+    foreign = Command(
+        "external-shipment-command", "schedule_pickup", "shipment",
+        "another-org-shipment", now + timedelta(hours=1),
+    )
+    import_patch = DurableScheduler(persistence)
+    own_work = import_patch.schedule(own)
+    foreign_work = import_patch.schedule(foreign)
+
+    backend = RecordingTemporalBackend(now)
+    assert engine.rebuild_backend(backend) == 1
+    assert [entry[2] for entry in backend.calls] == [
+        ("durable-work", own_work.work_id),
+    ]
+    at, _, _, callback = backend.calls[0]
+    backend.now = at
+    assert callback() is True
+    assert persistence.entity("work_order", work_order.id).state == "released"
+    assert persistence.command(foreign.command_id) == foreign
+    assert foreign_work in persistence.scheduled_work()

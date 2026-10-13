@@ -310,6 +310,14 @@ class DurableStoreManager:
         item = self._item_with_id(backend_item.item_id)
         intent = self._pending_put_intent(backend_item.item_id)
         if item is None and intent is None:
+            # Another worker may have committed this *exact* selection after
+            # our first selection() read but before the durable item lookup.
+            # The ephemeral SimPy callback is stale; authoritative receipt
+            # identity is the idempotence oracle, not backend queue contents.
+            winner = self.selection(request_id)
+            if winner is not None:
+                return winner
+            # A different request consuming the same item is NOT a replay.
             raise KeyError(f"unknown durable store item: {backend_item.item_id}")
 
         consumed = self._consume_store_item(
