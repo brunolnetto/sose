@@ -299,3 +299,58 @@ def test_destination_put_committed_after_false_and_intent_removed_is_retryable(m
     assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
     events = result.persistence.events()
     assert len(events) == len({event.event_id for event in events})
+
+
+def test_preexisting_in_transfer_reservations_do_not_mask_unsubstantiated_false(
+    monkeypatch,
+):
+    """A previously granted resource is not evidence of a new racing grant."""
+    original_origin = customer.logistics.reconcile_origin_hub
+
+    def dispatch_before_reconcile(persistence, engine, backend, *, entities):
+        completed = original_origin(
+            persistence, engine, backend, entities=entities,
+        )
+        if not completed:
+            return completed
+        shipment_id = entities.shipment_id
+        transfer = engine.resources.ensure_requested(
+            backend, resource_name="transfer_vehicle",
+            request_id=f"transfer-vehicle:{shipment_id}", requested_at=backend.now,
+        )
+        assert transfer is not None
+        assert customer.logistics._ensure_origin_queue_dequeue(
+            persistence, engine, backend, shipment_id=shipment_id,
+        )
+        shipment = persistence.entity("shipment", shipment_id)
+        assert shipment is not None and shipment.state == "at_origin_hub"
+        customer.logistics._dispatch(
+            engine, shipment, "dispatch_transfer",
+            key=("test-existing-transfer", shipment_id),
+        )
+        dock = engine.resources.ensure_requested(
+            backend, resource_name="destination_dock",
+            request_id=f"destination-dock:{shipment_id}", requested_at=backend.now,
+        )
+        backend.run_until(backend.now)
+        assert dock is not None
+        return completed
+
+    def invalid_reconcile(persistence, engine, backend, *, entities):
+        shipment_id = entities.shipment_id
+        assert persistence.entity("shipment", shipment_id).state == "in_transfer"
+        assert engine.resources.reservation_for(f"transfer-vehicle:{shipment_id}")
+        assert engine.resources.reservation_for(f"destination-dock:{shipment_id}")
+        assert not any(
+            intent.item_id == f"destination-queue:{shipment_id}"
+            for intent in persistence.store_put_intents()
+        )
+        return False
+
+    monkeypatch.setattr(customer.logistics, "reconcile_origin_hub", dispatch_before_reconcile)
+    monkeypatch.setattr(customer.logistics, "reconcile_transfer", invalid_reconcile)
+    # Fail fast if an incorrect DurableResourceWait enters the synchronous retry loop.
+    ticks = iter(range(1000))
+    monkeypatch.setattr(customer, "monotonic", lambda: next(ticks) * 100.0)
+    with pytest.raises(RuntimeError, match="logistics transfer failed"):
+        customer.run_customer_demand_path()
