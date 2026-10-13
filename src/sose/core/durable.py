@@ -218,10 +218,12 @@ class RuntimeRebuilder:
         *,
         context=None,
         participants: tuple[RecoveryParticipant, ...] = (),
+        scheduled_work_filter: Callable[[DurableScheduledItem], bool] | None = None,
     ) -> None:
         self._persistence = persistence
         self._context = context
         self._participants = tuple(participants)
+        self._scheduled_work_filter = scheduled_work_filter
 
     @property
     def phase_names(self) -> tuple[str, ...]:
