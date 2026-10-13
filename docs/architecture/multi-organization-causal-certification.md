@@ -30,7 +30,9 @@ SimPy arbitration, or declare five-arm scientific admissibility.
   **nullable** immutable BusinessEffectApplied certificates.
 
 Missing evidence remains explicit `None`; totals and terminal throughput are
-not adequate substitutes. The caller supplies the domain's entity types,
+not adequate substitutes. Every organization-correlated BusinessEffectApplied
+is also enumerated independently of expected message IDs: a duplicate or
+mis-keyed receipt must falsify equivalence rather than vanish from the view. The caller supplies the domain's entity types,
 physical event names, command identity namespace and organization identities.
 Job checkpoints are separately required because the independent reducer
 oracle does not own a recurring SimulationJobState; for every committed
@@ -47,9 +49,11 @@ facts; no missing domain evidence can be labeled certified by this projection.
 
 ### G1: Real OS death around durable phase boundaries
 
-Spawn a distinct OS worker. Kill it before the first occurrence of each of
-`publish`, `claim`, `ACK/Command`, `materialize`, `certify`;
-kill again after the respective independent COMMIT but before worker response.
+Spawn a distinct OS worker. Kill it **inside the staging UoW, after
+the phase-specific write but before COMMIT**, for the first occurrence of
+`publish`, `claim`, `ACK/Command`, `materialize`, `certify`; a simple
+pre-invocation death does not qualify. Kill again after the respective
+independent COMMIT but before worker response.
 Verify every intervening persisted snapshot against #488 (no synthetic event
 or duplicate effect). When a claimed owner dies, reclaim using a **new**
 owner after expiry and advance under the new epoch. Assert the complete
@@ -73,6 +77,10 @@ foreign-domain deliveries.
 Create two independent PostgreSQL namespaces: standalone #488 reducer plus
 reconciler, and integrated recurring native-SimPy-dispatched adapter.
 Run each organization through a separate persistent OS worker connection.
+Release **one** worker commit at a time for this oracle gate, snapshot after
+that individual COMMIT, then permit the next organization; otherwise two
+simultaneous commits could hide a transient incorrect intermediate state.
+G2 independently proves truly concurrent PostgreSQL critical sections.
 On **every** bounded occurrence compare G3's full durable certificate,
 and verify each integrated job's local authoritative tick/time. At completion
 verify every `published / claimed / acknowledged / materialized / certified`
