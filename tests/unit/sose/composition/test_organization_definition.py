@@ -64,6 +64,26 @@ def test_valid_organization_describes_components_without_global_lock_or_clock():
     assert not hasattr(spec, "authoritative_entity_state")
 
 
+def test_semantically_unordered_catalog_entries_have_one_stable_fingerprint():
+    original = organization()
+    reordered = replace(
+        original,
+        components=tuple(reversed((
+            original.components[0],
+            replace(
+                original.components[1],
+                statechart_types=tuple(reversed(original.components[1].statechart_types)),
+            ),
+        ))),
+        jobs=tuple(reversed(original.jobs)),
+        physical_pools=(replace(
+            original.physical_pools[0],
+            consumer_ids=tuple(reversed(original.physical_pools[0].consumer_ids)),
+        ),),
+    )
+    assert original.fingerprint() == reordered.fingerprint()
+
+
 def test_definition_fingerprint_is_stable_and_sensitive_to_semantic_configuration():
     spec = organization()
     assert len(spec.fingerprint()) == 64
@@ -118,28 +138,31 @@ def test_process_component_is_explicitly_versioned(component):
 
 def test_rejects_dangling_self_and_duplicate_causal_boundaries():
     spec = organization()
-    for bad in (
-        replace(spec.boundaries[0], producer_id="missing"),
-        replace(spec.boundaries[0], consumer_id="missing"),
-        replace(spec.boundaries[0], consumer_id="sales"),
-        replace(spec.boundaries[0], contract_version=0),
+    for changes in (
+        {"producer_id": "missing"},
+        {"consumer_id": "missing"},
+        {"consumer_id": "sales"},
+        {"contract_version": 0},
     ):
+        # Dataclass __post_init__ can itself reject the invalid value.
+        # Construct it *inside* the exception context.
         with pytest.raises(ValueError):
-            replace(spec, boundaries=(bad,))
+            replace(spec, boundaries=(replace(spec.boundaries[0], **changes),))
     with pytest.raises(ValueError):
         replace(spec, boundaries=spec.boundaries * 2)
 
 
 def test_rejects_duplicate_job_identity_and_invalid_component_link():
     spec = organization()
-    for jobs in (
-        spec.jobs + (spec.jobs[0],),
-        (replace(spec.jobs[0], component_id="missing"),),
-        (replace(spec.jobs[0], trigger_namespace=""),),
-        (spec.jobs[0], replace(spec.jobs[1], trigger_namespace="order")),
-    ):
+    cases = (
+        lambda: spec.jobs + (spec.jobs[0],),
+        lambda: (replace(spec.jobs[0], component_id="missing"),),
+        lambda: (replace(spec.jobs[0], trigger_namespace=""),),
+        lambda: (spec.jobs[0], replace(spec.jobs[1], trigger_namespace="order")),
+    )
+    for make_jobs in cases:
         with pytest.raises(ValueError):
-            replace(spec, jobs=jobs)
+            replace(spec, jobs=make_jobs())
 
 
 def test_physical_pool_ref_is_not_a_second_capacity_ledger():
