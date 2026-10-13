@@ -1,0 +1,96 @@
+"""Domain-neutral, immutable causal evidence for restart/concurrency falsification.
+
+The oracle can be driven by a different scheduler: compare persisted facts
+without relying on private runtime objects, event counts, or a running process.
+Future domains can supply their source identity and physical event names.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any, Iterable
+
+from sose.core.identity import deterministic_id
+
+
+@dataclass(frozen=True)
+class CausalCertificate:
+    sources: tuple[Any, ...]
+    events: tuple[Any, ...]
+    resource_definitions: tuple[Any, ...]
+    resource_reservations: tuple[Any, ...]
+    messages: tuple[Any, ...]
+    deliveries: tuple[Any, ...]
+    consumptions: tuple[Any, ...]
+    commands: tuple[Any, ...]
+    observations: tuple[Any, ...]
+    effects: tuple[Any, ...]
+
+
+def capture_causal_certificate(
+    store: Any, *, organizations: Iterable[str], source_type: str,
+    observation_type: str, physical_event_names: frozenset[str],
+    command_identity_namespace: str,
+) -> CausalCertificate:
+    """Capture negative evidence (missing Command/certificate) as explicit None.
+
+    The projection includes full causal DAG entries, clocks embedded in source
+    entities, physical reservations/definitions, and all five downstream fact
+    classes, for the supplied organizations only. Identity-sorted records are
+    compared by complete value, not counts or summary metrics.
+    """
+    orgs = tuple(sorted(organizations))
+    with store.transaction() as uow:
+        sources = tuple(uow.get_entity(source_type, name) for name in orgs)
+        events = tuple(sorted(
+            (event for event in uow.events()
+             if event.entity_type == source_type and event.entity_id in orgs),
+            key=lambda item: item.event_id,
+        ))
+        deliveries = tuple(sorted(
+            (
+                delivery for delivery in uow.boundary_deliveries()
+                if (message := uow.get_boundary_message(delivery.message_id)) is not None
+                and message.correlation_id in orgs
+            ),
+            key=lambda item: item.delivery_id,
+        ))
+        messages = tuple(uow.get_boundary_message(d.message_id) for d in deliveries)
+        physical = (event for event in events if event.name in physical_event_names)
+        commands = tuple(
+            (m.message_id, uow.get_command(deterministic_id(
+                command_identity_namespace, m.message_id,
+            )))
+            for m in messages
+        )
+        effects = tuple(
+            (m.message_id, uow.get_business_effect(deterministic_id(
+                command_identity_namespace, m.message_id,
+            )))
+            for m in messages
+        )
+        return CausalCertificate(
+            sources=sources,
+            events=events,
+            resource_definitions=tuple(sorted(
+                (r for r in store.resource_definitions()
+                 if any(r.name.startswith(name + "/") for name in orgs)),
+                key=lambda item: item.name,
+            )),
+            resource_reservations=tuple(sorted(
+                (r for r in uow.resource_reservations()
+                 if any(r.resource_name.startswith(name + "/") for name in orgs)),
+                key=lambda item: item.reservation_id,
+            )),
+            messages=messages,
+            deliveries=deliveries,
+            consumptions=tuple(
+                (d.delivery_id, uow.get_boundary_consumption(d.delivery_id))
+                for d in deliveries
+            ),
+            commands=commands,
+            observations=tuple(
+                (e.event_id, uow.get_entity(observation_type, e.event_id))
+                for e in physical
+            ),
+            effects=effects,
+        )
