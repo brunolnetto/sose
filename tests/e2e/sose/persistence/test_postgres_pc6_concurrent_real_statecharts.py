@@ -11,6 +11,7 @@ from threading import Barrier, Event, Lock, Thread
 from uuid import uuid4
 import json
 import os
+from pathlib import Path
 
 import pytest
 import psycopg
@@ -158,13 +159,21 @@ def test_pg_two_real_customer_statecharts_overlap_without_business_aliasing(monk
                 first_worker_failure, forensic_lock,
                 flow=key, error=error,
                 snapshot=lambda: _read_first_failure_snapshot(DSN, namespace),
+                evidence_path=(
+                    Path(os.environ["SOSE_PC6_FIRST_FAILURE_SNAPSHOT"])
+                    if os.environ.get("SOSE_PC6_FIRST_FAILURE_SNAPSHOT") else None
+                ),
             )
             raise
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(worker, key) for key in ("customer-a", "customer-b")]
         finished, unfinished = wait(futures, timeout=35)
-        assert not unfinished, "worker did not complete within bounded interval"
+        assert not unfinished, (
+            "worker did not complete within bounded interval; first failure: "
+            + json.dumps(first_worker_failure[0] if first_worker_failure else None,
+                         default=str, sort_keys=True)[:18000]
+        )
         failures = [
             {
                 "flow": key,
