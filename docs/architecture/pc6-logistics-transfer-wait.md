@@ -34,6 +34,11 @@ destination dock or hub-queue request.
    `reconcile_transfer()` reported stale `False` but before inspection of the
    pending request, the exact persisted `origin-dequeue:<shipment>` GET receipt
    authorizes an idempotent retry of the *original* intent, not terminal error.
+   Because finite resource admission and store publication may commit after
+   the local reconciler reports a stale `False`, the composite handler also
+   treats the exact *already-granted* vehicle/dock reservation and the exact
+   *already-committed* destination item/GET receipt as evidence for retry.
+   An unrelated reservation, item or receipt does not justify a wait.
 5. The reference synchronous demo retries the typed wait within its
    preexisting bounded window; recurring production recovery defers the
    **same command identity** to its next slot, without repeated ACK,
