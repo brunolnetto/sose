@@ -190,6 +190,12 @@ class Engine:
         rebuilt = RuntimeRebuilder(
             self.persistence,
             context=self.context,
+            # A local domain must never dispatch scheduled work owned by
+            # another domain's StateChart. The foreign durable Command/work
+            # remain untouched for their proper domain runtime.
+            scheduled_work_filter=lambda item: self.registry.supports(
+                item.command.entity_type
+            ),
             participants=(
                 RecoveryParticipant("resources", self.resources),
                 RecoveryParticipant("stores", self.stores),

@@ -24,6 +24,10 @@ class DomainRegistry:
             raise ValueError(f"entity type already registered: {definition.name}")
         self._types[definition.name] = definition
 
+    def supports(self, name: str) -> bool:
+        """Whether this domain runtime owns a StateChart for an entity type."""
+        return name in self._types
+
     def get(self, name: str) -> EntityType:
         return self._types[name]
 
