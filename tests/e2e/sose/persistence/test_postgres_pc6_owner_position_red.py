@@ -1,12 +1,14 @@
-"""RED: independent same-type StateCharts must not inherit a shared PG clock.
+"""RED counterexample: the legacy namespace clock aliases same-type flows.
 
-Deliberately fails on the legacy namespace-global SimulationPosition.
-Two real PostgreSQL connections force A to read its recovery boundary first;
-B advances a distinct owner by five logical minutes; A then rebuilds at its
-own unchanged boundary. No sleep, retry, or global mutex hides the interleaving.
+Two PostgreSQL connections force A to sample a shared SimulationPosition,
+B to advance the namespace clock, then A to rebuild at the old timestamp.
 
-This is an initial counterexample, not complete #504 certification. It does
-not yet test fenced owner-position writes, persisted owner bindings, or replay.
+IMPORTANT: `instance_key` isolates entity IDs, NOT organization/job ownership.
+The legacy runtime persists neither owner binding nor owner-scoped clock here.
+This test demonstrates the *global-clock hazard*, not two autonomous
+organizations; its desired owner-specific assertion cannot pass until the
+fixture is rebuilt using future durable organization/job bindings (#504).
+No timing luck, process-wide lock, or retry hides the interleaving.
 """
 from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
@@ -28,7 +30,7 @@ DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
 
 
-def test_two_same_type_owners_keep_independent_pg_recovery_boundaries():
+def test_unscoped_same_type_pg_clock_alias_is_red_for_future_owner_binding():
     assert DSN is not None
     namespace = "pc6_owner_time_" + uuid4().hex[:12]
     with PostgresPersistence(DSN, namespace=namespace) as initial:
@@ -59,10 +61,10 @@ def test_two_same_type_owners_keep_independent_pg_recovery_boundaries():
             backend = SimPyBackend(origin=sampled.logical_time)
             first_owner_sampled.set()
             assert second_owner_committed.wait(15), "other owner did not commit"
-            # The existing RuntimeRebuilder sees B's *shared* new position
-            # rather than the position that A sampled for its own job.
-            # Expected future contract: scoped owner A rebuild succeeds and
-            # attaches exactly A's still-pending shipment callback.
+            # The legacy runtime sees the namespace clock B just advanced.
+            # This initial RED intentionally has NO owner binding yet.
+            # Complete the fixture by persisting explicit org/job ownership,
+            # then route A's backend through its scoped cursor and callbacks.
             return engine.rebuild_backend(backend)
 
     def advance_organization_b():
@@ -85,6 +87,7 @@ def test_two_same_type_owners_keep_independent_pg_recovery_boundaries():
         assert committed.logical_time == ORIGIN + timedelta(minutes=5)
         attached_a = a.result(timeout=20)
 
-    # This assertion will also remain RED after the clock is isolated unless
-    # callbacks of the same StateChart type are bound to the correct owner.
+    # This future assertion is NOT a presently-valid legacy expectation:
+    # the unscoped registry sees two shipment callbacks. It becomes an
+    # executable conformance gate only with persisted A/B owner bindings.
     assert attached_a == 1
