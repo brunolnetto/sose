@@ -76,6 +76,11 @@ def _read_first_failure_snapshot(dsn: str, namespace: str) -> dict[str, object]:
                 events = state.events
                 return {
                     "namespace": namespace,
+                    "record_identities": [
+                        (str(row[0]), str(row[1]), int(row[2]))
+                        for row in rows[:100]
+                    ],
+                    "record_identity_count": len(rows),
                     "position": None if position is None else asdict(position),
                     "entities": sorted(
                         (entity.entity_type, entity.id, entity.state, entity.version)
