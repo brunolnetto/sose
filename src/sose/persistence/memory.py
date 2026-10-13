@@ -176,6 +176,13 @@ class MemoryUnitOfWork:
         value = self._working.boundary_consumptions.get(delivery_id)
         return deepcopy(value) if value else None
 
+    def boundary_consumptions(self) -> tuple[BoundaryConsumption, ...]:
+        """Inspect all ACK receipts from this transactional snapshot."""
+        return tuple(
+            deepcopy(self._working.boundary_consumptions[key])
+            for key in sorted(self._working.boundary_consumptions)
+        )
+
     def save_boundary_consumption(self, consumption: BoundaryConsumption) -> None:
         existing = self._working.boundary_consumptions.get(consumption.delivery_id)
         if existing is not None and existing != consumption:
@@ -294,6 +301,13 @@ class MemoryUnitOfWork:
     def get_entity(self, entity_type: str, entity_id: str) -> Entity | None:
         value = self._working.entities.get((entity_type, entity_id))
         return deepcopy(value) if value else None
+
+    def entities(self) -> tuple[Entity, ...]:
+        """Inspect all entities including orphan observations in this snapshot."""
+        return tuple(
+            deepcopy(self._working.entities[key])
+            for key in sorted(self._working.entities)
+        )
 
     def save_entity(self, entity: Entity) -> None:
         key = (entity.entity_type, entity.id)
