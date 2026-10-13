@@ -25,7 +25,8 @@ SimPy arbitration, or declare five-arm scientific admissibility.
 - authoritative source entities (including clocks and causal state) and all
   matching DomainEvents (full DAG and tick);
 - persisted definitions and occupied resource reservations;
-- typed boundary messages, deliveries and **nullable** ACK consumptions;
+- **all** typed boundary messages enumerated independently of deliveries (including
+  orphan publications), all scoped deliveries and **nullable** ACK consumptions;
 - **nullable** staged Commands, event-keyed materialized observations, and
   **nullable** immutable BusinessEffectApplied certificates.
 
