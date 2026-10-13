@@ -94,3 +94,28 @@ establishes a unique owner for each existing work item. Do not silently map
 - Do not mark #504 complete or merge draft #505 on a passing random run.
   OD-5a's existing preregistered scientific gates are independent of this
   organizational-runtime certification.
+
+
+## First implemented routing slice (draft #505, not a release gate)
+
+`ScheduledWorkOwnerBinding(work_id, organization_id, job_id)` is an immutable
+version-independent identity of an individual pending callback. The incremental
+record collection `scheduled_work_owners` is supported by the Memory, SQLite,
+and PostgreSQL record adapters. The optional `RuntimeRebuilder(owner_key=...)`
+selects only explicitly bound callbacks even when their StateCharts have the
+same `entity_type`. Activating scoped reconstruction with any unbound legacy
+ScheduledWork fails closed; legacy unscoped engines keep their original APIs.
+
+PostgreSQL treats ownership insertion as immutable: competing writers on the
+**same** `work_id` cannot overwrite the first committed binding; different
+work IDs can commit concurrently. This is implemented as record-key uniqueness
+with a readback on conflict, not a namespace mutex. The regressions include
+independent workers on distinct work and adversarial conflicting workers on
+one work, plus SQLite reopen/delete and in-memory identity immutability.
+
+This slice **does not yet** give a job a separate authoritative
+`SimulationPosition`, a versioned CAS cursor, scoped tick or scenario state,
+fenced owner-specific dispatch/ACK, or cross-domain physical/recovery
+equivalence. It must remain in draft until those gates and the original forced
+clock RED are GREEN. A typed callback owner is necessary, not sufficient, to
+make `Engine.advance_tick()` an organizational operation.
