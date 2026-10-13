@@ -761,6 +761,14 @@ class PostgresPersistence(MemoryPersistence):
             if work.due_at <= at
         )
 
+    def scheduled_work_owner(self, work_id):
+        self._fresh()
+        return super().scheduled_work_owner(work_id)
+
+    def scheduled_work_for_owner(self, organization_id, job_id):
+        self._fresh()
+        return super().scheduled_work_for_owner(organization_id, job_id)
+
     def simulation_position(self):
         self._fresh()
         return super().simulation_position()
