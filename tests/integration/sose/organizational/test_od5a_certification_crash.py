@@ -9,6 +9,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
 import os
+import sqlite3
 
 import pytest
 
@@ -88,11 +89,55 @@ def _integrated(store, org, owner, now):
     )
 
 
-def _kill_before_sqlite_commit(path):
-    # Real OS death before any SOSE durable boundary invocation.
+def _kill_inside_phase_before_commit(path, org, owner, now, action, prefix):
+    """Abort a live UoW after staging THIS phase's mutation, before COMMIT.
+
+    A simple worker death before calling the adapter would be vacuous.
+    Replace the specific UoW write primitive in the child process; the
+    operation must actually reach that durable phase before os._exit(86).
+    """
+    from sose.persistence.memory import MemoryUnitOfWork
+
+    writes = {
+        "source_advanced": "append_event",
+        "published": "save_boundary_message",
+        "claimed": "save_boundary_delivery",
+        "acknowledged": "save_boundary_consumption",
+        "materialized": "save_entity",
+        "certified": "save_business_effect",
+    }
     with SQLitePersistence(path) as store:
-        assert store.job_states()
-        os._exit(86)
+        for previous in prefix:
+            actual = _integrated(store, org, owner, now)
+            if actual.action != previous:
+                raise RuntimeError(
+                    f"phase setup committed {actual.action} instead of {previous}"
+                )
+        method = writes[action]
+        original = getattr(MemoryUnitOfWork, method)
+
+        def abort_staged_write(uow, *args, **kwargs):
+            value = original(uow, *args, **kwargs)
+            if action == "materialized" and args[0].entity_type != "od5a_physical_observation":
+                return value
+            # The mutation is in the uncommitted UnitOfWork. A real abrupt
+            # process death now discards it; recovery must reconstruct the
+            # exact prior committed causality without any phantom receipt.
+            os._exit(86)
+
+        setattr(MemoryUnitOfWork, method, abort_staged_write)
+        # Exit code 86 is possible ONLY after the requested phase actually
+        # reaches its staging write. A different phase or early no-op fails.
+        _integrated(store, org, owner, now)
+        os._exit(84)
+
+
+def _clone_sqlite(source, target):
+    # SQLite backup API captures all committed WAL pages consistently; plain
+    # file copying can omit WAL records and produce a false crash result.
+    with sqlite3.connect(source) as original:
+        with sqlite3.connect(target) as replica:
+            original.backup(replica)
 
 
 def _kill_after_sqlite_commits(path, org, owner, now, actions):
@@ -157,6 +202,7 @@ def test_integrated_real_os_deaths_before_after_every_boundary_commit(tmp_path):
                 break
             assert first.action not in {"idle", "blocked"}
             expected = [first.action]
+            intermediate = _certificate(oracle, (org,))
             if previous == "claimed":
                 # Expired claim is RECLAIMED by new owner; that owner commits
                 # the ACK before its process is killed after that second UoW.
@@ -171,11 +217,22 @@ def test_integrated_real_os_deaths_before_after_every_boundary_commit(tmp_path):
             reference = _certificate(oracle, (org,))
         with SQLitePersistence(restarted) as store:
             before = _certificate(store, (org,))
-        for action in expected:
+        for offset, action in enumerate(expected):
             if action not in terminated_before:
-                _exitcode(_kill_before_sqlite_commit, (str(restarted),), 86)
-                with SQLitePersistence(restarted) as unchanged:
-                    assert _certificate(unchanged, (org,)) == before
+                probe = tmp_path / f"precommit-{attempt}-{action}.sqlite"
+                _clone_sqlite(restarted, probe)
+                prefix = tuple(expected[:offset])
+                _exitcode(
+                    _kill_inside_phase_before_commit,
+                    (str(probe), org, owner, now, action, prefix), 86,
+                )
+                with SQLitePersistence(probe) as aborted:
+                    # ACK's pre-commit kill first RECLAIMS and commits the
+                    # new owner's claim; the expected rollback point is
+                    # therefore the oracle state after that preceding claim.
+                    assert _certificate(aborted, (org,)) == (
+                        intermediate if offset else before
+                    )
                 terminated_before.add(action)
         _exitcode(
             _kill_after_sqlite_commits,
