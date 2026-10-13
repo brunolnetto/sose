@@ -186,7 +186,7 @@ def test_integrated_real_os_deaths_before_after_every_boundary_commit(tmp_path):
             job = recovered.job_state(org)
             assert job.run_count == reference.sources[0].attributes["step"]
             assert job.next_tick == reference.sources[0].attributes["step"]
-            assert job.logical_time == reference.sources[0].updated_at or job.logical_time
+            assert job.logical_time == reference.sources[0].updated_at
             assert len({e.event_id for e in reference.events}) == len(reference.events)
         actions.extend(expected)
     else:
