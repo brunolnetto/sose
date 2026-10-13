@@ -30,7 +30,10 @@ parallel customer StateCharts and an in-transaction causal ingress barrier**.
 Each pytest invocation uses a unique PostgreSQL namespace. Multiple subprocesses
 run concurrently to recreate nontrivial real PostgreSQL scheduling pressure.
 
-Outputs:
+Each invocation creates a unique timestamp/UUID subdirectory under `--out`;
+previous logs and the previous `summary.json` are never overwritten.
+
+Outputs (inside that invocation subdirectory):
 - `run-<id>.log` contains pytest traceback and—on worker exception—a read-only
   reopened committed-state diagnostic.
 - `summary.json` lists all runs, pass/fail/timeout status and log path.
