@@ -21,11 +21,17 @@ destination dock or hub-queue request.
 3. If there is **no** durable pending request, the original terminal
    `RuntimeError` remains. A program bug is never silently reclassified
    as a capacity wait.
-4. The reference synchronous demo retries the typed wait within its
+4. Destination hub queue insertion is itself idempotent: if a previous
+   attempt left one durable `StorePutIntent` while the queue stayed full,
+   `logistics.reconcile_transfer` uses `engine.stores.ensure_put` to reuse the
+   **same item identity**, never calls `put` again and never duplicates a
+   physical arrival or shipment DomainEvent. Multiple blocked retries remain
+   pending until capacity is released.
+5. The reference synchronous demo retries the typed wait within its
    preexisting bounded window; recurring production recovery defers the
    **same command identity** to its next slot, without repeated ACK,
    guaranteed time travel or wall-clock-based logical progression.
-5. No global mutex/clock, new synthetic reservation, capacity increase or
+6. No global mutex/clock, new synthetic reservation, capacity increase or
    skipped concurrency test; SimPy remains ephemeral.
 
 ## Falsifiers
