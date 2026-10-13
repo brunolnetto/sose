@@ -19,7 +19,8 @@ import os
 import pytest
 
 from sose.backends.simpy import SimPyBackend
-from sose.core.runtime import SimulationPosition
+from sose.core.runtime import ScheduledWorkOwnerBinding, SimulationPosition
+from sose.core.durable import RuntimeRebuilder
 from sose.examples.logistics.simulation import (
     ORIGIN, build_runtime, seed_reference,
 )
@@ -37,12 +38,23 @@ def test_unscoped_same_type_pg_clock_alias_is_red_for_future_owner_binding():
         shipment_a = seed_reference(initial, instance_key="organization-a")
         shipment_b = seed_reference(initial, instance_key="organization-b")
         assert shipment_a.shipment_id != shipment_b.shipment_id
+        work = initial.scheduled_work()
         assert len([
-            item for item in initial.scheduled_work()
+            item for item in work
             if initial.command(item.command_id) is not None
             and initial.command(item.command_id).entity_type == "shipment"
         ]) == 2
         with initial.transaction() as uow:
+            for item in work:
+                command = initial.command(item.command_id)
+                assert command is not None
+                org, job = (
+                    ("org-a", "job-a") if command.entity_id == shipment_a.shipment_id
+                    else ("org-b", "job-b")
+                )
+                uow.bind_scheduled_work_owner(
+                    ScheduledWorkOwnerBinding(item.work_id, org, job)
+                )
             uow.set_simulation_position(
                 SimulationPosition(
                     logical_time=ORIGIN, execution_sequence=0,
@@ -57,7 +69,6 @@ def test_unscoped_same_type_pg_clock_alias_is_red_for_future_owner_binding():
         with PostgresPersistence(DSN, namespace=namespace) as store:
             sampled = store.simulation_position()
             assert sampled is not None and sampled.logical_time == ORIGIN
-            _, engine = build_runtime(store, now=sampled.logical_time)
             backend = SimPyBackend(origin=sampled.logical_time)
             first_owner_sampled.set()
             assert second_owner_committed.wait(15), "other owner did not commit"
@@ -65,7 +76,9 @@ def test_unscoped_same_type_pg_clock_alias_is_red_for_future_owner_binding():
             # This initial RED intentionally has NO owner binding yet.
             # Complete the fixture by persisting explicit org/job ownership,
             # then route A's backend through its scoped cursor and callbacks.
-            return engine.rebuild_backend(backend)
+            return RuntimeRebuilder(
+                store, owner_key=("org-a", "job-a"),
+            ).rebuild(backend, on_due=lambda item: None)
 
     def advance_organization_b():
         assert first_owner_sampled.wait(15), "first owner did not sample"
@@ -73,6 +86,10 @@ def test_unscoped_same_type_pg_clock_alias_is_red_for_future_owner_binding():
             _, engine = build_runtime(
                 store, now=ORIGIN, step=timedelta(minutes=5),
             )
+            # This legacy *unscoped* Engine still writes a shared clock,
+            # even though both scheduled callbacks now have real durable
+            # organization/job bindings. The next GREEN phase must route
+            # this operation through an owner-scoped engine transaction.
             engine.advance_tick()
             advanced = store.simulation_position()
             assert advanced is not None
