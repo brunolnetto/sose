@@ -133,6 +133,17 @@ class MemoryUnitOfWork:
         value = self._working.boundary_messages.get(message_id)
         return deepcopy(value) if value else None
 
+    def boundary_messages(self) -> tuple[BoundaryMessage, ...]:
+        """Read all messages from the same authoritative UoW snapshot.
+
+        Required for identifying unpaired/duplicated causal publications;
+        looking up messages only through deliveries would hide orphan facts.
+        """
+        return tuple(
+            deepcopy(self._working.boundary_messages[key])
+            for key in sorted(self._working.boundary_messages)
+        )
+
     def save_boundary_message(self, message: BoundaryMessage) -> None:
         existing = self._working.boundary_messages.get(message.message_id)
         if existing is not None and existing != message:
