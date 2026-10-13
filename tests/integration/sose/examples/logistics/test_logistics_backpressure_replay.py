@@ -138,6 +138,21 @@ def test_destination_queue_backpressure_recovers_after_durable_origin_dequeue():
     assert len(pending_destination) == 1
     assert pending_destination[0].store_name == "destination_hub_queue"
 
+    # A recurring worker can revisit the exact same blocked intent before
+    # capacity is released. Reissuing the same put must not raise or duplicate
+    # authoritative queue intent, state transitions or resource reservations.
+    first_blocked = (
+        tuple(persistence.store_put_intents()),
+        tuple(persistence.resource_reservations()),
+        tuple(persistence.events()),
+    )
+    assert reconcile_transfer(persistence, engine, backend, entities=entities) is False
+    assert (
+        tuple(persistence.store_put_intents()),
+        tuple(persistence.resource_reservations()),
+        tuple(persistence.events()),
+    ) == first_blocked
+
     _drain(
         engine,
         backend,
