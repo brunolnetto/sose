@@ -1,6 +1,8 @@
 """A durable transient resource demand is never a terminal business failure."""
 from datetime import datetime, timezone
 
+import pytest
+
 from sose.composition import trading_company_customer as customer
 from sose.composition.model import BoundaryMessage
 from sose.composition.recovery import TradingCustomerRecoveryRunner
@@ -123,3 +125,53 @@ def test_real_logistics_origin_dock_contention_is_durable_wait(monkeypatch):
     assert len(calls) >= 2
     assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
     assert result.persistence.business_effects()
+
+
+@pytest.mark.parametrize(
+    ("resource_name", "blocker_id"),
+    [
+        ("transfer_vehicle", "transfer-vehicle:external-blocker"),
+        ("destination_dock", "destination-dock:external-blocker"),
+    ],
+)
+def test_composed_logistics_transfer_resource_contention_is_a_durable_wait(
+    monkeypatch, resource_name, blocker_id,
+):
+    """A finite transfer leg must retry its original Command, not fail business."""
+    original = customer.logistics.reconcile_transfer
+    calls = []
+
+    def contend_once(persistence, engine, backend, *, entities):
+        calls.append(entities.shipment_id)
+        if len(calls) == 1:
+            holding = engine.resources.ensure_requested(
+                backend, resource_name=resource_name,
+                request_id=blocker_id, requested_at=backend.now,
+            )
+            backend.run_until(backend.now)
+            assert holding is not None
+        else:
+            engine.resources.withdraw(backend, blocker_id)
+            backend.run_until(backend.now)
+        return original(
+            persistence, engine, backend, entities=entities,
+        )
+
+    monkeypatch.setattr(customer.logistics, "reconcile_transfer", contend_once)
+    result = customer.run_customer_demand_path()
+    assert len(calls) >= 2
+    assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
+    assert len(result.persistence.business_effects()) == 8
+    assert len(set(effect.effect_id for effect in result.persistence.business_effects())) == 8
+
+
+def test_unsubstantiated_transfer_failure_remains_terminal(monkeypatch):
+    """No pending request, reservation, queue GET or PUT means no made-up wait."""
+    def fails_without_durable_demand(_persistence, _engine, _backend, *, entities):
+        return False
+
+    monkeypatch.setattr(
+        customer.logistics, "reconcile_transfer", fails_without_durable_demand,
+    )
+    with pytest.raises(RuntimeError, match="logistics transfer failed"):
+        customer.run_customer_demand_path()
