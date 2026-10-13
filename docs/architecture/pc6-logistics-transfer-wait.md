@@ -30,6 +30,10 @@ destination dock or hub-queue request.
    immediately GETs the newly accepted item, the matching durable
    `StoreGetResult` is accepted as authoritative completion of that item
    rather than incorrectly interpreting an empty destination queue as failure.
+   Similarly, when another worker confirms the origin-queue dequeue after
+   `reconcile_transfer()` reported stale `False` but before inspection of the
+   pending request, the exact persisted `origin-dequeue:<shipment>` GET receipt
+   authorizes an idempotent retry of the *original* intent, not terminal error.
 5. The reference synchronous demo retries the typed wait within its
    preexisting bounded window; recurring production recovery defers the
    **same command identity** to its next slot, without repeated ACK,
