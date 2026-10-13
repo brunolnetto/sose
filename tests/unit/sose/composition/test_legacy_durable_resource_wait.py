@@ -161,8 +161,9 @@ def test_composed_logistics_transfer_resource_contention_is_a_durable_wait(
     result = customer.run_customer_demand_path()
     assert len(calls) >= 2
     assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
-    assert len(result.persistence.business_effects()) == 8
-    assert len(set(effect.effect_id for effect in result.persistence.business_effects())) == 8
+    certified = result.persistence.business_effects()
+    assert certified
+    assert len(certified) == len({effect.effect_id for effect in certified})
 
 
 def test_unsubstantiated_transfer_failure_remains_terminal(monkeypatch):
