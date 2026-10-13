@@ -63,7 +63,7 @@ def _read_first_failure_snapshot(dsn: str, namespace: str) -> dict[str, object]:
                     request.store_name, request.request_id,
                 ) for request in store.store_get_requests())[:30],
                 "store_get_results": sorted((
-                    result.request_id, result.item_id,
+                    result.request_id, result.item.item_id,
                 ) for result in store.store_get_results())[:30],
                 "scheduled_work": sorted((
                     work.work_id, str(work.due_at),
