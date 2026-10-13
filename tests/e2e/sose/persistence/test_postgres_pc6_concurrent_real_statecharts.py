@@ -50,12 +50,27 @@ def _read_first_failure_snapshot(dsn: str, namespace: str) -> dict[str, object]:
                     (e.event_id, e.entity_type, e.entity_id, e.correlation_id)
                     for e in events
                 )[:40],
-                "resource_reservations": _canonical(store.resource_reservations())[:30],
-                "store_items": _canonical(store.store_items())[:30],
-                "store_get_requests": _canonical(store.store_get_requests())[:30],
-                "store_get_results": _canonical(store.store_get_results())[:30],
-                "scheduled_work": _canonical(store.scheduled_work())[:30],
-                "job_states": _canonical(store.job_states())[:30],
+                # Capture IDs and concurrency-relevant scheduling fields,
+                # not the full business payload or database credentials.
+                "resource_reservations": sorted((
+                    reservation.reservation_id, reservation.resource_name,
+                    reservation.request_id,
+                ) for reservation in store.resource_reservations())[:30],
+                "store_items": sorted((
+                    item.store_name, item.item_id,
+                ) for item in store.store_items())[:30],
+                "store_get_requests": sorted((
+                    request.store_name, request.request_id,
+                ) for request in store.store_get_requests())[:30],
+                "store_get_results": sorted((
+                    result.request_id, result.item_id,
+                ) for result in store.store_get_results())[:30],
+                "scheduled_work": sorted((
+                    work.work_id, str(work.due_at),
+                ) for work in store.scheduled_work())[:30],
+                "job_states": sorted((
+                    job.job_id, job.run_count,
+                ) for job in store.job_states())[:30],
                 "business_effects": tuple(
                     effect.effect_id for effect in store.business_effects()
                 )[:30],
