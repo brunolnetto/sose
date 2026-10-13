@@ -5,6 +5,7 @@ two sequential completions on two independent database connections.
 """
 from concurrent.futures import ThreadPoolExecutor, wait
 from dataclasses import asdict
+import traceback
 from threading import Barrier, Event, Lock, Thread
 from uuid import uuid4
 import json
@@ -25,6 +26,45 @@ def _canonical(values):
     return tuple(sorted(json.dumps(
         asdict(value), sort_keys=True, default=str, separators=(",", ":"),
     ) for value in values))
+
+
+def _read_first_failure_snapshot(dsn: str, namespace: str) -> dict[str, object]:
+    """Forensics only: reopen committed truth after joined workers have failed.
+
+    This must never advance a tick, recover a flow, or fix a failing assertion.
+    Avoid dumping sensitive payloads or huge state into the CI report.
+    """
+    try:
+        with PostgresPersistence(dsn, namespace=namespace) as store:
+            position = store.simulation_position()
+            events = store.events()
+            return {
+                "namespace": namespace,
+                "position": None if position is None else asdict(position),
+                "entities": sorted(
+                    (entity.entity_type, entity.id, entity.state, entity.version)
+                    for entity in store.entities()
+                )[:40],
+                "event_count": len(events),
+                "events": sorted(
+                    (e.event_id, e.entity_type, e.entity_id, e.correlation_id)
+                    for e in events
+                )[:40],
+                "resource_reservations": _canonical(store.resource_reservations())[:30],
+                "store_items": _canonical(store.store_items())[:30],
+                "store_get_requests": _canonical(store.store_get_requests())[:30],
+                "store_get_results": _canonical(store.store_get_results())[:30],
+                "scheduled_work": _canonical(store.scheduled_work())[:30],
+                "job_states": _canonical(store.job_states())[:30],
+                "business_effects": tuple(
+                    effect.effect_id for effect in store.business_effects()
+                )[:30],
+            }
+    except Exception as exc:  # failure is evidence, never an excuse to hide the first error
+        return {
+            "namespace": namespace, "snapshot_error": repr(exc),
+            "traceback": "".join(traceback.format_exception(exc))[-4000:],
+        }
 
 
 def test_pg_two_real_customer_statecharts_overlap_without_business_aliasing(monkeypatch):
@@ -61,11 +101,21 @@ def test_pg_two_real_customer_statecharts_overlap_without_business_aliasing(monk
         finished, unfinished = wait(futures, timeout=35)
         assert not unfinished, "worker did not complete within bounded interval"
         failures = [
-            (key, type(future.exception()).__name__, str(future.exception()))
+            {
+                "flow": key,
+                "error": repr(future.exception()),
+                "traceback": "".join(traceback.format_exception(future.exception()))[-4000:],
+            }
             for key, future in zip(("customer-a", "customer-b"), futures)
             if future.exception() is not None
         ]
-        assert not failures, f"independent worker errors: {failures}"
+        assert not failures, (
+            "independent worker errors; committed PostgreSQL forensic snapshot follows: "
+            + json.dumps(
+                {"failures": failures, "snapshot": _read_first_failure_snapshot(DSN, namespace)},
+                default=str, sort_keys=True,
+            )[:18000]
+        )
         results = tuple(f.result() for f in futures)
 
     assert len(ingress_correlations) == 2
