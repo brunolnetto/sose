@@ -45,3 +45,28 @@ def test_capture_first_failed_worker_before_later_state_overwrites_evidence():
     assert captured[0]["flow"] == "customer-a"
     assert "broken clock" in captured[0]["error"]
     assert captured[0]["snapshot"] == {"committed": "at-first-failure"}
+
+
+def test_first_failure_is_persisted_before_stalled_peer_finishes(tmp_path):
+    from pathlib import Path
+    from scripts.reproduce_pc6_pg_overlap import capture_first_worker_failure_once
+
+    evidence_path = tmp_path / "run-001.first-failure.json"
+    captured = []
+    capture_first_worker_failure_once(
+        captured, Lock(), flow="customer-a", error=RuntimeError("first failure"),
+        snapshot=lambda: {"position": "first-committed-boundary"},
+        evidence_path=evidence_path,
+    )
+    # The peer is still blocked: evidence must already exist and survive
+    # process termination, not rely on wait(ALL_COMPLETED) or pytest teardown.
+    assert evidence_path.is_file()
+    record = __import__("json").loads(evidence_path.read_text(encoding="utf-8"))
+    assert record["flow"] == "customer-a"
+    assert record["snapshot"]["position"] == "first-committed-boundary"
+
+    capture_first_worker_failure_once(
+        captured, Lock(), flow="customer-b", error=RuntimeError("later failure"),
+        snapshot=lambda: {"position": "later"}, evidence_path=evidence_path,
+    )
+    assert __import__("json").loads(evidence_path.read_text(encoding="utf-8")) == record
