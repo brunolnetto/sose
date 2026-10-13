@@ -22,6 +22,7 @@ class CausalCertificate:
     deliveries: tuple[Any, ...]
     consumptions: tuple[Any, ...]
     commands: tuple[Any, ...]
+    all_commands: tuple[Any, ...]
     observations: tuple[Any, ...]
     effects: tuple[Any, ...]
     all_effects: tuple[Any, ...]
@@ -94,6 +95,14 @@ def capture_causal_certificate(
                 for d in deliveries
             ),
             commands=commands,
+            # An unexpected staged command is executable domain intent, not
+            # merely a missing transport receipt. Preserve the nullable
+            # expected Command slots AND all organization-correlated ones.
+            all_commands=tuple(sorted(
+                (command for command in uow.commands()
+                 if command.correlation_id in orgs),
+                key=lambda command: command.command_id,
+            )),
             observations=tuple(
                 (e.event_id, uow.get_entity(observation_type, e.event_id))
                 for e in physical
