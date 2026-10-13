@@ -241,6 +241,14 @@ class JSONLJournalPersistence(MemoryPersistence):
             if work.due_at <= at
         )
 
+    def scheduled_work_owner(self, work_id):
+        self._refresh_from_journal()
+        return super().scheduled_work_owner(work_id)
+
+    def scheduled_work_for_owner(self, organization_id, job_id):
+        self._refresh_from_journal()
+        return super().scheduled_work_for_owner(organization_id, job_id)
+
     def simulation_position(self):
         self._refresh_from_journal()
         return super().simulation_position()
