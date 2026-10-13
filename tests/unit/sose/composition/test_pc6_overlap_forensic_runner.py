@@ -70,3 +70,31 @@ def test_first_failure_is_persisted_before_stalled_peer_finishes(tmp_path):
         snapshot=lambda: {"position": "later"}, evidence_path=evidence_path,
     )
     assert __import__("json").loads(evidence_path.read_text(encoding="utf-8")) == record
+
+
+
+def test_first_error_is_fsynced_before_potentially_blocking_pg_snapshot(tmp_path):
+    import json
+
+    sidecar = tmp_path / "first-exception.json"
+    observed = []
+
+    def delayed_snapshot():
+        # A future backend lock/query can hang or time out. Its diagnostics
+        # must never be a prerequisite for preserving the original failure.
+        assert sidecar.exists()
+        partial = json.loads(sidecar.read_text(encoding="utf-8"))
+        assert partial["flow"] == "customer-a"
+        assert "root error" in partial["error"]
+        observed.append(partial["snapshot"])
+        return {"durable_clock": "before"}
+
+    captured = []
+    capture_first_worker_failure_once(
+        captured, Lock(), flow="customer-a",
+        error=RuntimeError("root error"),
+        snapshot=delayed_snapshot, evidence_path=sidecar,
+    )
+    assert len(observed) == 1
+    final = json.loads(sidecar.read_text(encoding="utf-8"))
+    assert final["snapshot"] == {"durable_clock": "before"}
