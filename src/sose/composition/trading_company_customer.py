@@ -689,10 +689,11 @@ def _execute_intent(
                         ("destination_dock", f"destination-dock:{shipment_id}"),
                     )
                     for resource_name, request_id in waiting_resources:
-                        if (
-                            engine.resources.has_request(request_id)
-                            and engine.resources.reservation_for(request_id) is None
-                        ):
+                        # A concurrent worker may grant the durable demand
+                        # after reconcile_transfer() returned False. Both a
+                        # pending demand and its exact committed reservation
+                        # require replay of this same Command, not failure.
+                        if engine.resources.has_request(request_id):
                             raise DurableResourceWait(resource_name, request_id)
                     waiting_stores = (
                         (
@@ -726,6 +727,24 @@ def _execute_intent(
                         ):
                             raise DurableResourceWait(
                                 "origin_hub_queue", origin_request,
+                            )
+                    # A pending destination PUT may be accepted after the
+                    # reconciler returned False. Its intent vanishes once
+                    # committed, but the exact destination item (or a later
+                    # consumer's durable receipt) proves real progress.
+                    if current_state() == "in_transfer":
+                        destination_id = f"destination-queue:{shipment_id}"
+                        if any(
+                            item.item_id == destination_id
+                            and item.store_name == "destination_hub_queue"
+                            for item in persistence.store_items()
+                        ) or any(
+                            result.item.item_id == destination_id
+                            and result.store_name == "destination_hub_queue"
+                            for result in persistence.store_get_results()
+                        ):
+                            raise DurableResourceWait(
+                                "destination_hub_queue", destination_id,
                             )
                     # An unsubstantiated false result remains a genuine
                     # transition defect; never synthesize a queue receipt.
