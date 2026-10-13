@@ -14,6 +14,8 @@ from __future__ import annotations
 
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from collections.abc import Callable
+import traceback
 from datetime import datetime, timezone
 import json
 import os
@@ -27,6 +29,31 @@ TARGET = (
     "tests/e2e/sose/persistence/test_postgres_pc6_concurrent_real_statecharts.py"
     "::test_pg_two_real_customer_statecharts_overlap_without_business_aliasing"
 )
+
+
+
+def capture_first_worker_failure_once(
+    captured: list[dict[str, object]],
+    capture_lock,
+    *,
+    flow: str,
+    error: Exception,
+    snapshot: Callable[[], dict[str, object]],
+) -> None:
+    """Record committed state on first worker exception, not after wait(ALL_COMPLETED).
+
+    Locking is restricted to failure evidence collection. Healthy workers and
+    distinct organizational persistence transactions are never serialized here.
+    """
+    with capture_lock:
+        if captured:
+            return
+        captured.append({
+            "flow": flow,
+            "error": repr(error),
+            "traceback": "".join(traceback.format_exception(error))[-4000:],
+            "snapshot": snapshot(),
+        })
 
 
 def create_invocation_directory(parent: Path) -> Path:
