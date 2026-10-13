@@ -27,6 +27,7 @@ from sose.core.runtime import (
     PreemptiveResourceReleaseIntent,
     ResourcePreemptionResult,
     ScheduledWork,
+    ScheduledWorkOwnerBinding,
     SimulationPosition,
 )
 from sose.domain.entity import Entity
@@ -45,6 +46,7 @@ class _State:
     events: list[DomainEvent] = field(default_factory=list)
     commands: dict[str, Command] = field(default_factory=dict)
     scheduled_work: dict[str, ScheduledWork] = field(default_factory=dict)
+    scheduled_work_owners: dict[str, ScheduledWorkOwnerBinding] = field(default_factory=dict)
     simulation_position: SimulationPosition | None = None
     scenario_state: ScenarioRuntimeState | None = None
     resource_definitions: dict[str, ResourceDefinition] = field(default_factory=dict)
@@ -364,9 +366,21 @@ class MemoryUnitOfWork:
         self._working.scheduled_work[work.work_id] = deepcopy(work)
         self._mark_dirty("scheduled_work", work.work_id)
 
+    def bind_scheduled_work_owner(self, binding: ScheduledWorkOwnerBinding) -> None:
+        if binding.work_id not in self._working.scheduled_work:
+            raise KeyError(f"unknown scheduled work: {binding.work_id}")
+        existing = self._working.scheduled_work_owners.get(binding.work_id)
+        if existing is not None and existing != binding:
+            raise ValueError(f"scheduled work already bound: {binding.work_id}")
+        if existing is None:
+            self._working.scheduled_work_owners[binding.work_id] = deepcopy(binding)
+            self._mark_dirty("scheduled_work_owners", binding.work_id)
+
     def delete_scheduled_work(self, work_id: str) -> None:
         self._working.scheduled_work.pop(work_id, None)
         self._mark_dirty("scheduled_work", work_id)
+        if self._working.scheduled_work_owners.pop(work_id, None) is not None:
+            self._mark_dirty("scheduled_work_owners", work_id)
 
     def set_simulation_position(self, position: SimulationPosition) -> None:
         self._working.simulation_position = deepcopy(position)
@@ -864,6 +878,28 @@ class MemoryPersistence:
 
     def due_scheduled_work(self, at: datetime) -> tuple[ScheduledWork, ...]:
         return tuple(work for work in self.scheduled_work() if work.due_at <= at)
+
+    def scheduled_work_owner(self, work_id: str) -> ScheduledWorkOwnerBinding | None:
+        binding = self._state.scheduled_work_owners.get(work_id)
+        return deepcopy(binding) if binding is not None else None
+
+    def scheduled_work_for_owner(
+        self, organization_id: str, job_id: str,
+    ) -> tuple[ScheduledWork, ...]:
+        if not organization_id.strip() or not job_id.strip():
+            raise ValueError("organization_id and job_id must be nonempty")
+        unowned = set(self._state.scheduled_work) - set(self._state.scheduled_work_owners)
+        if unowned:
+            raise RuntimeError(
+                f"unowned scheduled work requires explicit migration: {len(unowned)}"
+            )
+        return tuple(
+            work for work in self.scheduled_work()
+            if (
+                (binding := self._state.scheduled_work_owners[work.work_id])
+                .organization_id == organization_id and binding.job_id == job_id
+            )
+        )
 
     def simulation_position(self) -> SimulationPosition | None:
         return deepcopy(self._state.simulation_position)
