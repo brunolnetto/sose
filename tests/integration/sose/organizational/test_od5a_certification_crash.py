@@ -345,3 +345,92 @@ def test_certificate_falsifies_unexpected_organization_command(tmp_path):
         assert original.all_commands == ()
         assert after.all_commands == (forged,)
         assert original != after
+
+
+def test_certificate_falsifies_extra_event_with_wrong_source_entity(tmp_path):
+    """Correlation still identifies a rogue event with an incorrect entity ID."""
+    from sose.core.events import DomainEvent
+
+    org = "org:wrong-event"
+    with SQLitePersistence(tmp_path / "wrong-event.db") as store:
+        initialize_od5a_recurring_job(
+            store, job_id=org, arm=_arm(), items=_items(org),
+        )
+        before = _certificate(store, (org,))
+        rogue = DomainEvent(
+            event_id="rogue-event",
+            name="od5a.execution.v1",
+            entity_type="od5a_durable_pilot",
+            entity_id="wrong-physical-entity",
+            occurred_at=NOW,
+            correlation_id=org,
+        )
+        with store.transaction() as uow:
+            uow.append_event(rogue)
+        after = _certificate(store, (org,))
+        assert before.events == ()
+        assert after.events == (rogue,)
+        assert before != after
+
+
+def test_certificate_falsifies_extra_correlated_observation(tmp_path):
+    """An extra terminal observation without a source DomainEvent must be visible."""
+    from sose.domain.entity import Entity
+
+    org = "org:extra-observation"
+    with SQLitePersistence(tmp_path / "extra-observation.db") as store:
+        initialize_od5a_recurring_job(
+            store, job_id=org, arm=_arm(), items=_items(org),
+        )
+        before = _certificate(store, (org,))
+        rogue = Entity(
+            id="forged-observation",
+            entity_type="od5a_physical_observation",
+            state="observed",
+            attributes={"correlation_id": org, "source_event_id": "nonexistent"},
+        )
+        with store.transaction() as uow:
+            uow.save_entity(rogue)
+        after = _certificate(store, (org,))
+        assert before.observations == after.observations == ()
+        assert before.all_observations == ()
+        assert after.all_observations == (rogue,)
+        assert before != after
+
+
+def test_certificate_falsifies_extra_receipt_without_matching_delivery(tmp_path):
+    """A valid org message can have an unpaired ACK row with a forged delivery."""
+    from sose.composition.model import BoundaryMessage, BoundaryConsumption
+
+    org = "org:extra-consumption"
+    with SQLitePersistence(tmp_path / "extra-consumption.db") as store:
+        initialize_od5a_recurring_job(
+            store, job_id=org, arm=_arm(), items=_items(org),
+        )
+        message = BoundaryMessage.create(
+            contract_name="od5a.physical_completion", contract_version=1,
+            source_domain="od5a_durable", source_identity=org,
+            destination_domain="od5a_command_staging", occurrence_key="fake",
+            correlation_id=org, causation_id=None,
+            produced_at=NOW, payload={"test": "extra-ack"},
+        )
+        with store.transaction() as uow:
+            uow.save_boundary_message(message)
+        before = _certificate(store, (org,))
+        rogue = BoundaryConsumption(
+            consumption_id="rogue-consumption",
+            delivery_id="nonexistent-delivery",
+            message_id=message.message_id,
+            destination_domain="od5a_command_staging",
+            contract_name=message.contract_name,
+            contract_version=1,
+            consumer_effect_id="rogue-effect",
+            consumed_at=NOW,
+        )
+        with store.transaction() as uow:
+            uow.save_boundary_consumption(rogue)
+        after = _certificate(store, (org,))
+        assert before.consumptions == after.consumptions == ()
+        assert before.all_consumptions == ()
+        assert after.all_consumptions == (rogue,)
+        assert before != after
