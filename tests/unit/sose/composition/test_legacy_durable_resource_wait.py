@@ -176,3 +176,55 @@ def test_unsubstantiated_transfer_failure_remains_terminal(monkeypatch):
     )
     with pytest.raises(RuntimeError, match="logistics transfer failed"):
         customer.run_customer_demand_path()
+
+
+
+def test_origin_dequeue_committed_between_reconcile_and_classification_is_retryable(
+    monkeypatch,
+):
+    """A raced-off pending GET is not a terminal error if exact receipt exists.
+
+    This forces the interleaving: one worker reports a stale False just after
+    a different worker has committed the same durable origin dequeue. No
+    pending StoreGetRequest remains, but the StoreGetResult is authoritative.
+    """
+    original = customer.logistics._ensure_origin_queue_dequeue
+    observed = []
+
+    def committed_just_after_read(persistence, engine, backend, *, shipment_id):
+        reconciled = original(
+            persistence, engine, backend, shipment_id=shipment_id,
+        )
+        if not observed and reconciled:
+            receipt = next(
+                (
+                    result for result in persistence.store_get_results()
+                    if result.request_id == f"origin-dequeue:{shipment_id}"
+                    and result.item.item_id == f"origin-queue:{shipment_id}"
+                    and result.store_name == "origin_hub_queue"
+                ),
+                None,
+            )
+            assert receipt is not None
+            assert not any(
+                req.request_id == f"origin-dequeue:{shipment_id}"
+                for req in persistence.store_get_requests()
+            )
+            observed.append(receipt.request_id)
+            return False
+        return reconciled
+
+    monkeypatch.setattr(
+        customer.logistics, "_ensure_origin_queue_dequeue",
+        committed_just_after_read,
+    )
+    result = customer.run_customer_demand_path()
+    assert len(observed) == 1
+    assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
+    results = (
+        x for x in result.persistence.store_get_results()
+        if x.request_id == observed[0]
+    )
+    assert len(tuple(results)) == 1
+    effects = result.persistence.business_effects()
+    assert len(effects) == len({effect.effect_id for effect in effects})
