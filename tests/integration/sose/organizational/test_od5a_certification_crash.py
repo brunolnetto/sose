@@ -290,3 +290,30 @@ def test_certificate_falsifies_unexpected_well_formed_effect(tmp_path):
         assert before.all_effects == ()
         assert len(after.all_effects) == 1
         assert before != after
+
+
+def test_certificate_falsifies_unpaired_organization_message(tmp_path):
+    """An orphan publication must be visible even without a delivery row."""
+    from sose.composition.model import BoundaryMessage
+
+    org = "org:orphan-message"
+    with SQLitePersistence(tmp_path / "orphan.db") as store:
+        initialize_od5a_recurring_job(
+            store, job_id=org, arm=_arm(), items=_items(org),
+        )
+        original = _certificate(store, (org,))
+        message = BoundaryMessage.create(
+            contract_name="od5a.orphan_probe", contract_version=1,
+            source_domain="od5a_durable", source_identity=org,
+            destination_domain="od5a_command_staging",
+            occurrence_key="unpaired", correlation_id=org,
+            causation_id=None, produced_at=NOW,
+            payload={"test": "unpaired-publication"},
+        )
+        with store.transaction() as uow:
+            uow.save_boundary_message(message)
+        after = _certificate(store, (org,))
+        assert original.messages == ()
+        assert after.deliveries == ()
+        assert after.messages == (message,)
+        assert original != after
