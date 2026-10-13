@@ -21,6 +21,7 @@ from sose.composition.audit import audit_causal_history
 from sose.composition.bindings import SettlementBindingService
 from sose.persistence.postgres import PostgresPersistence
 from sose.persistence.records import StateRecord, records_to_state
+from scripts.reproduce_pc6_pg_overlap import capture_first_worker_failure_once
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
@@ -125,6 +126,8 @@ def test_pg_two_real_customer_statecharts_overlap_without_business_aliasing(monk
     arrival = Barrier(2)
     lock = Lock()
     ingress_correlations = []
+    first_worker_failure = []
+    forensic_lock = Lock()
     original = customer._execute_intent
 
     def synchronized_first_ingress(persistence, *, effect_id, fixtures, correlation_id):
@@ -143,10 +146,20 @@ def test_pg_two_real_customer_statecharts_overlap_without_business_aliasing(monk
     monkeypatch.setattr(customer, "_execute_intent", synchronized_first_ingress)
 
     def worker(key):
-        with PostgresPersistence(DSN, namespace=namespace) as persistence:
-            return customer.run_customer_demand_path(
-                persistence=persistence, instance_key=key,
+        try:
+            with PostgresPersistence(DSN, namespace=namespace) as persistence:
+                return customer.run_customer_demand_path(
+                    persistence=persistence, instance_key=key,
+                )
+        except Exception as error:
+            # The failure happens before the surviving peer finishes. Retain
+            # the earliest committed MVCC read immediately from this path.
+            capture_first_worker_failure_once(
+                first_worker_failure, forensic_lock,
+                flow=key, error=error,
+                snapshot=lambda: _read_first_failure_snapshot(DSN, namespace),
             )
+            raise
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(worker, key) for key in ("customer-a", "customer-b")]
@@ -164,7 +177,11 @@ def test_pg_two_real_customer_statecharts_overlap_without_business_aliasing(monk
         assert not failures, (
             "independent worker errors; committed PostgreSQL forensic snapshot follows: "
             + json.dumps(
-                {"failures": failures, "snapshot": _read_first_failure_snapshot(DSN, namespace)},
+                {
+                    "failures": failures,
+                    "first_failure": first_worker_failure[0] if first_worker_failure else None,
+                    "post_worker_snapshot": _read_first_failure_snapshot(DSN, namespace),
+                },
                 default=str, sort_keys=True,
             )[:18000]
         )
