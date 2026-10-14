@@ -70,6 +70,7 @@ def occurrence_id(subscription_id: str, kind: str, ordinal: int) -> str:
 def build_runtime(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     tick: int = 0,
     scenarios=(),
@@ -91,6 +92,7 @@ def build_runtime(
     return context, Engine(
         context=context,
         registry=registry,
+        owner_id=owner_id,
         persistence=persistence,
         scenarios=scenarios,
     )
