@@ -52,11 +52,13 @@ class TransactionChaosSQLite(SQLiteIncrementalPersistence):
         )
 
     @contextmanager
-    def transaction(self, *, owner_epoch: int | None = None) -> Iterator:
+    def transaction(
+        self, *, owner_epoch: int | None = None, owner_id: str | None = None,
+    ) -> Iterator:
         self.transaction_count += 1
         transaction_index = self.transaction_count
 
-        with super().transaction(owner_epoch=owner_epoch) as uow:
+        with super().transaction(owner_epoch=owner_epoch, owner_id=owner_id) as uow:
             yield uow
             if self._should_crash(transaction_index, "before_commit"):
                 self.crashed = True
