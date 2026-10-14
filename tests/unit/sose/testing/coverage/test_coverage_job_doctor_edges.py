@@ -37,6 +37,11 @@ def _state(**overrides) -> SimulationJobState:
     return SimulationJobState(**values)
 
 
+def _diagnostics(persistence, *, owner_id):
+    assert owner_id == "doctor-edge"
+    return SimpleNamespace(issues=())
+
+
 def test_inspect_open_job_health_reports_pending_sink_and_missing_position(
     monkeypatch,
 ):
@@ -45,7 +50,7 @@ def test_inspect_open_job_health_reports_pending_sink_and_missing_position(
     monkeypatch.setattr(
         doctor_module,
         "collect_runtime_diagnostics",
-        lambda persistence: SimpleNamespace(issues=()),
+        _diagnostics,
     )
 
     class _Persistence:
@@ -68,7 +73,8 @@ def test_inspect_open_job_health_reports_pending_sink_and_missing_position(
                 ),
             )
 
-        def simulation_position(self):
+        def simulation_position(self, *, owner_id):
+            assert owner_id == "doctor-edge"
             return None
 
     report = inspect_open_job_health(
@@ -89,7 +95,7 @@ def test_inspect_open_job_health_reports_tick_and_time_mismatch(monkeypatch):
     monkeypatch.setattr(
         doctor_module,
         "collect_runtime_diagnostics",
-        lambda persistence: SimpleNamespace(issues=()),
+        _diagnostics,
     )
 
     class _Persistence:
@@ -99,7 +105,8 @@ def test_inspect_open_job_health_reports_tick_and_time_mismatch(monkeypatch):
         def sink_deliveries(self, *, job_id):
             return ()
 
-        def simulation_position(self):
+        def simulation_position(self, *, owner_id):
+            assert owner_id == "doctor-edge"
             return SimulationPosition(
                 logical_time=datetime(2026, 1, 2, tzinfo=timezone.utc),
                 execution_sequence=3,
@@ -126,7 +133,7 @@ def test_inspect_open_job_health_reports_invalid_config_failed_status_and_trigge
     monkeypatch.setattr(
         doctor_module,
         "collect_runtime_diagnostics",
-        lambda persistence: SimpleNamespace(issues=()),
+        _diagnostics,
     )
 
     class _Persistence:
@@ -142,7 +149,8 @@ def test_inspect_open_job_health_reports_invalid_config_failed_status_and_trigge
         def sink_deliveries(self, *, job_id):
             return ()
 
-        def simulation_position(self):
+        def simulation_position(self, *, owner_id):
+            assert owner_id == "doctor-edge"
             return SimulationPosition(
                 logical_time=NOW,
                 execution_sequence=2,
@@ -168,7 +176,7 @@ def test_inspect_open_job_health_reports_domain_mismatch(monkeypatch):
     monkeypatch.setattr(
         doctor_module,
         "collect_runtime_diagnostics",
-        lambda persistence: SimpleNamespace(issues=()),
+        _diagnostics,
     )
 
     class _Persistence:
@@ -178,7 +186,8 @@ def test_inspect_open_job_health_reports_domain_mismatch(monkeypatch):
         def sink_deliveries(self, *, job_id):
             return ()
 
-        def simulation_position(self):
+        def simulation_position(self, *, owner_id):
+            assert owner_id == "doctor-edge"
             return SimulationPosition(
                 logical_time=NOW,
                 execution_sequence=1,
