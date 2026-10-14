@@ -236,9 +236,9 @@ class DuckDBPersistence(MemoryPersistence):
         self._fresh()
         return super().simulation_position(owner_id=owner_id)
 
-    def scenario_state(self):
+    def scenario_state(self, *, owner_id: str | None = None):
         self._fresh()
-        return super().scenario_state()
+        return super().scenario_state(owner_id=owner_id)
 
     def resource_definitions(self):
         self._fresh()
