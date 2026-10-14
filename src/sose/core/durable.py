@@ -128,6 +128,8 @@ class DurableScheduler:
             work = uow.get_scheduled_work(work_id)
             if work is None:
                 return False
+            if work.owner_id != self._owner_id:
+                raise PermissionError("scheduled work belongs to a different owner")
             command = uow.get_command(work.command_id)
             if command is None:
                 raise RuntimeError(
