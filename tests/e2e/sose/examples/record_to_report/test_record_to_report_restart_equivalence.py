@@ -15,9 +15,12 @@ from sose.testing.restart import restart_reference_runtime
 from tests.support.behavioral_conformance import operational_snapshot
 
 
+R2R_OWNER = "record-to-report-restart-equivalence"
+
+
 def _prepare_matched(persistence):
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=R2R_OWNER)
+    _, engine = build_runtime(persistence, owner_id=R2R_OWNER)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     assert submit_and_post_journal(
@@ -66,6 +69,7 @@ def test_pending_close_schedule_is_restart_equivalent():
         restarted,
         build_runtime,
         r_backend_before,
+        owner_id=R2R_OWNER,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -80,7 +84,7 @@ def test_pending_close_schedule_is_restart_equivalent():
         entities=r_entities,
     )
 
-    assert operational_snapshot(restarted) == operational_snapshot(continuous)
+    assert operational_snapshot(restarted, owner_id=R2R_OWNER) == operational_snapshot(continuous, owner_id=R2R_OWNER)
     assert restarted.entity("accounting_period", r_entities.period_id).state == "closed"
     assert restarted.entity("close_task", r_entities.close_task_id).state == "completed"
 
@@ -122,6 +126,7 @@ def test_pending_close_accountant_demand_survives_restart():
         persistence,
         build_runtime,
         backend,
+        owner_id=R2R_OWNER,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -154,8 +159,8 @@ def test_pending_close_accountant_demand_survives_restart():
 
 def test_unmatched_item_recovers_missing_adjustment_after_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=R2R_OWNER)
+    _, engine = build_runtime(persistence, owner_id=R2R_OWNER)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -186,6 +191,7 @@ def test_unmatched_item_recovers_missing_adjustment_after_restart():
         persistence,
         build_runtime,
         backend,
+        owner_id=R2R_OWNER,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
