@@ -34,6 +34,7 @@ class ScheduledWork:
     sequence: int
     work_id: str
     command_id: str
+    owner_id: str | None = None
 
     def __init__(
         self,
@@ -42,7 +43,11 @@ class ScheduledWork:
         priority: int,
         sequence: int,
         command_id: str,
+        owner_id: str | None = None,
     ) -> None:
+        if owner_id is not None and not owner_id:
+            raise ValueError("owner_id must not be empty")
+        object.__setattr__(self, "owner_id", owner_id)
         object.__setattr__(self, "due_at", due_at)
         object.__setattr__(self, "priority", priority)
         object.__setattr__(self, "sequence", sequence)
