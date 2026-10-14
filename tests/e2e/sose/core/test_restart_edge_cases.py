@@ -2,12 +2,13 @@ import pytest
 
 from sose.core.runtime import SimulationPosition
 from sose.persistence.memory import MemoryPersistence
-RESTART_OWNER = "restart-edge-case"
-
 from sose.testing.restart import (
     restart_reference_runtime,
     restart_reference_runtime_repeated,
 )
+
+
+RESTART_OWNER = "restart-edge-case"
 
 
 def test_restart_reference_runtime_requires_backend_or_position():
@@ -42,7 +43,6 @@ def test_restart_reference_runtime_repeated_rejects_zero_count():
             persistence,
             _unused_builder,
             backend_before=object(),
-            owner_id=RESTART_OWNER,
             owner_id=RESTART_OWNER,
             backend_factory=lambda origin: object(),
             count=0,
