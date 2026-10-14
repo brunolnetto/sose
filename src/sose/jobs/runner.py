@@ -235,7 +235,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         config = self.definition.config_model.model_validate_json(
             pending.config_json
         )
-        bootstrap_state = self.definition.seed(self.domain_persistence, config, self.job_id)
+        bootstrap_state = self.definition.seed(self.domain_persistence, config, owner_id=self.job_id)
         self.flush_domain_warehouse()
         initialized = replace(
             pending,
@@ -749,7 +749,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
             config,
             logical_time,
             logical_tick,
-            self.job_id,
+            owner_id=self.job_id,
         )
         if engine.owner_id != self.job_id:
             raise RuntimeError("domain runtime owner does not match configured job_id")
