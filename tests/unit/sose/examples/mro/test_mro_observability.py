@@ -11,8 +11,11 @@ from sose.examples.process_manifest import ProcessEvidence, ProcessMaturity
 from sose.persistence.memory import MemoryPersistence
 
 
+MRO_REFERENCE_OWNER = "mro-observability-reference"
+
+
 def test_mro_projection_is_read_only_and_idempotent() -> None:
-    persistence, entities = run_happy_path(quantity=2.0)
+    persistence, entities = run_happy_path(owner_id=MRO_REFERENCE_OWNER, quantity=2.0)
     work_order = persistence.entity("work_order", entities.work_order_id)
     part_demand = persistence.entity("part_demand", entities.part_demand_id)
     assert work_order is not None and part_demand is not None
@@ -41,7 +44,7 @@ def test_mro_projection_is_read_only_and_idempotent() -> None:
 
 
 def test_mro_kpis_are_derived_from_durable_state_and_events() -> None:
-    persistence, entities = run_happy_path(quantity=2.0)
+    persistence, entities = run_happy_path(owner_id=MRO_REFERENCE_OWNER, quantity=2.0)
 
     projection = mro_projection(persistence, entities=entities)
     kpis = mro_kpis(persistence, entities=entities)
@@ -69,7 +72,7 @@ def test_mro_kpis_are_derived_from_durable_state_and_events() -> None:
 
 def test_mro_projection_does_not_invent_terminal_metrics() -> None:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, quantity=3.0)
+    entities = seed_reference(persistence, owner_id=MRO_REFERENCE_OWNER, quantity=3.0)
 
     projection = mro_projection(persistence, entities=entities)
     kpis = mro_kpis(persistence, entities=entities)
