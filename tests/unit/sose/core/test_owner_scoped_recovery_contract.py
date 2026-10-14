@@ -494,3 +494,46 @@ def test_public_scheduled_dispatch_refuses_foreign_owner_before_transaction():
     )
     with pytest.raises(PermissionError, match="different owner"):
         engine.dispatch_scheduled(DurableScheduledItem(work, command))
+
+
+def test_tick_refuses_stale_pretransaction_position(monkeypatch):
+    from sose.core.clock import SimulationClock
+    from sose.core.context import SimulationContext
+    from sose.core.engine import Engine
+    from sose.core.randomness import RandomSource
+    from sose.core.scheduler import Scheduler
+    from sose.domain.registry import DomainRegistry
+
+    owner = "organization-a"
+    store = MemoryPersistence()
+    initial = _position(0, 0)
+    other_worker = _position(1, 1)
+    with store.transaction() as uow:
+        uow.set_simulation_position(initial, owner_id=owner)
+
+    context = SimulationContext(
+        clock=SimulationClock(now=ORIGIN, step=timedelta(hours=1), tick=0),
+        random=RandomSource(root_seed=9),
+        scheduler=Scheduler(),
+    )
+    engine = Engine(
+        context=context, registry=DomainRegistry(),
+        persistence=store, owner_id=owner,
+    )
+    original_transaction = store.transaction
+    interleaving = {"injected": False}
+
+    def competing_transaction():
+        if not interleaving["injected"]:
+            interleaving["injected"] = True
+            with original_transaction() as uow:
+                uow.set_simulation_position(other_worker, owner_id=owner)
+        return original_transaction()
+
+    monkeypatch.setattr(store, "transaction", competing_transaction)
+    with pytest.raises(RuntimeError, match="stale|changed|position"):
+        engine.advance_tick()
+
+    assert store.simulation_position(owner_id=owner) == other_worker
+    assert context.clock.now == ORIGIN
+    assert context.clock.tick == 0
