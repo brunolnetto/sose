@@ -23,9 +23,10 @@ def _build(
     config: OrderToCashConfig,
     now: datetime,
     tick: int,
+    owner_id: str,
 ):
     return build_runtime(
-        persistence,
+        persistence, owner_id=owner_id,
         now=now,
         tick=tick,
         step=config.tick_step,
@@ -33,9 +34,9 @@ def _build(
     )
 
 
-def _seed(persistence: Persistence, config: OrderToCashConfig):
+def _seed(persistence: Persistence, config: OrderToCashConfig, owner_id: str):
     return seed_reference(
-        persistence,
+        persistence, owner_id=owner_id,
         now=config.start_at,
         amount=config.amount,
         currency=config.currency,
