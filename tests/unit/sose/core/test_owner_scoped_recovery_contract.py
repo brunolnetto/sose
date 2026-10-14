@@ -1,8 +1,8 @@
-"""#504 — contract-level RED: same-type owners must not share a recovery clock.
+"""#504: owner-qualified temporal persistence contract, intentionally RED.
 
-The test deliberately exercises the public owner-scoped recovery contract that
-does not yet exist. A GREEN requires authoritative owner-qualified position and
-ScheduledWork reads, not a clock-mismatch bypass or global serialization.
+A different organization progressing in the same PostgreSQL namespace must
+not replace this organization's recovery boundary. The in-memory test defines
+the persistence API before the real two-worker PostgreSQL gate.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -23,25 +23,43 @@ class RecordingBackend:
         self.calls.append((at, priority, key, callback))
 
 
-def test_independent_same_type_owner_cannot_inherit_foreign_persisted_clock():
-    """RED: A may rebuild at its own boundary after B advances its clock.
+def _position(hours, sequence):
+    return SimulationPosition(
+        logical_time=ORIGIN + timedelta(hours=hours),
+        execution_sequence=sequence,
+        committed_sequence=sequence,
+        logical_tick=sequence,
+    )
 
-    Current runtime reads one namespace-wide SimulationPosition, causing
-    RuntimeError or incorrectly treating B's time as A's recovery boundary.
-    """
+
+def test_same_type_owners_rebuild_at_independent_authoritative_boundaries():
     store = MemoryPersistence()
     with store.transaction() as uow:
-        uow.set_simulation_position(SimulationPosition(
-            logical_time=ORIGIN + timedelta(hours=2),
-            execution_sequence=2,
-            committed_sequence=2,
-            logical_tick=2,
-        ))
+        uow.set_simulation_position(_position(1, 1), owner_id="organization-a")
+        uow.set_simulation_position(_position(2, 2), owner_id="organization-b")
+
     backend_a = RecordingBackend(ORIGIN + timedelta(hours=1))
-    # Desired future contract: owner_id determines the authoritative position.
-    # Owner A has not advanced merely because B committed at hour 2.
-    rebuilt = RuntimeRebuilder(
+    backend_b = RecordingBackend(ORIGIN + timedelta(hours=2))
+    assert store.simulation_position(owner_id="organization-a") == _position(1, 1)
+    assert store.simulation_position(owner_id="organization-b") == _position(2, 2)
+
+    assert RuntimeRebuilder(
         store, owner_id="organization-a",
-    ).rebuild(backend_a, on_due=lambda _: None)
-    assert rebuilt == 0
-    assert backend_a.now == ORIGIN + timedelta(hours=1)
+    ).rebuild(backend_a, on_due=lambda _: None) == 0
+    assert RuntimeRebuilder(
+        store, owner_id="organization-b",
+    ).rebuild(backend_b, on_due=lambda _: None) == 0
+
+    # Explicit legacy reads cannot accidentally alias either scoped owner.
+    assert store.simulation_position() is None
+
+
+def test_scoped_position_writes_do_not_advance_foreign_owner():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.set_simulation_position(_position(1, 1), owner_id="organization-a")
+        uow.set_simulation_position(_position(2, 2), owner_id="organization-b")
+    with store.transaction() as uow:
+        uow.set_simulation_position(_position(3, 3), owner_id="organization-b")
+    assert store.simulation_position(owner_id="organization-a") == _position(1, 1)
+    assert store.simulation_position(owner_id="organization-b") == _position(3, 3)
