@@ -107,7 +107,7 @@ def _claim_after_worker_death(
 def _customer_fixtures(store) -> customer._CustomerFixtures:
     origin = o2c.ORIGIN
     sales_order = o2c.seed_reference(store,
-        owner_id="test-org-customer-conformance", now=origin, amount=250.0, currency="USD")
+        owner_id="trading-customer-reference", now=origin, amount=250.0, currency="USD")
     expected_id = deterministic_id(
         "entity", "warehouse_fulfillment_order",
         "warehouse-reference", f"order:{sales_order.order_id}",
@@ -119,24 +119,24 @@ def _customer_fixtures(store) -> customer._CustomerFixtures:
         fulfillment=fulfillment.WarehouseEntities(order_id=expected_id, lot_ids=()),
         warehouse=wm.seed_reference(
             store,
-        owner_id="test-org-customer-conformance",
+        owner_id="trading-customer-reference",
             now=origin,
             origin_on_hand=20.0,
             transfer_quantity=1.0,
             sku=fulfillment.PRIMARY_SKU,
         ),
         logistics=logistics.seed_reference(store,
-        owner_id="test-org-customer-conformance", now=origin),
+        owner_id="trading-customer-reference", now=origin),
         payments=payments.seed_reference(
             store,
-        owner_id="test-org-customer-conformance",
+        owner_id="trading-customer-reference",
             now=origin,
             amount=250.0,
             currency="USD",
         ),
         r2r=r2r.seed_reference(
             store,
-        owner_id="test-org-customer-conformance",
+        owner_id="trading-customer-reference",
             now=origin,
             amount=250.0,
             currency="USD",
