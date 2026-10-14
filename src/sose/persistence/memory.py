@@ -368,6 +368,11 @@ class MemoryUnitOfWork:
         self._working.scheduled_work.pop(work_id, None)
         self._mark_dirty("scheduled_work", work_id)
 
+    def get_simulation_position(self, *, owner_id: str) -> SimulationPosition | None:
+        if not owner_id:
+            raise ValueError("owner_id must not be empty")
+        return deepcopy(self._working.simulation_positions.get(owner_id))
+
     def set_simulation_position(self, position: SimulationPosition, *, owner_id: str) -> None:
         if not owner_id:
             raise ValueError("owner_id must not be empty")
