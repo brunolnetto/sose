@@ -186,7 +186,7 @@ class SQLitePersistence(MemoryPersistence):
         self._fresh()
         return super().job_states()
 
-    def committed_tick(self, *, owner_id: str | None = None) -> int:
+    def committed_tick(self, *, owner_id: str) -> int:
         self._fresh()
         return super().committed_tick(owner_id=owner_id)
 
@@ -210,11 +210,11 @@ class SQLitePersistence(MemoryPersistence):
         self._fresh()
         return tuple(work for work in super().scheduled_work() if work.due_at <= at)
 
-    def simulation_position(self, *, owner_id: str | None = None):
+    def simulation_position(self, *, owner_id: str):
         self._fresh()
         return super().simulation_position(owner_id=owner_id)
 
-    def scenario_state(self, *, owner_id: str | None = None):
+    def scenario_state(self, *, owner_id: str):
         self._fresh()
         return super().scenario_state(owner_id=owner_id)
 
