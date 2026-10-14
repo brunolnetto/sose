@@ -411,3 +411,32 @@ def test_all_scoped_temporal_fields_reject_explicit_none_owner():
         for action in actions:
             with pytest.raises(ValueError, match="owner_id"):
                 action()
+
+
+@pytest.mark.parametrize(
+    "legacy_collection",
+    ("simulation_position", "scenario_state", "committed_tick"),
+)
+def test_historical_scalar_runtime_records_fail_closed(legacy_collection):
+    from sose.persistence.records import StateRecord, records_to_state
+
+    old = StateRecord(
+        collection=legacy_collection,
+        key="__scalar__",
+        position=0,
+        payload="null",
+    )
+    with pytest.raises(ValueError, match="unsupported|legacy|unknown"):
+        records_to_state((old,))
+
+
+def test_unknown_durable_record_collection_fails_closed():
+    from sose.persistence.records import StateRecord, records_to_state
+
+    with pytest.raises(ValueError, match="unknown|unsupported"):
+        records_to_state((StateRecord(
+            collection="future_unknown_collection",
+            key="something",
+            position=0,
+            payload="null",
+        ),))
