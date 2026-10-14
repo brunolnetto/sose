@@ -268,7 +268,7 @@ def _sink_delivery_health(sink_deliveries) -> tuple[tuple[Any, ...], tuple[Any, 
     return pending_sink_deliveries, failed_sink_deliveries
 
 
-def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
+def collect_runtime_diagnostics(persistence: Persistence, *, owner_id: str | None = None) -> RuntimeDiagnostics:
     """Inspect durable runtime truth without mutating or rebuilding it."""
 
     issues: list[DiagnosticIssue] = []
@@ -276,7 +276,7 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
     # Snapshot every durable collection once. Besides making diagnostics cheaper
     # on remote stores, this ensures counts and referential checks describe the
     # same observation rather than independent reads.
-    scheduled = persistence.scheduled_work()
+    scheduled = tuple(work for work in persistence.scheduled_work() if work.owner_id == owner_id)
     events = persistence.events()
     resource_definitions = persistence.resource_definitions()
     resource_demands = persistence.resource_demands()
@@ -345,7 +345,7 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
         for delivery in failed_sink_deliveries
     )
 
-    scenario_state = persistence.scenario_state()
+    scenario_state = persistence.scenario_state(owner_id=owner_id)
     counts = RuntimeCounts(
         events=len(events),
         scheduled_work=len(scheduled),
@@ -368,7 +368,7 @@ def collect_runtime_diagnostics(persistence: Persistence) -> RuntimeDiagnostics:
         sink_deliveries_failed=len(failed_sink_deliveries),
     )
     return RuntimeDiagnostics(
-        position=persistence.simulation_position(),
+        position=persistence.simulation_position(owner_id=owner_id),
         counts=counts,
         issues=tuple(issues),
     )
