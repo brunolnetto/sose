@@ -1477,8 +1477,8 @@ def run_customer_demand_path(
             )
 
     sales_order = o2c.seed_reference(
-        persistence,
-            owner_id=organization_id, now=origin, amount=amount, currency=currency,
+        persistence, owner_id=organization_id,
+        now=origin, amount=amount, currency=currency,
         instance_key=instance_key,
     )
     fulfillment_order_id = deterministic_id(
