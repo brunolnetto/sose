@@ -88,7 +88,7 @@ def _control(definition, namespace: str):
     job.initialize()
     for tick in range(1, 4):
         job.run_tick(trigger_id=_trigger(definition.name, tick))
-    snapshot = operational_snapshot(persistence)
+    snapshot = operational_snapshot(persistence, owner_id=job.job_id)
     count = persistence.transaction_count
     persistence.close()
     return snapshot, count
@@ -132,7 +132,7 @@ def _recover(definition, dsn: str, namespace: str):
             tick = state.next_tick + 1
             job.run_tick(trigger_id=_trigger(definition.name, tick))
 
-    snapshot = operational_snapshot(persistence)
+    snapshot = operational_snapshot(persistence, owner_id=job.job_id)
     persistence.close()
     return snapshot
 
