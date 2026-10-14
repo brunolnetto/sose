@@ -180,8 +180,8 @@ def _claim_consume(
     return lease, consumption
 
 
-def _recovery_time(store: MemoryPersistence, requested: datetime) -> datetime:
-    position = store.simulation_position()
+def _recovery_time(store: MemoryPersistence, requested: datetime, *, owner_id: str) -> datetime:
+    position = store.simulation_position(owner_id=owner_id)
     if position is None:
         return requested
     if requested < position.logical_time:
@@ -189,9 +189,9 @@ def _recovery_time(store: MemoryPersistence, requested: datetime) -> datetime:
     return position.logical_time
 
 
-def _next_time(store: MemoryPersistence, previous: datetime) -> datetime:
+def _next_time(store: MemoryPersistence, previous: datetime, *, owner_id: str) -> datetime:
     candidate = previous + timedelta(minutes=1)
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=owner_id)
     if position is not None and position.logical_time > candidate:
         return position.logical_time
     return candidate
@@ -211,9 +211,10 @@ def _execute_procurement(
     fixtures: _Fixtures,
     quantity: float,
     correlation_id: str,
+    owner_id: str,
 ) -> None:
-    recovery = _recovery_time(store, intent.due_at)
-    _, engine = p2p.build_runtime(store, now=recovery)
+    recovery = _recovery_time(store, intent.due_at, owner_id=owner_id)
+    _, engine = p2p.build_runtime(store, owner_id=owner_id, now=recovery)
     backend = SimPyBackend(origin=recovery)
 
     p2p.schedule_procurement_cycle(
@@ -262,9 +263,10 @@ def _execute_warehouse_receipt(
     fixtures: _Fixtures,
     quantity: float,
     correlation_id: str,
+    owner_id: str,
 ) -> None:
-    recovery = _recovery_time(store, intent.due_at)
-    _, engine = wm.build_runtime(store, now=recovery)
+    recovery = _recovery_time(store, intent.due_at, owner_id=owner_id)
+    _, engine = wm.build_runtime(store, owner_id=owner_id, now=recovery)
     if intent.due_at > engine.context.clock.now:
         engine.context.clock.now = intent.due_at
 
@@ -288,10 +290,11 @@ def _release_p2p_staging(
     fixtures: _Fixtures,
     quantity: float,
     correlation_id: str,
+    owner_id: str,
 ) -> None:
-    recovery = store.simulation_position()
+    recovery = store.simulation_position(owner_id=owner_id)
     now = caused_by.due_at if recovery is None else recovery.logical_time
-    _, engine = p2p.build_runtime(store, now=now)
+    _, engine = p2p.build_runtime(store, owner_id=owner_id, now=now)
     backend = SimPyBackend(origin=now)
     engine.rebuild_backend(backend)
     with _causal_scope(
@@ -314,9 +317,10 @@ def _execute_accounting(
     intent: Command,
     fixtures: _Fixtures,
     correlation_id: str,
+    owner_id: str,
 ) -> None:
-    recovery = _recovery_time(store, intent.due_at)
-    _, engine = r2r.build_runtime(store, now=recovery)
+    recovery = _recovery_time(store, intent.due_at, owner_id=owner_id)
+    _, engine = r2r.build_runtime(store, owner_id=owner_id, now=recovery)
     backend = SimPyBackend(origin=recovery)
     engine.rebuild_backend(backend)
     if backend.now < intent.due_at:
@@ -336,7 +340,7 @@ def _execute_accounting(
     # The same R2R contract is used by customer settlements and replenishment.
     # Both must produce an immutable business-completion receipt, distinct
     # from a boundary transport ACK.
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=owner_id)
     completed_at = max(
         intent.due_at,
         position.logical_time if position is not None else intent.due_at,
@@ -346,7 +350,9 @@ def _execute_accounting(
     )
 
 
-def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
+def run_replenishment_path(*, owner_id: str, quantity: float = 5.0) -> ReplenishmentPathResult:
+    if not isinstance(owner_id, str) or not owner_id.strip():
+        raise ValueError("owner_id must not be empty")
     if quantity <= 0:
         raise ValueError("quantity must be positive")
 
@@ -357,6 +363,7 @@ def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
     fixtures = _Fixtures(
         warehouse=wm.seed_reference(
             store,
+            owner_id=owner_id,
             now=origin,
             origin_on_hand=2.0,
             transfer_quantity=1.0,
@@ -364,12 +371,14 @@ def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
         ),
         procurement=p2p.seed_happy_path(
             store,
+            owner_id=owner_id,
             now=origin,
             quantity=quantity,
             schedule=False,
         ),
         accounting=r2r.seed_reference(
             store,
+            owner_id=owner_id,
             now=origin,
             amount=amount,
             currency=currency,
@@ -415,6 +424,7 @@ def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
     if intent is None:
         raise RuntimeError("P2P replenishment intent was not persisted")
     _execute_procurement(
+        owner_id=owner_id,
         store,
         intent=intent,
         fixtures=fixtures,
@@ -431,7 +441,7 @@ def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
         occurrence_key="inventory-receipt-ready",
         correlation_id=correlation_id,
         causation_id=messages[-1].message_id,
-        produced_at=_next_time(store, messages[-1].produced_at),
+        produced_at=_next_time(store, messages[-1].produced_at, owner_id=owner_id),
         payload={
             "receipt_id": fixtures.procurement.receipt_id,
             "stock_id": fixtures.warehouse.origin_stock_id,
@@ -451,6 +461,7 @@ def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
     if intent is None:
         raise RuntimeError("WM replenishment intent was not persisted")
     _execute_warehouse_receipt(
+        owner_id=owner_id,
         store,
         intent=intent,
         fixtures=fixtures,
@@ -466,6 +477,7 @@ def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
     receipt_replay_was_idempotent = replay == consumption
 
     _release_p2p_staging(
+        owner_id=owner_id,
         store,
         caused_by=intent,
         fixtures=fixtures,
@@ -482,7 +494,7 @@ def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
         occurrence_key="replenishment-accounting-entry",
         correlation_id=correlation_id,
         causation_id=messages[-1].message_id,
-        produced_at=_next_time(store, messages[-1].produced_at),
+        produced_at=_next_time(store, messages[-1].produced_at, owner_id=owner_id),
         payload={
             "receipt_id": fixtures.procurement.receipt_id,
             "journal_id": fixtures.accounting.journal_id,
@@ -502,6 +514,7 @@ def run_replenishment_path(*, quantity: float = 5.0) -> ReplenishmentPathResult:
     if intent is None:
         raise RuntimeError("R2R replenishment intent was not persisted")
     _execute_accounting(
+        owner_id=owner_id,
         store,
         intent=intent,
         fixtures=fixtures,
