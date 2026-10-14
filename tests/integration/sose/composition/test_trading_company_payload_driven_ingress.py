@@ -116,7 +116,7 @@ def test_customer_path_does_not_preseed_fulfillment_before_ingress(monkeypatch):
         return original(persistence, **kwargs)
 
     monkeypatch.setattr(customer.fulfillment, "seed_composed_reference", observed)
-    result = customer.run_customer_demand_path()
+    result = customer.run_customer_demand_path(organization_id="trading-customer-reference")
     assert materializations == [f"order:{result.o2c_order_id}"]
     persistence_order = result.persistence.entity(
         "warehouse_fulfillment_order", result.fulfillment_order_id
