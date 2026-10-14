@@ -15,6 +15,9 @@ from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
 
 
+OWNER_ID = "durable-engine-reference"
+
+
 def build_runtime():
     now = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
     context = SimulationContext(
@@ -32,7 +35,7 @@ def build_runtime():
     )
     with persistence.transaction() as uow:
         uow.save_entity(work_order)
-    engine = Engine(context=context, registry=registry, persistence=persistence)
+    engine = Engine(context=context, registry=registry, persistence=persistence, owner_id=OWNER_ID)
     return now, context, persistence, engine, work_order
 
 
@@ -44,7 +47,7 @@ def test_dispatch_scheduled_commits_transition_and_consumption_atomically():
         due_at=now,
         key=("durable-release", work_order.id),
     )
-    scheduler = DurableScheduler(persistence)
+    scheduler = DurableScheduler(persistence, owner_id=OWNER_ID)
     scheduler.schedule(command)
     item = scheduler.pending()[0]
 
@@ -63,7 +66,7 @@ def test_dispatch_scheduled_commits_transition_and_consumption_atomically():
         "to_state": "released",
     }
 
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=OWNER_ID)
     assert position is not None
     assert position.logical_time == now
     assert position.execution_sequence == 1
@@ -79,7 +82,7 @@ def test_dispatch_scheduled_advances_logical_time_to_due_at():
         due_at=due_at,
         key=("durable-release-later", work_order.id),
     )
-    scheduler = DurableScheduler(persistence)
+    scheduler = DurableScheduler(persistence, owner_id=OWNER_ID)
     scheduler.schedule(command)
     item = scheduler.pending()[0]
 
@@ -87,7 +90,7 @@ def test_dispatch_scheduled_advances_logical_time_to_due_at():
 
     assert context.clock.now == due_at
     assert persistence.events()[0].occurred_at == due_at
-    assert persistence.simulation_position().logical_time == due_at
+    assert persistence.simulation_position(owner_id=OWNER_ID).logical_time == due_at
 
 
 def test_failed_scheduled_dispatch_rolls_back_work_and_logical_time():
@@ -104,7 +107,7 @@ def test_failed_scheduled_dispatch_rolls_back_work_and_logical_time():
         due_at=due_at,
         key=("missing-durable-target", missing.id),
     )
-    scheduler = DurableScheduler(persistence)
+    scheduler = DurableScheduler(persistence, owner_id=OWNER_ID)
     work = scheduler.schedule(command)
     item = scheduler.pending()[0]
 
@@ -119,7 +122,7 @@ def test_failed_scheduled_dispatch_rolls_back_work_and_logical_time():
     assert persistence.command(command.command_id) == command
     assert persistence.scheduled_work() == (work,)
     assert persistence.events() == ()
-    assert persistence.simulation_position() is None
+    assert persistence.simulation_position(owner_id=OWNER_ID) is None
     assert context.clock.now == now
 
 
@@ -131,7 +134,7 @@ def test_duplicate_stale_callback_does_not_execute_consumed_work_twice():
         due_at=now,
         key=("duplicate-callback", work_order.id),
     )
-    scheduler = DurableScheduler(persistence)
+    scheduler = DurableScheduler(persistence, owner_id=OWNER_ID)
     scheduler.schedule(command)
     item = scheduler.pending()[0]
 
@@ -152,7 +155,7 @@ def test_stale_callback_cannot_consume_rescheduled_replacement():
         due_at=now,
         key=("replacement-callback", work_order.id),
     )
-    scheduler = DurableScheduler(persistence)
+    scheduler = DurableScheduler(persistence, owner_id=OWNER_ID)
     scheduler.schedule(original)
     stale_item = scheduler.pending()[0]
 
@@ -310,7 +313,7 @@ def test_advance_tick_executes_between_tick_durable_work_at_due_time():
     assert context.clock.now == now + timedelta(hours=1)
     assert context.clock.tick == 1
 
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=OWNER_ID)
     assert position is not None
     assert position.logical_time == now + timedelta(hours=1)
     assert position.logical_tick == 1
@@ -448,7 +451,7 @@ def test_cancel_returns_false_when_work_changes_mid_transaction():
         uow.save_scheduled_work(scheduled)
         uow.save_entity(work_order)
 
-    scheduler = DurableScheduler(mismatch)
+    scheduler = DurableScheduler(mismatch, owner_id=OWNER_ID)
     assert scheduler.cancel(scheduled.work_id) is False
     assert mismatch.command(command.command_id) == command
     assert mismatch.scheduled_work() == (scheduled,)
@@ -461,7 +464,7 @@ def test_pending_reads_work_and_command_from_one_transaction(monkeypatch):
         "release", target=work_order, due_at=now,
         key=("atomic-schedule-pending", work_order.id),
     )
-    scheduler = DurableScheduler(persistence)
+    scheduler = DurableScheduler(persistence, owner_id=OWNER_ID)
     work = scheduler.schedule(command)
 
     def forbid_split_snapshot(*args, **kwargs):
@@ -479,7 +482,7 @@ def test_cancel_reads_work_and_command_from_one_transaction(monkeypatch):
         "release", target=work_order, due_at=now,
         key=("atomic-schedule-cancel", work_order.id),
     )
-    scheduler = DurableScheduler(persistence)
+    scheduler = DurableScheduler(persistence, owner_id=OWNER_ID)
     work = scheduler.schedule(command)
 
     def forbid_split_snapshot(*args, **kwargs):
@@ -501,7 +504,7 @@ def test_real_orphan_within_atomic_schedule_snapshot_is_rejected():
         "release", target=work_order, due_at=now,
         key=("atomic-schedule-orphan", work_order.id),
     )
-    scheduler = DurableScheduler(persistence)
+    scheduler = DurableScheduler(persistence, owner_id=OWNER_ID)
     work = scheduler.schedule(command)
     with persistence.transaction() as uow:
         uow.delete_command(command.command_id)
@@ -523,9 +526,9 @@ def test_pending_reuses_active_sqlite_transaction_without_nested_begin(tmp_path)
             command = Command(
                 command_id=f"nested-{adapter.__name__}",
                 name="release", entity_type="work_order",
-                entity_id="work-1", due_at=now,
+                entity_id="work-1", due_at=now, owner_id=OWNER_ID,
             )
-            scheduler = DurableScheduler(store)
+            scheduler = DurableScheduler(store, owner_id=OWNER_ID)
             scheduled = scheduler.schedule(command)
             with store.transaction() as uow:
                 pending = scheduler.pending()
@@ -544,10 +547,11 @@ def test_rebuilt_domain_engine_never_dispatches_foreign_chart_scheduled_work():
     foreign = Command(
         "external-shipment-command", "schedule_pickup", "shipment",
         "another-org-shipment", now + timedelta(hours=1),
+        owner_id="other-organization",
     )
-    import_patch = DurableScheduler(persistence)
+    import_patch = DurableScheduler(persistence, owner_id=OWNER_ID)
     own_work = import_patch.schedule(own)
-    foreign_work = import_patch.schedule(foreign)
+    foreign_work = DurableScheduler(persistence, owner_id="other-organization").schedule(foreign)
 
     backend = RecordingTemporalBackend(now)
     assert engine.rebuild_backend(backend) == 1
