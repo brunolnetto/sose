@@ -70,6 +70,7 @@ class TradingCustomerRecoveryRunner:
     lease_duration: timedelta = timedelta(hours=1)
     resource_policies: Mapping[str, ResourcePoolContract] | None = None
     resource_organizations: Mapping[str, str] | None = None
+    organization_owners: Mapping[str, str] | None = None
     resource_persistence: Persistence | None = None
     resource_slot_duration: timedelta = timedelta(minutes=5)
     resource_retry_delay: timedelta = timedelta(minutes=5)
@@ -96,6 +97,12 @@ class TradingCustomerRecoveryRunner:
             if (not hasattr(self.persistence, "dsn")
                 or self.persistence.dsn != getattr(self.resource_persistence, "dsn", None)):
                 raise ValueError("domain and physical resource ledgers must share PostgreSQL")
+        if self.organization_owners is not None and any(
+            not isinstance(correlation, str) or not correlation.strip()
+            or not isinstance(organization, str) or not organization.strip()
+            for correlation, organization in self.organization_owners.items()
+        ):
+            raise ValueError("organization_owners must contain valid durable bindings")
         if self.resource_policies is not None:
             if self.resource_slot_duration <= timedelta(0) or self.resource_retry_delay <= timedelta(0):
                 raise ValueError("resource slot and retry delay must be positive")
@@ -114,6 +121,25 @@ class TradingCustomerRecoveryRunner:
             or not callable(getattr(self.persistence, "claim_writer", None))
         ):
             raise TypeError("composition runner requires authoritative writer fencing")
+
+    def _organization_for(self, correlation_id: str) -> str:
+        """Resolve durable organizational ownership, never a worker lease identity."""
+        configured = (
+            None if self.organization_owners is None
+            else self.organization_owners.get(correlation_id)
+        )
+        physical = (
+            None if self.resource_organizations is None
+            else self.resource_organizations.get(correlation_id)
+        )
+        if configured is not None and physical is not None and configured != physical:
+            raise ValueError("physical and operational organization bindings disagree")
+        organization_id = configured if configured is not None else physical
+        if not isinstance(organization_id, str) or not organization_id.strip():
+            raise ValueError(
+                "recovery requires explicit correlation-to-organization ownership"
+            )
+        return organization_id
 
     @staticmethod
     def _pending_effects(store: Persistence) -> tuple[tuple[BoundaryMessage, str], ...]:
@@ -137,7 +163,8 @@ class TradingCustomerRecoveryRunner:
     @staticmethod
     def _execute_pending(
         store: Persistence, source: BoundaryMessage, effect_id: str,
-        *, authoritative_pickup: TemporalReservation | None = None,
+        *, organization_id: str,
+        authoritative_pickup: TemporalReservation | None = None,
         resource_persistence: Persistence | None = None,
     ) -> None:
         details = source.payload()
@@ -171,6 +198,7 @@ class TradingCustomerRecoveryRunner:
             effect_id=effect_id,
             fixtures=fixture,
             correlation_id=source.correlation_id,
+            organization_id=organization_id,
             **kwargs,
         )
 
@@ -391,6 +419,7 @@ class TradingCustomerRecoveryRunner:
             ]
             if pending:
                 source, effect_id = pending[0]
+                organization_id = self._organization_for(source.correlation_id)
                 command = store.command(effect_id)
                 if command is None:
                     raise RuntimeError("accepted effect disappeared before execution")
@@ -448,15 +477,19 @@ class TradingCustomerRecoveryRunner:
                     if pickup is not None:
                         if self.resource_persistence is not None:
                             self._execute_pending(
-                                store, source, effect_id, authoritative_pickup=pickup,
+                                store, source, effect_id, organization_id=organization_id,
+                                authoritative_pickup=pickup,
                                 resource_persistence=self.resource_persistence,
                             )
                         else:
                             self._execute_pending(
-                                store, source, effect_id, authoritative_pickup=pickup,
+                                store, source, effect_id, organization_id=organization_id,
+                                authoritative_pickup=pickup,
                             )
                     else:
-                        self._execute_pending(store, source, effect_id)
+                        self._execute_pending(
+                            store, source, effect_id, organization_id=organization_id,
+                        )
                 except customer.DurableResourceWait:
                     # Physical capacity contention is waiting, not failure.
                     # The immutable Command stays durable for another slot.
