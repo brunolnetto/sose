@@ -30,11 +30,13 @@ from sose.examples.hospitals.runtime import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+ORGANIZATION_ID = "hospital-reference-organization"
+
 
 def _runtime():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=ORGANIZATION_ID)
+    _, engine = build_runtime(persistence, owner_id=ORGANIZATION_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     return persistence, entities, engine, backend

@@ -6,11 +6,13 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.manufacturing import simulation as manufacturing
 from sose.persistence.memory import MemoryPersistence
 
+ORGANIZATION_ID = "manufacturing-reference-organization"
+
 
 def _released_runtime(*, quantity: float = 5.0):
     persistence = MemoryPersistence()
-    entities = manufacturing.seed_happy_path(persistence, quantity=quantity)
-    _, engine = manufacturing.build_runtime(persistence)
+    entities = manufacturing.seed_happy_path(persistence, owner_id=ORGANIZATION_ID, quantity=quantity)
+    _, engine = manufacturing.build_runtime(persistence, owner_id=ORGANIZATION_ID)
     backend = SimPyBackend(origin=manufacturing.ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(manufacturing.ORIGIN.replace(hour=9))
