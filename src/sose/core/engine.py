@@ -115,6 +115,8 @@ class Engine:
 
         command = item.command
         work = item.work
+        if work.owner_id != self.owner_id:
+            raise PermissionError("scheduled work belongs to a different owner")
         if command.command_id != work.command_id:
             raise ValueError("scheduled work does not match command")
         if work.due_at != command.due_at:
