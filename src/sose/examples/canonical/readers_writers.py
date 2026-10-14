@@ -19,12 +19,12 @@ class ReadersWritersConfig(CanonicalConfig):
         return self
 
 
-def seed(persistence, config):
+def seed(persistence, config, *, owner_id: str):
     if not persistence.resource_definitions():
         with persistence.transaction() as uow:
             uow.save_resource_definition(ResourceDefinition("reader_slots", config.readers))
             uow.save_resource_definition(ResourceDefinition("writer_gate", 1))
-    return seed_case(persistence, name="readers_writers",
+    return seed_case(persistence, owner_id=owner_id, name="readers_writers",
                      attributes={"readers": config.readers, "writers": config.participants - config.readers})
 
 
