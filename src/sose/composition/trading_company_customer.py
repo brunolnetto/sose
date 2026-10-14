@@ -344,6 +344,7 @@ def _dispatch_o2c_event(
         payload=command.payload,
         causation_id=causation_id,
         correlation_id=correlation_id,
+        owner_id=command.owner_id,
     )
     engine.dispatch(command)
 
