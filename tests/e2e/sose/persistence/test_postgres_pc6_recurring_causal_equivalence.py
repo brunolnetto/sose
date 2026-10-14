@@ -44,7 +44,7 @@ def _seed(ns):
     with PostgresPersistence(DSN, namespace=ns) as store:
         service = BoundaryService(store)
         for org in ORGS:
-            entities = logistics.seed_reference(store, instance_key=org)
+            entities = logistics.seed_reference(store, owner_id=org, instance_key=org)
             shipments[org] = entities.shipment_id
             upstream = BoundaryMessage.create(
                 contract_name="o2c.fulfillment_requested", contract_version=2,
