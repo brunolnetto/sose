@@ -135,6 +135,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     customer_id: str = "customer-1",
     product_offering: str = "postpaid-mobile",
@@ -142,7 +143,7 @@ def seed_reference(
     sim_type: str = "eSIM",
     provisioning_capacity: int = 1,
 ) -> TelecomEntities:
-    context, _ = build_runtime(persistence, now=now)
+    context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
     order = context.entities.create(
         ProductOrder,
         key=("telecom-reference", "postpaid-mobile-order-1"),
