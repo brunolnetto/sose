@@ -135,6 +135,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     primary_customer_id: str = "customer-1",
     secondary_customer_id: str = "customer-2",
@@ -142,7 +143,7 @@ def seed_reference(
     quantity_kind: str = "energy",
     unit: str = "kWh",
 ) -> EnergyEntities:
-    context, _ = build_runtime(persistence, now=now)
+    context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
 
     def create_point(
         ordinal: int,
