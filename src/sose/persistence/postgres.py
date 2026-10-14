@@ -281,6 +281,51 @@ class PostgresPersistence(MemoryPersistence):
                 # belong to independent organizations. Their index in the
                 # UoW snapshot is NOT a globally unique record key.
                 continue
+            if (
+                change.collection == "simulation_positions"
+                and change.operation == "upsert"
+            ):
+                # Each owner has its own authoritative recovery boundary. A
+                # writer must atomically replace exactly the position it read,
+                # not overwrite a newer one committed by another connection.
+                assert change.position is not None
+                assert change.payload is not None
+                owner_id = loads(change.key)
+                if not isinstance(owner_id, str) or not owner_id:
+                    raise ValueError("simulation position requires an owner key")
+                expected = before.simulation_positions.get(owner_id)
+                if expected is None:
+                    result = self._connection.execute(
+                        sql.SQL(
+                            """
+                            INSERT INTO {}(collection, record_key, position, payload)
+                            VALUES (%s, %s, %s, %s)
+                            ON CONFLICT(collection, record_key) DO NOTHING
+                            RETURNING record_key
+                            """
+                        ).format(self._record_table),
+                        (change.collection, change.key, change.position, change.payload),
+                    )
+                else:
+                    result = self._connection.execute(
+                        sql.SQL(
+                            """
+                            UPDATE {} SET position = %s, payload = %s
+                            WHERE collection = %s AND record_key = %s
+                              AND payload = %s
+                            RETURNING record_key
+                            """
+                        ).format(self._record_table),
+                        (
+                            change.position, change.payload,
+                            change.collection, change.key, dumps(expected),
+                        ),
+                    )
+                if result.fetchone() is None:
+                    raise StaleWriterError(
+                        f"stale simulation position for owner {owner_id!r}"
+                    )
+                continue
             if change.operation == "delete":
                 self._connection.execute(
                     sql.SQL(
