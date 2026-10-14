@@ -40,13 +40,12 @@ class Engine:
         scenarios: Iterable[Scenario] = (),
         store_filters=None,
         domain_warehouse: DomainWarehouse | None = None,
-        owner_id: str | None = None,
+        owner_id: str,
     ) -> None:
-        if owner_id == "":
+        if not owner_id:
             raise ValueError("owner_id must not be empty")
         self.owner_id = owner_id
-        if owner_id is not None:
-            context.commands.bind_owner(owner_id)
+        context.commands.bind_owner(owner_id)
         self.context = context
         self.registry = registry
         self.persistence = persistence
