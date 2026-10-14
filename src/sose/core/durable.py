@@ -247,7 +247,7 @@ class RuntimeRebuilder:
         if position is not None:
             self._context.clock.now = position.logical_time
             self._context.clock.tick = position.logical_tick
-        self._context.scenarios.restore_state(self._persistence.scenario_state())
+        self._context.scenarios.restore_state(self._persistence.scenario_state(owner_id=self._owner_id))
 
     def _validate_scheduled_items(
         self,
