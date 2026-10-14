@@ -125,7 +125,7 @@ def test_paused_job_does_not_advance():
     with pytest.raises(RuntimeError, match="paused"):
         job.run_tick()
 
-    assert persistence.simulation_position() is None
+    assert persistence.simulation_position(owner_id=job.job_id) is None
     assert job.state().run_count == 0
 
 
@@ -199,7 +199,7 @@ def test_explicit_trigger_id_is_idempotent_after_success():
 
     assert repeated == first
     assert repeated.trigger_id == "scheduler-run-001"
-    assert persistence.simulation_position().logical_tick == 1
+    assert persistence.simulation_position(owner_id=job.job_id).logical_tick == 1
     assert job.state().run_count == 1
     assert job.state().last_completed_trigger_id == "scheduler-run-001"
     assert job.state().active_trigger_id is None
@@ -267,7 +267,7 @@ def test_trigger_identity_survives_sqlite_reopen(tmp_path):
     repeated = resumed.run_tick(trigger_id="external-42")
 
     assert repeated == first
-    assert reopened.simulation_position().logical_tick == 1
+    assert reopened.simulation_position(owner_id=resumed.job_id).logical_tick == 1
     assert resumed.state().last_completed_trigger_id == "external-42"
     reopened.close()
 
@@ -298,7 +298,7 @@ def test_failed_before_advance_can_recover_same_trigger():
     assert failed.status == "failed"
     assert failed.phase == "advance"
     assert failed.active_trigger_id == "retry-advance"
-    assert persistence.simulation_position() is None
+    assert persistence.simulation_position(owner_id=job.job_id) is None
 
     result = job.run_tick(
         trigger_id="retry-advance",
@@ -373,7 +373,7 @@ def test_reconcile_failure_recovers_without_advancing_second_tick():
     assert failed.status == "failed"
     assert failed.phase == "reconcile"
     assert failed.next_tick == 1
-    assert persistence.simulation_position().logical_tick == 1
+    assert persistence.simulation_position(owner_id=job.job_id).logical_tick == 1
 
     result = job.run_tick(
         trigger_id="reconcile-trigger",
@@ -382,7 +382,7 @@ def test_reconcile_failure_recovers_without_advancing_second_tick():
 
     assert result.logical_tick == 1
     assert result.run_count == 1
-    assert persistence.simulation_position().logical_tick == 1
+    assert persistence.simulation_position(owner_id=job.job_id).logical_tick == 1
     entity = persistence.entity("tutorial_job", state.bootstrap_state.id)
     assert entity is not None and entity.state == "running"
 
@@ -413,6 +413,7 @@ def test_recovery_infers_reconcile_when_position_committed_before_phase_checkpoi
         config,
         config.start_at,
         0,
+        owner_id=job.job_id,
     )
     backend = _backend(config.start_at)
     engine.rebuild_backend(backend)
@@ -420,7 +421,7 @@ def test_recovery_infers_reconcile_when_position_committed_before_phase_checkpoi
     backend.run_until(context.clock.now)
 
     # Simulates process death here: SimulationPosition committed, job phase did not.
-    assert persistence.simulation_position().logical_tick == 1
+    assert persistence.simulation_position(owner_id=job.job_id).logical_tick == 1
     assert job.state().phase == "advance"
     assert job.state().next_tick == 0
 
