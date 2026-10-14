@@ -33,9 +33,9 @@ def test_pending_arrival_schedule_survives_restart():
     )
     rebuilt = restart_reference_runtime(
         persistence,
-        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend_before,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -82,9 +82,9 @@ def test_pending_gate_demand_survives_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
-        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -164,9 +164,9 @@ def test_pending_tug_demand_survives_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
-        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -238,9 +238,9 @@ def test_consumed_slot_and_pushback_recover_after_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
-        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -285,9 +285,9 @@ def test_committed_departure_queue_selection_survives_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
-        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
