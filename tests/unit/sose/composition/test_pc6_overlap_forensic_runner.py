@@ -107,7 +107,7 @@ def test_sidecar_io_failure_never_masks_primary_worker_error(tmp_path, monkeypat
     target = tmp_path / "unwritable.json"
 
     def fail_sidecar_open(path, *args, **kwargs):
-        if str(path) == str(target):
+        if str(path).startswith(str(target) + "."):
             raise OSError("simulated forensic volume failure")
         return original_open(path, *args, **kwargs)
 
