@@ -294,3 +294,38 @@ def test_scheduled_work_owner_cannot_cancel_foreign_work():
     assert store.command("foreign-cmd") is not None
     assert work in store.scheduled_work()
     assert b.cancel(work.work_id) is True
+
+
+def test_missing_foreign_command_cannot_poison_unrelated_owner_recovery():
+    from sose.core.durable import DurableScheduler
+    from sose.core.events import Command
+
+    store = MemoryPersistence()
+    owner_a = DurableScheduler(store, owner_id="organization-a")
+    owner_b = DurableScheduler(store, owner_id="organization-b")
+    own = owner_a.schedule(Command("a-command", "advance", "demo", "a", ORIGIN + timedelta(hours=1)))
+    foreign = owner_b.schedule(Command("b-command", "advance", "demo", "b", ORIGIN + timedelta(hours=2)))
+    with store.transaction() as uow:
+        uow.delete_command(foreign.command_id)
+
+    # B's damaged authoritative work must be diagnosed by B, never dispatched
+    # or inspected as part of A's independent recovery transaction.
+    assert [item.work.work_id for item in owner_a.pending()] == [own.work_id]
+    assert RuntimeRebuilder(store, owner_id="organization-a").rebuild(
+        RecordingBackend(ORIGIN), on_due=lambda _: None,
+    ) == 1
+    with pytest.raises(RuntimeError, match="references missing command"):
+        owner_b.pending()
+
+
+def test_scheduled_sequence_is_local_to_owner_not_namespace():
+    from sose.core.durable import DurableScheduler
+    from sose.core.events import Command
+
+    store = MemoryPersistence()
+    a = DurableScheduler(store, owner_id="organization-a")
+    b = DurableScheduler(store, owner_id="organization-b")
+    aw = a.schedule(Command("a-first", "advance", "demo", "same-type", ORIGIN))
+    bw = b.schedule(Command("b-first", "advance", "demo", "same-type", ORIGIN))
+    assert aw.sequence == 1
+    assert bw.sequence == 1
