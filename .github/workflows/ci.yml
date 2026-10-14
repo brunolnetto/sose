@@ -600,6 +600,7 @@ jobs:
             tests/e2e/sose/persistence/test_postgres_resource_release_race.py \
             tests/e2e/sose/persistence/test_postgres_pc6_federated_recovery.py \
             tests/e2e/sose/persistence/test_postgres_pc6_same_org_fencing.py \
+            tests/e2e/sose/persistence/test_postgres_owner_position_cas_interleaving.py \
             tests/e2e/sose/persistence/test_postgres_pc6_recurring_organization_recovery.py \
             tests/e2e/sose/persistence/test_postgres_pc6_recurring_causal_equivalence.py
       - name: Certify OD-5a PostgreSQL physical observation and causal reconciliation
