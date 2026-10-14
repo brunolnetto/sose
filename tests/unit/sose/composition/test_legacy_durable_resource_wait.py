@@ -91,7 +91,7 @@ def test_synchronous_reference_path_retries_only_typed_temporary_capacity_wait(
         )
 
     monkeypatch.setattr(customer, "_execute_intent", transient_once)
-    result = customer.run_customer_demand_path()
+    result = customer.run_customer_demand_path(organization_id="test-org-legacy-durable-resource-wait")
     assert len(attempts) == 2
     assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
 
@@ -119,7 +119,7 @@ def test_real_logistics_origin_dock_contention_is_durable_wait(monkeypatch):
         )
 
     monkeypatch.setattr(customer.logistics, "reconcile_origin_hub", contend_once)
-    result = customer.run_customer_demand_path()
+    result = customer.run_customer_demand_path(organization_id="test-org-legacy-durable-resource-wait")
     assert len(calls) >= 2
     assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
     assert result.persistence.business_effects()
