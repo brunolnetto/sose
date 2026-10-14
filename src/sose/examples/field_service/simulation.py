@@ -69,6 +69,7 @@ def visit_id(appointment_id_value: str, sequence: int) -> str:
 def build_runtime(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     tick: int = 0,
     scenarios=(),
@@ -88,6 +89,7 @@ def build_runtime(
     return context, Engine(
         context=context,
         registry=registry,
+        owner_id=owner_id,
         persistence=persistence,
         scenarios=scenarios,
         store_filters={PART_FILTER_KEY: _required_part_filter},
