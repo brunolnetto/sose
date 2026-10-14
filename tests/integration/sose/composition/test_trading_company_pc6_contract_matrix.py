@@ -10,6 +10,8 @@ from sose.composition.trading_company_replenishment import run_replenishment_pat
 from sose.composition.model import DeliveryStatus
 
 
+REPLENISHMENT_OWNER_ID = "trading-company-replenishment-reference"
+
 def _audited_boundary(result):
     with result.persistence.transaction() as uow:
         deliveries = uow.boundary_deliveries()
@@ -30,7 +32,7 @@ def _audited_boundary(result):
 
 def test_pc6_two_composed_paths_preserve_durable_boundary_and_ownership():
     customer = run_customer_demand_path()
-    replenishment = run_replenishment_path()
+    replenishment = run_replenishment_path(owner_id=REPLENISHMENT_OWNER_ID)
 
     customer_contracts = _audited_boundary(customer)
     replenishment_contracts = _audited_boundary(replenishment)
