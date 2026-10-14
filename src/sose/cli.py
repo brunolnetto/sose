@@ -401,6 +401,8 @@ def _cmd_composition_recovery(args: argparse.Namespace) -> int:
         runner = TradingCustomerRecoveryRunner(
             persistence=store,
             owner_id=args.owner_id,
+            correlation_id=args.correlation_id,
+            organization_owners={args.correlation_id: args.organization_id},
             max_actions=args.max_actions,
         )
         scheduler = RecoverySchedule(
@@ -433,7 +435,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run deterministic PC6 catch-up once (cron) or as a recurring worker.",
     )
     recovery.add_argument("--sqlite", required=True, help="Authoritative SQLite DB path.")
-    recovery.add_argument("--owner-id", required=True)
+    recovery.add_argument("--owner-id", required=True, help="Worker lease identity, not the organization.")
+    recovery.add_argument("--correlation-id", required=True, help="Durable flow correlation handled by this worker.")
+    recovery.add_argument("--organization-id", required=True, help="Authoritative organizational owner of the flow runtime.")
     recovery.add_argument("--start-at", required=True, help="ISO 8601 timezone-aware anchor.")
     recovery.add_argument("--interval-seconds", type=int, required=True)
     recovery.add_argument("--max-slots", type=int, default=16)
