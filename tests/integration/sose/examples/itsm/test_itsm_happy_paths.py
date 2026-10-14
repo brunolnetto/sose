@@ -1,3 +1,5 @@
+REFERENCE_OWNER_ID = "itsm-integration-reference"
+
 from sose.examples.itsm.simulation import (
     escalation_id,
     run_escalation_path,
@@ -6,7 +8,7 @@ from sose.examples.itsm.simulation import (
 
 
 def test_itsm_happy_path_closes_without_stale_runtime_truth():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id=REFERENCE_OWNER_ID)
 
     assert persistence.entity("itsm_incident", entities.incident_id).state == "closed"
     assert persistence.store_items() == ()
@@ -18,7 +20,7 @@ def test_itsm_happy_path_closes_without_stale_runtime_truth():
 
 
 def test_sla_escalation_is_independent_durable_case():
-    persistence, entities = run_escalation_path()
+    persistence, entities = run_escalation_path(owner_id=REFERENCE_OWNER_ID)
 
     assert persistence.entity("itsm_incident", entities.incident_id).state == "resolved"
     escalation = persistence.entity(
@@ -45,8 +47,8 @@ def test_escalated_incident_cannot_resolve_without_completed_escalation_evidence
     from sose.persistence.memory import MemoryPersistence
 
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
