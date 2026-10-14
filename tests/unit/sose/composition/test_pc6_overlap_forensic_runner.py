@@ -190,3 +190,25 @@ def test_forensic_summary_is_private_even_with_umask_022(tmp_path, monkeypatch):
         assert json.loads(summaries[0].read_text())["runs"] == 1
     finally:
         os.umask(old_umask)
+
+
+def test_failed_initial_sidecar_fsync_never_exposes_truncated_evidence(tmp_path, monkeypatch):
+    import os
+    from scripts.reproduce_pc6_pg_overlap import capture_first_worker_failure_once
+
+    target = tmp_path / "first-failure.json"
+    original_fsync = os.fsync
+
+    def fail_fsync(fd):
+        raise OSError("simulated disk full during first evidence fsync")
+
+    monkeypatch.setattr(os, "fsync", fail_fsync)
+    root = RuntimeError("primary worker failure")
+    capture_first_worker_failure_once(
+        [], Lock(), flow="customer-a", error=root,
+        snapshot=lambda: {"durable": True}, evidence_path=target,
+    )
+    monkeypatch.setattr(os, "fsync", original_fsync)
+    assert not target.exists()
+    assert "primary worker failure" in str(root)
+    assert any("forensic initial sidecar write failed" in n for n in root.__notes__)
