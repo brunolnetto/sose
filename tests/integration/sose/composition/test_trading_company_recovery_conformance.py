@@ -106,7 +106,8 @@ def _claim_after_worker_death(
 
 def _customer_fixtures(store) -> customer._CustomerFixtures:
     origin = o2c.ORIGIN
-    sales_order = o2c.seed_reference(store, now=origin, amount=250.0, currency="USD")
+    sales_order = o2c.seed_reference(store,
+        owner_id="test-org-customer-conformance", now=origin, amount=250.0, currency="USD")
     expected_id = deterministic_id(
         "entity", "warehouse_fulfillment_order",
         "warehouse-reference", f"order:{sales_order.order_id}",
@@ -118,20 +119,24 @@ def _customer_fixtures(store) -> customer._CustomerFixtures:
         fulfillment=fulfillment.WarehouseEntities(order_id=expected_id, lot_ids=()),
         warehouse=wm.seed_reference(
             store,
+        owner_id="test-org-customer-conformance",
             now=origin,
             origin_on_hand=20.0,
             transfer_quantity=1.0,
             sku=fulfillment.PRIMARY_SKU,
         ),
-        logistics=logistics.seed_reference(store, now=origin),
+        logistics=logistics.seed_reference(store,
+        owner_id="test-org-customer-conformance", now=origin),
         payments=payments.seed_reference(
             store,
+        owner_id="test-org-customer-conformance",
             now=origin,
             amount=250.0,
             currency="USD",
         ),
         r2r=r2r.seed_reference(
             store,
+        owner_id="test-org-customer-conformance",
             now=origin,
             amount=250.0,
             currency="USD",
@@ -334,6 +339,7 @@ def test_customer_path_is_continuous_equivalent_across_worker_death_and_restart(
             effect_id=consumption.consumer_effect_id,
             fixtures=fixtures,
             correlation_id=correlation_id,
+            organization_id="trading-customer-reference",
         )
         store = _reopen(store, path)
 
@@ -345,7 +351,7 @@ def test_customer_path_is_continuous_equivalent_across_worker_death_and_restart(
         assert replay.consumer_effect_id == consumption.consumer_effect_id
 
         causation_id = message.message_id
-        produced_at = customer._next_logical_time(store, message.produced_at)
+        produced_at = customer._next_logical_time(store, message.produced_at, organization_id="trading-customer-reference")
 
     assert tuple(message.message_id for message in messages) == continuous.message_ids
     assert tuple(effects) == continuous.effect_ids
