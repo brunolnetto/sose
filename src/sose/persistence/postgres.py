@@ -734,9 +734,9 @@ class PostgresPersistence(MemoryPersistence):
         self._fresh()
         return super().job_states()
 
-    def committed_tick(self) -> int:
+    def committed_tick(self, *, owner_id: str | None = None) -> int:
         self._fresh()
-        return super().committed_tick()
+        return super().committed_tick(owner_id=owner_id)
 
     def events(self):
         self._fresh()
