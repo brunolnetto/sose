@@ -228,7 +228,7 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
     )
     try:
         state = persistence.job_state(config.job.id)
-        position = persistence.simulation_position()
+        position = persistence.simulation_position(owner_id=config.job.id)
         diagnostics = None
         if state is not None:
             diagnostics = {
