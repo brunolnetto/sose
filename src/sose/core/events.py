@@ -19,6 +19,7 @@ class Command:
     payload: Mapping[str, Any] = field(default_factory=dict)
     causation_id: str | None = None
     correlation_id: str | None = None
+    owner_id: str | None = None
 
     def rescheduled(self, due_at: datetime) -> "Command":
         return replace(self, due_at=due_at)
