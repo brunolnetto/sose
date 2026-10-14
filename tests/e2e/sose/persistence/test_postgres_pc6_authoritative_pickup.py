@@ -42,8 +42,8 @@ def _context():
 
 
 def _runtime(store):
-    entities = logistics.seed_reference(store)
-    _, engine = logistics.build_runtime(store)
+    entities = logistics.seed_reference(store, owner_id="company-a")
+    _, engine = logistics.build_runtime(store, owner_id="company-a")
     backend = SimPyBackend(origin=logistics.ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(logistics.PICKUP_DUE)
@@ -58,6 +58,7 @@ def _bind_effect(store, effect_id, shipment_id, *, cause="source-a"):
             entity_id=shipment_id, issued_at=logistics.PICKUP_DUE,
             due_at=logistics.PICKUP_DUE,
             causation_id=cause, correlation_id="correlation-a",
+            owner_id="company-a",
         ))
 
 
@@ -295,9 +296,9 @@ def test_pg_crash_before_pickup_commit_rolls_back_domain_transition_not_booking(
         assert restarted.temporal_resources().get("crash-effect") == booking
         events_before = {event.event_id for event in restarted.events()}
         version_before = restarted.entity("shipment", entities.shipment_id).version
-        position = restarted.simulation_position()
+        position = restarted.simulation_position(owner_id="company-a")
         restore_at = position.logical_time if position is not None else logistics.ORIGIN
-        _, engine = logistics.build_runtime(restarted, now=restore_at)
+        _, engine = logistics.build_runtime(restarted, owner_id="company-a", now=restore_at)
         backend = SimPyBackend(origin=restore_at)
         engine.rebuild_backend(backend)
         backend.run_until(max(backend.now, logistics.PICKUP_DUE))
@@ -334,7 +335,7 @@ def test_pg_real_pickup_statechart_is_booked_through_recovery_runner_and_restart
     ns = "pc6_pickup_real_" + uuid4().hex[:12]
     correlation = "real-logistics-correlation"
     with PostgresPersistence(DSN, namespace=ns) as store:
-        entities = logistics.seed_reference(store)
+        entities = logistics.seed_reference(store, owner_id="company-a")
         source = BoundaryMessage.create(
             contract_name="warehouse.dispatch_ready", contract_version=1,
             source_domain="warehouse_fulfillment",
