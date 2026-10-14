@@ -3,6 +3,7 @@ from __future__ import annotations
 from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from collections.abc import Mapping
 from math import isfinite
 from time import monotonic, sleep
 
@@ -543,6 +544,7 @@ def _execute_intent(
             # already-durable dispatch message after WM has consumed stock.
             picked_messages = reconcile_shipped_fulfillment_egress(
                 persistence, correlation_id=correlation_id,
+                organization_owners={correlation_id: organization_id},
             )
             if not picked_messages or picked_messages[0].contract_key != (
                 "warehouse.inventory_consumption_requested.v1"
@@ -935,8 +937,19 @@ def _execute_intent(
                 uow.delete_command(effect_id)
 
 
+def _operational_owner(organization_owners: Mapping[str, str], correlation_id: str) -> str:
+    """Resolve an explicit durable binding; correlation never becomes ownership."""
+    if not isinstance(correlation_id, str) or not correlation_id.strip():
+        raise ValueError("egress correlation_id must not be empty")
+    owner_id = organization_owners.get(correlation_id)
+    if not isinstance(owner_id, str) or not owner_id.strip():
+        raise ValueError("egress requires explicit correlation-to-organization ownership")
+    return owner_id
+
+
 def reconcile_shipped_fulfillment_egress(
-    persistence: MemoryPersistence, *, correlation_id: str | None = None,
+    persistence: MemoryPersistence, *, organization_owners: Mapping[str, str],
+    correlation_id: str | None = None,
     max_new_messages: int | None = None,
     recovery_job_id: str | None = None,
 ) -> tuple[BoundaryMessage, ...]:
@@ -1105,7 +1118,10 @@ def reconcile_shipped_fulfillment_egress(
             source_identity=order_id,
             correlation=reservation.correlation_id,
             causation=reservation.message_id,
-            produced_at=_next_logical_time(persistence, reservation.produced_at),
+            produced_at=_next_logical_time(
+                persistence, reservation.produced_at,
+                organization_id=_operational_owner(organization_owners, reservation.correlation_id),
+            ),
             payload={
                 "fulfillment_order_id": order_id,
                 "stock_id": stock_id,
@@ -1138,7 +1154,10 @@ def reconcile_shipped_fulfillment_egress(
             source_identity=order_id,
             correlation=reservation.correlation_id,
             causation=consumption.message_id,
-            produced_at=_next_logical_time(persistence, consumption.produced_at),
+            produced_at=_next_logical_time(
+                persistence, consumption.produced_at,
+                organization_id=_operational_owner(organization_owners, consumption.correlation_id),
+            ),
             payload={"fulfillment_order_id": order_id, "shipment_id": shipment_id},
         )
         if dispatch is None:
@@ -1148,7 +1167,8 @@ def reconcile_shipped_fulfillment_egress(
 
 
 def reconcile_completed_logistics_egress(
-    persistence: MemoryPersistence, *, correlation_id: str | None = None,
+    persistence: MemoryPersistence, *, organization_owners: Mapping[str, str],
+    correlation_id: str | None = None,
     max_new_messages: int | None = None,
     recovery_job_id: str | None = None,
 ) -> tuple[BoundaryMessage, ...]:
@@ -1217,7 +1237,10 @@ def reconcile_completed_logistics_egress(
             prior = uow.get_boundary_message(identity)
         produced_at = (
             prior.produced_at if prior is not None
-            else _next_logical_time(persistence, dispatch.produced_at)
+            else _next_logical_time(
+                persistence, dispatch.produced_at,
+                organization_id=_operational_owner(organization_owners, dispatch.correlation_id),
+            )
         )
         message = BoundaryMessage.create(
             contract_name="logistics.delivery_completed", contract_version=1,
@@ -1242,7 +1265,8 @@ def reconcile_completed_logistics_egress(
 
 
 def reconcile_invoiced_o2c_egress(
-    persistence: MemoryPersistence, *, correlation_id: str | None = None,
+    persistence: MemoryPersistence, *, organization_owners: Mapping[str, str],
+    correlation_id: str | None = None,
     max_new_messages: int | None = None,
     recovery_job_id: str | None = None,
 ) -> tuple[BoundaryMessage, ...]:
@@ -1321,7 +1345,10 @@ def reconcile_invoiced_o2c_egress(
             previous = uow.get_boundary_message(identity)
         produced_at = (
             previous.produced_at if previous is not None
-            else _next_logical_time(persistence, upstream.produced_at)
+            else _next_logical_time(
+                persistence, upstream.produced_at,
+                organization_id=_operational_owner(organization_owners, upstream.correlation_id),
+            )
         )
         outgoing = BoundaryMessage.create(
             contract_name="o2c.payment_requested", contract_version=1,
@@ -1349,7 +1376,8 @@ def reconcile_invoiced_o2c_egress(
 
 
 def reconcile_settled_payment_egress(
-    persistence: MemoryPersistence, *, correlation_id: str | None = None,
+    persistence: MemoryPersistence, *, organization_owners: Mapping[str, str],
+    correlation_id: str | None = None,
     max_new_messages: int | None = None,
     recovery_job_id: str | None = None,
 ) -> tuple[BoundaryMessage, ...]:
@@ -1419,7 +1447,10 @@ def reconcile_settled_payment_egress(
             existing = uow.get_boundary_message(identity)
         produced_at = (
             existing.produced_at if existing is not None
-            else _next_logical_time(persistence, upstream.produced_at)
+            else _next_logical_time(
+                persistence, upstream.produced_at,
+                organization_id=_operational_owner(organization_owners, upstream.correlation_id),
+            )
         )
         message = BoundaryMessage.create(
             contract_name="accounting.entry_requested", contract_version=1,
@@ -1682,6 +1713,7 @@ def run_customer_demand_path(
     # are the authoritative source for outbound consumption and dispatch.
     reconstructed = reconcile_shipped_fulfillment_egress(
         persistence, correlation_id=correlation_id,
+        organization_owners={correlation_id: organization_id},
     )
     if len(reconstructed) != 1 or reconstructed[0].contract_key != (
         "warehouse.inventory_consumption_requested.v1"
@@ -1692,6 +1724,7 @@ def run_customer_demand_path(
     )
     reconstructed = reconcile_shipped_fulfillment_egress(
         persistence, correlation_id=correlation_id,
+        organization_owners={correlation_id: organization_id},
     )
     if len(reconstructed) != 2 or reconstructed[1].contract_key != (
         "warehouse.dispatch_ready.v1"
