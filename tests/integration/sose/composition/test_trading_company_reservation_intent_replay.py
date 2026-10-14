@@ -7,7 +7,7 @@ from sose.examples.warehouse_fulfillment import simulation as fulfillment
 
 
 def test_completed_reservation_intent_replay_remains_business_idempotent():
-    run = customer.run_customer_demand_path()
+    run = customer.run_customer_demand_path(organization_id="test-org-trading-company-reservation-intent-replay")
     persistence = run.persistence
     with persistence.transaction() as uow:
         reservation_effect = next(
@@ -37,6 +37,7 @@ def test_completed_reservation_intent_replay_remains_business_idempotent():
     )
     customer._execute_intent(
         persistence, effect_id=reservation_effect,
+        organization_id="test-org-trading-company-reservation-intent-replay",
         fixtures=fixtures, correlation_id=run.correlation_id,
     )
     after = tuple(
