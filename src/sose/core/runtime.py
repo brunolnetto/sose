@@ -45,7 +45,7 @@ class ScheduledWork:
         command_id: str,
         owner_id: str,
     ) -> None:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         object.__setattr__(self, "owner_id", owner_id)
         object.__setattr__(self, "due_at", due_at)
