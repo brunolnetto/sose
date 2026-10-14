@@ -45,7 +45,7 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
     monkeypatch.setattr(customer, "_publish", interrupt_publish)
     monkeypatch.setattr(customer, "_execute_intent", interrupt_execute)
     with pytest.raises(RuntimeError, match="worker killed"):
-        customer.run_customer_demand_path()
+        customer.run_customer_demand_path(organization_id="test-org-logistics-durable-recovery")
     held[-1].close()
     monkeypatch.setattr(customer, "_publish", original_publish)
     monkeypatch.setattr(customer, "_execute_intent", original_execute)
@@ -130,7 +130,7 @@ def test_mid_transition_worker_death_resumes_from_durable_logistics_state(
 
     monkeypatch.setattr(customer.logistics, stage, crash_after_stage)
     with pytest.raises(RuntimeError, match="crash between durable Logistics phases"):
-        customer.run_customer_demand_path()
+        customer.run_customer_demand_path(organization_id="test-org-logistics-durable-recovery")
     monkeypatch.setattr(customer.logistics, stage, original)
     held[-1].close()
 
