@@ -18,9 +18,10 @@ def _build(
     config: EnergyUtilitiesConfig,
     now: datetime,
     tick: int,
+    owner_id: str,
 ):
     return build_runtime(
-        persistence,
+        persistence, owner_id=owner_id,
         now=now,
         tick=tick,
         step=config.tick_step,
@@ -28,9 +29,9 @@ def _build(
     )
 
 
-def _seed(persistence: Persistence, config: EnergyUtilitiesConfig):
+def _seed(persistence: Persistence, config: EnergyUtilitiesConfig, owner_id: str):
     return seed_reference(
-        persistence,
+        persistence, owner_id=owner_id,
         now=config.start_at,
         primary_customer_id=config.primary_customer_id,
         secondary_customer_id=config.secondary_customer_id,
