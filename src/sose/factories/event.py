@@ -66,6 +66,7 @@ class EventFactory:
             payload=merged_payload,
             causation_id=cause_id,
             correlation_id=correlation or event_id,
+            owner_id=self._owner_id,
         )
 
     def transition(
