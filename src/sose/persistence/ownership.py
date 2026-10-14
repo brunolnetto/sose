@@ -29,8 +29,8 @@ class FencedEnginePersistence:
             kwargs["writer_scope"] = scope
         return kwargs
 
-    def transaction(self):
-        return self._persistence.transaction(**self._writer_kwargs())
+    def transaction(self, *, owner_id: str | None = None):
+        return self._persistence.transaction(owner_id=owner_id, **self._writer_kwargs())
 
     def boundary_transaction(self):
         factory = getattr(self._persistence, "boundary_transaction", None)
