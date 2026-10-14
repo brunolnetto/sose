@@ -582,3 +582,30 @@ def test_reference_restart_rejects_whitespace_owner_before_persistence_access():
             owner_id=" \t ",
             backend_factory=lambda **_kwargs: None,
         )
+
+
+def test_cancel_rejects_foreign_command_even_when_work_is_labeled_as_owned():
+    """A compromised/mismatched work row must never authorize deleting B's command."""
+    from sose.core.durable import DurableScheduler
+    from sose.core.events import Command
+    from sose.core.runtime import ScheduledWork
+
+    store = MemoryPersistence()
+    command = Command(
+        "command-owned-by-b", "advance", "demo", "same-type",
+        ORIGIN + timedelta(hours=1), owner_id="organization-b",
+    )
+    work = ScheduledWork(
+        work_id="misattributed-work-a", command_id=command.command_id,
+        due_at=command.due_at, priority=100, sequence=1,
+        owner_id="organization-a",
+    )
+    with store.transaction() as uow:
+        uow.save_command(command)
+        uow.save_scheduled_work(work)
+
+    scheduler = DurableScheduler(store, owner_id="organization-a")
+    with pytest.raises(PermissionError, match="command belongs to a different owner"):
+        scheduler.cancel(work.work_id)
+    assert store.command(command.command_id) == command
+    assert work in store.scheduled_work()
