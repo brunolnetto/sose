@@ -15,10 +15,12 @@ from sose.examples.airports.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+
+REFERENCE_OWNER_ID = "airports-crash-recovery-reference"
 def _arrived_at_gate():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     arrival_at = schedule_arrival(
