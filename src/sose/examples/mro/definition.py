@@ -21,9 +21,10 @@ def _build(
     config: MROConfig,
     now: datetime,
     tick: int,
+    owner_id: str,
 ):
     return build_runtime(
-        persistence,
+        persistence, owner_id=owner_id,
         now=now,
         tick=tick,
         step=config.tick_step,
@@ -31,9 +32,9 @@ def _build(
     )
 
 
-def _seed(persistence: Persistence, config: MROConfig):
+def _seed(persistence: Persistence, config: MROConfig, owner_id: str):
     return seed_reference(
-        persistence,
+        persistence, owner_id=owner_id,
         quantity=config.quantity,
         now=config.start_at,
         technician_capacity=config.technician_capacity,
