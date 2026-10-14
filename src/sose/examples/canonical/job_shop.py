@@ -14,7 +14,7 @@ class JobShopConfig(CanonicalConfig):
     machines: int = Field(default=2, ge=1)
 
 
-def seed(persistence, config):
+def seed(persistence, config, *, owner_id: str):
     if not persistence.resource_definitions():
         with persistence.transaction() as uow:
             for index in range(config.machines):
@@ -22,7 +22,7 @@ def seed(persistence, config):
     stores = DurableStoreManager(persistence)
     if not any(d.name == "completed_operations" for d in persistence.store_definitions()):
         stores.define(StoreDefinition("completed_operations"))
-    return seed_case(persistence, name="job_shop",
+    return seed_case(persistence, owner_id=owner_id, name="job_shop",
                      attributes={"jobs": config.participants, "machines": config.machines})
 
 
