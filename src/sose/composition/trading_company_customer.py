@@ -413,12 +413,19 @@ def _materialize_fulfillment_from_request(
     return created
 
 
-def pickup_resource_due_at(persistence: MemoryPersistence, intent: Command) -> datetime:
+def pickup_resource_due_at(
+    persistence: MemoryPersistence,
+    intent: Command,
+    *,
+    organization_id: str,
+) -> datetime:
+    if not isinstance(organization_id, str) or not organization_id.strip():
+        raise ValueError("organization_id must not be empty")
     """Resolve the earliest physical pickup time from durable domain state."""
     shipment = persistence.entity("shipment", intent.entity_id)
     if shipment is None:
         raise RuntimeError("pickup demand references a missing shipment")
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=organization_id)
     anchor = max(
         intent.due_at,
         position.logical_time if position is not None else intent.due_at,
