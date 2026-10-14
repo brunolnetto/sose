@@ -58,7 +58,7 @@ def restart_reference_runtime(
     Domain-specific continuation and equality assertions remain in the caller.
     """
 
-    if not owner_id:
+    if not isinstance(owner_id, str) or not owner_id.strip():
         raise ValueError("owner_id must not be empty")
     position = persistence.simulation_position(owner_id=owner_id)
     if backend_before is not None:
