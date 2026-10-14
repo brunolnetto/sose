@@ -60,8 +60,9 @@ def _measure(name, items, repetitions, fn) -> BenchmarkResult:
 
 def _memory_scheduled_batch(count: int) -> None:
     persistence = MemoryPersistence()
-    jobs = [seed_job(persistence, job_key=f"memory-{index}") for index in range(count)]
-    _, engine = build_runtime(persistence)
+    owner_id = "benchmark-memory"
+    jobs = [seed_job(persistence, owner_id=owner_id, job_key=f"memory-{index}") for index in range(count)]
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     due_at = ORIGIN + timedelta(hours=1)
@@ -83,11 +84,12 @@ def _file_sink_scheduled_batch(count: int, factory, filename: str, prefix: str) 
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / filename
         persistence = factory(path)
+        owner_id = f"benchmark-{prefix}"
         jobs = [
-            seed_job(persistence, job_key=f"{prefix}-{index}")
+            seed_job(persistence, owner_id=owner_id, job_key=f"{prefix}-{index}")
             for index in range(count)
         ]
-        _, engine = build_runtime(persistence)
+        _, engine = build_runtime(persistence, owner_id=owner_id)
         backend = SimPyBackend(origin=ORIGIN)
         engine.rebuild_backend(backend)
         due_at = ORIGIN + timedelta(hours=1)
@@ -111,11 +113,12 @@ def _file_sink_reopen(count: int, factory, filename: str, prefix: str) -> None:
     with tempfile.TemporaryDirectory() as directory:
         path = Path(directory) / filename
         persistence = factory(path)
+        owner_id = f"benchmark-{prefix}"
         jobs = [
-            seed_job(persistence, job_key=f"{prefix}-reopen-{index}")
+            seed_job(persistence, owner_id=owner_id, job_key=f"{prefix}-reopen-{index}")
             for index in range(count)
         ]
-        _, engine = build_runtime(persistence)
+        _, engine = build_runtime(persistence, owner_id=owner_id)
         backend = SimPyBackend(origin=ORIGIN)
         engine.rebuild_backend(backend)
         due_at = ORIGIN + timedelta(hours=2)
@@ -131,7 +134,7 @@ def _file_sink_reopen(count: int, factory, filename: str, prefix: str) -> None:
             close()
 
         reopened = factory(path)
-        _, rebuilt = build_runtime(reopened, now=ORIGIN)
+        _, rebuilt = build_runtime(reopened, owner_id=owner_id, now=ORIGIN)
         new_backend = SimPyBackend(origin=ORIGIN)
         rebuilt.rebuild_backend(new_backend)
         if len(reopened.scheduled_work()) != count:
@@ -215,11 +218,12 @@ def _duckdb_reopen(count: int) -> None:
 
 def _diagnostics_collection(count: int) -> None:
     persistence = MemoryPersistence()
+    owner_id = "benchmark-diagnostics"
     jobs = [
-        seed_job(persistence, job_key=f"diagnostics-{index}")
+        seed_job(persistence, owner_id=owner_id, job_key=f"diagnostics-{index}")
         for index in range(count)
     ]
-    _, engine = build_runtime(persistence)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     due_at = ORIGIN + timedelta(hours=4)
