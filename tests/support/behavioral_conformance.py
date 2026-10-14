@@ -9,20 +9,22 @@ from sose.jobs.runner import SimulationJob
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
-def operational_snapshot(persistence) -> dict[str, object]:
-    """Complete durable continuation truth used by recovery and chaos gates."""
+def operational_snapshot(persistence, *, owner_id: str) -> dict[str, object]:
+    """Capture one explicitly identified runtime's durable continuation truth."""
+    if not isinstance(owner_id, str) or not owner_id.strip():
+        raise ValueError("owner_id must not be empty")
     scheduled_work = persistence.scheduled_work()
     entities = getattr(persistence, "entities", lambda: ())()
     return {
         "job": persistence.job_states(),
-        "committed_tick": persistence.committed_tick(),
-        "position": persistence.simulation_position(),
+        "committed_tick": persistence.committed_tick(owner_id=owner_id),
+        "position": persistence.simulation_position(owner_id=owner_id),
         "events": persistence.events(),
         "entities": entities,
         "domain_deliveries": persistence.domain_deliveries(),
         "sink_deliveries": persistence.sink_deliveries(),
         "sink_checkpoints": persistence.sink_checkpoints(),
-        "scenario_state": persistence.scenario_state(),
+        "scenario_state": persistence.scenario_state(owner_id=owner_id),
         "scheduled_work": scheduled_work,
         "scheduled_commands": tuple(
             (work.command_id, persistence.command(work.command_id))
@@ -109,7 +111,7 @@ def assert_restart_equivalent(
     ticks: int,
     restart_at: Iterable[int],
     job_id: str | None = None,
-    snapshot: Callable[[Any], Any] = operational_snapshot,
+    snapshot: Callable[..., Any] = operational_snapshot,
 ) -> None:
     """Compare uninterrupted execution with arbitrary fresh-process boundaries."""
     points = tuple(sorted(set(restart_at)))
@@ -136,7 +138,7 @@ def assert_restart_equivalent(
     job.initialize()
     for tick in range(1, ticks + 1):
         job.run_tick(trigger_id=f"{definition.name}:{tick}")
-    expected = snapshot(continuous)
+    expected = snapshot(continuous, owner_id=identity)
     continuous.close()
 
     persistence = SQLiteIncrementalPersistence(restarted_path)
@@ -160,6 +162,6 @@ def assert_restart_equivalent(
                 backend_factory=backend,
             )
 
-    actual = snapshot(persistence)
+    actual = snapshot(persistence, owner_id=identity)
     persistence.close()
     assert actual == expected
