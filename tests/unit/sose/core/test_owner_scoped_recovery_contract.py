@@ -220,3 +220,39 @@ def test_owner_committed_ticks_survive_sqlite_restart(tmp_path):
         assert restored.committed_tick(owner_id="organization-a") == 1
         assert restored.committed_tick(owner_id="organization-b") == 4
         assert restored.committed_tick() == -1
+
+
+def test_scenario_rebuild_restores_only_selected_owner_snapshot():
+    from sose.scenarios.model import ScenarioRuntimeState
+
+    store = MemoryPersistence()
+    snapshot = ScenarioRuntimeState()
+    with store.transaction() as uow:
+        uow.set_scenario_state(snapshot, owner_id="organization-a")
+
+    class Clock:
+        now = ORIGIN
+        tick = 0
+
+    class Scenarios:
+        def __init__(self):
+            self.restored = []
+
+        def restore_state(self, state):
+            self.restored.append(state)
+
+    class Context:
+        def __init__(self):
+            self.clock = Clock()
+            self.scenarios = Scenarios()
+
+    context_a, context_b = Context(), Context()
+    RuntimeRebuilder(store, context=context_a, owner_id="organization-a").rebuild(
+        RecordingBackend(ORIGIN), on_due=lambda _: None,
+    )
+    RuntimeRebuilder(store, context=context_b, owner_id="organization-b").rebuild(
+        RecordingBackend(ORIGIN), on_due=lambda _: None,
+    )
+    assert context_a.scenarios.restored == [snapshot]
+    assert context_b.scenarios.restored == [None]
+    assert store.scenario_state() is None
