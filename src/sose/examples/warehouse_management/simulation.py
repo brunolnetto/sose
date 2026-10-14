@@ -39,6 +39,7 @@ def _flow_id(shipment_id: str) -> str:
 def build_runtime(
     persistence: Persistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     tick: int = 0,
     step: timedelta = timedelta(hours=1),
@@ -55,7 +56,7 @@ def build_runtime(
     registry.register(EntityType("warehouse_management_truck", TruckChart))
     registry.register(EntityType("warehouse_management_forklift", ForkliftChart))
     registry.register(EntityType("warehouse_management_shipment", ShipmentChart))
-    return context, Engine(context=context, registry=registry, persistence=persistence)
+    return context, Engine(context=context, registry=registry, persistence=persistence, owner_id=owner_id)
 
 
 def seed_reference(
