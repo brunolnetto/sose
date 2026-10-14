@@ -156,8 +156,8 @@ def test_same_type_scheduled_work_is_dispatched_only_by_its_owner():
     store = MemoryPersistence()
     a = DurableScheduler(store, owner_id="organization-a")
     b = DurableScheduler(store, owner_id="organization-b")
-    a_work = a.schedule(Command("a-cmd", "advance", "demo", "a", ORIGIN + timedelta(hours=3)))
-    b_work = b.schedule(Command("b-cmd", "advance", "demo", "b", ORIGIN + timedelta(hours=3)))
+    a_work = a.schedule(Command("a-cmd", "advance", "demo", "a", ORIGIN + timedelta(hours=3), owner_id="organization-a"))
+    b_work = b.schedule(Command("b-cmd", "advance", "demo", "b", ORIGIN + timedelta(hours=3), owner_id="organization-b"))
     assert a_work.owner_id == "organization-a"
     assert b_work.owner_id == "organization-b"
     seen_a = []
@@ -288,7 +288,7 @@ def test_scheduled_work_owner_cannot_cancel_foreign_work():
     store = MemoryPersistence()
     a = DurableScheduler(store, owner_id="organization-a")
     b = DurableScheduler(store, owner_id="organization-b")
-    work = b.schedule(Command("foreign-cmd", "advance", "demo", "same-type", ORIGIN + timedelta(hours=1)))
+    work = b.schedule(Command("foreign-cmd", "advance", "demo", "same-type", ORIGIN + timedelta(hours=1), owner_id="organization-b"))
     with pytest.raises(PermissionError, match="different owner"):
         a.cancel(work.work_id)
     assert store.command("foreign-cmd") is not None
@@ -303,8 +303,8 @@ def test_missing_foreign_command_cannot_poison_unrelated_owner_recovery():
     store = MemoryPersistence()
     owner_a = DurableScheduler(store, owner_id="organization-a")
     owner_b = DurableScheduler(store, owner_id="organization-b")
-    own = owner_a.schedule(Command("a-command", "advance", "demo", "a", ORIGIN + timedelta(hours=1)))
-    foreign = owner_b.schedule(Command("b-command", "advance", "demo", "b", ORIGIN + timedelta(hours=2)))
+    own = owner_a.schedule(Command("a-command", "advance", "demo", "a", ORIGIN + timedelta(hours=1), owner_id="organization-a"))
+    foreign = owner_b.schedule(Command("b-command", "advance", "demo", "b", ORIGIN + timedelta(hours=2), owner_id="organization-b"))
     with store.transaction() as uow:
         uow.delete_command(foreign.command_id)
 
@@ -325,8 +325,8 @@ def test_scheduled_sequence_is_local_to_owner_not_namespace():
     store = MemoryPersistence()
     a = DurableScheduler(store, owner_id="organization-a")
     b = DurableScheduler(store, owner_id="organization-b")
-    aw = a.schedule(Command("a-first", "advance", "demo", "same-type", ORIGIN))
-    bw = b.schedule(Command("b-first", "advance", "demo", "same-type", ORIGIN))
+    aw = a.schedule(Command("a-first", "advance", "demo", "same-type", ORIGIN, owner_id="organization-a"))
+    bw = b.schedule(Command("b-first", "advance", "demo", "same-type", ORIGIN, owner_id="organization-b"))
     assert aw.sequence == 1
     assert bw.sequence == 1
 
@@ -367,7 +367,7 @@ def test_engine_rejects_foreign_scheduled_callback_before_database_reads():
 
     engine = Engine.__new__(Engine)
     engine.owner_id = "organization-a"
-    command = Command("b-cmd", "advance", "demo", "same-type", ORIGIN)
+    command = Command("b-cmd", "advance", "demo", "same-type", ORIGI, owner_id="organization-b"))
     work = ScheduledWork(
         work_id="b-work", command_id=command.command_id,
         owner_id="organization-b", due_at=ORIGIN, priority=100, sequence=1,
@@ -486,7 +486,7 @@ def test_public_scheduled_dispatch_refuses_foreign_owner_before_transaction():
     engine = Engine.__new__(Engine)
     engine.owner_id = "organization-a"
     engine.persistence = NoTransactions()
-    command = Command("cmd-b", "advance", "demo", "same-type", ORIGIN)
+    command = Command("cmd-b", "advance", "demo", "same-type", ORIGIN, owner_id="organization-b")
     work = ScheduledWork(
         work_id="work-b", command_id=command.command_id,
         due_at=ORIGIN, priority=100, sequence=1,
