@@ -185,7 +185,7 @@ class Engine:
 
     def diagnostics(self) -> RuntimeDiagnostics:
         """Return a read-only snapshot of durable runtime state and warnings."""
-        return collect_runtime_diagnostics(self.persistence)
+        return collect_runtime_diagnostics(self.persistence, owner_id=self.owner_id)
 
 
     def rebuild_backend(self, backend) -> int:
