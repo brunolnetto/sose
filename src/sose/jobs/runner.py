@@ -23,7 +23,7 @@ BackendFactory = Callable[[datetime], object]
 def scheduled_trigger_id(job_id: str, scheduled_for: datetime) -> str:
     """Return a stable trigger identity for one external scheduler occurrence."""
 
-    if not job_id:
+    if not isinstance(job_id, str) or not job_id.strip():
         raise ValueError("job_id cannot be empty")
     if scheduled_for.tzinfo is None or scheduled_for.utcoffset() is None:
         raise ValueError("scheduled_for must be timezone-aware")
@@ -77,7 +77,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         sink_bindings: tuple[SinkBinding, ...] = (),
         domain_warehouse: DomainWarehouse | None = None,
     ) -> None:
-        if not job_id:
+        if not isinstance(job_id, str) or not job_id.strip():
             raise ValueError("job_id cannot be empty")
         self.job_id = job_id
         if ticks_per_trigger < 1:
