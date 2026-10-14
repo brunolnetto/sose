@@ -268,8 +268,10 @@ def _sink_delivery_health(sink_deliveries) -> tuple[tuple[Any, ...], tuple[Any, 
     return pending_sink_deliveries, failed_sink_deliveries
 
 
-def collect_runtime_diagnostics(persistence: Persistence, *, owner_id: str | None = None) -> RuntimeDiagnostics:
-    """Inspect durable runtime truth without mutating or rebuilding it."""
+def collect_runtime_diagnostics(persistence: Persistence, *, owner_id: str) -> RuntimeDiagnostics:
+    """Inspect one owner\'s durable runtime truth without mutating it."""
+    if not isinstance(owner_id, str) or not owner_id.strip():
+        raise ValueError("owner_id must not be empty")
 
     issues: list[DiagnosticIssue] = []
 
@@ -277,7 +279,7 @@ def collect_runtime_diagnostics(persistence: Persistence, *, owner_id: str | Non
     # on remote stores, this ensures counts and referential checks describe the
     # same observation rather than independent reads.
     scheduled = tuple(work for work in persistence.scheduled_work() if work.owner_id == owner_id)
-    events = persistence.events()
+    events = tuple(event for event in persistence.events() if event.owner_id == owner_id)
     resource_definitions = persistence.resource_definitions()
     resource_demands = persistence.resource_demands()
     resource_reservations = persistence.resource_reservations()
