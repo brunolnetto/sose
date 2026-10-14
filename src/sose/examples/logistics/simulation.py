@@ -76,6 +76,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     service_level: str = "standard",
     route: str = "origin-a:destination-b",
@@ -86,7 +87,7 @@ def seed_reference(
 ) -> LogisticsEntities:
     if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
         raise ValueError("instance_key must be a nonempty string")
-    context, engine = build_runtime(persistence, now=now)
+    context, engine = build_runtime(persistence, owner_id=owner_id, now=now)
     shipment = context.entities.create(
         Shipment,
         key=(("logistics-reference", "shipment-1") if instance_key is None
