@@ -51,7 +51,7 @@ def test_restart_recovers_o2c_and_payment_request_from_durable_delivery(
     monkeypatch.setattr(customer, "_execute_intent", interrupted_execute)
     monkeypatch.setattr(customer.o2c, "ensure_receivable", interrupted_receivable)
     with pytest.raises(RuntimeError, match="worker killed at O2C"):
-        customer.run_customer_demand_path()
+        customer.run_customer_demand_path(organization_id="test-org-o2c-durable-recovery")
 
     monkeypatch.setattr(customer, "_execute_intent", original_execute)
     monkeypatch.setattr(customer.o2c, "ensure_receivable", original_receivable)
@@ -130,7 +130,7 @@ def test_payment_egress_requires_ack_and_completed_o2c_effect(tmp_path, monkeypa
 
     monkeypatch.setattr(customer, "_execute_intent", interrupted)
     with pytest.raises(RuntimeError, match="crash before O2C"):
-        customer.run_customer_demand_path()
+        customer.run_customer_demand_path(organization_id="test-org-o2c-durable-recovery")
     monkeypatch.setattr(customer, "_execute_intent", original_execute)
     opened[-1].close()
 
@@ -171,7 +171,7 @@ def test_payment_egress_rejects_tampered_durable_existing_output(tmp_path, monke
         return store
 
     monkeypatch.setattr(customer, "MemoryPersistence", factory)
-    customer.run_customer_demand_path()
+    customer.run_customer_demand_path(organization_id="test-org-o2c-durable-recovery")
     opened[-1].close()
 
     from sose.persistence.memory import MemoryPersistence
