@@ -61,14 +61,14 @@ def _view(store, results):
 def _reconnected(namespace):
     with PostgresPersistence(DSN, namespace=namespace) as store:
         first = run_customer_demand_path(
-            organization_id="trading-customer-reference",
+            organization_id="org-a",
             persistence=store, instance_key="customer-a",
         )
     # Genuine connection disposal and rehydration, not only new in-memory
     # runtime objects. The second real path sees authoritative PostgreSQL truth.
     with PostgresPersistence(DSN, namespace=namespace) as store:
         second = run_customer_demand_path(
-            organization_id="trading-customer-reference",
+            organization_id="org-b",
             persistence=store, instance_key="customer-b",
         )
     with PostgresPersistence(DSN, namespace=namespace) as store:
