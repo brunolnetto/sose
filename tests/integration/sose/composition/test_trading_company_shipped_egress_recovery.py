@@ -36,7 +36,7 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
     monkeypatch.setattr(customer, "MemoryPersistence", persistent_store)
     monkeypatch.setattr(customer, "_publish", crash_after_shipment)
     with pytest.raises(RuntimeError, match="injected worker death"):
-        customer.run_customer_demand_path()
+        customer.run_customer_demand_path(organization_id="test-org-shipped-egress")
     held["store"].close()
     monkeypatch.setattr(customer, "_publish", original_publish)
 
@@ -126,6 +126,7 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
                 warehouse=None, logistics=None, payments=None, r2r=None,
             ),
             correlation_id=reserved.correlation_id,
+            organization_id="test-org-shipped-egress",
         )
         assert recovered.command(reservation_effect) is None
         assert recovered.entity(
@@ -152,6 +153,7 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
                 logistics=None, payments=None, r2r=None,
             ),
             correlation_id=reserved.correlation_id,
+            organization_id="test-org-shipped-egress",
         )
         replayed = service.consume(
             lease=lease,
