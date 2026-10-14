@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from sose.composition.model import DeliveryStatus
 from sose.composition.trading_company_replenishment import run_replenishment_path
 
@@ -94,3 +96,9 @@ def test_replenishment_domain_events_share_composition_correlation() -> None:
     assert {event.correlation_id for event in relevant} == {
         result.correlation_id
     }
+
+
+@pytest.mark.parametrize("owner_id", ["", " ", None])
+def test_replenishment_rejects_missing_operational_owner(owner_id):
+    with pytest.raises(ValueError, match="owner_id must not be empty"):
+        run_replenishment_path(owner_id=owner_id)
