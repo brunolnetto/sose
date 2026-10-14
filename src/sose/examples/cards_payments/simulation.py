@@ -73,6 +73,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     amount: float = 125.0,
     currency: str = "USD",
@@ -81,7 +82,7 @@ def seed_reference(
 ) -> PaymentEntities:
     if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
         raise ValueError("instance_key must be a nonempty string")
-    context, _ = build_runtime(persistence, now=now)
+    context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
     payment = context.entities.create(
         Payment,
         key=(("cards-reference", "payment-1") if instance_key is None
