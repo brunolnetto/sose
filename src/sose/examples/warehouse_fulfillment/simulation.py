@@ -190,6 +190,7 @@ def seed_reference(
 def seed_composed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     requested_quantity: float = 10.0,
     requested_sku: str = PRIMARY_SKU,
@@ -219,7 +220,7 @@ def seed_composed_reference(
         if value < 1:
             raise ValueError(f"{name} must be at least one")
 
-    context, _ = build_runtime(persistence, now=now)
+    context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
     order = context.entities.create(
         FulfillmentOrder,
         key=("warehouse-reference", request_key),
