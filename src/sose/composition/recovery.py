@@ -401,7 +401,10 @@ class TradingCustomerRecoveryRunner:
                         and command.name in self.resource_policies
                         and store.entity("shipment", command.entity_id) is not None
                     ):
-                        demand_due = customer.pickup_resource_due_at(store, command)
+                        demand_due = customer.pickup_resource_due_at(
+                            store, command,
+                            organization_id=self.resource_organizations[source.correlation_id],
+                        )
                     admitted = resource_intents.admit(
                         effect_id=effect_id,
                         intent_name=command.name,
