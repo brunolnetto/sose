@@ -896,7 +896,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         claimed: SimulationJobState,
         effective_trigger_id: str,
     ):
-        position = self.persistence.simulation_position()
+        position = self.persistence.simulation_position(owner_id=self.job_id)
         running = self._recover_reconcile_state(
             claimed=claimed,
             effective_trigger_id=effective_trigger_id,
@@ -939,7 +939,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         if callable(run_until):
             run_until(context.clock.now)
 
-        committed = self.persistence.simulation_position()
+        committed = self.persistence.simulation_position(owner_id=self.job_id)
         if committed is None:
             raise RuntimeError(
                 "tick advance completed without durable simulation position"
@@ -957,7 +957,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         return running, context, engine, backend, run_until
 
     def _build_reconcile_runtime(self, config, *, running: SimulationJobState):
-        committed = self.persistence.simulation_position()
+        committed = self.persistence.simulation_position(owner_id=self.job_id)
         if committed is None:
             raise RuntimeError(
                 "reconcile phase requires durable simulation position"
@@ -999,7 +999,7 @@ class SimulationJob(Generic[ConfigT, SeedT]):
         running: SimulationJobState,
         effective_trigger_id: str,
     ) -> SimulationJobState:
-        committed = self.persistence.simulation_position()
+        committed = self.persistence.simulation_position(owner_id=self.job_id)
         if committed is None:
             raise RuntimeError(
                 "tick completed without a durable simulation position"
