@@ -1,3 +1,5 @@
+REFERENCE_OWNER_ID = "transit-integration-reference"
+
 from sose.examples.transit.simulation import (
     run_happy_path,
     vehicle_position_id,
@@ -5,7 +7,7 @@ from sose.examples.transit.simulation import (
 
 
 def test_two_trip_block_runs_with_one_vehicle_and_position_evidence():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id=REFERENCE_OWNER_ID)
 
     vehicle = persistence.entity("transit_vehicle", entities.vehicle_id)
     trip_a = persistence.entity("transit_scheduled_trip", entities.trip_a_id)
