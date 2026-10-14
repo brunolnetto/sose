@@ -6,7 +6,7 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
 def test_equal_value_unrelated_payment_and_journal_cannot_hijack_completed_causal_path():
-    result = customer.run_customer_demand_path()
+    result = customer.run_customer_demand_path(organization_id="trading-customer-reference")
     store = result.persistence
 
     with store.transaction() as uow:
@@ -53,7 +53,7 @@ def test_sqlite_reopened_reference_recovers_same_causal_payment_journal_bindings
         return store
 
     monkeypatch.setattr(customer, "MemoryPersistence", store_factory)
-    original = customer.run_customer_demand_path()
+    original = customer.run_customer_demand_path(organization_id="trading-customer-reference")
     opened[-1].close()
 
     with SQLiteIncrementalPersistence(path) as reopened:
