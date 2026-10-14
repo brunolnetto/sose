@@ -25,25 +25,32 @@ NOW = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 def _definition(*, write_position: bool = True, reconcile=None):
     base = builtin_catalog().get("tutorial_job")
 
-    def seed(persistence, config):
+    def seed(persistence, config, *, owner_id: str):
         return {"seeded": True}
 
-    def build_runtime(persistence, config, logical_time, logical_tick):
+    def build_runtime(persistence, config, logical_time, logical_tick, *, owner_id: str):
         target_time = logical_time + config.tick_step
         context = SimpleNamespace(clock=SimpleNamespace(now=target_time))
 
         class Engine:
+            def __init__(self):
+                self.owner_id = owner_id
+
             def rebuild_backend(self, backend):
                 self.backend = backend
 
             def advance_tick(self):
                 if write_position:
-                    persistence._state.simulation_position = SimulationPosition(
-                        logical_time=target_time,
-                        execution_sequence=0,
-                        committed_sequence=0,
-                        logical_tick=logical_tick + 1,
-                    )
+                    with persistence.transaction() as uow:
+                        uow.set_simulation_position(
+                            SimulationPosition(
+                                logical_time=target_time,
+                                execution_sequence=0,
+                                committed_sequence=0,
+                                logical_tick=logical_tick + 1,
+                            ),
+                            owner_id=owner_id,
+                        )
 
         return context, Engine()
 
