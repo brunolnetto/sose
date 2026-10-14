@@ -6,6 +6,8 @@ the persistence API before the real two-worker PostgreSQL gate.
 """
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from sose.core.durable import RuntimeRebuilder
 from sose.core.runtime import SimulationPosition
 from sose.persistence.memory import MemoryPersistence
@@ -50,8 +52,9 @@ def test_same_type_owners_rebuild_at_independent_authoritative_boundaries():
         store, owner_id="organization-b",
     ).rebuild(backend_b, on_due=lambda _: None) == 0
 
-    # Explicit legacy reads cannot accidentally alias either scoped owner.
-    assert store.simulation_position() is None
+    # Unowned temporal reads are invalid, never interpreted as a legacy namespace.
+    with pytest.raises(TypeError):
+        store.simulation_position()
 
 
 def test_scoped_position_writes_do_not_advance_foreign_owner():
@@ -63,7 +66,8 @@ def test_scoped_position_writes_do_not_advance_foreign_owner():
         uow.set_simulation_position(_position(3, 3), owner_id="organization-b")
     assert store.simulation_position(owner_id="organization-a") == _position(1, 1)
     assert store.simulation_position(owner_id="organization-b") == _position(3, 3)
-    assert store.simulation_position() is None
+    with pytest.raises(TypeError):
+        store.simulation_position()
 
 
 def test_sqlite_scoped_positions_survive_total_restart_without_legacy_alias(tmp_path):
@@ -82,7 +86,8 @@ def test_sqlite_scoped_positions_survive_total_restart_without_legacy_alias(tmp_
     try:
         assert restored.simulation_position(owner_id="organization-a") == _position(1, 1)
         assert restored.simulation_position(owner_id="organization-b") == _position(2, 2)
-        assert restored.simulation_position() is None
+        with pytest.raises(TypeError):
+            restored.simulation_position()
     finally:
         restored.close()
 
@@ -106,7 +111,8 @@ def test_postgres_scoped_positions_survive_reopen_with_independent_owners():
     with PostgresPersistence(dsn, namespace=namespace) as restored:
         assert restored.simulation_position(owner_id="organization-a") == _position(1, 1)
         assert restored.simulation_position(owner_id="organization-b") == _position(2, 2)
-        assert restored.simulation_position() is None
+        with pytest.raises(TypeError):
+            restored.simulation_position()
 
 
 def test_rebuilder_restores_the_selected_owner_clock_into_context():
@@ -171,40 +177,54 @@ def test_same_type_scheduled_work_is_dispatched_only_by_its_owner():
     assert {w.work_id for w in store.scheduled_work()} == {a_work.work_id, b_work.work_id}
 
 
-def test_legacy_rebuilder_never_dispatches_foreign_owner_work():
+def test_implicit_unowned_runtime_is_forbidden():
     from sose.core.durable import DurableScheduler
-    from sose.core.events import Command
 
     store = MemoryPersistence()
-    legacy = DurableScheduler(store)
-    scoped = DurableScheduler(store, owner_id="organization-a")
-    old = legacy.schedule(Command("legacy-cmd", "advance", "demo", "legacy", ORIGIN + timedelta(hours=1)))
-    owned = scoped.schedule(Command("owned-cmd", "advance", "demo", "owned", ORIGIN + timedelta(hours=1)))
-
-    observed = []
-    backend = RecordingBackend(ORIGIN)
-    assert RuntimeRebuilder(store).rebuild(
-        backend, on_due=lambda item: observed.append(item.command.command_id),
-    ) == 1
-    assert [call[2] for call in backend.calls] == [("durable-work", old.work_id)]
-    backend.calls[0][3]()
-    assert observed == ["legacy-cmd"]
-    assert {work.work_id for work in store.scheduled_work()} == {old.work_id, owned.work_id}
+    for constructor in (DurableScheduler, RuntimeRebuilder):
+        with pytest.raises(TypeError, match="owner_id"):
+            constructor(store)
+        with pytest.raises(ValueError, match="owner_id"):
+            constructor(store, owner_id=None)
+        with pytest.raises(ValueError, match="owner_id"):
+            constructor(store, owner_id="")
 
 
-def test_committed_ticks_are_owner_scoped_and_do_not_mutate_legacy_checkpoint():
+def test_implicit_unowned_temporal_persistence_is_forbidden():
+    from sose.scenarios.model import ScenarioRuntimeState
+
+    store = MemoryPersistence()
+    for reader in (store.simulation_position, store.committed_tick, store.scenario_state):
+        with pytest.raises(TypeError, match="owner_id"):
+            reader()
+        with pytest.raises(ValueError, match="owner_id"):
+            reader(owner_id=None)
+
+    with store.transaction() as uow:
+        for write in (
+            lambda: uow.set_simulation_position(_position(1, 1)),
+            lambda: uow.set_committed_tick(1),
+            lambda: uow.set_scenario_state(ScenarioRuntimeState()),
+        ):
+            with pytest.raises(TypeError, match="owner_id"):
+                write()
+
+
+def test_committed_ticks_are_owner_scoped_without_scalar_checkpoint():
     store = MemoryPersistence()
     with store.transaction() as uow:
         uow.set_committed_tick(3, owner_id="organization-a")
         uow.set_committed_tick(9, owner_id="organization-b")
     assert store.committed_tick(owner_id="organization-a") == 3
     assert store.committed_tick(owner_id="organization-b") == 9
-    assert store.committed_tick() == -1
+    with pytest.raises(TypeError):
+        store.committed_tick()
     with store.transaction() as uow:
         uow.set_committed_tick(10, owner_id="organization-b")
     assert store.committed_tick(owner_id="organization-a") == 3
     assert store.committed_tick(owner_id="organization-b") == 10
-    assert store.committed_tick() == -1
+    with pytest.raises(TypeError):
+        store.committed_tick()
 
 
 def test_owner_committed_ticks_survive_sqlite_restart(tmp_path):
@@ -219,7 +239,8 @@ def test_owner_committed_ticks_survive_sqlite_restart(tmp_path):
     with SQLitePersistence(database) as restored:
         assert restored.committed_tick(owner_id="organization-a") == 1
         assert restored.committed_tick(owner_id="organization-b") == 4
-        assert restored.committed_tick() == -1
+        with pytest.raises(TypeError):
+            restored.committed_tick()
 
 
 def test_scenario_rebuild_restores_only_selected_owner_snapshot():
@@ -255,7 +276,8 @@ def test_scenario_rebuild_restores_only_selected_owner_snapshot():
     )
     assert context_a.scenarios.restored == [snapshot]
     assert context_b.scenarios.restored == [None]
-    assert store.scenario_state() is None
+    with pytest.raises(TypeError):
+        store.scenario_state()
 
 
 def test_scheduled_work_owner_cannot_cancel_foreign_work():
