@@ -367,7 +367,7 @@ def test_engine_rejects_foreign_scheduled_callback_before_database_reads():
 
     engine = Engine.__new__(Engine)
     engine.owner_id = "organization-a"
-    command = Command("b-cmd", "advance", "demo", "same-type", ORIGI, owner_id="organization-b"))
+    command = Command("b-cmd", "advance", "demo", "same-type", ORIGIN, owner_id="organization-b")
     work = ScheduledWork(
         work_id="b-work", command_id=command.command_id,
         owner_id="organization-b", due_at=ORIGIN, priority=100, sequence=1,
