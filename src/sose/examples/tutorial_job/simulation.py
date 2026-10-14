@@ -24,6 +24,7 @@ ORIGIN = datetime(2027, 4, 1, 9, tzinfo=timezone.utc)
 def build_runtime(
     persistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     tick: int = 0,
     step: timedelta = timedelta(hours=1),
@@ -40,11 +41,12 @@ def build_runtime(
         context=context,
         registry=registry,
         persistence=persistence,
+        owner_id=owner_id,
     )
 
 
-def seed_job(persistence, *, job_key: str = "example") -> TutorialJob:
-    context, _ = build_runtime(persistence)
+def seed_job(persistence, *, owner_id: str, job_key: str = "example") -> TutorialJob:
+    context, _ = build_runtime(persistence, owner_id=owner_id)
     job = context.entities.create(
         TutorialJob,
         key=("tutorial-job", job_key),
@@ -96,8 +98,9 @@ def start_and_schedule_completion(
 
 def run_happy_path():
     persistence = MemoryPersistence()
-    job = seed_job(persistence)
-    _, engine = build_runtime(persistence)
+    owner_id = "tutorial-happy-path"
+    job = seed_job(persistence, owner_id=owner_id)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
