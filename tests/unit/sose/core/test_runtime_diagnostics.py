@@ -76,6 +76,7 @@ def test_corruption_is_reported_with_stable_issue_codes():
         priority=100,
         sequence=1,
         command_id="missing-command",
+            owner_id="test-test_runtime_diagnostics",
     )
     persistence._state.resource_demands["orphan-demand"] = ResourceDemand(
         request_id="orphan-demand",
