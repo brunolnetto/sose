@@ -46,6 +46,8 @@ def build_runtime(
     config: CanonicalConfig | None = None,
     now: datetime | None = None,
     tick: int = 0,
+    *,
+    owner_id: str,
 ):
     config = CanonicalConfig() if config is None else config
     now = config.start_at if now is None else now
@@ -56,7 +58,7 @@ def build_runtime(
     )
     registry = DomainRegistry()
     registry.register(EntityType("canonical_case", CanonicalCaseChart))
-    return context, Engine(context=context, registry=registry, persistence=persistence)
+    return context, Engine(context=context, registry=registry, persistence=persistence, owner_id=owner_id)
 
 
 def seed_case(persistence, *, name: str, attributes: dict[str, object]):
