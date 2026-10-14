@@ -201,9 +201,11 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
 def _next_logical_time(
     persistence: MemoryPersistence,
     previous: datetime,
+    *,
+    organization_id: str,
 ) -> datetime:
     candidate = previous + timedelta(minutes=1)
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=organization_id)
     if position is not None and position.logical_time > candidate:
         return position.logical_time
     return candidate
@@ -301,8 +303,10 @@ def _causal_command_scope(engine, *, intent: Command, correlation_id: str):
 def _recovery_time(
     persistence: MemoryPersistence,
     requested_at: datetime,
+    *,
+    organization_id: str,
 ) -> datetime:
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=organization_id)
     if position is None:
         return requested_at
     if requested_at < position.logical_time:
@@ -451,7 +455,10 @@ def _execute_intent(
     correlation_id: str,
     authoritative_pickup: TemporalReservation | None = None,
     resource_persistence: MemoryPersistence | None = None,
+    organization_id: str,
 ) -> None:
+    if not isinstance(organization_id, str) or not organization_id.strip():
+        raise ValueError("organization_id must not be empty")
     intent = persistence.command(effect_id)
     if intent is None:
         return
@@ -477,7 +484,7 @@ def _execute_intent(
             raise RuntimeError("inventory reservation requires requested fulfillment order")
 
     elif intent.name == "composition.reserve_fulfillment_inventory":
-        _, engine = wm.build_runtime(persistence, now=intent.due_at)
+        _, engine = wm.build_runtime(persistence, owner_id=organization_id, now=intent.due_at)
         applied = wm.reserve_external_stock(
             persistence,
             engine,
@@ -502,7 +509,7 @@ def _execute_intent(
                 raise RuntimeError("warehouse management inventory reservation failed")
 
     elif intent.name == "composition.accept_inventory_reservation":
-        _, engine = fulfillment.build_runtime(persistence, now=intent.due_at)
+        _, engine = fulfillment.build_runtime(persistence, owner_id=organization_id, now=intent.due_at)
         with _causal_command_scope(
             engine,
             intent=intent,
@@ -555,7 +562,7 @@ def _execute_intent(
                 raise RuntimeError("composed fulfillment cannot resume terminal shipment")
 
     elif intent.name == "composition.consume_fulfillment_inventory":
-        _, engine = wm.build_runtime(persistence, now=intent.due_at)
+        _, engine = wm.build_runtime(persistence, owner_id=organization_id, now=intent.due_at)
         # False means the same reservation/consumption reference was already
         # durably applied; that is a successful idempotent retry after a crash.
         wm.consume_external_reservation(
@@ -577,10 +584,10 @@ def _execute_intent(
         shipment = persistence.entity("shipment", shipment_id)
         if shipment is None:
             raise RuntimeError("logistics shipment disappeared")
-        position = persistence.simulation_position()
+        position = persistence.simulation_position(owner_id=organization_id)
         restore_at = position.logical_time if position is not None else intent.due_at
         recovery_time = max(restore_at, intent.due_at)
-        _, engine = logistics.build_runtime(persistence, now=restore_at)
+        _, engine = logistics.build_runtime(persistence, owner_id=organization_id, now=restore_at)
         backend = SimPyBackend(origin=restore_at)
 
         with _causal_command_scope(
@@ -722,7 +729,7 @@ def _execute_intent(
                 )
 
     elif intent.name == "composition.complete_external_fulfillment":
-        _, engine = o2c.build_runtime(persistence, now=intent.due_at)
+        _, engine = o2c.build_runtime(persistence, owner_id=organization_id, now=intent.due_at)
         order = persistence.entity("sales_order", fixtures.o2c.order_id)
         if order is None:
             raise RuntimeError("sales order disappeared")
@@ -780,10 +787,10 @@ def _execute_intent(
             # Each transition commits independently, so a worker may restart at
             # authorized, captured, settlement_pending or already settled. Never
             # replay an already-committed capture or rewind the logical position.
-            position = persistence.simulation_position()
+            position = persistence.simulation_position(owner_id=organization_id)
             restore_at = position.logical_time if position is not None else intent.due_at
             target_at = max(restore_at, intent.due_at)
-            _, engine = payments.build_runtime(persistence, now=restore_at)
+            _, engine = payments.build_runtime(persistence, owner_id=organization_id, now=restore_at)
             backend = SimPyBackend(origin=restore_at)
             engine.rebuild_backend(backend)
             # Reattach durable resource reservations before any release operation.
@@ -876,10 +883,10 @@ def _execute_intent(
             # Journal submission and posting are separate committed transitions.
             # Restore the backend at the authoritative position before advancing
             # to the intent due time; rebuilding at a later origin is invalid.
-            position = persistence.simulation_position()
+            position = persistence.simulation_position(owner_id=organization_id)
             restore_at = position.logical_time if position is not None else intent.due_at
             target_at = max(restore_at, intent.due_at)
-            _, engine = r2r.build_runtime(persistence, now=restore_at)
+            _, engine = r2r.build_runtime(persistence, owner_id=organization_id, now=restore_at)
             backend = SimPyBackend(origin=restore_at)
             engine.rebuild_backend(backend)
             backend.run_until(backend.now)
@@ -909,7 +916,7 @@ def _execute_intent(
         # receipt; proof insert and staged Command deletion share one UoW.
         # A crash after business transition but before this commit retries
         # idempotently instead of silently asserting an ACK is an effect.
-        position = persistence.simulation_position()
+        position = persistence.simulation_position(owner_id=organization_id)
         completed_at = max(
             intent.due_at,
             position.logical_time if position is not None else intent.due_at,
@@ -1437,7 +1444,8 @@ def reconcile_settled_payment_egress(
 
 
 def run_customer_demand_path(
-    *, persistence: MemoryPersistence | None = None, instance_key: str | None = None,
+    *, organization_id: str,
+    persistence: MemoryPersistence | None = None, instance_key: str | None = None,
 ) -> CustomerDemandPathResult:
     """Execute the durable Trading Company customer-demand composition path.
 
@@ -1445,12 +1453,14 @@ def run_customer_demand_path(
     Management and never creates authoritative Warehouse Fulfillment inventory lots.
     """
 
+    if not isinstance(organization_id, str) or not organization_id.strip():
+        raise ValueError("organization_id must not be empty")
     if persistence is not None and instance_key is None:
         raise ValueError("instance_key is required for injected persistence")
     if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
         raise ValueError("instance_key must be a nonempty string")
     persistence = persistence if persistence is not None else MemoryPersistence()
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=organization_id)
     origin = max(
         o2c.ORIGIN, position.logical_time if position is not None else o2c.ORIGIN,
     )
@@ -1467,7 +1477,8 @@ def run_customer_demand_path(
             )
 
     sales_order = o2c.seed_reference(
-        persistence, now=origin, amount=amount, currency=currency,
+        persistence,
+            owner_id=organization_id, now=origin, amount=amount, currency=currency,
         instance_key=instance_key,
     )
     fulfillment_order_id = deterministic_id(
@@ -1483,6 +1494,7 @@ def run_customer_demand_path(
         ),
         warehouse=wm.seed_reference(
             persistence,
+            owner_id=organization_id,
             now=origin,
             origin_on_hand=20.0,
             transfer_quantity=1.0,
@@ -1491,11 +1503,13 @@ def run_customer_demand_path(
         ),
         logistics=logistics.seed_reference(
             persistence,
+            owner_id=organization_id,
             now=origin,
             instance_key=instance_key,
         ),
         payments=payments.seed_reference(
             persistence,
+            owner_id=organization_id,
             now=origin,
             amount=amount,
             currency=currency,
@@ -1503,6 +1517,7 @@ def run_customer_demand_path(
         ),
         r2r=r2r.seed_reference(
             persistence,
+            owner_id=organization_id,
             now=origin,
             amount=amount,
             currency=currency,
@@ -1510,7 +1525,7 @@ def run_customer_demand_path(
         ),
     )
 
-    _, o2c_engine = o2c.build_runtime(persistence, now=origin)
+    _, o2c_engine = o2c.build_runtime(persistence, owner_id=organization_id, now=origin)
     if not o2c.reconcile_credit(
         persistence,
         o2c_engine,
@@ -1570,6 +1585,7 @@ def run_customer_demand_path(
                     effect_id=effect,
                     fixtures=fixtures,
                     correlation_id=correlation_id,
+                    organization_id=organization_id,
                 )
                 break
             except DurableResourceWait:
@@ -1601,7 +1617,9 @@ def run_customer_demand_path(
             produced_at=(
                 origin
                 if previous is None
-                else _next_logical_time(persistence, previous.produced_at)
+                else _next_logical_time(
+                    persistence, previous.produced_at, organization_id=organization_id
+                )
             ),
             payload=payload,
             contract_version=contract_version,
