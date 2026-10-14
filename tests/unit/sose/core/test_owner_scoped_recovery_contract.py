@@ -63,6 +63,7 @@ def test_scoped_position_writes_do_not_advance_foreign_owner():
         uow.set_simulation_position(_position(3, 3), owner_id="organization-b")
     assert store.simulation_position(owner_id="organization-a") == _position(1, 1)
     assert store.simulation_position(owner_id="organization-b") == _position(3, 3)
+    assert store.simulation_position() is None
 
 
 def test_sqlite_scoped_positions_survive_total_restart_without_legacy_alias(tmp_path):
@@ -106,3 +107,37 @@ def test_postgres_scoped_positions_survive_reopen_with_independent_owners():
         assert restored.simulation_position(owner_id="organization-a") == _position(1, 1)
         assert restored.simulation_position(owner_id="organization-b") == _position(2, 2)
         assert restored.simulation_position() is None
+
+
+def test_rebuilder_restores_the_selected_owner_clock_into_context():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.set_simulation_position(_position(1, 1), owner_id="organization-a")
+        uow.set_simulation_position(_position(2, 2), owner_id="organization-b")
+
+    class Clock:
+        now = ORIGIN
+        tick = 0
+
+    class Scenarios:
+        def restore_state(self, state):
+            self.last_state = state
+
+    class Context:
+        def __init__(self):
+            self.clock = Clock()
+            self.scenarios = Scenarios()
+
+    context = Context()
+    RuntimeRebuilder(store, owner_id="organization-a", context=context).rebuild(
+        RecordingBackend(ORIGIN + timedelta(hours=1)), on_due=lambda _: None,
+    )
+    assert context.clock.now == ORIGIN + timedelta(hours=1)
+    assert context.clock.tick == 1
+
+    context_b = Context()
+    RuntimeRebuilder(store, owner_id="organization-b", context=context_b).rebuild(
+        RecordingBackend(ORIGIN + timedelta(hours=2)), on_due=lambda _: None,
+    )
+    assert context_b.clock.now == ORIGIN + timedelta(hours=2)
+    assert context_b.clock.tick == 2
