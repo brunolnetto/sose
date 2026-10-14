@@ -78,7 +78,7 @@ def _run_clean(definition, path: Path):
     job.initialize()
     for tick in range(1, TICKS + 1):
         job.run_tick(trigger_id=_trigger(definition.name, tick))
-    snapshot = operational_snapshot(persistence)
+    snapshot = operational_snapshot(persistence, owner_id=job.job_id)
     transaction_count = persistence.transaction_count
     checkpoints = {
         index: persistence.checkpoint_for(index)
@@ -110,7 +110,7 @@ def _recover_from_checkpoint(definition, path: Path):
             next_tick = state.next_tick + 1
             resumed.run_tick(trigger_id=_trigger(definition.name, next_tick))
 
-    snapshot = operational_snapshot(reopened)
+    snapshot = operational_snapshot(reopened, owner_id=resumed.job_id)
     reopened.close()
     return snapshot
 
