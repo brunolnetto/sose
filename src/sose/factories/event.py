@@ -20,7 +20,7 @@ class EventFactory:
         self._owner_id: str | None = None
 
     def bind_owner(self, owner_id: str) -> None:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         if self._owner_id is not None and self._owner_id != owner_id:
             raise ValueError("event factory cannot be rebound to another owner")
