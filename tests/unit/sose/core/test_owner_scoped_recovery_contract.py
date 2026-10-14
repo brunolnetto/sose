@@ -169,3 +169,24 @@ def test_same_type_scheduled_work_is_dispatched_only_by_its_owner():
     assert seen_a == ["a-cmd"]
     assert seen_b == ["b-cmd"]
     assert {w.work_id for w in store.scheduled_work()} == {a_work.work_id, b_work.work_id}
+
+
+def test_legacy_rebuilder_never_dispatches_foreign_owner_work():
+    from sose.core.durable import DurableScheduler
+    from sose.core.events import Command
+
+    store = MemoryPersistence()
+    legacy = DurableScheduler(store)
+    scoped = DurableScheduler(store, owner_id="organization-a")
+    old = legacy.schedule(Command("legacy-cmd", "advance", "demo", "legacy", ORIGIN + timedelta(hours=1)))
+    owned = scoped.schedule(Command("owned-cmd", "advance", "demo", "owned", ORIGIN + timedelta(hours=1)))
+
+    observed = []
+    backend = RecordingBackend(ORIGIN)
+    assert RuntimeRebuilder(store).rebuild(
+        backend, on_due=lambda item: observed.append(item.command.command_id),
+    ) == 1
+    assert [call[2] for call in backend.calls] == [("durable-work", old.work_id)]
+    backend.calls[0][3]()
+    assert observed == ["legacy-cmd"]
+    assert {work.work_id for work in store.scheduled_work()} == {old.work_id, owned.work_id}
