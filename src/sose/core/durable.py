@@ -172,7 +172,7 @@ class DurableScheduler:
                         f"scheduled work references missing command: {work.work_id}/{work.command_id}"
                     )
                 items.append(DurableScheduledItem(work=work, command=command))
-            return tuple(item for item in items if self._owner_id is None or item.work.owner_id == self._owner_id)
+            return tuple(item for item in items if item.work.owner_id == self._owner_id)
 
         # PostgreSQL and non-nested adapters read the pair in a single UoW.
         with self._persistence.transaction() as uow:
@@ -184,7 +184,7 @@ class DurableScheduler:
                         f"scheduled work references missing command: {work.work_id}/{work.command_id}"
                     )
                 items.append(DurableScheduledItem(work=work, command=command))
-            return tuple(item for item in items if self._owner_id is None or item.work.owner_id == self._owner_id)
+            return tuple(item for item in items if item.work.owner_id == self._owner_id)
 
 @dataclass(frozen=True, slots=True)
 class RecoveryParticipant:
