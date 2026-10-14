@@ -58,19 +58,27 @@ def capture_first_worker_failure_once(
         captured.append(record)
         sidecar_written = False
         if evidence_path is not None:
-            # The primary worker exception always wins over diagnostic I/O.
+            # Publish only a complete, fsynced record; do not leave truncated
+            # sidecars that the stress harness could mistake for evidence.
+            initial_tmp = evidence_path.with_name(
+                evidence_path.name + "." + uuid4().hex + ".tmp"
+            )
             try:
-                fd = os.open(
-                    evidence_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600
-                )
+                fd = os.open(initial_tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                 with os.fdopen(fd, "w", encoding="utf-8") as handle:
                     json.dump(record, handle, sort_keys=True, default=str)
                     handle.write("\n")
                     handle.flush()
                     os.fsync(handle.fileno())
+                os.link(initial_tmp, evidence_path)  # Exclusive publish, never overwrite.
                 sidecar_written = True
             except OSError as io_error:
                 error.add_note(f"forensic initial sidecar write failed: {io_error!r}")
+            finally:
+                try:
+                    initial_tmp.unlink(missing_ok=True)
+                except OSError:
+                    pass
         try:
             record["snapshot"] = snapshot()
         except Exception as snapshot_error:
