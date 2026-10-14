@@ -424,8 +424,9 @@ def run_replenishment_path(*, owner_id: str, quantity: float = 5.0) -> Replenish
     if intent is None:
         raise RuntimeError("P2P replenishment intent was not persisted")
     _execute_procurement(
-        owner_id=owner_id,
         store,
+
+        owner_id=owner_id,
         intent=intent,
         fixtures=fixtures,
         quantity=quantity,
@@ -461,8 +462,9 @@ def run_replenishment_path(*, owner_id: str, quantity: float = 5.0) -> Replenish
     if intent is None:
         raise RuntimeError("WM replenishment intent was not persisted")
     _execute_warehouse_receipt(
-        owner_id=owner_id,
         store,
+
+        owner_id=owner_id,
         intent=intent,
         fixtures=fixtures,
         quantity=quantity,
@@ -477,8 +479,9 @@ def run_replenishment_path(*, owner_id: str, quantity: float = 5.0) -> Replenish
     receipt_replay_was_idempotent = replay == consumption
 
     _release_p2p_staging(
-        owner_id=owner_id,
         store,
+
+        owner_id=owner_id,
         caused_by=intent,
         fixtures=fixtures,
         quantity=quantity,
@@ -514,8 +517,9 @@ def run_replenishment_path(*, owner_id: str, quantity: float = 5.0) -> Replenish
     if intent is None:
         raise RuntimeError("R2R replenishment intent was not persisted")
     _execute_accounting(
-        owner_id=owner_id,
         store,
+
+        owner_id=owner_id,
         intent=intent,
         fixtures=fixtures,
         correlation_id=correlation_id,
