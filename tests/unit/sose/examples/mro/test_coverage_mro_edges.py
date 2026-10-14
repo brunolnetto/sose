@@ -9,10 +9,13 @@ from sose.examples.mro import simulation as mro
 from sose.persistence.memory import MemoryPersistence
 
 
+MRO_REFERENCE_OWNER = "mro-coverage-reference"
+
+
 def _released_runtime(*, quantity: float = 1.0):
     persistence = MemoryPersistence()
-    entities = mro.seed_reference(persistence, quantity=quantity)
-    _, engine = mro.build_runtime(persistence)
+    entities = mro.seed_reference(persistence, owner_id=MRO_REFERENCE_OWNER, quantity=quantity)
+    _, engine = mro.build_runtime(persistence, owner_id=MRO_REFERENCE_OWNER)
     backend = SimPyBackend(origin=mro.ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(mro.ORIGIN.replace(hour=9))
@@ -33,7 +36,7 @@ def _hide_entity(monkeypatch, persistence, entity_type: str, entity_id: str):
 @pytest.mark.parametrize("quantity", [0.0, -1.0, mro.PART_CAPACITY + 1.0])
 def test_seed_reference_rejects_quantity_outside_spare_part_capacity(quantity):
     with pytest.raises(ValueError, match="quantity must fit spare-parts capacity"):
-        mro.seed_reference(MemoryPersistence(), quantity=quantity)
+        mro.seed_reference(MemoryPersistence(), owner_id=MRO_REFERENCE_OWNER, quantity=quantity)
 
 
 @pytest.mark.parametrize("quantity", [0.0, -1.0, mro.PART_CAPACITY + 1.0])
@@ -187,7 +190,7 @@ def test_reconcile_start_propagates_incomplete_part_issue(monkeypatch):
 def test_happy_path_reports_unavailable_prerequisites(monkeypatch):
     monkeypatch.setattr(mro, "reconcile_start", lambda *args, **kwargs: False)
     with pytest.raises(RuntimeError, match="MRO prerequisites are still unavailable"):
-        mro.run_happy_path()
+        mro.run_happy_path(owner_id=MRO_REFERENCE_OWNER)
 
 
 def test_dispatch_work_order_interrupt_is_noop_without_active_work():
