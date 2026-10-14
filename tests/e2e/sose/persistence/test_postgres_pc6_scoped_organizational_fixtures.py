@@ -23,15 +23,26 @@ def test_pg_two_scoped_pc6_organization_fixtures_do_not_alias_on_restart():
     assert DSN is not None
     namespace = "pc6fixtures_" + uuid4().hex[:12]
     identities = {}
+    organization_owners = {"customer-a": "org-a", "customer-b": "org-b"}
     with PostgresPersistence(DSN, namespace=namespace) as writer:
         for key in ("customer-a", "customer-b"):
-            order = o2c.seed_reference(writer, amount=250.0, instance_key=key)
-            payment = payments.seed_reference(writer, amount=250.0, instance_key=key)
-            accounting = r2r.seed_reference(writer, amount=250.0, instance_key=key)
-            shipment = logistics.seed_reference(writer, instance_key=key)
+            # The commercial instance key is not the operational organization.
+            owner_id = organization_owners[key]
+            order = o2c.seed_reference(
+                writer, owner_id=owner_id, amount=250.0, instance_key=key,
+            )
+            payment = payments.seed_reference(
+                writer, owner_id=owner_id, amount=250.0, instance_key=key,
+            )
+            accounting = r2r.seed_reference(
+                writer, owner_id=owner_id, amount=250.0, instance_key=key,
+            )
+            shipment = logistics.seed_reference(
+                writer, owner_id=owner_id, instance_key=key,
+            )
             stock = warehouse.seed_reference(
-                writer, instance_key=key, origin_on_hand=20.0,
-                transfer_quantity=1.0,
+                writer, owner_id=owner_id, instance_key=key,
+                origin_on_hand=20.0, transfer_quantity=1.0,
             )
             identities[key] = (order, payment, accounting, shipment, stock)
             SettlementBindingService(writer).bind(CustomerSettlementBinding.create(
