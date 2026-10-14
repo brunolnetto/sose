@@ -17,8 +17,8 @@ def test_two_real_pc6_customer_paths_preserve_identities_and_business_truth(adap
     path = tmp_path / "pc6-multi-order.sqlite"
     store = MemoryPersistence() if adapter == "memory" else SQLiteIncrementalPersistence(path)
     try:
-        first = run_customer_demand_path(persistence=store, instance_key="pc6-order-a")
-        second = run_customer_demand_path(persistence=store, instance_key="pc6-order-b")
+        first = run_customer_demand_path(organization_id="org-a", persistence=store, instance_key="pc6-order-a")
+        second = run_customer_demand_path(organization_id="org-b", persistence=store, instance_key="pc6-order-b")
 
         ids = (
             "o2c_order_id", "fulfillment_order_id", "shipment_id", "payment_id",
@@ -70,7 +70,7 @@ def test_default_pc6_reference_flow_retains_frozen_identity():
     from sose.examples.order_to_cash import simulation as o2c
     from sose.core.identity import deterministic_id
 
-    result = run_customer_demand_path()
+    result = run_customer_demand_path(organization_id="trading-customer-reference")
     assert result.o2c_order_id == deterministic_id(
         "entity", "sales_order", "o2c-reference", "order-1",
     )
@@ -88,12 +88,12 @@ def test_reusing_customer_instance_key_rejects_reseed_without_rewinding_truth(ad
     path = tmp_path / "resumption.sqlite"
     store = MemoryPersistence() if adapter == "memory" else SQLiteIncrementalPersistence(path)
     try:
-        result = run_customer_demand_path(persistence=store, instance_key="stable-owner")
+        result = run_customer_demand_path(organization_id="org-stable", persistence=store, instance_key="stable-owner")
         before = audit_causal_history(store)
         original = store.entity("sales_order", result.o2c_order_id)
         assert original.state == "invoiced"
         with pytest.raises(ValueError, match="already initialized"):
-            run_customer_demand_path(persistence=store, instance_key="stable-owner")
+            run_customer_demand_path(organization_id="org-stable", persistence=store, instance_key="stable-owner")
         assert store.entity("sales_order", result.o2c_order_id) == original
         assert audit_causal_history(store) == before
     finally:
