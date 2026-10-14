@@ -62,7 +62,7 @@ class DurableScheduler:
         if self._backend is not None and command.due_at < self._backend.now:
             raise ValueError("scheduled work cannot be created before backend logical time")
 
-        with self._persistence.transaction() as uow:
+        with self._persistence.transaction(owner_id=self._owner_id) as uow:
             if uow.get_command(command.command_id) is not None:
                 raise ValueError(f"command already scheduled: {command.command_id}")
             existing = uow.scheduled_work()
