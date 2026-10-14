@@ -120,6 +120,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     vehicle_key: str = "vehicle-1",
     block_id: str = "block-1",
@@ -127,7 +128,7 @@ def seed_reference(
     trip_duration: timedelta = timedelta(hours=1),
     layover: timedelta = timedelta(minutes=15),
 ) -> TransitEntities:
-    context, _ = build_runtime(persistence, now=now)
+    context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
     first_start = now + first_trip_delay
     first_end = first_start + trip_duration
     second_start = first_end + layover
