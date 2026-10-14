@@ -21,9 +21,10 @@ def _build(
     config: WarehouseManagementConfig,
     now: datetime,
     tick: int,
+    owner_id: str,
 ):
     return build_runtime(
-        persistence,
+        persistence, owner_id=owner_id,
         now=now,
         tick=tick,
         step=config.tick_step,
@@ -31,9 +32,9 @@ def _build(
     )
 
 
-def _seed(persistence: Persistence, config: WarehouseManagementConfig):
+def _seed(persistence: Persistence, config: WarehouseManagementConfig, owner_id: str):
     return seed_reference(
-        persistence,
+        persistence, owner_id=owner_id,
         now=config.start_at,
         origin_on_hand=config.origin_on_hand,
         transfer_quantity=config.transfer_quantity,
