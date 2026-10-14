@@ -537,3 +537,35 @@ def test_tick_refuses_stale_pretransaction_position(monkeypatch):
     assert store.simulation_position(owner_id=owner) == other_worker
     assert context.clock.now == ORIGIN
     assert context.clock.tick == 0
+
+
+def test_unowned_in_memory_scheduler_refused_without_durable_effects():
+    from sose.core.clock import SimulationClock
+    from sose.core.context import SimulationContext
+    from sose.core.engine import Engine
+    from sose.core.events import Command
+    from sose.core.randomness import RandomSource
+    from sose.core.scheduler import Scheduler
+    from sose.domain.registry import DomainRegistry
+
+    owner = "organization-a"
+    store = MemoryPersistence()
+    context = SimulationContext(
+        clock=SimulationClock(now=ORIGIN, step=timedelta(hours=1), tick=0),
+        random=RandomSource(root_seed=5), scheduler=Scheduler(),
+    )
+    engine = Engine(
+        context=context, registry=DomainRegistry(),
+        persistence=store, owner_id=owner,
+    )
+    context.scheduler.schedule(Command(
+        command_id="test-unowned-scheduler",
+        name="legacy", entity_type="demo", entity_id="one",
+        due_at=ORIGIN, owner_id=owner,
+    ))
+    with pytest.raises(RuntimeError, match="unowned in-memory scheduling"):
+        engine.advance_tick()
+    assert context.clock.now == ORIGIN
+    assert context.clock.tick == 0
+    assert store.simulation_position(owner_id=owner) is None
+    assert len(context.scheduler) == 1
