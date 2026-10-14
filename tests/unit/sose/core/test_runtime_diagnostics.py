@@ -76,7 +76,7 @@ def test_corruption_is_reported_with_stable_issue_codes():
         priority=100,
         sequence=1,
         command_id="missing-command",
-        owner_id="test-test_runtime_diagnostics",
+        owner_id=OWNER_ID,
     )
     persistence._state.resource_demands["orphan-demand"] = ResourceDemand(
         request_id="orphan-demand",
@@ -93,7 +93,7 @@ def test_corruption_is_reported_with_stable_issue_codes():
     )
 
     before = persistence._state
-    diagnostics = collect_runtime_diagnostics(persistence)
+    diagnostics = collect_runtime_diagnostics(persistence, owner_id=OWNER_ID)
 
     assert not diagnostics.healthy
     assert [issue.code for issue in diagnostics.issues] == [
@@ -168,7 +168,7 @@ def test_diagnostics_reports_failed_sink_delivery():
             )
         )
 
-    diagnostics = collect_runtime_diagnostics(persistence)
+    diagnostics = collect_runtime_diagnostics(persistence, owner_id=OWNER_ID)
 
     assert not diagnostics.healthy
     assert diagnostics.counts.sink_deliveries_pending == 1
@@ -189,10 +189,10 @@ class _DiagnosticsFixturePersistence:
         self.commands = {"command-ok": object()}
         self.values = {
             "scheduled_work": (
-                _record(work_id="work-ok", command_id="command-ok"),
-                _record(work_id="work-bad", command_id="command-missing"),
+                _record(work_id="work-ok", command_id="command-ok", owner_id=OWNER_ID),
+                _record(work_id="work-bad", command_id="command-missing", owner_id=OWNER_ID),
             ),
-            "events": (object(), object()),
+            "events": (_record(owner_id=OWNER_ID), _record(owner_id=OWNER_ID)),
             "resource_definitions": (_record(name="resource-ok"),),
             "resource_demands": (
                 _record(request_id="d-ok", resource_name="resource-ok"),
@@ -282,11 +282,13 @@ class _DiagnosticsFixturePersistence:
         self.calls["command"] = self.calls.get("command", 0) + 1
         return self.commands.get(command_id)
 
-    def scenario_state(self):
+    def scenario_state(self, *, owner_id: str):
+        assert owner_id == OWNER_ID
         self.calls["scenario_state"] = self.calls.get("scenario_state", 0) + 1
         return self._scenario_state
 
-    def simulation_position(self):
+    def simulation_position(self, *, owner_id: str):
+        assert owner_id == OWNER_ID
         self.calls["simulation_position"] = self.calls.get("simulation_position", 0) + 1
         return self._position
 
@@ -324,7 +326,7 @@ for _name in (
 def test_diagnostics_reference_matrix_and_snapshot_reads_are_complete():
     persistence = _DiagnosticsFixturePersistence()
 
-    diagnostics = collect_runtime_diagnostics(persistence)
+    diagnostics = collect_runtime_diagnostics(persistence, owner_id=OWNER_ID)
 
     assert [issue.code for issue in diagnostics.issues] == [
         "scheduled.command_missing",
