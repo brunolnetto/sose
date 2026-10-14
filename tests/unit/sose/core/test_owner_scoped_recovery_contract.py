@@ -440,3 +440,57 @@ def test_unknown_durable_record_collection_fails_closed():
             position=0,
             payload="null",
         ),))
+
+
+def test_owner_scoped_statechart_transitions_get_disjoint_event_ids():
+    from sose.factories.event import EventFactory
+
+    class Target:
+        entity_type = "shipment"
+        id = "same-entity"
+        version = 1
+
+    def transition(owner_id):
+        factory = EventFactory(now=lambda: ORIGIN, tick=lambda: 1)
+        factory.bind_owner(owner_id)
+        return factory.transition(
+            entity=Target(), trigger="pickup",
+            from_state="pending", to_state="picked",
+        )
+
+    a = transition("organization-a")
+    b = transition("organization-b")
+    assert a.event_id != b.event_id
+    assert a.event_id == transition("organization-a").event_id
+
+
+def test_event_factory_cannot_be_reassigned_to_foreign_owner():
+    from sose.factories.event import EventFactory
+
+    factory = EventFactory(now=lambda: ORIGIN, tick=lambda: 1)
+    factory.bind_owner("organization-a")
+    with pytest.raises(ValueError, match="owner"):
+        factory.bind_owner("organization-b")
+
+
+def test_public_scheduled_dispatch_refuses_foreign_owner_before_transaction():
+    from sose.core.durable import DurableScheduledItem
+    from sose.core.engine import Engine
+    from sose.core.events import Command
+    from sose.core.runtime import ScheduledWork
+
+    class NoTransactions:
+        def transaction(self):
+            raise AssertionError("foreign callback must never enter a transaction")
+
+    engine = Engine.__new__(Engine)
+    engine.owner_id = "organization-a"
+    engine.persistence = NoTransactions()
+    command = Command("cmd-b", "advance", "demo", "same-type", ORIGIN)
+    work = ScheduledWork(
+        work_id="work-b", command_id=command.command_id,
+        due_at=ORIGIN, priority=100, sequence=1,
+        owner_id="organization-b",
+    )
+    with pytest.raises(PermissionError, match="different owner"):
+        engine.dispatch_scheduled(DurableScheduledItem(work, command))
