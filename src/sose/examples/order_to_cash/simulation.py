@@ -84,6 +84,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     amount: float = 250.0,
     currency: str = "USD",
@@ -93,7 +94,7 @@ def seed_reference(
         raise ValueError("instance_key must be a nonempty string")
     if amount <= 0:
         raise ValueError("amount must be positive")
-    context, _ = build_runtime(persistence, now=now)
+    context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
     order = context.entities.create(
         SalesOrder,
         key=(("o2c-reference", "order-1") if instance_key is None
