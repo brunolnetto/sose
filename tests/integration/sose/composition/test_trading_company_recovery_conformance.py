@@ -473,8 +473,9 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     intent = store.command(consumption.consumer_effect_id)
     assert intent is not None
     replenishment._execute_procurement(
-        owner_id=REPLENISHMENT_OWNER_ID,
         store,
+
+        owner_id=REPLENISHMENT_OWNER_ID,
         intent=intent,
         fixtures=fixtures,
         quantity=quantity,
@@ -511,8 +512,9 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     intent = store.command(consumption.consumer_effect_id)
     assert intent is not None
     replenishment._execute_warehouse_receipt(
-        owner_id=REPLENISHMENT_OWNER_ID,
         store,
+
+        owner_id=REPLENISHMENT_OWNER_ID,
         intent=intent,
         fixtures=fixtures,
         quantity=quantity,
@@ -528,8 +530,9 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     assert replay == consumption
 
     replenishment._release_p2p_staging(
-        owner_id=REPLENISHMENT_OWNER_ID,
         store,
+
+        owner_id=REPLENISHMENT_OWNER_ID,
         caused_by=intent,
         fixtures=fixtures,
         quantity=quantity,
@@ -566,8 +569,9 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     intent = store.command(consumption.consumer_effect_id)
     assert intent is not None
     replenishment._execute_accounting(
-        owner_id=REPLENISHMENT_OWNER_ID,
         store,
+
+        owner_id=REPLENISHMENT_OWNER_ID,
         intent=intent,
         fixtures=fixtures,
         correlation_id=correlation_id,
