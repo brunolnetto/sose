@@ -38,17 +38,17 @@ class PostgresAuthoritativeHarness:
     def atomic_uow(self):
         p=self._open(_ns("atomic"))
         try:
-            with p.transaction() as u: u.set_committed_tick(1)
+            with p.transaction() as u: u.set_committed_tick(1, owner_id='test-test_postgres_authoritative_conformance')
             with pytest.raises(RuntimeError):
                 with p.transaction() as u:
-                    u.set_committed_tick(2); raise RuntimeError("fault")
-            assert p.committed_tick()==1
+                    u.set_committed_tick(2, owner_id='test-test_postgres_authoritative_conformance'); raise RuntimeError("fault")
+            assert p.committed_tick(owner_id='test-test_postgres_authoritative_conformance')==1
         finally: p.close()
     def read_after_commit(self):
         ns=_ns("read"); a=self._open(ns); b=self._open(ns)
         try:
-            with a.transaction() as u: u.set_committed_tick(7)
-            assert b.committed_tick()==7
+            with a.transaction() as u: u.set_committed_tick(7, owner_id='test-test_postgres_authoritative_conformance')
+            assert b.committed_tick(owner_id='test-test_postgres_authoritative_conformance')==7
         finally: b.close(); a.close()
     def conditional_ownership(self):
         ns=_ns("claim"); a=self._open(ns); b=self._open(ns)
@@ -63,19 +63,19 @@ class PostgresAuthoritativeHarness:
             la=a.claim_writer("a", expected_epoch=0)
             lb=b.claim_writer("b", expected_epoch=la.epoch)
             with pytest.raises(StaleWriterError):
-                with a.transaction(owner_epoch=la.epoch) as u: u.set_committed_tick(9)
+                with a.transaction(owner_epoch=la.epoch) as u: u.set_committed_tick(9, owner_id='test-test_postgres_authoritative_conformance')
             with pytest.raises(StaleWriterError):
-                with a.transaction() as u: u.set_committed_tick(10)
-            with b.transaction(owner_epoch=lb.epoch) as u: u.set_committed_tick(11)
-            assert a.committed_tick()==11
+                with a.transaction() as u: u.set_committed_tick(10, owner_id='test-test_postgres_authoritative_conformance')
+            with b.transaction(owner_epoch=lb.epoch) as u: u.set_committed_tick(11, owner_id='test-test_postgres_authoritative_conformance')
+            assert a.committed_tick(owner_id='test-test_postgres_authoritative_conformance')==11
         finally: b.close(); a.close()
     def fresh_process_reconstruction(self):
         ns=_ns("restart"); p=self._open(ns)
-        with p.transaction() as u: u.set_committed_tick(13)
+        with p.transaction() as u: u.set_committed_tick(13, owner_id='test-test_postgres_authoritative_conformance')
         p.close()
         code=("from sose.persistence.postgres import PostgresPersistence;"
               f"p=PostgresPersistence({DSN!r},namespace={ns!r});"
-              "assert p.committed_tick()==13;p.close()")
+              "assert p.committed_tick(owner_id='test-test_postgres_authoritative_conformance')==13;p.close()")
         subprocess.run([sys.executable,"-c",code],check=True)
     def deterministic_continuation(self):
         ref_ns=_ns("ref"); res_ns=_ns("resume")
@@ -83,14 +83,14 @@ class PostgresAuthoritativeHarness:
             cmd=Command(command_id="cmd",name="go",entity_type="x",entity_id="1",due_at=NOW)
             work=ScheduledWork(work_id="work",due_at=NOW,priority=1,sequence=1,command_id="cmd", owner_id="test-test_postgres_authoritative_conformance")
             with p.transaction() as u:
-                u.save_command(cmd); u.save_scheduled_work(work); u.set_committed_tick(20)
+                u.save_command(cmd); u.save_scheduled_work(work); u.set_committed_tick(20, owner_id='test-test_postgres_authoritative_conformance')
         ref=self._open(ref_ns); seed(ref)
-        with ref.transaction() as u: u.set_committed_tick(21)
-        expected=(ref.committed_tick(),ref.command("cmd"),ref.scheduled_work()); ref.close()
+        with ref.transaction() as u: u.set_committed_tick(21, owner_id='test-test_postgres_authoritative_conformance')
+        expected=(ref.committed_tick(owner_id='test-test_postgres_authoritative_conformance'),ref.command("cmd"),ref.scheduled_work()); ref.close()
         first=self._open(res_ns); seed(first); first.close()
         resumed=self._open(res_ns)
-        with resumed.transaction() as u: u.set_committed_tick(21)
-        actual=(resumed.committed_tick(),resumed.command("cmd"),resumed.scheduled_work()); resumed.close()
+        with resumed.transaction() as u: u.set_committed_tick(21, owner_id='test-test_postgres_authoritative_conformance')
+        actual=(resumed.committed_tick(owner_id='test-test_postgres_authoritative_conformance'),resumed.command("cmd"),resumed.scheduled_work()); resumed.close()
         assert actual==expected
     def terminal_identity_monotonicity(self):
         p=self._open(_ns("identity")); d=StoreDefinition(name="parts")
