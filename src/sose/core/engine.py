@@ -162,6 +162,8 @@ class Engine:
         """
         if item.work.owner_id != self.owner_id:
             raise PermissionError("scheduled work belongs to a different owner")
+        if item.command.owner_id != self.owner_id:
+            raise PermissionError("command belongs to a different or missing owner")
 
         previous_time = self.context.clock.now
         previous_tick = self.context.clock.tick
