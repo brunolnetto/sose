@@ -53,6 +53,7 @@ def test_pg_two_real_customer_statecharts_overlap_without_business_aliasing(monk
     def worker(key):
         with PostgresPersistence(DSN, namespace=namespace) as persistence:
             return customer.run_customer_demand_path(
+                organization_id={"customer-a": "org-a", "customer-b": "org-b"}[key],
                 persistence=persistence, instance_key=key,
             )
 
