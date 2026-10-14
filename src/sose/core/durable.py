@@ -57,6 +57,8 @@ class DurableScheduler:
         self._on_due = None
 
     def schedule(self, command: Command, *, priority: int = 100) -> ScheduledWork:
+        if command.owner_id != self._owner_id:
+            raise PermissionError("command belongs to a different or missing owner")
         if self._persistence.command(command.command_id) is not None:
             raise ValueError(f"command already scheduled: {command.command_id}")
         if self._backend is not None and command.due_at < self._backend.now:
