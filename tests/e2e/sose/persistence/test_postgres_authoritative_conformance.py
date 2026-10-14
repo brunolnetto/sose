@@ -81,7 +81,7 @@ class PostgresAuthoritativeHarness:
         ref_ns=_ns("ref"); res_ns=_ns("resume")
         def seed(p):
             cmd=Command(command_id="cmd",name="go",entity_type="x",entity_id="1",due_at=NOW)
-            work=ScheduledWork(work_id="work",due_at=NOW,priority=1,sequence=1,command_id="cmd")
+            work=ScheduledWork(work_id="work",due_at=NOW,priority=1,sequence=1,command_id="cmd", owner_id="test-test_postgres_authoritative_conformance")
             with p.transaction() as u:
                 u.save_command(cmd); u.save_scheduled_work(work); u.set_committed_tick(20)
         ref=self._open(ref_ns); seed(ref)
