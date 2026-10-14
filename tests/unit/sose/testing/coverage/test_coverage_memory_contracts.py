@@ -192,7 +192,7 @@ def test_job_domain_domain_delivery_and_scheduled_work_guards():
     with pytest.raises(KeyError, match="unknown scheduled command"):
         with persistence.transaction() as uow:
             uow.save_scheduled_work(
-                ScheduledWork("work", NOW, 100, 1, "missing-command")
+                ScheduledWork("work", NOW, 100, 1, "missing-command", owner_id="test-test_coverage_memory_contracts")
             )
 
 
