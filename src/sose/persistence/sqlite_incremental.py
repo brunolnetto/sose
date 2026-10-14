@@ -400,7 +400,10 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         self,
         *,
         owner_epoch: int | None = None,
+        owner_id: str | None = None,
     ) -> Iterator[MemoryUnitOfWork]:
+        if owner_id is not None and not owner_id:
+            raise ValueError("owner_id must not be empty")
         self._connection.execute("BEGIN IMMEDIATE")
         row = self._connection.execute(
             f"SELECT owner_epoch FROM {self._meta_table} WHERE singleton = 1"
