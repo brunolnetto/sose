@@ -46,6 +46,7 @@ class Engine:
             raise ValueError("owner_id must not be empty")
         self.owner_id = owner_id
         context.commands.bind_owner(owner_id)
+        context.events.bind_owner(owner_id)
         self.context = context
         self.registry = registry
         self.persistence = persistence
@@ -155,6 +156,8 @@ class Engine:
         Returns False for an already-consumed stale callback so backend duplication
         cannot replay a committed transition.
         """
+        if item.work.owner_id != self.owner_id:
+            raise PermissionError("scheduled work belongs to a different owner")
 
         previous_time = self.context.clock.now
         previous_tick = self.context.clock.tick
