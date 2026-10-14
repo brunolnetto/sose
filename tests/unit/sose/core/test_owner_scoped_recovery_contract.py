@@ -63,3 +63,46 @@ def test_scoped_position_writes_do_not_advance_foreign_owner():
         uow.set_simulation_position(_position(3, 3), owner_id="organization-b")
     assert store.simulation_position(owner_id="organization-a") == _position(1, 1)
     assert store.simulation_position(owner_id="organization-b") == _position(3, 3)
+
+
+def test_sqlite_scoped_positions_survive_total_restart_without_legacy_alias(tmp_path):
+    from sose.persistence.sqlite import SQLitePersistence
+
+    database = tmp_path / "two-organizations.sqlite"
+    store = SQLitePersistence(database)
+    try:
+        with store.transaction() as uow:
+            uow.set_simulation_position(_position(1, 1), owner_id="organization-a")
+            uow.set_simulation_position(_position(2, 2), owner_id="organization-b")
+    finally:
+        store.close()
+
+    restored = SQLitePersistence(database)
+    try:
+        assert restored.simulation_position(owner_id="organization-a") == _position(1, 1)
+        assert restored.simulation_position(owner_id="organization-b") == _position(2, 2)
+        assert restored.simulation_position() is None
+    finally:
+        restored.close()
+
+
+def test_postgres_scoped_positions_survive_reopen_with_independent_owners():
+    import os
+    from uuid import uuid4
+
+    import pytest
+    from sose.persistence.postgres import PostgresPersistence
+
+    dsn = os.getenv("SOSE_TEST_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("requires real PostgreSQL DSN")
+    namespace = "owner_clock_" + uuid4().hex[:12]
+    with PostgresPersistence(dsn, namespace=namespace) as first:
+        with first.transaction() as uow:
+            uow.set_simulation_position(_position(1, 1), owner_id="organization-a")
+            uow.set_simulation_position(_position(2, 2), owner_id="organization-b")
+
+    with PostgresPersistence(dsn, namespace=namespace) as restored:
+        assert restored.simulation_position(owner_id="organization-a") == _position(1, 1)
+        assert restored.simulation_position(owner_id="organization-b") == _position(2, 2)
+        assert restored.simulation_position() is None
