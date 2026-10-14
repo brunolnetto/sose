@@ -11,10 +11,13 @@ from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
 
+AVIATION_OWNER_ID = "aviation-reference-restart"
+
+
 def test_restart_reference_runtime_rebuilds_at_same_logical_boundary():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=AVIATION_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=AVIATION_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -30,6 +33,7 @@ def test_restart_reference_runtime_rebuilds_at_same_logical_boundary():
         persistence,
         build_runtime,
         backend,
+        owner_id=AVIATION_OWNER_ID,
         backend_factory=SimPyBackend,
     )
 
@@ -45,8 +49,8 @@ def test_restart_reference_runtime_rebuilds_at_same_logical_boundary():
 
 def test_restart_reference_runtime_allows_explicit_tick_without_assertion_policy():
     persistence = MemoryPersistence()
-    seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    seed_reference(persistence, owner_id=AVIATION_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=AVIATION_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -54,6 +58,7 @@ def test_restart_reference_runtime_allows_explicit_tick_without_assertion_policy
         persistence,
         build_runtime,
         backend,
+        owner_id=AVIATION_OWNER_ID,
         backend_factory=SimPyBackend,
         tick=7,
     )
@@ -64,19 +69,20 @@ def test_restart_reference_runtime_allows_explicit_tick_without_assertion_policy
 
 def test_restart_reference_runtime_can_use_persisted_position_without_live_backend():
     persistence = MemoryPersistence()
-    seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    seed_reference(persistence, owner_id=AVIATION_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=AVIATION_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
     engine.advance_tick()
     backend.run_until(engine.context.clock.now)
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=AVIATION_OWNER_ID)
     assert position is not None
 
     rebuilt = restart_reference_runtime(
         persistence,
         build_runtime,
+        owner_id=AVIATION_OWNER_ID,
         backend_factory=SimPyBackend,
     )
 
