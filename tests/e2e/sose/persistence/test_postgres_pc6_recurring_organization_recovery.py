@@ -236,7 +236,7 @@ def test_real_logistics_certified_crash_keeps_other_organization_progressing(mon
     with PostgresPersistence(DSN, namespace=ns) as original:
         service = BoundaryService(original)
         for org in orgs:
-            entities = logistics.seed_reference(original, instance_key=org)
+            entities = logistics.seed_reference(original, owner_id=org, instance_key=org)
             shipments[org] = entities.shipment_id
             fulfillment_id = f"fulfillment-{org}"
             upstream = BoundaryMessage.create(
