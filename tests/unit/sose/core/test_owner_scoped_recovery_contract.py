@@ -357,3 +357,22 @@ def test_command_factory_rejects_silent_owner_rebinding():
     factory.bind_owner("organization-a")
     with pytest.raises(ValueError, match="owner"):
         factory.bind_owner("organization-b")
+
+
+def test_engine_rejects_foreign_scheduled_callback_before_database_reads():
+    from sose.core.durable import DurableScheduledItem
+    from sose.core.engine import Engine
+    from sose.core.events import Command
+    from sose.core.runtime import ScheduledWork
+
+    engine = Engine.__new__(Engine)
+    engine.owner_id = "organization-a"
+    command = Command("b-cmd", "advance", "demo", "same-type", ORIGIN)
+    work = ScheduledWork(
+        work_id="b-work", command_id=command.command_id,
+        owner_id="organization-b", due_at=ORIGIN, priority=100, sequence=1,
+    )
+    # A foreign callback must never reach even the first authoritative read,
+    # irrespective of whether its Command/StateChart type matches a local one.
+    with pytest.raises(PermissionError, match="different owner"):
+        engine._dispatch_scheduled_in_uow(DurableScheduledItem(work, command), object())
