@@ -72,6 +72,18 @@ def records_to_state(records: Iterable[StateRecord]) -> _State:
         grouped.setdefault(record.collection, []).append(record)
 
     template = _State()
+    known = {field.name for field in fields(_State)}
+    legacy = {"simulation_position", "scenario_state", "committed_tick"}
+    unknown = set(grouped) - known
+    if unknown:
+        if unknown & legacy:
+            raise ValueError(
+                "unsupported legacy unowned runtime records: "
+                + ", ".join(sorted(unknown & legacy))
+            )
+        raise ValueError(
+            "unknown durable record collections: " + ", ".join(sorted(unknown))
+        )
     values: dict[str, object] = {}
 
     for field in fields(_State):
