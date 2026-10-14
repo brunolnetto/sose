@@ -70,11 +70,11 @@ def test_transaction_can_atomically_consume_work_and_commit_position():
     with store.transaction() as uow:
         uow.delete_scheduled_work(work.work_id)
         uow.delete_command(cmd.command_id)
-        uow.set_simulation_position(position)
+        uow.set_simulation_position(position, owner_id="test-test_durable_runtime")
 
     assert store.scheduled_work() == ()
     assert store.command(cmd.command_id) is None
-    assert store.simulation_position() == position
+    assert store.simulation_position(owner_id="test-test_durable_runtime") == position
 
 
 def test_rollback_restores_scheduled_work_and_position():
@@ -91,7 +91,8 @@ def test_rollback_restores_scheduled_work_and_position():
             uow.delete_scheduled_work(work.work_id)
             uow.delete_command(cmd.command_id)
             uow.set_simulation_position(
-                SimulationPosition(ORIGIN, execution_sequence=1, committed_sequence=1)
+                SimulationPosition(ORIGIN, execution_sequence=1, committed_sequence=1),
+                owner_id="test-test_durable_runtime",
             )
             raise RuntimeError("crash before commit")
     except RuntimeError:
