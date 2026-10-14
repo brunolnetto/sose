@@ -110,7 +110,7 @@ def test_opaque_v1_causation_is_not_reinterpreted_by_prefix_or_id_collision():
 
 
 def test_customer_reference_certificates_are_causally_auditable():
-    result = run_customer_demand_path()
+    result = run_customer_demand_path(organization_id="test-org-causal-dag-audit")
     graph = audit_causal_history(result.persistence)
     assert graph.message_count == len(result.message_ids)
     assert graph.applied_effects == 4
@@ -119,7 +119,7 @@ def test_customer_reference_certificates_are_causally_auditable():
 
 
 def test_deleted_business_certificate_is_detected_in_completed_chain():
-    result = run_customer_demand_path()
+    result = run_customer_demand_path(organization_id="test-org-causal-dag-audit")
     proof = next(x for x in result.persistence.business_effects() if x.entity_type == "shipment")
     result.persistence._state.business_effects.pop(proof.effect_id)
     with pytest.raises(CausalAuditError, match="missing applied business certificate"):
@@ -137,7 +137,7 @@ def test_audit_snapshot_is_stable_after_sqlite_restart(tmp_path, monkeypatch):
         return store
 
     monkeypatch.setattr(customer, "MemoryPersistence", factory)
-    customer.run_customer_demand_path()
+    customer.run_customer_demand_path(organization_id="test-org-causal-dag-audit")
     original = audit_causal_history(opened[-1])
     opened[-1].close()
     with SQLiteIncrementalPersistence(path) as restored:
@@ -165,7 +165,7 @@ def test_worker_death_and_restart_preserves_normalized_causal_dag(
     from sose.persistence.ownership import FencedEnginePersistence
     from sose.persistence.sqlite_incremental import WriterLease
 
-    uninterrupted = audit_causal_history(customer.run_customer_demand_path().persistence)
+    uninterrupted = audit_causal_history(customer.run_customer_demand_path(organization_id="test-org-causal-dag-audit").persistence)
     path = tmp_path / "independent-replay.sqlite"
     opened = []
 
@@ -185,7 +185,7 @@ def test_worker_death_and_restart_preserves_normalized_causal_dag(
 
     monkeypatch.setattr(BusinessEffectService, "complete", interrupt)
     with pytest.raises(RuntimeError, match="injected worker death"):
-        customer.run_customer_demand_path()
+        customer.run_customer_demand_path(organization_id="test-org-causal-dag-audit")
     monkeypatch.setattr(BusinessEffectService, "complete", original)
     opened[-1].close()
     with SQLiteIncrementalPersistence(path) as store:
@@ -273,7 +273,7 @@ def test_consumed_message_with_invalid_receipt_is_not_causally_auditable():
 
 
 def test_certificate_cannot_be_reused_under_different_correlation():
-    result = run_customer_demand_path()
+    result = run_customer_demand_path(organization_id="test-org-causal-dag-audit")
     delivery = next(
         d for d in result.persistence._state.boundary_deliveries.values()
         if d.contract_name == "warehouse.dispatch_ready"
@@ -288,7 +288,7 @@ def test_certificate_cannot_be_reused_under_different_correlation():
 
 
 def test_unlinked_business_certificate_cannot_disappear_from_audit_digest():
-    result = run_customer_demand_path()
+    result = run_customer_demand_path(organization_id="test-org-causal-dag-audit")
     store = result.persistence
     proof = next(x for x in store.business_effects() if x.entity_type == "shipment")
     with store.transaction() as uow:
@@ -321,7 +321,7 @@ def test_typed_event_with_no_correlation_cannot_parent_correlated_message():
 
 def test_certificate_cannot_claim_different_terminal_state_at_same_entity_version():
     """An equal-version rewrite contradicts immutable certified business truth."""
-    result = run_customer_demand_path()
+    result = run_customer_demand_path(organization_id="test-org-causal-dag-audit")
     store = result.persistence
     proof = next(x for x in store.business_effects() if x.entity_type == "shipment")
     with store.transaction() as uow:
@@ -334,7 +334,7 @@ def test_certificate_cannot_claim_different_terminal_state_at_same_entity_versio
 
 def test_certificate_allows_later_entity_version_without_inventing_historical_state():
     """A receipt anchors its own version; a later state is not a contradiction."""
-    result = run_customer_demand_path()
+    result = run_customer_demand_path(organization_id="test-org-causal-dag-audit")
     store = result.persistence
     proof = next(x for x in store.business_effects() if x.entity_type == "shipment")
     baseline = audit_causal_history(store)
