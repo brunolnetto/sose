@@ -18,9 +18,10 @@ def _build(
     config: TutorialJobConfig,
     now: datetime,
     tick: int,
+    owner_id: str,
 ):
     return build_runtime(
-        persistence,
+        persistence, owner_id=owner_id,
         now=now,
         tick=tick,
         step=config.tick_step,
@@ -28,8 +29,8 @@ def _build(
     )
 
 
-def _seed(persistence: Persistence, config: TutorialJobConfig):
-    return seed_job(persistence, job_key=config.job_key)
+def _seed(persistence: Persistence, config: TutorialJobConfig, owner_id: str):
+    return seed_job(persistence, owner_id=owner_id, job_key=config.job_key)
 
 
 def _reconcile_tick(
