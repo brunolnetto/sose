@@ -245,9 +245,9 @@ class JSONLJournalPersistence(MemoryPersistence):
         self._refresh_from_journal()
         return super().simulation_position(owner_id=owner_id)
 
-    def scenario_state(self):
+    def scenario_state(self, *, owner_id: str | None = None):
         self._refresh_from_journal()
-        return super().scenario_state()
+        return super().scenario_state(owner_id=owner_id)
 
     def resource_definitions(self):
         self._refresh_from_journal()
