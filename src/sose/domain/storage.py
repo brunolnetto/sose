@@ -102,6 +102,6 @@ class DomainPersistence:
         return tuple(deepcopy(tuple(by_key.values())))
 
     @contextmanager
-    def transaction(self):
-        with self.engine.transaction() as inner:
+    def transaction(self, *, owner_id: str | None = None):
+        with self.engine.transaction(owner_id=owner_id) as inner:
             yield DomainUnitOfWork(inner, self.engine, self.warehouse)
