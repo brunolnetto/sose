@@ -76,6 +76,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     amount: float = 1000.0,
     currency: str = "USD",
@@ -88,7 +89,7 @@ def seed_reference(
     if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
         raise ValueError("instance_key must be a nonempty string")
     prefix = ("r2r-reference",) if instance_key is None else ("r2r-reference", instance_key)
-    context, _ = build_runtime(persistence, now=now)
+    context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
     period = context.entities.create(
         AccountingPeriod,
         key=(*prefix, "period-2026-09"),
