@@ -136,7 +136,9 @@ class DuckDBPersistence(MemoryPersistence):
         return len(changes)
 
     @contextmanager
-    def transaction(self) -> Iterator[MemoryUnitOfWork]:
+    def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
+        if owner_id is not None and not owner_id:
+            raise ValueError("owner_id must not be empty")
         self._connection.execute("BEGIN TRANSACTION")
         self._refresh_from_db()
         before = self._state
