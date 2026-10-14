@@ -7,6 +7,9 @@ from sose.examples.warehouse_management import simulation as wm
 from sose.persistence.memory import MemoryPersistence
 
 
+ORGANIZATION_ID = "warehouse-composition-reference-organization"
+
+
 def _entities_of_type(store: MemoryPersistence, entity_type: str):
     return tuple(entity for entity in store.entities() if entity.entity_type == entity_type)
 
@@ -15,11 +18,12 @@ def test_warehouse_management_external_reservation_and_consumption_are_idempoten
     store = MemoryPersistence()
     entities = wm.seed_reference(
         store,
+        owner_id=ORGANIZATION_ID,
         origin_on_hand=20.0,
         transfer_quantity=1.0,
         sku=fulfillment.PRIMARY_SKU,
     )
-    _, engine = wm.build_runtime(store)
+    _, engine = wm.build_runtime(store, owner_id=ORGANIZATION_ID)
 
     assert wm.reserve_external_stock(
         store,
@@ -102,11 +106,12 @@ def test_external_reservation_rejects_sku_mismatch_and_insufficient_stock() -> N
     store = MemoryPersistence()
     entities = wm.seed_reference(
         store,
+        owner_id=ORGANIZATION_ID,
         origin_on_hand=4.0,
         transfer_quantity=1.0,
         sku=fulfillment.PRIMARY_SKU,
     )
-    _, engine = wm.build_runtime(store)
+    _, engine = wm.build_runtime(store, owner_id=ORGANIZATION_ID)
 
     with pytest.raises(ValueError, match="reservation SKU mismatch"):
         wm.reserve_external_stock(
@@ -136,13 +141,14 @@ def test_composed_fulfillment_uses_foreign_reservation_without_local_inventory()
     store = MemoryPersistence()
     entities = fulfillment.seed_composed_reference(
         store,
+        owner_id=ORGANIZATION_ID,
         requested_quantity=10.0,
     )
 
     assert entities.lot_ids == ()
     assert _entities_of_type(store, "warehouse_inventory_lot") == ()
 
-    _, engine = fulfillment.build_runtime(store)
+    _, engine = fulfillment.build_runtime(store, owner_id=ORGANIZATION_ID)
     assert fulfillment.allocate_composed_order(
         store,
         engine,
@@ -177,7 +183,7 @@ def test_composed_fulfillment_uses_foreign_reservation_without_local_inventory()
 
 def test_standalone_fulfillment_retains_local_inventory_lots() -> None:
     store = MemoryPersistence()
-    entities = fulfillment.seed_reference(store, requested_quantity=10.0)
+    entities = fulfillment.seed_reference(store, owner_id=ORGANIZATION_ID, requested_quantity=10.0)
 
     assert len(entities.lot_ids) == 2
     assert len(_entities_of_type(store, "warehouse_inventory_lot")) == 2
@@ -187,11 +193,12 @@ def test_external_reservation_normalizes_quantity_before_persist_and_consume() -
     store = MemoryPersistence()
     entities = wm.seed_reference(
         store,
+        owner_id=ORGANIZATION_ID,
         origin_on_hand=4.0,
         transfer_quantity=1.0,
         sku=fulfillment.PRIMARY_SKU,
     )
-    _, engine = wm.build_runtime(store)
+    _, engine = wm.build_runtime(store, owner_id=ORGANIZATION_ID)
 
     raw_quantity = 1.0000004
     assert wm.reserve_external_stock(
