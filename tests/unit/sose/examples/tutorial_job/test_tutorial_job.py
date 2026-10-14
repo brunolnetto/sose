@@ -42,6 +42,7 @@ def test_tutorial_job_survives_backend_restart():
         persistence,
         build_runtime,
         backend,
+        owner_id=OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt.backend.run_until(complete_at)
