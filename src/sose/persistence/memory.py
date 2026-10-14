@@ -771,7 +771,9 @@ class MemoryPersistence:
         self._state = _State()
 
     @contextmanager
-    def transaction(self) -> Iterator[MemoryUnitOfWork]:
+    def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
+        if owner_id is not None and not owner_id:
+            raise ValueError("owner_id must not be empty")
         uow = MemoryUnitOfWork(fork_state(self._state), self)
         try:
             yield uow
