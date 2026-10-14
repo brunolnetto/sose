@@ -14,7 +14,7 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 REPLENISHMENT_OWNER_ID = "trading-company-replenishment-reference"
 
 def test_customer_reference_has_four_distinct_business_completion_certificates():
-    result = customer.run_customer_demand_path()
+    result = customer.run_customer_demand_path(organization_id="test-org-business-effect-recovery")
     effects = result.persistence.business_effects()
     assert len(effects) == 4
     assert {x.entity_type for x in effects} == {
@@ -78,7 +78,7 @@ def test_worker_death_after_business_effect_before_proof_is_idempotent(
 
     monkeypatch.setattr(BusinessEffectService, "complete", crash_before_certificate)
     with pytest.raises(RuntimeError, match="worker killed before certificate commit"):
-        customer.run_customer_demand_path()
+        customer.run_customer_demand_path(organization_id="test-org-business-effect-recovery")
     monkeypatch.setattr(BusinessEffectService, "complete", original_complete)
     opened[-1].close()
 
