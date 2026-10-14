@@ -63,7 +63,10 @@ class DurableScheduler:
             raise ValueError("scheduled work cannot be created before backend logical time")
 
         existing = self._persistence.scheduled_work()
-        sequence = max((work.sequence for work in existing), default=0) + 1
+        sequence = max(
+            (work.sequence for work in existing if work.owner_id == self._owner_id),
+            default=0,
+        ) + 1
         work = ScheduledWork(
             work_id=deterministic_id("scheduled-work", command.command_id),
             due_at=command.due_at,
@@ -168,6 +171,8 @@ class DurableScheduler:
         if isinstance(connection, sqlite3.Connection) and connection.in_transaction:
             items: list[DurableScheduledItem] = []
             for work in self._persistence.scheduled_work():
+                if work.owner_id != self._owner_id:
+                    continue
                 command = self._persistence.command(work.command_id)
                 if command is None:
                     raise RuntimeError(
@@ -180,6 +185,8 @@ class DurableScheduler:
         with self._persistence.transaction() as uow:
             items: list[DurableScheduledItem] = []
             for work in uow.scheduled_work():
+                if work.owner_id != self._owner_id:
+                    continue
                 command = uow.get_command(work.command_id)
                 if command is None:
                     raise RuntimeError(
