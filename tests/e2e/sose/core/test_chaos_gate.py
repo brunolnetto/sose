@@ -60,10 +60,12 @@ class _CheckpointingSQLite(SQLiteIncrementalPersistence):
         return self._checkpoints_dir / f"tx-{index}.sqlite3"
 
     @contextmanager
-    def transaction(self, *, owner_epoch: int | None = None) -> Iterator:
+    def transaction(
+        self, *, owner_epoch: int | None = None, owner_id: str | None = None,
+    ) -> Iterator:
         self.transaction_count += 1
         transaction_index = self.transaction_count
-        with super().transaction(owner_epoch=owner_epoch) as uow:
+        with super().transaction(owner_epoch=owner_epoch, owner_id=owner_id) as uow:
             yield uow
         self._checkpoint(transaction_index)
 
