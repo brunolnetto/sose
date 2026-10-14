@@ -219,8 +219,12 @@ class RuntimeRebuilder:
         context=None,
         participants: tuple[RecoveryParticipant, ...] = (),
         scheduled_work_filter: Callable[[DurableScheduledItem], bool] | None = None,
+        owner_id: str | None = None,
     ) -> None:
         self._persistence = persistence
+        if owner_id == "":
+            raise ValueError("owner_id must not be empty")
+        self._owner_id = owner_id
         self._context = context
         self._participants = tuple(participants)
         self._scheduled_work_filter = scheduled_work_filter
@@ -274,7 +278,7 @@ class RuntimeRebuilder:
         *,
         on_due: Callable[[DurableScheduledItem], None],
     ) -> int:
-        position = self._persistence.simulation_position()
+        position = self._persistence.simulation_position(owner_id=self._owner_id)
         if position is not None and backend.now != position.logical_time:
             raise RuntimeError(
                 "backend logical time does not match persisted recovery boundary"
