@@ -25,6 +25,15 @@ PICKUP_DUE = ORIGIN + timedelta(hours=1)
 RETRY_DELAY = timedelta(hours=2)
 
 
+def _organization_queue(owner_id: str, queue: str) -> str:
+    """Physical Store names are owner-qualified; independent FIFO heads cannot alias."""
+    if not isinstance(owner_id, str) or not owner_id.strip():
+        raise ValueError("store queue owner_id must not be empty")
+    if queue not in {"origin_hub_queue", "destination_hub_queue"}:
+        raise ValueError("unknown Logistics queue")
+    return f"{owner_id}/{queue}"
+
+
 @dataclass(frozen=True, slots=True)
 class LogisticsEntities:
     shipment_id: str
@@ -106,9 +115,9 @@ def seed_reference(
         ):
             uow.save_resource_definition(ResourceDefinition(name, capacity=resource_capacity))
 
-    engine.stores.define(StoreDefinition("origin_hub_queue", kind="fifo", capacity=hub_queue_capacity))
+    engine.stores.define(StoreDefinition(_organization_queue(owner_id, "origin_hub_queue"), kind="fifo", capacity=hub_queue_capacity))
     engine.stores.define(
-        StoreDefinition("destination_hub_queue", kind="fifo", capacity=hub_queue_capacity)
+        StoreDefinition(_organization_queue(owner_id, "destination_hub_queue"), kind="fifo", capacity=hub_queue_capacity)
     )
 
     command = context.commands.create(
@@ -277,7 +286,7 @@ def reconcile_origin_hub(
     if not any(item.item_id == item_id for item in persistence.store_items()):
         engine.stores.put(
             backend,
-            store_name="origin_hub_queue",
+            store_name=_organization_queue(engine.owner_id, "origin_hub_queue"),
             item_id=item_id,
             value={"shipment_id": shipment.id},
             requested_at=backend.now,
@@ -325,7 +334,7 @@ def _ensure_origin_queue_dequeue(
     if not _has_store_get_request(persistence, dequeue_id):
         engine.stores.get(
             backend,
-            store_name="origin_hub_queue",
+            store_name=_organization_queue(engine.owner_id, "origin_hub_queue"),
             request_id=dequeue_id,
             requested_at=backend.now,
         )
@@ -346,7 +355,7 @@ def _ensure_destination_queue_dequeue(
     if not _has_store_get_request(persistence, dequeue_id):
         engine.stores.get(
             backend,
-            store_name="destination_hub_queue",
+            store_name=_organization_queue(engine.owner_id, "destination_hub_queue"),
             request_id=dequeue_id,
             requested_at=backend.now,
         )
@@ -407,7 +416,7 @@ def reconcile_transfer(
     if not any(item.item_id == item_id for item in persistence.store_items()):
         engine.stores.put(
             backend,
-            store_name="destination_hub_queue",
+            store_name=_organization_queue(engine.owner_id, "destination_hub_queue"),
             item_id=item_id,
             value={"shipment_id": shipment.id},
             requested_at=backend.now,

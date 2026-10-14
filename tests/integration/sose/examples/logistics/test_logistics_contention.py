@@ -11,10 +11,13 @@ from sose.examples.logistics.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+ORGANIZATION_ID = "logistics-contention-organization"
+
+
 def test_origin_hub_queue_survives_transfer_contention():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=ORGANIZATION_ID)
+    _, engine = build_runtime(persistence, owner_id=ORGANIZATION_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -36,7 +39,7 @@ def test_origin_hub_queue_survives_transfer_contention():
     ) is False
     assert persistence.entity("shipment", entities.shipment_id).state == "at_origin_hub"
     assert [item.store_name for item in persistence.store_items()] == [
-        "origin_hub_queue"
+        f"{ORGANIZATION_ID}/origin_hub_queue"
     ]
     assert any(
         demand.request_id == f"transfer-vehicle:{entities.shipment_id}"
@@ -58,5 +61,5 @@ def test_origin_hub_queue_survives_transfer_contention():
         "shipment", entities.shipment_id
     ).state == "at_destination_hub"
     assert [item.store_name for item in persistence.store_items()] == [
-        "destination_hub_queue"
+        f"{ORGANIZATION_ID}/destination_hub_queue"
     ]

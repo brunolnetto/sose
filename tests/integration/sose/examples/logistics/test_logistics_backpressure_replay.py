@@ -15,13 +15,17 @@ from sose.examples.logistics.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+ORGANIZATION_ID = "logistics-backpressure-organization"
+
+
 def _runtime(*, queue_capacity: int = 1):
     persistence = MemoryPersistence()
     entities = seed_reference(
         persistence,
+        owner_id=ORGANIZATION_ID,
         hub_queue_capacity=queue_capacity,
     )
-    _, engine = build_runtime(persistence)
+    _, engine = build_runtime(persistence, owner_id=ORGANIZATION_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(PICKUP_DUE)
@@ -46,7 +50,7 @@ def test_origin_hub_queue_backpressure_recovers_without_duplicate_arrival():
 
     engine.stores.put(
         backend,
-        store_name="origin_hub_queue",
+        store_name=f"{ORGANIZATION_ID}/origin_hub_queue",
         item_id="origin-blocker",
         value={"shipment_id": "blocker"},
         requested_at=backend.now,
@@ -70,12 +74,12 @@ def test_origin_hub_queue_backpressure_recovers_without_duplicate_arrival():
         if intent.item_id == f"origin-queue:{entities.shipment_id}"
     ]
     assert len(pending_origin) == 1
-    assert pending_origin[0].store_name == "origin_hub_queue"
+    assert pending_origin[0].store_name == f"{ORGANIZATION_ID}/origin_hub_queue"
 
     _drain(
         engine,
         backend,
-        store_name="origin_hub_queue",
+        store_name=f"{ORGANIZATION_ID}/origin_hub_queue",
         request_id="drain-origin-blocker",
     )
 
@@ -106,7 +110,7 @@ def test_destination_queue_backpressure_recovers_after_durable_origin_dequeue():
 
     engine.stores.put(
         backend,
-        store_name="destination_hub_queue",
+        store_name=f"{ORGANIZATION_ID}/destination_hub_queue",
         item_id="destination-blocker",
         value={"shipment_id": "blocker"},
         requested_at=backend.now,
@@ -136,12 +140,12 @@ def test_destination_queue_backpressure_recovers_after_durable_origin_dequeue():
         if intent.item_id == f"destination-queue:{entities.shipment_id}"
     ]
     assert len(pending_destination) == 1
-    assert pending_destination[0].store_name == "destination_hub_queue"
+    assert pending_destination[0].store_name == f"{ORGANIZATION_ID}/destination_hub_queue"
 
     _drain(
         engine,
         backend,
-        store_name="destination_hub_queue",
+        store_name=f"{ORGANIZATION_ID}/destination_hub_queue",
         request_id="drain-destination-blocker",
     )
 
