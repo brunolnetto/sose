@@ -24,6 +24,8 @@ from sose.examples.warehouse_management import simulation as wm
 from sose.persistence.sqlite import SQLitePersistence
 
 
+REPLENISHMENT_OWNER_ID = "trading-company-replenishment-reference"
+
 def _reopen(store: SQLitePersistence, path) -> SQLitePersistence:
     store.close()
     return SQLitePersistence(path)
@@ -382,6 +384,7 @@ def _replenishment_fixtures(store, *, quantity: float) -> replenishment._Fixture
     return replenishment._Fixtures(
         warehouse=wm.seed_reference(
             store,
+            owner_id=REPLENISHMENT_OWNER_ID,
             now=origin,
             origin_on_hand=2.0,
             transfer_quantity=1.0,
@@ -389,12 +392,14 @@ def _replenishment_fixtures(store, *, quantity: float) -> replenishment._Fixture
         ),
         procurement=p2p.seed_happy_path(
             store,
+            owner_id=REPLENISHMENT_OWNER_ID,
             now=origin,
             quantity=quantity,
             schedule=False,
         ),
         accounting=r2r.seed_reference(
             store,
+            owner_id=REPLENISHMENT_OWNER_ID,
             now=origin,
             amount=500.0,
             currency="USD",
@@ -419,7 +424,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     tmp_path,
 ) -> None:
     quantity = 5.0
-    continuous = replenishment.run_replenishment_path(quantity=quantity)
+    continuous = replenishment.run_replenishment_path(owner_id=REPLENISHMENT_OWNER_ID, quantity=quantity)
     path = tmp_path / "replenishment-composition.sqlite3"
     store = SQLitePersistence(path)
     fixtures = _replenishment_fixtures(store, quantity=quantity)
@@ -462,6 +467,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     intent = store.command(consumption.consumer_effect_id)
     assert intent is not None
     replenishment._execute_procurement(
+        owner_id=REPLENISHMENT_OWNER_ID,
         store,
         intent=intent,
         fixtures=fixtures,
@@ -479,7 +485,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
         occurrence_key="inventory-receipt-ready",
         correlation_id=correlation_id,
         causation_id=messages[-1].message_id,
-        produced_at=replenishment._next_time(store, messages[-1].produced_at),
+        produced_at=replenishment._next_time(store, messages[-1].produced_at, owner_id=REPLENISHMENT_OWNER_ID),
         payload={
             "receipt_id": fixtures.procurement.receipt_id,
             "stock_id": fixtures.warehouse.origin_stock_id,
@@ -499,6 +505,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     intent = store.command(consumption.consumer_effect_id)
     assert intent is not None
     replenishment._execute_warehouse_receipt(
+        owner_id=REPLENISHMENT_OWNER_ID,
         store,
         intent=intent,
         fixtures=fixtures,
@@ -515,6 +522,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     assert replay == consumption
 
     replenishment._release_p2p_staging(
+        owner_id=REPLENISHMENT_OWNER_ID,
         store,
         caused_by=intent,
         fixtures=fixtures,
@@ -532,7 +540,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
         occurrence_key="replenishment-accounting-entry",
         correlation_id=correlation_id,
         causation_id=messages[-1].message_id,
-        produced_at=replenishment._next_time(store, messages[-1].produced_at),
+        produced_at=replenishment._next_time(store, messages[-1].produced_at, owner_id=REPLENISHMENT_OWNER_ID),
         payload={
             "receipt_id": fixtures.procurement.receipt_id,
             "journal_id": fixtures.accounting.journal_id,
@@ -552,6 +560,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     intent = store.command(consumption.consumer_effect_id)
     assert intent is not None
     replenishment._execute_accounting(
+        owner_id=REPLENISHMENT_OWNER_ID,
         store,
         intent=intent,
         fixtures=fixtures,
