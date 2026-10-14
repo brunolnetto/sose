@@ -77,7 +77,7 @@ def _seed_real_workflow(dsn, ns):
     with PostgresPersistence(dsn, namespace=ns) as store:
         with patch.object(customer, "_execute_intent", side_effect=only_seed):
             with pytest.raises(RuntimeError, match="pc6 staged real Logistics boundary"):
-                customer.run_customer_demand_path(persistence=store, instance_key=INSTANCE)
+                customer.run_customer_demand_path(organization_id="test-org-postgres-pc6-full-real-domain-recovery", persistence=store, instance_key=INSTANCE)
         with store.boundary_transaction() as uow:
             dispatches = [
                 (uow.get_boundary_message(d.message_id),
@@ -524,6 +524,7 @@ def _seed_before_logistics_ack(dsn, ns):
         with patch.object(customer, "_consume_next", side_effect=stop_at_dispatch):
             with pytest.raises(RuntimeError, match="before real Logistics claim"):
                 customer.run_customer_demand_path(
+                    organization_id="test-org-postgres-pc6-full-real-domain-recovery",
                     persistence=store, instance_key=INSTANCE,
                 )
         with store.boundary_transaction() as uow:
