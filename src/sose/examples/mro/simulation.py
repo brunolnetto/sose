@@ -71,6 +71,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     quantity: float = 1.0,
     now: datetime = ORIGIN,
     technician_capacity: int = 1,
@@ -81,7 +82,7 @@ def seed_reference(
     if quantity <= 0 or quantity > PART_CAPACITY:
         raise ValueError("quantity must fit spare-parts capacity")
 
-    context, engine = build_runtime(persistence, now=now)
+    context, engine = build_runtime(persistence, owner_id=owner_id, now=now)
     wo = context.entities.create(
         WorkOrder,
         key=("mro-reference", "wo-1"),
