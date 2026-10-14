@@ -214,9 +214,9 @@ class JSONLJournalPersistence(MemoryPersistence):
         self._refresh_from_journal()
         return super().job_states()
 
-    def committed_tick(self) -> int:
+    def committed_tick(self, *, owner_id: str | None = None) -> int:
         self._refresh_from_journal()
-        return super().committed_tick()
+        return super().committed_tick(owner_id=owner_id)
 
     def events(self):
         self._refresh_from_journal()
