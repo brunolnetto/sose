@@ -34,8 +34,11 @@ class RebuildBackend(Protocol):
 class DurableScheduler:
     """Persist future execution intent independently from any backend queue."""
 
-    def __init__(self, persistence: Persistence) -> None:
+    def __init__(self, persistence: Persistence, *, owner_id: str | None = None) -> None:
+        if owner_id == "":
+            raise ValueError("owner_id must not be empty")
         self._persistence = persistence
+        self._owner_id = owner_id
         self._backend: RebuildBackend | None = None
         self._on_due: Callable[[DurableScheduledItem], None] | None = None
 
@@ -67,6 +70,7 @@ class DurableScheduler:
             priority=priority,
             sequence=sequence,
             command_id=command.command_id,
+            owner_id=self._owner_id,
         )
 
         with self._persistence.transaction() as uow:
@@ -168,7 +172,7 @@ class DurableScheduler:
                         f"scheduled work references missing command: {work.work_id}/{work.command_id}"
                     )
                 items.append(DurableScheduledItem(work=work, command=command))
-            return tuple(items)
+            return tuple(item for item in items if self._owner_id is None or item.work.owner_id == self._owner_id)
 
         # PostgreSQL and non-nested adapters read the pair in a single UoW.
         with self._persistence.transaction() as uow:
@@ -180,7 +184,7 @@ class DurableScheduler:
                         f"scheduled work references missing command: {work.work_id}/{work.command_id}"
                     )
                 items.append(DurableScheduledItem(work=work, command=command))
-            return tuple(items)
+            return tuple(item for item in items if self._owner_id is None or item.work.owner_id == self._owner_id)
 
 @dataclass(frozen=True, slots=True)
 class RecoveryParticipant:
@@ -285,7 +289,7 @@ class RuntimeRebuilder:
             )
 
         boundary = position.logical_time if position is not None else backend.now
-        items = DurableScheduler(self._persistence).pending()
+        items = DurableScheduler(self._persistence, owner_id=self._owner_id).pending()
         if self._scheduled_work_filter is not None:
             # Validate only work this domain is authorized to dispatch.
             # Foreign commands are authoritative persisted work: neither
