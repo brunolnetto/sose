@@ -827,10 +827,10 @@ def _drop_open_incident_if_resolved(
     )
 
 
-def run_happy_path() -> tuple[MemoryPersistence, TelecomEntities]:
+def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, TelecomEntities]:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=owner_id)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     due_at = schedule_activation(
