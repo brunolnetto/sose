@@ -57,10 +57,15 @@ class PausingSQLite(SQLiteIncrementalPersistence):
         super().__init__(*args, **kwargs)
 
     @contextmanager
-    def transaction(self, *, owner_epoch: int | None = None) -> Iterator:
+    def transaction(
+        self,
+        *,
+        owner_epoch: int | None = None,
+        owner_id: str | None = None,
+    ) -> Iterator:
         self._transaction_count += 1
         index = self._transaction_count
-        with super().transaction(owner_epoch=owner_epoch) as uow:
+        with super().transaction(owner_epoch=owner_epoch, owner_id=owner_id) as uow:
             yield uow
             if index == self._pause_at and self._phase == "before_commit":
                 _pause(self._marker, None)
@@ -86,10 +91,15 @@ class PausingPostgres(PostgresPersistence):
         super().__init__(*args, **kwargs)
 
     @contextmanager
-    def transaction(self, *, owner_epoch: int | None = None) -> Iterator:
+    def transaction(
+        self,
+        *,
+        owner_epoch: int | None = None,
+        owner_id: str | None = None,
+    ) -> Iterator:
         self._transaction_count += 1
         index = self._transaction_count
-        with super().transaction(owner_epoch=owner_epoch) as uow:
+        with super().transaction(owner_epoch=owner_epoch, owner_id=owner_id) as uow:
             yield uow
             if index == self._pause_at and self._phase == "before_commit":
                 pid = self._connection.execute("SELECT pg_backend_pid()").fetchone()[0]
