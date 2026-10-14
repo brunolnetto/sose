@@ -11,6 +11,9 @@ from sose.domain.entity import Entity
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
+# One explicitly identified runtime owns checkpoints in this storage fault harness.
+STORAGE_CHAOS_OWNER = "storage-chaos-runtime"
+
 
 def _large_entity(version: int = 1) -> Entity:
     return Entity(
@@ -27,7 +30,7 @@ def test_sqlite_disk_full_rolls_back_atomically_and_recovers(tmp_path):
     persistence = SQLiteIncrementalPersistence(path)
 
     with persistence.transaction() as uow:
-        uow.set_committed_tick(7)
+        uow.set_committed_tick(7, owner_id=STORAGE_CHAOS_OWNER)
     baseline_count = persistence.persisted_record_count()
     baseline_revision = persistence._database_revision()
 
@@ -42,7 +45,7 @@ def test_sqlite_disk_full_rolls_back_atomically_and_recovers(tmp_path):
         with persistence.transaction() as uow:
             uow.save_entity(_large_entity())
 
-    assert persistence.committed_tick() == 7
+    assert persistence.committed_tick(owner_id=STORAGE_CHAOS_OWNER) == 7
     assert persistence.entity("storage_chaos", "large-entity") is None
     assert persistence.persisted_record_count() == baseline_count
     assert persistence._database_revision() == baseline_revision
@@ -55,7 +58,7 @@ def test_sqlite_disk_full_rolls_back_atomically_and_recovers(tmp_path):
     persistence.close()
 
     reopened = SQLiteIncrementalPersistence(path)
-    assert reopened.committed_tick() == 7
+    assert reopened.committed_tick(owner_id=STORAGE_CHAOS_OWNER) == 7
     assert reopened.entity("storage_chaos", "large-entity") == _large_entity()
     reopened.close()
 
@@ -68,7 +71,7 @@ def test_sqlite_read_only_filesystem_preserves_state_and_recovers(tmp_path):
 
     first = SQLiteIncrementalPersistence(path)
     with first.transaction() as uow:
-        uow.set_committed_tick(11)
+        uow.set_committed_tick(11, owner_id=STORAGE_CHAOS_OWNER)
         uow.save_entity(
             Entity(
                 id="entity-1",
@@ -93,7 +96,7 @@ def test_sqlite_read_only_filesystem_preserves_state_and_recovers(tmp_path):
             blocked = SQLiteIncrementalPersistence(path)
             try:
                 with blocked.transaction() as uow:
-                    uow.set_committed_tick(12)
+                    uow.set_committed_tick(12, owner_id=STORAGE_CHAOS_OWNER)
             finally:
                 blocked.close()
     finally:
@@ -101,7 +104,7 @@ def test_sqlite_read_only_filesystem_preserves_state_and_recovers(tmp_path):
         os.chmod(path, original_file_mode)
 
     recovered = SQLiteIncrementalPersistence(path)
-    assert recovered.committed_tick() == 11
+    assert recovered.committed_tick(owner_id=STORAGE_CHAOS_OWNER) == 11
     entity = recovered.entity("storage_chaos", "entity-1")
     assert entity is not None
     assert entity.attributes["value"] == "before"
@@ -112,11 +115,11 @@ def test_sqlite_read_only_filesystem_preserves_state_and_recovers(tmp_path):
         current.attributes["value"] = "after"
         current.version = 2
         uow.save_entity(current)
-        uow.set_committed_tick(12)
+        uow.set_committed_tick(12, owner_id=STORAGE_CHAOS_OWNER)
     recovered.close()
 
     final = SQLiteIncrementalPersistence(path)
-    assert final.committed_tick() == 12
+    assert final.committed_tick(owner_id=STORAGE_CHAOS_OWNER) == 12
     entity = final.entity("storage_chaos", "entity-1")
     assert entity is not None
     assert entity.attributes["value"] == "after"
@@ -128,22 +131,22 @@ def test_live_sqlite_write_denial_rolls_back_and_can_retry(tmp_path):
     path = tmp_path / "write-denied.sqlite3"
     persistence = SQLiteIncrementalPersistence(path)
     with persistence.transaction() as uow:
-        uow.set_committed_tick(20)
+        uow.set_committed_tick(20, owner_id=STORAGE_CHAOS_OWNER)
 
     persistence._connection.execute("PRAGMA query_only = ON")
     try:
         with pytest.raises(sqlite3.OperationalError, match="readonly"):
             with persistence.transaction() as uow:
-                uow.set_committed_tick(21)
+                uow.set_committed_tick(21, owner_id=STORAGE_CHAOS_OWNER)
     finally:
         persistence._connection.execute("PRAGMA query_only = OFF")
 
-    assert persistence.committed_tick() == 20
+    assert persistence.committed_tick(owner_id=STORAGE_CHAOS_OWNER) == 20
     with persistence.transaction() as uow:
-        uow.set_committed_tick(21)
-    assert persistence.committed_tick() == 21
+        uow.set_committed_tick(21, owner_id=STORAGE_CHAOS_OWNER)
+    assert persistence.committed_tick(owner_id=STORAGE_CHAOS_OWNER) == 21
     persistence.close()
 
     reopened = SQLiteIncrementalPersistence(path)
-    assert reopened.committed_tick() == 21
+    assert reopened.committed_tick(owner_id=STORAGE_CHAOS_OWNER) == 21
     reopened.close()
