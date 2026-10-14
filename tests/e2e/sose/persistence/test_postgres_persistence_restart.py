@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+OWNER_ID = "test-postgres_persistence_restart"
+
 from datetime import timedelta
 import os
 from uuid import uuid4
@@ -30,8 +32,8 @@ def test_postgres_survives_connection_close_reopen_and_backend_rebuild():
     namespace = f"restart_{uuid4().hex[:16]}"
 
     first = PostgresPersistence(DSN, namespace=namespace)
-    job = seed_job(first)
-    _, engine = build_runtime(first)
+    job = seed_job(owner_id=OWNER_ID, first)
+    _, engine = build_runtime(owner_id=OWNER_ID, first)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     complete_at = ORIGIN + timedelta(hours=2)
