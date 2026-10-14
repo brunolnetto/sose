@@ -16,10 +16,12 @@ from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
 
+
+REFERENCE_OWNER_ID = "airports-restart-equivalence-reference"
 def test_pending_arrival_schedule_survives_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend_before = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend_before)
 
@@ -31,6 +33,7 @@ def test_pending_arrival_schedule_survives_restart():
     )
     rebuilt = restart_reference_runtime(
         persistence,
+        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend_before,
         backend_factory=SimPyBackend,
@@ -50,8 +53,8 @@ def test_pending_arrival_schedule_survives_restart():
 
 def test_pending_gate_demand_survives_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -79,6 +82,7 @@ def test_pending_gate_demand_survives_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
+        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
@@ -113,8 +117,8 @@ def test_pending_gate_demand_survives_restart():
 
 
 def _prepare_waiting_slot(persistence):
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     arrival_at = schedule_arrival(
@@ -160,6 +164,7 @@ def test_pending_tug_demand_survives_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
+        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
@@ -233,6 +238,7 @@ def test_consumed_slot_and_pushback_recover_after_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
+        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
@@ -279,6 +285,7 @@ def test_committed_departure_queue_selection_survives_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
+        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
