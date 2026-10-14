@@ -35,7 +35,7 @@ class DurableScheduler:
     """Persist future execution intent independently from any backend queue."""
 
     def __init__(self, persistence: Persistence, *, owner_id: str) -> None:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         self._persistence = persistence
         self._owner_id = owner_id
@@ -130,7 +130,7 @@ class DurableScheduler:
         A work row *present* without its Command in the same transaction remains
         an error, and must not be silently repaired.
         """
-        with self._persistence.transaction() as uow:
+        with self._persistence.transaction(owner_id=self._owner_id) as uow:
             work = uow.get_scheduled_work(work_id)
             if work is None:
                 return False
@@ -238,7 +238,7 @@ class RuntimeRebuilder:
         owner_id: str,
     ) -> None:
         self._persistence = persistence
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         self._owner_id = owner_id
         self._context = context
