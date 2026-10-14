@@ -40,7 +40,11 @@ class Engine:
         scenarios: Iterable[Scenario] = (),
         store_filters=None,
         domain_warehouse: DomainWarehouse | None = None,
+        owner_id: str | None = None,
     ) -> None:
+        if owner_id == "":
+            raise ValueError("owner_id must not be empty")
+        self.owner_id = owner_id
         self.context = context
         self.registry = registry
         self.persistence = persistence
@@ -55,7 +59,7 @@ class Engine:
         self.preemptive_resources = DurablePreemptiveResourceManager(persistence)
         self.stores = DurableStoreManager(persistence, filters=store_filters)
         self.containers = DurableContainerManager(persistence)
-        self.scheduler = DurableScheduler(persistence)
+        self.scheduler = DurableScheduler(persistence, owner_id=owner_id)
         self.context.schedules.bind_scheduler(self.scheduler)
         self.context.scenarios.register_many(scenarios)
         self.context.bind_statecharts(registry)
@@ -158,7 +162,7 @@ class Engine:
                 if not self._dispatch_scheduled_in_uow(item, uow):
                     return False
 
-                previous = self.persistence.simulation_position()
+                previous = self.persistence.simulation_position(owner_id=self.owner_id)
                 next_sequence = 1 if previous is None else previous.execution_sequence + 1
                 uow.set_simulation_position(
                     SimulationPosition(
@@ -166,7 +170,8 @@ class Engine:
                         execution_sequence=next_sequence,
                         committed_sequence=next_sequence,
                         logical_tick=self.context.clock.tick,
-                    )
+                    ),
+                    owner_id=self.owner_id,
                 )
         except Exception:
             self.context.clock.now = previous_time
@@ -190,6 +195,7 @@ class Engine:
         rebuilt = RuntimeRebuilder(
             self.persistence,
             context=self.context,
+            owner_id=self.owner_id,
             # A local domain must never dispatch scheduled work owned by
             # another domain's StateChart. The foreign durable Command/work
             # remain untouched for their proper domain runtime.
@@ -303,7 +309,7 @@ class Engine:
 
         scenario_before = self.context.scenarios.snapshot_state()
         pending_before = list(self.context.pending_events)
-        position_before = self.persistence.simulation_position()
+        position_before = self.persistence.simulation_position(owner_id=self.owner_id)
         execution_sequence = (
             0 if position_before is None else position_before.execution_sequence
         )
@@ -335,7 +341,8 @@ class Engine:
                         execution_sequence=next_sequence,
                         committed_sequence=next_sequence,
                         logical_tick=next_tick,
-                    )
+                    ),
+                    owner_id=self.owner_id,
                 )
         except Exception:
             self.context.clock.now = tick_start
