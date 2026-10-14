@@ -82,6 +82,7 @@ def service_task_id(stage: str, subject_id: str) -> str:
 def build_runtime(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     tick: int = 0,
     scenarios=(),
@@ -107,6 +108,7 @@ def build_runtime(
     return context, Engine(
         context=context,
         registry=registry,
+        owner_id=owner_id,
         persistence=persistence,
         scenarios=scenarios,
     )
