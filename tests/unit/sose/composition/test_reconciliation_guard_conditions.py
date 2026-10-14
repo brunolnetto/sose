@@ -64,7 +64,7 @@ class _ReadFault:
     ],
 )
 def test_recovery_never_invents_missing_or_conflicting_pick_evidence(case, error):
-    executed = customer.run_customer_demand_path()
+    executed = customer.run_customer_demand_path(organization_id="test-org-reconciliation-guard-conditions")
     overlay = _ReadFault(executed.persistence, case)
     if error is None:
         assert customer.reconcile_shipped_fulfillment_egress(
