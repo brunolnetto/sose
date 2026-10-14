@@ -64,7 +64,7 @@ def test_restarted_r2r_consumer_resumes_committed_journal_without_duplicate(
     monkeypatch.setattr(customer.r2r, "_dispatch", interrupted_dispatch)
     monkeypatch.setattr(customer.r2r, "submit_and_post_journal", interrupted_submit)
     with pytest.raises(RuntimeError, match="R2R worker died"):
-        customer.run_customer_demand_path()
+        customer.run_customer_demand_path(organization_id="test-org-r2r-durable-recovery")
     monkeypatch.setattr(customer, "_execute_intent", original_execute)
     monkeypatch.setattr(customer.r2r, "_dispatch", original_dispatch)
     monkeypatch.setattr(customer.r2r, "submit_and_post_journal", original_submit)
