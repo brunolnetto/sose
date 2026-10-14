@@ -168,7 +168,7 @@ class Engine:
                 if not self._dispatch_scheduled_in_uow(item, uow):
                     return False
 
-                previous = self.persistence.simulation_position(owner_id=self.owner_id)
+                previous = uow.get_simulation_position(owner_id=self.owner_id)
                 next_sequence = 1 if previous is None else previous.execution_sequence + 1
                 uow.set_simulation_position(
                     SimulationPosition(
@@ -332,6 +332,8 @@ class Engine:
                 self.dispatch(command)
 
             with self.persistence.transaction() as uow:
+                if uow.get_simulation_position(owner_id=self.owner_id) != position_before:
+                    raise RuntimeError("stale owner simulation position at tick admission")
                 uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
 
                 executed = 0
