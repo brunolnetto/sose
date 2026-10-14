@@ -111,3 +111,34 @@ def test_postgres_different_owners_forced_overlap_advance_independently():
         for owner in owners:
             assert store.simulation_position(owner_id=owner) == _position(1)
             assert store.committed_tick(owner_id=owner) == 0
+
+
+def test_postgres_same_owner_parallel_scheduling_allocates_distinct_local_sequence():
+    assert DSN
+    from sose.core.durable import DurableScheduler
+    from sose.core.events import Command
+
+    namespace = "pc6_owner_schedule_" + uuid4().hex[:12]
+    owner = "organization-one"
+    barrier = Barrier(2)
+
+    def schedule(index):
+        with PostgresPersistence(DSN, namespace=namespace) as store:
+            scheduler = DurableScheduler(store, owner_id=owner)
+            command = Command(
+                command_id=f"owner-one-command-{index}",
+                name="advance", entity_type="shipment", entity_id=str(index),
+                due_at=ORIGIN + timedelta(hours=1),
+            )
+            barrier.wait(timeout=15)
+            return scheduler.schedule(command)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(schedule, index) for index in range(2)]
+        works = [f.result(timeout=35) for f in futures]
+
+    assert {work.sequence for work in works} == {1, 2}
+    assert len({work.work_id for work in works}) == 2
+    assert all(work.owner_id == owner for work in works)
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        assert len(store.scheduled_work()) == 2
