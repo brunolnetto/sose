@@ -55,7 +55,7 @@ def test_replaying_completed_batch_trigger_is_idempotent():
 
     assert repeated == first
     assert job.state().next_tick == 2
-    assert persistence.simulation_position().logical_tick == 2
+    assert persistence.simulation_position(owner_id=job.job_id).logical_tick == 2
 
 
 def test_failed_batch_recovers_from_first_unfinished_child_tick():
@@ -297,7 +297,7 @@ def test_completed_history_is_rechecked_atomically_before_batch_claim(monkeypatc
     replayed = job.run_trigger(trigger_id="scheduler-old")
 
     assert replayed == completed
-    assert persistence.simulation_position().logical_tick == 1
+    assert persistence.simulation_position(owner_id=job.job_id).logical_tick == 1
 
 
 def test_recovery_uses_persisted_batch_size_after_policy_change():
@@ -368,7 +368,7 @@ def test_active_batch_accepts_only_exact_next_child_trigger_id():
     with pytest.raises(RuntimeError, match="expected_child"):
         job.run_tick(trigger_id="batch:tick:999")
 
-    assert persistence.simulation_position() is None
+    assert persistence.simulation_position(owner_id=job.job_id) is None
     state = job.state()
     assert state.active_batch_completed_ticks == 0
 
@@ -401,7 +401,7 @@ def test_tick_rechecks_batch_ownership_inside_claim_transaction(monkeypatch):
     with pytest.raises(RuntimeError, match="unresolved batch trigger"):
         job.run_tick(trigger_id="manual-race")
 
-    assert persistence.simulation_position() is None
+    assert persistence.simulation_position(owner_id=job.job_id) is None
     durable = persistence.job_state(job.job_id)
     assert durable is not None
     assert durable.active_batch_trigger_id == "batch-race"
