@@ -9,6 +9,8 @@ from sose.persistence.memory import MemoryPersistence
 
 
 ORIGIN = datetime(2026, 1, 1, tzinfo=timezone.utc)
+OWNER_ID = "reference-rebuilder"
+FOREIGN_OWNER_ID = "independent-organization"
 
 
 class RecordingBackend:
@@ -22,12 +24,12 @@ class RecordingBackend:
 
 
 def command(command_id: str, due_at: datetime) -> Command:
-    return Command(command_id, "advance", "demo", "1", due_at)
+    return Command(command_id, "advance", "demo", "1", due_at , owner_id=OWNER_ID)
 
 
 def test_durable_scheduler_persists_semantic_work_not_callback():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     cmd = command("cmd-1", ORIGIN + timedelta(hours=1))
 
     work = scheduler.schedule(cmd, priority=10)
@@ -41,10 +43,10 @@ def test_durable_scheduler_persists_semantic_work_not_callback():
 
 def test_durable_scheduler_sequence_survives_reconstruction():
     store = MemoryPersistence()
-    first = DurableScheduler(store)
+    first = DurableScheduler(store, owner_id=OWNER_ID)
     work1 = first.schedule(command("cmd-1", ORIGIN + timedelta(hours=1)))
 
-    second = DurableScheduler(store)
+    second = DurableScheduler(store, owner_id=OWNER_ID)
     work2 = second.schedule(command("cmd-2", ORIGIN + timedelta(hours=1)))
 
     assert work2.sequence == work1.sequence + 1
@@ -52,13 +54,13 @@ def test_durable_scheduler_sequence_survives_reconstruction():
 
 def test_rebuilder_reconstructs_backend_events_from_durable_work():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     cmd = command("cmd-1", ORIGIN + timedelta(hours=1))
     work = scheduler.schedule(cmd, priority=7)
     backend = RecordingBackend(now=ORIGIN)
     observed = []
 
-    rebuilt = RuntimeRebuilder(store).rebuild(
+    rebuilt = RuntimeRebuilder(store, owner_id=OWNER_ID).rebuild(
         backend,
         on_due=lambda item: observed.append((item.work.work_id, item.command.command_id)),
     )
@@ -75,7 +77,7 @@ def test_rebuilder_reconstructs_backend_events_from_durable_work():
 
 def test_rebuilder_uses_persisted_logical_time_as_recovery_boundary():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     scheduler.schedule(command("cmd-1", ORIGIN + timedelta(hours=1)))
 
     with store.transaction() as uow:
@@ -85,16 +87,16 @@ def test_rebuilder_uses_persisted_logical_time_as_recovery_boundary():
                 execution_sequence=4,
                 committed_sequence=4,
             )
-        )
+         , owner_id=OWNER_ID)
 
     backend = RecordingBackend(now=ORIGIN + timedelta(hours=1))
 
-    assert RuntimeRebuilder(store).rebuild(backend, on_due=lambda _: None) == 1
+    assert RuntimeRebuilder(store, owner_id=OWNER_ID).rebuild(backend, on_due=lambda _: None) == 1
 
 
 def test_rebuilder_rejects_pending_work_before_committed_logical_time():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     scheduler.schedule(command("cmd-1", ORIGIN))
 
     with store.transaction() as uow:
@@ -104,22 +106,22 @@ def test_rebuilder_rejects_pending_work_before_committed_logical_time():
                 execution_sequence=4,
                 committed_sequence=4,
             )
-        )
+         , owner_id=OWNER_ID)
 
     backend = RecordingBackend(now=ORIGIN + timedelta(hours=1))
 
     with pytest.raises(RuntimeError, match="before recovery boundary"):
-        RuntimeRebuilder(store).rebuild(backend, on_due=lambda _: None)
+        RuntimeRebuilder(store, owner_id=OWNER_ID).rebuild(backend, on_due=lambda _: None)
 
 
 def test_rebuilder_rejects_work_before_backend_time_without_saved_position():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     scheduler.schedule(command("cmd-1", ORIGIN))
     backend = RecordingBackend(now=ORIGIN + timedelta(hours=1))
 
     with pytest.raises(RuntimeError, match="before recovery boundary"):
-        RuntimeRebuilder(store).rebuild(backend, on_due=lambda _: None)
+        RuntimeRebuilder(store, owner_id=OWNER_ID).rebuild(backend, on_due=lambda _: None)
 
 
 class FakeClock:
@@ -161,7 +163,7 @@ def test_rebuilder_restores_runtime_position_scenarios_and_resources():
                 committed_sequence=3,
                 logical_tick=9,
             )
-        )
+         , owner_id=OWNER_ID)
 
     backend = RecordingBackend(now=ORIGIN + timedelta(hours=2))
     context = FakeContext()
@@ -169,6 +171,7 @@ def test_rebuilder_restores_runtime_position_scenarios_and_resources():
 
     rebuilt = RuntimeRebuilder(
         store,
+        owner_id=OWNER_ID,
         context=context,
         participants=(RecoveryParticipant("resources", resources),),
     ).rebuild(
@@ -185,7 +188,7 @@ def test_rebuilder_restores_runtime_position_scenarios_and_resources():
 
 def test_rebuilder_validates_all_scheduled_work_before_resource_reconstruction():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     scheduler.schedule(command("stale", ORIGIN))
 
     with store.transaction() as uow:
@@ -196,7 +199,7 @@ def test_rebuilder_validates_all_scheduled_work_before_resource_reconstruction()
                 committed_sequence=1,
                 logical_tick=1,
             )
-        )
+         , owner_id=OWNER_ID)
 
     backend = RecordingBackend(now=ORIGIN + timedelta(hours=1))
     resources = FakeResources()
@@ -204,6 +207,7 @@ def test_rebuilder_validates_all_scheduled_work_before_resource_reconstruction()
     with pytest.raises(RuntimeError, match="before recovery boundary"):
         RuntimeRebuilder(
             store,
+            owner_id=OWNER_ID,
             context=FakeContext(),
             participants=(RecoveryParticipant("resources", resources),),
         ).rebuild(
@@ -235,6 +239,7 @@ def test_rebuilder_validates_every_participant_before_any_rebuild():
 
     RuntimeRebuilder(
         store,
+        owner_id=OWNER_ID,
         participants=(
             RecoveryParticipant("first", first),
             RecoveryParticipant("second", second),
@@ -253,6 +258,7 @@ def test_rebuilder_exposes_stable_named_recovery_order():
     observed = []
     rebuilder = RuntimeRebuilder(
         MemoryPersistence(),
+        owner_id=OWNER_ID,
         context=FakeContext(),
         participants=(
             RecoveryParticipant("resources", OrderedParticipant("resources", observed)),
@@ -292,6 +298,7 @@ def test_malformed_late_participant_fails_before_any_rebuild():
     with pytest.raises(TypeError, match="has no rebuild_backend"):
         RuntimeRebuilder(
             MemoryPersistence(),
+            owner_id=OWNER_ID,
             participants=(
                 RecoveryParticipant("valid", valid),
                 RecoveryParticipant("invalid", object()),
@@ -311,6 +318,7 @@ def test_rebuilder_restores_scenarios_with_live_clock_when_no_position_exists():
 
     rebuilt = RuntimeRebuilder(
         store,
+        owner_id=OWNER_ID,
         context=context,
     ).rebuild(
         backend,
@@ -326,7 +334,7 @@ def test_rebuilder_restores_scenarios_with_live_clock_when_no_position_exists():
 def test_scheduler_attached_backend_schedules_and_detach_stops_callbacks():
     store = MemoryPersistence()
     backend = RecordingBackend(now=ORIGIN)
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     observed = []
     scheduler.attach_backend(
         backend,
@@ -348,7 +356,7 @@ def test_scheduler_attached_backend_schedules_and_detach_stops_callbacks():
 
 def test_scheduler_rejects_duplicate_and_past_due_work_with_attached_backend():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     scheduler.schedule(command("cmd-1", ORIGIN + timedelta(minutes=5)))
 
     with pytest.raises(ValueError, match="already scheduled"):
@@ -361,7 +369,7 @@ def test_scheduler_rejects_duplicate_and_past_due_work_with_attached_backend():
 
 def test_scheduler_find_pending_due_and_cancel_pending_paths():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     early = scheduler.schedule(command("cmd-early", ORIGIN + timedelta(minutes=5)))
     scheduler.schedule(
         Command(
@@ -370,7 +378,7 @@ def test_scheduler_find_pending_due_and_cancel_pending_paths():
             "demo",
             "2",
             ORIGIN + timedelta(hours=1),
-        )
+         owner_id=OWNER_ID)
     )
 
     assert [item.work.work_id for item in scheduler.due(ORIGIN + timedelta(minutes=30))] == [
@@ -404,7 +412,7 @@ def test_scheduler_find_pending_due_and_cancel_pending_paths():
 
 def test_scheduler_find_pending_rejects_duplicate_semantic_matches():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     scheduler.schedule(command("cmd-1", ORIGIN + timedelta(minutes=1)))
     scheduler.schedule(command("cmd-2", ORIGIN + timedelta(minutes=2)))
 
@@ -418,7 +426,7 @@ def test_scheduler_find_pending_rejects_duplicate_semantic_matches():
 
 def test_scheduler_pending_and_cancel_reject_missing_command_reference():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     work = scheduler.schedule(command("cmd-1", ORIGIN + timedelta(minutes=1)))
     with store.transaction() as uow:
         uow.delete_command("cmd-1")
@@ -430,7 +438,7 @@ def test_scheduler_pending_and_cancel_reject_missing_command_reference():
 
 
 def test_scheduler_cancel_returns_false_when_target_not_found():
-    scheduler = DurableScheduler(MemoryPersistence())
+    scheduler = DurableScheduler(MemoryPersistence(), owner_id=OWNER_ID)
     assert scheduler.cancel("missing-work") is False
 
 
@@ -460,17 +468,18 @@ def test_recovery_participant_validate_and_rebuild_normalize_return_type():
 
 def test_rebuilder_filters_foreign_scheduled_work_without_consuming_it():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
-    own = Command("own-mro", "release", "work_order", "wo-1", ORIGIN + timedelta(hours=2))
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
+    own = Command("own-mro", "release", "work_order", "wo-1", ORIGIN + timedelta(hours=2) , owner_id=OWNER_ID)
     foreign = Command("foreign-shipment", "schedule_pickup", "shipment", "s-1",
-                      ORIGIN + timedelta(hours=1))
+                      ORIGIN + timedelta(hours=1), owner_id=FOREIGN_OWNER_ID)
     own_work = scheduler.schedule(own)
-    foreign_work = scheduler.schedule(foreign)
+    foreign_work = DurableScheduler(store, owner_id=FOREIGN_OWNER_ID).schedule(foreign)
 
     backend = RecordingBackend(ORIGIN)
     observed = []
     rebuilt = RuntimeRebuilder(
-        store, scheduled_work_filter=lambda item: item.command.entity_type == "work_order",
+        store,
+        owner_id=OWNER_ID, scheduled_work_filter=lambda item: item.command.entity_type == "work_order",
     ).rebuild(backend, on_due=lambda item: observed.append(item.command.command_id))
 
     assert rebuilt == 1
@@ -485,19 +494,45 @@ def test_rebuilder_filters_foreign_scheduled_work_without_consuming_it():
 
 def test_rebuilder_filters_foreign_earlier_work_before_own_recovery_boundary_validation():
     store = MemoryPersistence()
-    scheduler = DurableScheduler(store)
-    foreign = scheduler.schedule(Command("older-foreign", "pickup", "shipment", "s-1", ORIGIN))
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
+    foreign = DurableScheduler(store, owner_id=FOREIGN_OWNER_ID).schedule(Command("older-foreign", "pickup", "shipment", "s-1", ORIGIN, owner_id=FOREIGN_OWNER_ID))
     own = scheduler.schedule(Command(
         "current-own", "release", "work_order", "wo-1", ORIGIN + timedelta(hours=2),
-    ))
+     owner_id=OWNER_ID))
     with store.transaction() as uow:
         uow.set_simulation_position(SimulationPosition(
             logical_time=ORIGIN + timedelta(hours=1), execution_sequence=1,
             committed_sequence=1,
-        ))
+        ) , owner_id=OWNER_ID)
     backend = RecordingBackend(ORIGIN + timedelta(hours=1))
     assert RuntimeRebuilder(
-        store, scheduled_work_filter=lambda item: item.command.entity_type == "work_order",
+        store,
+        owner_id=OWNER_ID, scheduled_work_filter=lambda item: item.command.entity_type == "work_order",
     ).rebuild(backend, on_due=lambda _: None) == 1
     assert backend.calls[0][2] == ("durable-work", own.work_id)
     assert foreign in store.scheduled_work()
+
+
+def test_rebuilder_does_not_read_another_organizations_position():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.set_simulation_position(
+            SimulationPosition(
+                logical_time=ORIGIN + timedelta(hours=3),
+                execution_sequence=3,
+                committed_sequence=3,
+                logical_tick=3,
+            ), owner_id=OWNER_ID,
+        )
+        uow.set_simulation_position(
+            SimulationPosition(
+                logical_time=ORIGIN,
+                execution_sequence=0,
+                committed_sequence=0,
+            ), owner_id=FOREIGN_OWNER_ID,
+        )
+    backend = RecordingBackend(now=ORIGIN)
+    assert RuntimeRebuilder(store, owner_id=FOREIGN_OWNER_ID).rebuild(
+        backend, on_due=lambda _: None,
+    ) == 0
+    assert backend.calls == []
