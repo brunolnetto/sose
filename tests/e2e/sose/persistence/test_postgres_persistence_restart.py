@@ -51,6 +51,7 @@ def test_postgres_survives_connection_close_reopen_and_backend_rebuild():
         reopened,
         build_runtime,
         backend,
+        owner_id=OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt.backend.run_until(complete_at)
