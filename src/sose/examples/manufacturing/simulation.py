@@ -75,11 +75,12 @@ def _validate_quantity(quantity: float) -> None:
 def seed_happy_path(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     quantity: float = 10.0,
 ) -> ManufacturingEntities:
     _validate_quantity(quantity)
-    context, engine = build_runtime(persistence, now=now)
+    context, engine = build_runtime(persistence, owner_id=owner_id, now=now)
     correlation_id = flow_correlation_id()
 
     order = context.entities.create(
