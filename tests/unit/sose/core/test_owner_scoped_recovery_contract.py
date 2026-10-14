@@ -523,12 +523,13 @@ def test_tick_refuses_stale_pretransaction_position(monkeypatch):
     original_transaction = store.transaction
     interleaving = {"injected": False}
 
-    def competing_transaction():
+    def competing_transaction(*, owner_epoch=None, owner_id=None):
+        assert owner_id == owner
         if not interleaving["injected"]:
             interleaving["injected"] = True
-            with original_transaction() as uow:
+            with original_transaction(owner_id=owner) as uow:
                 uow.set_simulation_position(other_worker, owner_id=owner)
-        return original_transaction()
+        return original_transaction(owner_epoch=owner_epoch, owner_id=owner_id)
 
     monkeypatch.setattr(store, "transaction", competing_transaction)
     with pytest.raises(RuntimeError, match="stale|changed|position"):
