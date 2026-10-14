@@ -48,6 +48,7 @@ class _State:
     simulation_position: SimulationPosition | None = None
     simulation_positions: dict[str, SimulationPosition] = field(default_factory=dict)
     scenario_state: ScenarioRuntimeState | None = None
+    scenario_states: dict[str, ScenarioRuntimeState] = field(default_factory=dict)
     resource_definitions: dict[str, ResourceDefinition] = field(default_factory=dict)
     resource_demands: dict[str, ResourceDemand] = field(default_factory=dict)
     resource_reservations: dict[str, ResourceReservation] = field(default_factory=dict)
@@ -76,6 +77,7 @@ class _State:
     customer_settlement_bindings: dict[tuple[str, str], CustomerSettlementBinding] = field(default_factory=dict)
     domain_deliveries: dict[str, DomainDelivery] = field(default_factory=dict)
     committed_tick: int = -1
+    committed_ticks: dict[str, int] = field(default_factory=dict)
 
 
 def fork_state(state: _State) -> _State:
@@ -379,7 +381,13 @@ class MemoryUnitOfWork:
         self._working.simulation_position = deepcopy(position)
         self._mark_dirty("simulation_position", "__scalar__")
 
-    def set_scenario_state(self, state: ScenarioRuntimeState) -> None:
+    def set_scenario_state(self, state: ScenarioRuntimeState, *, owner_id: str | None = None) -> None:
+        if owner_id is not None:
+            if not owner_id:
+                raise ValueError("owner_id must not be empty")
+            self._working.scenario_states[owner_id] = deepcopy(state)
+            self._mark_dirty("scenario_states", owner_id)
+            return
         self._working.scenario_state = deepcopy(state)
         self._mark_dirty("scenario_state", "__scalar__")
 
@@ -731,7 +739,13 @@ class MemoryUnitOfWork:
         self._working.resource_preemption_results[result.result_id] = deepcopy(result)
         self._mark_dirty("resource_preemption_results", result.result_id)
 
-    def set_committed_tick(self, tick: int) -> None:
+    def set_committed_tick(self, tick: int, *, owner_id: str | None = None) -> None:
+        if owner_id is not None:
+            if not owner_id:
+                raise ValueError("owner_id must not be empty")
+            self._working.committed_ticks[owner_id] = tick
+            self._mark_dirty("committed_ticks", owner_id)
+            return
         self._working.committed_tick = tick
         self._mark_dirty("committed_tick", "__scalar__")
 
@@ -849,8 +863,8 @@ class MemoryPersistence:
             if job_id is None or checkpoint.job_id == job_id
         )
 
-    def committed_tick(self) -> int:
-        return self._state.committed_tick
+    def committed_tick(self, *, owner_id: str | None = None) -> int:
+        return self._state.committed_ticks.get(owner_id, -1) if owner_id is not None else self._state.committed_tick
 
     def events(self) -> tuple[DomainEvent, ...]:
         return tuple(deepcopy(self._state.events))
@@ -879,8 +893,8 @@ class MemoryPersistence:
             return deepcopy(self._state.simulation_positions.get(owner_id))
         return deepcopy(self._state.simulation_position)
 
-    def scenario_state(self) -> ScenarioRuntimeState | None:
-        return deepcopy(self._state.scenario_state)
+    def scenario_state(self, *, owner_id: str | None = None) -> ScenarioRuntimeState | None:
+        return deepcopy(self._state.scenario_states.get(owner_id)) if owner_id is not None else deepcopy(self._state.scenario_state)
 
     def resource_definitions(self) -> tuple[ResourceDefinition, ...]:
         return tuple(
