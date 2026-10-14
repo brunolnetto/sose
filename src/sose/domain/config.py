@@ -27,10 +27,10 @@ SeedT = TypeVar("SeedT")
 
 
 BuildRuntime = Callable[
-    [Persistence, ConfigT, datetime, int],
+    [Persistence, ConfigT, datetime, int, str],
     tuple[SimulationContext, Engine],
 ]
-SeedDomain = Callable[[Persistence, ConfigT], SeedT]
+SeedDomain = Callable[[Persistence, ConfigT, str], SeedT]
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,10 +46,10 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
     description: str
     config_model: type[ConfigT]
     build_runtime: Callable[
-        [Persistence, ConfigT, datetime, int],
+        [Persistence, ConfigT, datetime, int, str],
         tuple[SimulationContext, Engine],
     ]
-    seed: Callable[[Persistence, ConfigT], SeedT]
+    seed: Callable[[Persistence, ConfigT, str], SeedT]
     kind: Literal["domain", "canonical"] = "domain"
     reconcile_tick: Callable[
         [Persistence, Engine, object, ConfigT, SeedT],
