@@ -631,10 +631,20 @@ class PostgresPersistence(MemoryPersistence):
         *,
         owner_epoch: int | None = None,
         writer_scope: str | None = None,
+        owner_id: str | None = None,
     ) -> Iterator[MemoryUnitOfWork]:
+        if owner_id is not None and not owner_id:
+            raise ValueError("owner_id must not be empty")
         before: _State | None = None
         try:
             with self._connection.transaction():
+                if owner_id is not None:
+                    # Per-owner admission linearizes clock/sequence read and write.
+                    # Independent owners never contend on this advisory key.
+                    self._connection.execute(
+                        "SELECT pg_advisory_xact_lock(hashtext(%s), hashtext(%s))",
+                        (self.namespace, "runtime-owner:" + owner_id),
+                    )
                 if writer_scope is None:
                     # Preserve the original single-argument extension point.
                     self._lock_and_validate_epoch(owner_epoch)
