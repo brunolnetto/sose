@@ -223,7 +223,7 @@ def _proof(dsn, domains, physical_ns, seeds):
                 "containers": _canonical_objects(store.container_states()),
                 "sinks": _canonical_objects(store.sink_checkpoints()),
                 "position": (
-                    asdict(position) if (position := store.simulation_position()) is not None
+                    asdict(position) if (position := store.simulation_position(owner_id=state.job_id)) is not None
                     else None
                 ),
                 "job_state": asdict(state),
