@@ -13,7 +13,10 @@ def test_composition_recovery_one_shot_cron_invocations(tmp_path, capsys):
     db = tmp_path / "composition.sqlite"
     args = [
         "composition-recovery", "--sqlite", str(db),
-        "--owner-id", "cron", "--start-at", START.isoformat(),
+        "--owner-id", "cron",
+        "--correlation-id", "test-customer-correlation",
+        "--organization-id", "test-trading-organization",
+        "--start-at", START.isoformat(),
         "--interval-seconds", "60", "--max-slots", "2",
     ]
     assert run_cli([*args, "--now", (START + timedelta(minutes=1)).isoformat()]) == 0
@@ -30,7 +33,10 @@ def test_composition_recovery_one_shot_cron_invocations(tmp_path, capsys):
 def test_composition_recovery_cli_rejects_naive_anchor(tmp_path, capsys):
     result = run_cli([
         "composition-recovery", "--sqlite", str(tmp_path / "invalid.sqlite"),
-        "--owner-id", "cron", "--start-at", "2026-10-09T12:00:00",
+        "--owner-id", "cron",
+        "--correlation-id", "test-customer-correlation",
+        "--organization-id", "test-trading-organization",
+        "--start-at", "2026-10-09T12:00:00",
         "--interval-seconds", "60",
     ])
     assert result == 2
