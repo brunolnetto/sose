@@ -96,11 +96,12 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     room_count: int = 2,
     room_type: str = "standard",
 ) -> HospitalityEntities:
-    context, _ = build_runtime(persistence, now=now)
+    context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
     rooms = tuple(
         context.entities.create(
             Room,
