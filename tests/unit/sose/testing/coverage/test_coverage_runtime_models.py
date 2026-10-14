@@ -36,7 +36,7 @@ def test_scheduled_work_preserves_constructor_argument_order():
         7,
         13,
         "command-1",
-            owner_id="test-test_coverage_runtime_models",
+        owner_id="test-test_coverage_runtime_models",
     )
 
     assert work.work_id == "work-1"
