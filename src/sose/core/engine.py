@@ -332,10 +332,11 @@ class Engine:
         try:
             self.context.scenarios.on_tick()
 
-            # The legacy in-memory scheduler is retained only as a compatibility
-            # bridge. Engine-bound ScheduleFactory instances use DurableScheduler.
-            for command in self.context.scheduler.due(tick_start):
-                self.dispatch(command)
+            # The in-memory Scheduler is not an authoritative work source.
+            # Reject it before entering an owner transaction; never commit
+            # legacy callbacks outside the fenced durable work boundary.
+            if len(self.context.scheduler):
+                raise RuntimeError("unowned in-memory scheduling is not supported")
 
             with self.persistence.transaction(owner_id=self.owner_id) as uow:
                 if uow.get_simulation_position(owner_id=self.owner_id) != position_before:
