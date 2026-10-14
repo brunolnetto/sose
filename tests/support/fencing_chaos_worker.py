@@ -91,11 +91,16 @@ class PausingSQLite(_PausingMixin, SQLiteIncrementalPersistence):
         super().__init__(path)
 
     @contextmanager
-    def transaction(self, *, owner_epoch: int | None = None) -> Iterator:
+    def transaction(
+        self,
+        *,
+        owner_epoch: int | None = None,
+        owner_id: str | None = None,
+    ) -> Iterator:
         if owner_epoch is not None:
             self.fenced_transactions += 1
         index = self.fenced_transactions
-        with super().transaction(owner_epoch=owner_epoch) as uow:
+        with super().transaction(owner_epoch=owner_epoch, owner_id=owner_id) as uow:
             yield uow
             if self._matches(index, "before_commit", owner_epoch):
                 _pause(self.marker, self.continue_file, owner_epoch)
@@ -120,11 +125,16 @@ class PausingPostgres(_PausingMixin, PostgresPersistence):
         super().__init__(dsn, namespace=namespace)
 
     @contextmanager
-    def transaction(self, *, owner_epoch: int | None = None) -> Iterator:
+    def transaction(
+        self,
+        *,
+        owner_epoch: int | None = None,
+        owner_id: str | None = None,
+    ) -> Iterator:
         if owner_epoch is not None:
             self.fenced_transactions += 1
         index = self.fenced_transactions
-        with super().transaction(owner_epoch=owner_epoch) as uow:
+        with super().transaction(owner_epoch=owner_epoch, owner_id=owner_id) as uow:
             yield uow
             if self._matches(index, "before_commit", owner_epoch):
                 _pause(self.marker, self.continue_file, owner_epoch)
