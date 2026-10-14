@@ -97,7 +97,11 @@ def records_to_state(records: Iterable[StateRecord]) -> _State:
         if isinstance(default_value, dict):
             restored: dict[object, object] = {}
             for record in current:
-                restored[loads(record.key)] = loads(record.payload)
+                decoded_key = loads(record.key)
+                if name in {"simulation_positions", "scenario_states", "committed_ticks"}:
+                    if not isinstance(decoded_key, str) or not decoded_key.strip():
+                        raise ValueError(f"unowned durable temporal record in {name}")
+                restored[decoded_key] = loads(record.payload)
             values[name] = restored
             continue
 
