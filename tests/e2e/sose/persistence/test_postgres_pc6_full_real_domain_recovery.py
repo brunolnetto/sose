@@ -61,23 +61,23 @@ def _policy():
     )
 
 
-def _seed_real_workflow(dsn, ns):
+def _seed_real_workflow(dsn, ns, organization):
     """Stop synchronous demo before real Logistics, leaving a genuine ACK/Command."""
     original = customer._execute_intent
 
-    def only_seed(store, *, effect_id, fixtures, correlation_id):
+    def only_seed(store, *, effect_id, fixtures, correlation_id, organization_id):
         command = store.command(effect_id)
         if command is not None and command.name == DOMAINS[0]:
             raise RuntimeError("pc6 staged real Logistics boundary")
         return original(
             store, effect_id=effect_id, fixtures=fixtures,
-            correlation_id=correlation_id,
+            correlation_id=correlation_id, organization_id=organization_id,
         )
 
     with PostgresPersistence(dsn, namespace=ns) as store:
         with patch.object(customer, "_execute_intent", side_effect=only_seed):
             with pytest.raises(RuntimeError, match="pc6 staged real Logistics boundary"):
-                customer.run_customer_demand_path(organization_id="test-org-postgres-pc6-full-real-domain-recovery", persistence=store, instance_key=INSTANCE)
+                customer.run_customer_demand_path(organization_id=organization, persistence=store, instance_key=INSTANCE)
         with store.boundary_transaction() as uow:
             dispatches = [
                 (uow.get_boundary_message(d.message_id),
@@ -223,7 +223,7 @@ def _proof(dsn, domains, physical_ns, seeds):
                 "containers": _canonical_objects(store.container_states()),
                 "sinks": _canonical_objects(store.sink_checkpoints()),
                 "position": (
-                    asdict(position) if (position := store.simulation_position(owner_id=state.job_id)) is not None
+                    asdict(position) if (position := store.simulation_position(owner_id=org)) is not None
                     else None
                 ),
                 "job_state": asdict(state),
@@ -234,7 +234,7 @@ def _proof(dsn, domains, physical_ns, seeds):
 def _run(dsn, *, killed=False, cut="after_logistics_effect"):
     domains = {"a": _name("pc6fulla"), "b": _name("pc6fullb")}
     shared_ns = _name("pc6fullphysical")
-    seeds = {org: _seed_real_workflow(dsn, ns) for org, ns in domains.items()}
+    seeds = {org: _seed_real_workflow(dsn, ns, org) for org, ns in domains.items()}
     assert seeds["a"][1] == seeds["b"][1]
     assert seeds["a"][0] == seeds["b"][0]
 
@@ -420,7 +420,7 @@ def _pending_domain_effect(dsn, ns, intent_name):
 def _run_real_domain_cut(dsn, *, name, killed, before_certificate=False):
     domains = {"a": _name("pc6cut_a"), "b": _name("pc6cut_b")}
     shared_ns = _name("pc6cut_physical")
-    seeds = {org: _seed_real_workflow(dsn, ns) for org, ns in domains.items()}
+    seeds = {org: _seed_real_workflow(dsn, ns, org) for org, ns in domains.items()}
     slot = 0
     while not _pending_domain_effect(dsn, domains["a"], name):
         assert slot < 18, f"target domain never acquired a durable Command: {name}"
@@ -504,7 +504,7 @@ def test_pg_real_statechart_commits_but_worker_dies_before_business_certificate(
     _record_equivalence(f"before_{intent_name}_certificate", baseline, resumed)
 
 
-def _seed_before_logistics_ack(dsn, ns):
+def _seed_before_logistics_ack(dsn, ns, organization):
     """Real customer path stops before the Logistics claim, not at fake state."""
     from sose.composition.model import DeliveryStatus
 
@@ -524,7 +524,7 @@ def _seed_before_logistics_ack(dsn, ns):
         with patch.object(customer, "_consume_next", side_effect=stop_at_dispatch):
             with pytest.raises(RuntimeError, match="before real Logistics claim"):
                 customer.run_customer_demand_path(
-                    organization_id="test-org-postgres-pc6-full-real-domain-recovery",
+                    organization_id=organization,
                     persistence=store, instance_key=INSTANCE,
                 )
         with store.boundary_transaction() as uow:
@@ -625,7 +625,7 @@ def _run_real_boundary_cut(dsn, *, cut=None):
 
     domains = {"a": _name("pc6ack_a"), "b": _name("pc6ack_b")}
     physical_ns = _name("pc6ack_shared")
-    seeded = {org: _seed_before_logistics_ack(dsn, ns) for org, ns in domains.items()}
+    seeded = {org: _seed_before_logistics_ack(dsn, ns, org) for org, ns in domains.items()}
     seeds = {org: values[:2] for org, values in seeded.items()}
     assert seeds["a"] == seeds["b"]
     if cut is None:
@@ -889,7 +889,7 @@ def _run_later_boundary_cut(dsn, *, destination, contract, predecessor_type,
 
     domains = {"a": _name("pc6later_a"), "b": _name("pc6later_b")}
     physical_ns = _name("pc6later_shared")
-    seeded = {org: _seed_before_logistics_ack(dsn, ns) for org, ns in domains.items()}
+    seeded = {org: _seed_before_logistics_ack(dsn, ns, org) for org, ns in domains.items()}
     seeds = {org: values[:2] for org, values in seeded.items()}
     assert seeds["a"] == seeds["b"]
     slot = _prepare_downstream_cut(
