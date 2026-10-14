@@ -71,6 +71,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     severity: int = 50,
     service: str = "payments-api",
@@ -78,7 +79,7 @@ def seed_reference(
     escalation_manager_capacity: int = 1,
     incident_queue_capacity: int = 100,
 ) -> ITSMEntities:
-    context, engine = build_runtime(persistence, now=now)
+    context, engine = build_runtime(persistence, owner_id=owner_id, now=now)
     incident = context.entities.create(
         Incident,
         key=("itsm-reference", "incident-1"),
