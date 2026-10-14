@@ -19,11 +19,13 @@ from sose.examples.record_to_report.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+ORGANIZATION_ID = "record-to-report-reference-organization"
+
 
 def _runtime():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=ORGANIZATION_ID)
+    _, engine = build_runtime(persistence, owner_id=ORGANIZATION_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     return persistence, entities, engine, backend
@@ -44,7 +46,7 @@ def _save(persistence, entity):
 )
 def test_seed_reference_validates_amount_and_currency(amount, currency, message):
     with pytest.raises(ValueError, match=message):
-        seed_reference(MemoryPersistence(), amount=amount, currency=currency)
+        seed_reference(MemoryPersistence(), owner_id=ORGANIZATION_ID, amount=amount, currency=currency)
 
 
 def test_missing_r2r_entity_guard_is_observable():

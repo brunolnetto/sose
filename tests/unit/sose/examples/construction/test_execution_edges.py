@@ -23,14 +23,17 @@ from sose.examples.construction.runtime import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+ORGANIZATION_ID = "construction-reference-organization"
+
 
 def _runtime(*, predecessor_completed=True):
     persistence = MemoryPersistence()
     entities = seed_reference(
         persistence,
+        owner_id=ORGANIZATION_ID,
         predecessor_completed=predecessor_completed,
     )
-    _, engine = build_runtime(persistence)
+    _, engine = build_runtime(persistence, owner_id=ORGANIZATION_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     return persistence, entities, engine, backend

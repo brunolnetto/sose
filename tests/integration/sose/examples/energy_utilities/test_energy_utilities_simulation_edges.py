@@ -27,11 +27,13 @@ from sose.examples.energy_utilities.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+ORGANIZATION_ID = "energy-utilities-reference-organization"
+
 
 def _runtime(**seed_kwargs):
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, **seed_kwargs)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=ORGANIZATION_ID, **seed_kwargs)
+    _, engine = build_runtime(persistence, owner_id=ORGANIZATION_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     return persistence, entities, engine, backend

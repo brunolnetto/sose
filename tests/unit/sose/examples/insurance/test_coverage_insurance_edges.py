@@ -25,11 +25,13 @@ from sose.examples.insurance.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+ORGANIZATION_ID = "insurance-reference-organization"
+
 
 def _runtime(**seed_kwargs):
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, **seed_kwargs)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=ORGANIZATION_ID, **seed_kwargs)
+    _, engine = build_runtime(persistence, owner_id=ORGANIZATION_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     return persistence, entities, engine, backend
@@ -66,12 +68,12 @@ def test_reference_minor_units_rejects_fractional_minor_units():
 @pytest.mark.parametrize("amount", [0.0, -1.0])
 def test_seed_reference_requires_positive_amount(amount):
     with pytest.raises(ValueError, match="amount must be positive"):
-        seed_reference(MemoryPersistence(), amount=amount)
+        seed_reference(MemoryPersistence(), owner_id=ORGANIZATION_ID, amount=amount)
 
 
 def test_seed_reference_requires_currency():
     with pytest.raises(ValueError, match="currency must be non-empty"):
-        seed_reference(MemoryPersistence(), currency="")
+        seed_reference(MemoryPersistence(), owner_id=ORGANIZATION_ID, currency="")
 
 
 def test_missing_insurance_entity_guard_is_observable():
