@@ -89,7 +89,7 @@ class Engine:
     def dispatch(self, command: Command) -> None:
         scenario_before = self.context.scenarios.snapshot_state()
         try:
-            with self.persistence.transaction() as uow:
+            with self.persistence.transaction(owner_id=self.owner_id) as uow:
                 entity = self._load_entity(uow, command.entity_type, command.entity_id)
                 if entity is None:
                     raise KeyError(f"entity not found: {command.entity_type}/{command.entity_id}")
@@ -164,7 +164,7 @@ class Engine:
         scenario_before = self.context.scenarios.snapshot_state()
         pending_before = list(self.context.pending_events)
         try:
-            with self.persistence.transaction() as uow:
+            with self.persistence.transaction(owner_id=self.owner_id) as uow:
                 if not self._dispatch_scheduled_in_uow(item, uow):
                     return False
 
@@ -331,7 +331,7 @@ class Engine:
             for command in self.context.scheduler.due(tick_start):
                 self.dispatch(command)
 
-            with self.persistence.transaction() as uow:
+            with self.persistence.transaction(owner_id=self.owner_id) as uow:
                 if uow.get_simulation_position(owner_id=self.owner_id) != position_before:
                     raise RuntimeError("stale owner simulation position at tick admission")
                 uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
