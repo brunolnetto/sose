@@ -99,6 +99,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     territory: str = REQUIRED_TERRITORY,
     required_skill: str = REQUIRED_SKILL,
@@ -106,7 +107,7 @@ def seed_reference(
     technician_resource_capacity: int = 1,
     parts_store_capacity: int = 20,
 ) -> FieldServiceEntities:
-    context, engine = build_runtime(persistence, now=now)
+    context, engine = build_runtime(persistence, owner_id=owner_id, now=now)
     work_order = context.entities.create(
         WorkOrder,
         key=("field-service-reference", "installation-1"),
