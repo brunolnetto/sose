@@ -15,14 +15,14 @@ class SleepingBarberConfig(CanonicalConfig):
     waiting_chairs: int = Field(default=3, ge=0)
 
 
-def seed(persistence, config):
+def seed(persistence, config, *, owner_id: str):
     if not persistence.resource_definitions():
         with persistence.transaction() as uow:
             uow.save_resource_definition(ResourceDefinition("barber", config.capacity))
     stores = DurableStoreManager(persistence)
     if not any(d.name == "abandoned" for d in persistence.store_definitions()):
         stores.define(StoreDefinition("abandoned"))
-    return seed_case(persistence, name="sleeping_barber",
+    return seed_case(persistence, owner_id=owner_id, name="sleeping_barber",
                      attributes={"customers": config.participants, "waiting_chairs": config.waiting_chairs})
 
 
