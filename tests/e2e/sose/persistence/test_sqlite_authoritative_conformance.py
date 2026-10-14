@@ -128,6 +128,7 @@ class SQLiteIncrementalHarness:
             priority=3,
             sequence=4,
             command_id=command.command_id,
+                    owner_id="test-test_sqlite_authoritative_conformance",
         )
         with store.transaction() as uow:
             uow.save_command(command)
