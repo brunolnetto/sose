@@ -51,12 +51,13 @@ def test_every_builtin_domain_has_serializable_default_config_and_builds_runtime
         assert restored == config
 
         persistence = MemoryPersistence()
-        definition.seed(persistence, config)
+        definition.seed(persistence, config, owner_id=f"reference-{definition.name}")
         context, _ = definition.build_runtime(
             persistence,
             config,
             config.start_at,
             0,
+            owner_id=f"reference-{definition.name}",
         )
         assert context.clock.step == config.tick_step
 
