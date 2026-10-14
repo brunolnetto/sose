@@ -11,12 +11,12 @@ class DiningPhilosophersConfig(CanonicalConfig):
     participants: int = 5
 
 
-def seed(persistence, config):
+def seed(persistence, config, *, owner_id: str):
     if not persistence.resource_definitions():
         with persistence.transaction() as uow:
             for index in range(config.participants):
                 uow.save_resource_definition(ResourceDefinition(f"fork-{index}", 1))
-    return seed_case(persistence, name="dining_philosophers",
+    return seed_case(persistence, owner_id=owner_id, name="dining_philosophers",
                      attributes={"philosophers": config.participants})
 
 
