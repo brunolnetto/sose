@@ -141,6 +141,8 @@ class DurableScheduler:
                 raise RuntimeError(
                     f"scheduled work references missing command: {work.work_id}/{work.command_id}"
                 )
+            if command.owner_id != self._owner_id:
+                raise PermissionError("scheduled command belongs to a different owner")
             uow.delete_scheduled_work(work.work_id)
             uow.delete_command(command.command_id)
         return True
