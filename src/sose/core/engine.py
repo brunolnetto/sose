@@ -319,6 +319,9 @@ class Engine:
         current_tick = self.context.clock.tick
         next_tick = current_tick + 1
 
+        if len(self.context.scheduler):
+            # No legacy callback may trigger before the owner fence.
+            raise RuntimeError("unowned in-memory scheduling is not supported")
         scenario_before = self.context.scenarios.snapshot_state()
         pending_before = list(self.context.pending_events)
         position_before = self.persistence.simulation_position(owner_id=self.owner_id)
@@ -331,12 +334,6 @@ class Engine:
 
         try:
             self.context.scenarios.on_tick()
-
-            # The in-memory Scheduler is not an authoritative work source.
-            # Reject it before entering an owner transaction; never commit
-            # legacy callbacks outside the fenced durable work boundary.
-            if len(self.context.scheduler):
-                raise RuntimeError("unowned in-memory scheduling is not supported")
 
             with self.persistence.transaction(owner_id=self.owner_id) as uow:
                 if uow.get_simulation_position(owner_id=self.owner_id) != position_before:
