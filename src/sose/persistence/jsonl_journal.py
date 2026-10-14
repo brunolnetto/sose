@@ -214,7 +214,7 @@ class JSONLJournalPersistence(MemoryPersistence):
         self._refresh_from_journal()
         return super().job_states()
 
-    def committed_tick(self, *, owner_id: str | None = None) -> int:
+    def committed_tick(self, *, owner_id: str) -> int:
         self._refresh_from_journal()
         return super().committed_tick(owner_id=owner_id)
 
@@ -241,11 +241,11 @@ class JSONLJournalPersistence(MemoryPersistence):
             if work.due_at <= at
         )
 
-    def simulation_position(self, *, owner_id: str | None = None):
+    def simulation_position(self, *, owner_id: str):
         self._refresh_from_journal()
         return super().simulation_position(owner_id=owner_id)
 
-    def scenario_state(self, *, owner_id: str | None = None):
+    def scenario_state(self, *, owner_id: str):
         self._refresh_from_journal()
         return super().scenario_state(owner_id=owner_id)
 
