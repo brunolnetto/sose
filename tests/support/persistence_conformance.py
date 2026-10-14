@@ -420,19 +420,19 @@ class PersistenceConformanceSuite:
         )
 
         with store.transaction() as uow:
-            uow.set_simulation_position(position)
-            uow.set_scenario_state(state)
+            uow.set_simulation_position(position, owner_id='test-persistence_conformance')
+            uow.set_scenario_state(state, owner_id='test-persistence_conformance')
 
         effect_payload["nested"]["value"] = 500
-        assert store.simulation_position() == position
-        persisted_state = store.scenario_state()
+        assert store.simulation_position(owner_id='test-persistence_conformance') == position
+        persisted_state = store.scenario_state(owner_id='test-persistence_conformance')
         assert persisted_state is not None
         persisted_effect = persisted_state.activations[0].effects[0]
         assert isinstance(persisted_effect, AttributeEffect)
         assert persisted_effect.value == {"nested": {"value": 1}}
 
         persisted_effect.value["nested"]["value"] = 999
-        reloaded_state = store.scenario_state()
+        reloaded_state = store.scenario_state(owner_id='test-persistence_conformance')
         assert reloaded_state is not None
         reloaded_effect = reloaded_state.activations[0].effects[0]
         assert isinstance(reloaded_effect, AttributeEffect)
@@ -447,12 +447,12 @@ class PersistenceConformanceSuite:
         changed_state = ScenarioRuntimeState()
         with pytest.raises(RuntimeError, match="abort checkpoint"):
             with store.transaction() as uow:
-                uow.set_simulation_position(changed_position)
-                uow.set_scenario_state(changed_state)
+                uow.set_simulation_position(changed_position, owner_id='test-persistence_conformance')
+                uow.set_scenario_state(changed_state, owner_id='test-persistence_conformance')
                 raise RuntimeError("abort checkpoint")
 
-        assert store.simulation_position() == position
-        assert store.scenario_state() == expected_state
+        assert store.simulation_position(owner_id='test-persistence_conformance') == position
+        assert store.scenario_state(owner_id='test-persistence_conformance') == expected_state
 
     def test_store_put_intent_lifecycle_is_atomic_and_isolated(self):
         store = self.make_persistence()
