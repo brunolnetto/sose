@@ -18,8 +18,8 @@ from sose.testing.restart import restart_reference_runtime_repeated
 
 def _scheduled_batch_snapshot(count: int = 48):
     persistence = MemoryPersistence()
-    jobs = [seed_job(owner_id=OWNER_ID, persistence, job_key=f"job-{index:03d}") for index in range(count)]
-    _, engine = build_runtime(owner_id=OWNER_ID, persistence)
+    jobs = [seed_job(persistence, owner_id=OWNER_ID, job_key=f"job-{index:03d}") for index in range(count)]
+    _, engine = build_runtime(persistence, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     complete_at = ORIGIN + timedelta(hours=2)
@@ -45,8 +45,8 @@ def _scheduled_batch_snapshot(count: int = 48):
 
 def test_repeated_rebuilds_do_not_mutate_pending_durable_truth():
     persistence = MemoryPersistence()
-    job = seed_job(owner_id=OWNER_ID, persistence)
-    _, engine = build_runtime(owner_id=OWNER_ID, persistence)
+    job = seed_job(persistence, owner_id=OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     complete_at = ORIGIN + timedelta(hours=2)
@@ -77,8 +77,8 @@ def test_repeated_rebuilds_do_not_mutate_pending_durable_truth():
 
 def test_consumed_work_stays_stale_after_repeated_restart():
     persistence = MemoryPersistence()
-    job = seed_job(owner_id=OWNER_ID, persistence)
-    _, engine = build_runtime(owner_id=OWNER_ID, persistence)
+    job = seed_job(persistence, owner_id=OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     complete_at = ORIGIN + timedelta(hours=1)
