@@ -1,3 +1,5 @@
+OWNER_ID = "test-persistence_sink_restart"
+
 from datetime import timedelta
 
 import pytest
@@ -24,8 +26,8 @@ from sose.testing.restart import restart_reference_runtime
 def test_sink_survives_close_reopen_and_backend_rebuild(tmp_path, factory, filename):
     path = tmp_path / filename
     first = factory(path)
-    job = seed_job(first)
-    _, engine = build_runtime(first)
+    job = seed_job(owner_id=OWNER_ID, first)
+    _, engine = build_runtime(owner_id=OWNER_ID, first)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     complete_at = ORIGIN + timedelta(hours=2)
@@ -57,7 +59,7 @@ def test_sink_survives_close_reopen_and_backend_rebuild(tmp_path, factory, filen
 
 def test_incremental_sqlite_writes_records_not_whole_state(tmp_path):
     persistence = SQLiteIncrementalPersistence(tmp_path / "records.sqlite3")
-    job = seed_job(persistence)
+    job = seed_job(owner_id=OWNER_ID, persistence)
 
     assert persistence.persisted_record_count() > 0
     columns = {
@@ -74,7 +76,7 @@ def test_incremental_sqlite_writes_records_not_whole_state(tmp_path):
 def test_jsonl_journal_replays_only_complete_transaction_lines(tmp_path):
     path = tmp_path / "journal.jsonl"
     persistence = JSONLJournalPersistence(path)
-    job = seed_job(persistence)
+    job = seed_job(owner_id=OWNER_ID, persistence)
     assert persistence.journal_transaction_count() >= 1
 
     with path.open("a", encoding="utf-8") as handle:
