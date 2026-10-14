@@ -12,11 +12,11 @@ class ProducerConsumerConfig(CanonicalConfig):
     capacity: int = 2
 
 
-def seed(persistence, config):
+def seed(persistence, config, *, owner_id: str):
     stores = DurableStoreManager(persistence)
     if not persistence.store_definitions():
         stores.define(StoreDefinition("buffer", kind="fifo", capacity=config.capacity))
-    return seed_case(persistence, name="producer_consumer", attributes={"capacity": config.capacity})
+    return seed_case(persistence, owner_id=owner_id, name="producer_consumer", attributes={"capacity": config.capacity})
 
 
 def _candidate_for_state(current) -> str:
