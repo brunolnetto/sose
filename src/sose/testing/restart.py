@@ -40,6 +40,7 @@ def restart_reference_runtime(
     build_runtime: RuntimeBuilder,
     backend_before=None,
     *,
+    owner_id: str,
     backend_factory: BackendFactory,
     tick: int | None = None,
     runtime_kwargs: Mapping[str, object] | None = None,
@@ -57,7 +58,9 @@ def restart_reference_runtime(
     Domain-specific continuation and equality assertions remain in the caller.
     """
 
-    position = persistence.simulation_position()
+    if not owner_id:
+        raise ValueError("owner_id must not be empty")
+    position = persistence.simulation_position(owner_id=owner_id)
     if backend_before is not None:
         restarted_at = backend_before.now
     elif position is not None:
@@ -75,10 +78,13 @@ def restart_reference_runtime(
         )
 
     kwargs = dict(runtime_kwargs or {})
+    if "owner_id" in kwargs:
+        raise ValueError("runtime_kwargs must not override owner_id")
     context, engine = build_runtime(
         persistence,
         now=restarted_at,
         tick=tick,
+        owner_id=owner_id,
         **kwargs,
     )
     backend = backend_factory(origin=restarted_at)
@@ -100,6 +106,7 @@ def restart_reference_runtime_repeated(
     build_runtime: RuntimeBuilder,
     backend_before,
     *,
+    owner_id: str,
     backend_factory: BackendFactory,
     count: int,
     tick: int | None = None,
@@ -123,6 +130,7 @@ def restart_reference_runtime_repeated(
             persistence,
             build_runtime,
             current_backend,
+            owner_id=owner_id,
             backend_factory=backend_factory,
             tick=tick,
             runtime_kwargs=runtime_kwargs,
