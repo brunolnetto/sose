@@ -32,8 +32,8 @@ def test_postgres_survives_connection_close_reopen_and_backend_rebuild():
     namespace = f"restart_{uuid4().hex[:16]}"
 
     first = PostgresPersistence(DSN, namespace=namespace)
-    job = seed_job(owner_id=OWNER_ID, first)
-    _, engine = build_runtime(owner_id=OWNER_ID, first)
+    job = seed_job(first, owner_id=OWNER_ID)
+    _, engine = build_runtime(first, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     complete_at = ORIGIN + timedelta(hours=2)
