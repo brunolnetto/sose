@@ -14,7 +14,7 @@ def _entities_of_type(persistence, entity_type: str):
 
 
 def test_customer_demand_path_composes_domains_with_warehouse_owned_stock() -> None:
-    result = run_customer_demand_path()
+    result = run_customer_demand_path(organization_id="trading-customer-reference")
     persistence = result.persistence
 
     assert persistence.entity("sales_order", result.o2c_order_id).state == "invoiced"
@@ -99,7 +99,7 @@ def test_customer_demand_path_composes_domains_with_warehouse_owned_stock() -> N
 
 
 def test_customer_demand_path_preserves_boundary_and_domain_causality() -> None:
-    result = run_customer_demand_path()
+    result = run_customer_demand_path(organization_id="trading-customer-reference")
     persistence = result.persistence
 
     with persistence.transaction() as uow:
