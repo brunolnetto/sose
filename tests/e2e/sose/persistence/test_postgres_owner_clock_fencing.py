@@ -129,6 +129,7 @@ def test_postgres_same_owner_parallel_scheduling_allocates_distinct_local_sequen
                 command_id=f"owner-one-command-{index}",
                 name="advance", entity_type="shipment", entity_id=str(index),
                 due_at=ORIGIN + timedelta(hours=1),
+                owner_id=owner,
             )
             barrier.wait(timeout=15)
             return scheduler.schedule(command)
