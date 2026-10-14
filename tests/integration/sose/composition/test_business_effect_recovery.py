@@ -11,6 +11,8 @@ from sose.examples.order_to_cash import simulation as o2c
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
+REPLENISHMENT_OWNER_ID = "trading-company-replenishment-reference"
+
 def test_customer_reference_has_four_distinct_business_completion_certificates():
     result = customer.run_customer_demand_path()
     effects = result.persistence.business_effects()
@@ -36,7 +38,7 @@ def test_customer_reference_has_four_distinct_business_completion_certificates()
 
 
 def test_replenishment_journal_uses_same_receipt_contract():
-    result = replenishment.run_replenishment_path()
+    result = replenishment.run_replenishment_path(owner_id=REPLENISHMENT_OWNER_ID)
     effects = result.persistence.business_effects()
     assert len(effects) == 1
     assert effects[0].entity_type == "journal_entry"
