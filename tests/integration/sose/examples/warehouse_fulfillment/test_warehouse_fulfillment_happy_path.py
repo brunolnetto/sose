@@ -7,7 +7,7 @@ from sose.examples.warehouse_fulfillment.simulation import (
 
 
 def test_order_allocates_primary_then_substitute_and_ships():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id="warehouse-fulfillment-reference-organization")
 
     order = persistence.entity("warehouse_fulfillment_order", entities.order_id)
     primary = persistence.entity("warehouse_inventory_lot", entities.lot_ids[0])
