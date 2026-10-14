@@ -1,3 +1,5 @@
+OWNER_ID = "test-runtime_diagnostics"
+
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -19,8 +21,8 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_engine_diagnostics_reports_clean_pending_runtime():
     persistence = MemoryPersistence()
-    job = seed_job(persistence)
-    _, engine = build_runtime(persistence)
+    job = seed_job(owner_id=OWNER_ID, persistence)
+    _, engine = build_runtime(owner_id=OWNER_ID, persistence)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -43,8 +45,8 @@ def test_engine_diagnostics_reports_clean_pending_runtime():
 
 def test_diagnostics_follow_runtime_consumption_without_mutation():
     persistence = MemoryPersistence()
-    job = seed_job(persistence)
-    _, engine = build_runtime(persistence)
+    job = seed_job(owner_id=OWNER_ID, persistence)
+    _, engine = build_runtime(owner_id=OWNER_ID, persistence)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     complete_at = ORIGIN + timedelta(hours=1)
@@ -103,8 +105,8 @@ def test_corruption_is_reported_with_stable_issue_codes():
 
 def test_diagnostics_are_deterministic_for_same_durable_truth():
     persistence = MemoryPersistence()
-    job = seed_job(persistence)
-    _, engine = build_runtime(persistence)
+    job = seed_job(owner_id=OWNER_ID, persistence)
+    _, engine = build_runtime(owner_id=OWNER_ID, persistence)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     start_and_schedule_completion(
