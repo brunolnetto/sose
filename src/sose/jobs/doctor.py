@@ -154,7 +154,7 @@ def inspect_open_job_health(
     resolved_config_json: str,
 ) -> JobDoctorReport:
     state = persistence.job_state(config.job.id)
-    runtime = collect_runtime_diagnostics(persistence)
+    runtime = collect_runtime_diagnostics(persistence, owner_id=config.job.id)
     issues: list[JobDoctorIssue] = [
         JobDoctorIssue(issue.code, issue.message)
         for issue in runtime.issues
