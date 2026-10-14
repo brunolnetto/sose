@@ -42,7 +42,7 @@ class Engine:
         domain_warehouse: DomainWarehouse | None = None,
         owner_id: str,
     ) -> None:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         self.owner_id = owner_id
         context.commands.bind_owner(owner_id)
