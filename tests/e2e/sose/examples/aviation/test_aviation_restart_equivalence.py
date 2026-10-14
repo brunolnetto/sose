@@ -37,9 +37,9 @@ def test_departure_schedule_survives_restart():
     )
     rebuilt = restart_reference_runtime(
         persistence,
-        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -91,9 +91,9 @@ def test_pending_crew_demand_survives_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
-        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -273,9 +273,9 @@ def test_committed_maintenance_queue_selection_survives_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
-        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -331,9 +331,9 @@ def test_completed_maintenance_reconciles_aircraft_and_flight_after_restart():
 
     rebuilt = restart_reference_runtime(
         persistence,
-        owner_id=REFERENCE_OWNER_ID,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
