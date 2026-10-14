@@ -56,9 +56,11 @@ class CountingPostgresPersistence(PostgresPersistence):
         super().__init__(*args, **kwargs)
 
     @contextmanager
-    def transaction(self, *, owner_epoch: int | None = None) -> Iterator:
+    def transaction(
+        self, *, owner_epoch: int | None = None, owner_id: str | None = None,
+    ) -> Iterator:
         self.transaction_count += 1
-        with super().transaction(owner_epoch=owner_epoch) as uow:
+        with super().transaction(owner_epoch=owner_epoch, owner_id=owner_id) as uow:
             yield uow
 
 
