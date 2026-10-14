@@ -120,7 +120,7 @@ def _append_position_alignment_issues(
     state: SimulationJobState,
     issues: list[JobDoctorIssue],
 ) -> None:
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=state.job_id)
     if position is None:
         if state.next_tick > 0:
             issues.append(
