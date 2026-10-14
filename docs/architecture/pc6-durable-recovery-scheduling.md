@@ -43,11 +43,15 @@ on every invocation):
 sose composition-recovery \
   --sqlite state/trading.sqlite3 \
   --owner-id pc6-recovery-1 \
+  --correlation-id <durable-flow-correlation-id> \
+  --organization-id <authoritative-organization-id> \
   --start-at 2026-10-09T12:00:00+00:00 \
   --interval-seconds 60 \
   --max-slots 16 \
   --max-actions 16
 ```
+
+The operator must supply the real durable correlation and its authoritative organizational owner. `--owner-id` identifies the worker lease only; it must never be reused to infer Engine ownership. This command handles one correlation per invocation.
 
 Or use the long-running worker with `--serve --poll-seconds 5`. The
 `--now` override exists for controlled one-shot replay/testing only.
