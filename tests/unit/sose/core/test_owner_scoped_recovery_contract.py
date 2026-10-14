@@ -190,3 +190,33 @@ def test_legacy_rebuilder_never_dispatches_foreign_owner_work():
     backend.calls[0][3]()
     assert observed == ["legacy-cmd"]
     assert {work.work_id for work in store.scheduled_work()} == {old.work_id, owned.work_id}
+
+
+def test_committed_ticks_are_owner_scoped_and_do_not_mutate_legacy_checkpoint():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.set_committed_tick(3, owner_id="organization-a")
+        uow.set_committed_tick(9, owner_id="organization-b")
+    assert store.committed_tick(owner_id="organization-a") == 3
+    assert store.committed_tick(owner_id="organization-b") == 9
+    assert store.committed_tick() == -1
+    with store.transaction() as uow:
+        uow.set_committed_tick(10, owner_id="organization-b")
+    assert store.committed_tick(owner_id="organization-a") == 3
+    assert store.committed_tick(owner_id="organization-b") == 10
+    assert store.committed_tick() == -1
+
+
+def test_owner_committed_ticks_survive_sqlite_restart(tmp_path):
+    from sose.persistence.sqlite import SQLitePersistence
+
+    database = tmp_path / "owner-ticks.sqlite"
+    with SQLitePersistence(database) as store:
+        with store.transaction() as uow:
+            uow.set_committed_tick(1, owner_id="organization-a")
+            uow.set_committed_tick(4, owner_id="organization-b")
+
+    with SQLitePersistence(database) as restored:
+        assert restored.committed_tick(owner_id="organization-a") == 1
+        assert restored.committed_tick(owner_id="organization-b") == 4
+        assert restored.committed_tick() == -1
