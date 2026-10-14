@@ -10,7 +10,7 @@ from sose.domain.entity import Entity
 
 
 def completed():
-    result = customer.run_customer_demand_path()
+    result = customer.run_customer_demand_path(organization_id="test-org-payments-accounting-egress-proofs")
     return result.persistence, result
 
 
