@@ -21,7 +21,7 @@ def test_scheduled_work_round_trips_through_persistence():
         priority=10,
         sequence=3,
         command_id=cmd.command_id,
-            owner_id="test-test_durable_runtime",
+        owner_id="test-test_durable_runtime",
     )
 
     with store.transaction() as uow:
