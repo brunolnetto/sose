@@ -301,6 +301,7 @@ class PersistenceConformanceSuite:
             priority=100,
             sequence=2,
             command_id=later_command.command_id,
+                    owner_id="test-persistence_conformance",
         )
         earlier_work = ScheduledWork(
             "work-earlier",
@@ -308,6 +309,7 @@ class PersistenceConformanceSuite:
             priority=100,
             sequence=1,
             command_id=earlier_command.command_id,
+                    owner_id="test-persistence_conformance",
         )
 
         with store.transaction() as uow:
@@ -347,6 +349,7 @@ class PersistenceConformanceSuite:
             priority=100,
             sequence=3,
             command_id=rollback_command.command_id,
+                    owner_id="test-persistence_conformance",
         )
         with pytest.raises(RuntimeError, match="abort schedule"):
             with store.transaction() as uow:
