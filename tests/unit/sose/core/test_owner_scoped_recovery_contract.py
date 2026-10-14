@@ -256,3 +256,19 @@ def test_scenario_rebuild_restores_only_selected_owner_snapshot():
     assert context_a.scenarios.restored == [snapshot]
     assert context_b.scenarios.restored == [None]
     assert store.scenario_state() is None
+
+
+def test_scheduled_work_owner_cannot_cancel_foreign_work():
+    import pytest
+    from sose.core.durable import DurableScheduler
+    from sose.core.events import Command
+
+    store = MemoryPersistence()
+    a = DurableScheduler(store, owner_id="organization-a")
+    b = DurableScheduler(store, owner_id="organization-b")
+    work = b.schedule(Command("foreign-cmd", "advance", "demo", "same-type", ORIGIN + timedelta(hours=1)))
+    with pytest.raises(PermissionError, match="different owner"):
+        a.cancel(work.work_id)
+    assert store.command("foreign-cmd") is not None
+    assert work in store.scheduled_work()
+    assert b.cancel(work.work_id) is True
