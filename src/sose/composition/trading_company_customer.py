@@ -352,6 +352,7 @@ def _materialize_fulfillment_from_request(
     *,
     intent: Command,
     expected_sales_order_id: str,
+    organization_id: str,
 ) -> fulfillment.WarehouseEntities:
     """Derive composed WF business state from immutable O2C payload, never a fixture."""
     payload = intent.payload
@@ -407,6 +408,7 @@ def _materialize_fulfillment_from_request(
 
     created = fulfillment.seed_composed_reference(
         persistence,
+        owner_id=organization_id,
         now=intent.due_at,
         requested_quantity=float(quantity),
         requested_sku=sku,
@@ -475,7 +477,9 @@ def _execute_intent(
 
     if intent.name == "composition.request_fulfillment_inventory":
         order_ref = _materialize_fulfillment_from_request(
-            persistence, intent=intent, expected_sales_order_id=fixtures.o2c.order_id
+            persistence, intent=intent,
+            expected_sales_order_id=fixtures.o2c.order_id,
+            organization_id=organization_id,
         )
         if order_ref.order_id != fixtures.fulfillment.order_id:
             raise ValueError("composed fulfillment request differs from current workflow")
