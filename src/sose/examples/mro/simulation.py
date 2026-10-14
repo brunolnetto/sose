@@ -130,10 +130,10 @@ def seed_reference(
     return MROEntities(wo.id, demand.id)
 
 
-def build_demo() -> tuple[Engine, MemoryPersistence, str]:
+def build_demo(*, owner_id: str) -> tuple[Engine, MemoryPersistence, str]:
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    ids = seed_reference(persistence, owner_id=owner_id)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     return engine, persistence, ids.work_order_id
 
 
@@ -1003,13 +1003,14 @@ def reconcile_cancel(
 
 def run_happy_path(
     *,
+    owner_id: str,
     quantity: float = 1.0,
 ) -> tuple[MemoryPersistence, MROEntities]:
     from sose.backends.simpy import SimPyBackend
 
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence, quantity=quantity)
-    _, engine = build_runtime(persistence)
+    ids = seed_reference(persistence, owner_id=owner_id, quantity=quantity)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     seed_spare_parts(engine, backend, quantity=quantity)
