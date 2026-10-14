@@ -59,7 +59,7 @@ def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
     monkeypatch.setattr(customer, "_publish", crashing_publish)
     monkeypatch.setattr(customer, "_execute_intent", crashing_execute)
     with pytest.raises(RuntimeError, match="simulated process death"):
-        customer.run_customer_demand_path()
+        customer.run_customer_demand_path(organization_id="test-org-recurring-trading-recovery")
     held[-1].close()
     monkeypatch.setattr(customer, "_publish", original_publish)
     monkeypatch.setattr(customer, "_execute_intent", original_execute)
