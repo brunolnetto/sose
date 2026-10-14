@@ -14,10 +14,12 @@ from sose.examples.aviation.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+
+REFERENCE_OWNER_ID = "aviation-crash-recovery-reference"
 def test_passed_inspection_reconciles_aircraft_and_flight_after_crash():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     due_at = schedule_departure(
@@ -89,8 +91,8 @@ def test_passed_inspection_reconciles_aircraft_and_flight_after_crash():
 
 def test_failed_inspection_reconciles_aog_and_maintenance_after_crash():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     due_at = schedule_departure(
@@ -159,8 +161,8 @@ def test_failed_inspection_reconciles_aog_and_maintenance_after_crash():
 
 def test_landed_flight_reconciles_aircraft_and_inspection_after_crash():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     due_at = schedule_departure(
