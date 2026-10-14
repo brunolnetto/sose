@@ -38,3 +38,4 @@ class DomainEvent:
     payload: Mapping[str, Any] = field(default_factory=dict)
     causation_id: str | None = None
     correlation_id: str | None = None
+    owner_id: str | None = None
