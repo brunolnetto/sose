@@ -569,3 +569,15 @@ def test_unowned_in_memory_scheduler_refused_without_durable_effects():
     assert context.clock.tick == 0
     assert store.simulation_position(owner_id=owner) is None
     assert len(context.scheduler) == 1
+
+
+def test_reference_restart_rejects_whitespace_owner_before_persistence_access():
+    from sose.testing.restart import restart_reference_runtime
+
+    with pytest.raises(ValueError, match="owner_id"):
+        restart_reference_runtime(
+            object(),
+            lambda *_args, **_kwargs: None,
+            owner_id=" \t ",
+            backend_factory=lambda **_kwargs: None,
+        )
