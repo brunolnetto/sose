@@ -329,3 +329,31 @@ def test_scheduled_sequence_is_local_to_owner_not_namespace():
     bw = b.schedule(Command("b-first", "advance", "demo", "same-type", ORIGIN))
     assert aw.sequence == 1
     assert bw.sequence == 1
+
+
+def test_identical_same_type_commands_receive_distinct_owner_qualified_ids():
+    from sose.factories.command import CommandFactory
+
+    class Target:
+        entity_type = "shipment"
+        id = "same-chart-entity"
+
+    def factory(owner_id):
+        item = CommandFactory(now=lambda: ORIGIN, tick=lambda: 1)
+        item.bind_owner(owner_id)
+        return item
+
+    a = factory("organization-a").create("pickup", target=Target())
+    b = factory("organization-b").create("pickup", target=Target())
+    again = factory("organization-a").create("pickup", target=Target())
+    assert a.command_id == again.command_id
+    assert a.command_id != b.command_id
+
+
+def test_command_factory_rejects_silent_owner_rebinding():
+    from sose.factories.command import CommandFactory
+
+    factory = CommandFactory(now=lambda: ORIGIN, tick=lambda: 1)
+    factory.bind_owner("organization-a")
+    with pytest.raises(ValueError, match="owner"):
+        factory.bind_owner("organization-b")
