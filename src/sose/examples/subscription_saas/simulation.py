@@ -101,12 +101,13 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     customer_id: str = "customer-1",
     initial_plan: str = "basic",
     term_duration: timedelta = TERM_DURATION,
 ) -> SubscriptionEntities:
-    context, _ = build_runtime(persistence, now=now)
+    context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
     subscription = context.entities.create(
         Subscription,
         key=("saas-reference", "subscription-1"),
