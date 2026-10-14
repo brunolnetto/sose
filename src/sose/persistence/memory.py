@@ -46,6 +46,7 @@ class _State:
     commands: dict[str, Command] = field(default_factory=dict)
     scheduled_work: dict[str, ScheduledWork] = field(default_factory=dict)
     simulation_position: SimulationPosition | None = None
+    simulation_positions: dict[str, SimulationPosition] = field(default_factory=dict)
     scenario_state: ScenarioRuntimeState | None = None
     resource_definitions: dict[str, ResourceDefinition] = field(default_factory=dict)
     resource_demands: dict[str, ResourceDemand] = field(default_factory=dict)
@@ -368,7 +369,13 @@ class MemoryUnitOfWork:
         self._working.scheduled_work.pop(work_id, None)
         self._mark_dirty("scheduled_work", work_id)
 
-    def set_simulation_position(self, position: SimulationPosition) -> None:
+    def set_simulation_position(self, position: SimulationPosition, *, owner_id: str | None = None) -> None:
+        if owner_id is not None:
+            if not owner_id:
+                raise ValueError("owner_id must not be empty")
+            self._working.simulation_positions[owner_id] = deepcopy(position)
+            self._mark_dirty("simulation_positions", owner_id)
+            return
         self._working.simulation_position = deepcopy(position)
         self._mark_dirty("simulation_position", "__scalar__")
 
@@ -865,7 +872,11 @@ class MemoryPersistence:
     def due_scheduled_work(self, at: datetime) -> tuple[ScheduledWork, ...]:
         return tuple(work for work in self.scheduled_work() if work.due_at <= at)
 
-    def simulation_position(self) -> SimulationPosition | None:
+    def simulation_position(self, *, owner_id: str | None = None) -> SimulationPosition | None:
+        if owner_id is not None:
+            if not owner_id:
+                raise ValueError("owner_id must not be empty")
+            return deepcopy(self._state.simulation_positions.get(owner_id))
         return deepcopy(self._state.simulation_position)
 
     def scenario_state(self) -> ScenarioRuntimeState | None:
