@@ -11,12 +11,12 @@ from .simulation import (
     triage_and_queue,
 )
 
-def _build(persistence: Persistence, config: ITSMConfig, now: datetime, tick: int):
-    return build_runtime(persistence, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
+def _build(persistence: Persistence, config: ITSMConfig, now: datetime, tick: int, owner_id: str):
+    return build_runtime(persistence, owner_id=owner_id, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
 
-def _seed(persistence: Persistence, config: ITSMConfig):
+def _seed(persistence: Persistence, config: ITSMConfig, owner_id: str):
     return seed_reference(
-        persistence,
+        persistence, owner_id=owner_id,
         now=config.start_at,
         severity=config.severity,
         service=config.service,
