@@ -369,18 +369,18 @@ class MemoryUnitOfWork:
         self._mark_dirty("scheduled_work", work_id)
 
     def get_simulation_position(self, *, owner_id: str) -> SimulationPosition | None:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         return deepcopy(self._working.simulation_positions.get(owner_id))
 
     def set_simulation_position(self, position: SimulationPosition, *, owner_id: str) -> None:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         self._working.simulation_positions[owner_id] = deepcopy(position)
         self._mark_dirty("simulation_positions", owner_id)
 
     def set_scenario_state(self, state: ScenarioRuntimeState, *, owner_id: str) -> None:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         self._working.scenario_states[owner_id] = deepcopy(state)
         self._mark_dirty("scenario_states", owner_id)
@@ -734,7 +734,7 @@ class MemoryUnitOfWork:
         self._mark_dirty("resource_preemption_results", result.result_id)
 
     def set_committed_tick(self, tick: int, *, owner_id: str) -> None:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         self._working.committed_ticks[owner_id] = tick
         self._mark_dirty("committed_ticks", owner_id)
@@ -856,7 +856,7 @@ class MemoryPersistence:
         )
 
     def committed_tick(self, *, owner_id: str) -> int:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         return self._state.committed_ticks.get(owner_id, -1)
 
@@ -881,12 +881,12 @@ class MemoryPersistence:
         return tuple(work for work in self.scheduled_work() if work.due_at <= at)
 
     def simulation_position(self, *, owner_id: str) -> SimulationPosition | None:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         return deepcopy(self._state.simulation_positions.get(owner_id))
 
     def scenario_state(self, *, owner_id: str) -> ScenarioRuntimeState | None:
-        if not owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
         return deepcopy(self._state.scenario_states.get(owner_id))
 
