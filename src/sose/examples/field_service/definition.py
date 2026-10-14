@@ -12,12 +12,12 @@ from .simulation import (
     seed_reference,
 )
 
-def _build(persistence: Persistence, config: FieldServiceConfig, now: datetime, tick: int):
-    return build_runtime(persistence, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
+def _build(persistence: Persistence, config: FieldServiceConfig, now: datetime, tick: int, owner_id: str):
+    return build_runtime(persistence, owner_id=owner_id, now=now, tick=tick, step=config.tick_step, random_seed=config.random_seed)
 
-def _seed(persistence: Persistence, config: FieldServiceConfig):
+def _seed(persistence: Persistence, config: FieldServiceConfig, owner_id: str):
     return seed_reference(
-        persistence,
+        persistence, owner_id=owner_id,
         now=config.start_at,
         territory=config.territory,
         required_skill=config.required_skill,
