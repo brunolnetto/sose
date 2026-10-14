@@ -31,7 +31,7 @@ def _audited_boundary(result):
 
 
 def test_pc6_two_composed_paths_preserve_durable_boundary_and_ownership():
-    customer = run_customer_demand_path()
+    customer = run_customer_demand_path(organization_id="test-org-trading-company-pc6-contract-matrix")
     replenishment = run_replenishment_path(owner_id=REPLENISHMENT_OWNER_ID)
 
     customer_contracts = _audited_boundary(customer)
