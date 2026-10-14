@@ -57,3 +57,35 @@ def test_same_owner_competing_positions_cannot_both_commit_one_sequence():
     )
     with PostgresPersistence(DSN, namespace=namespace) as verify:
         assert verify.simulation_position(owner_id=owner) in (prior, next_pos)
+
+
+def test_distinct_owners_advance_independently_in_same_postgres_namespace():
+    assert DSN is not None
+    namespace = "owner_independent_" + uuid4().hex[:12]
+    origin = datetime(2026, 1, 1, tzinfo=timezone.utc)
+    initial = SimulationPosition(origin, execution_sequence=0, committed_sequence=0)
+    advanced = SimulationPosition(
+        origin + timedelta(hours=1), execution_sequence=1, committed_sequence=1,
+        logical_tick=1,
+    )
+    owners = ("organization-a", "organization-b")
+    with PostgresPersistence(DSN, namespace=namespace) as setup:
+        with setup.transaction() as uow:
+            for owner in owners:
+                uow.set_simulation_position(initial, owner_id=owner)
+
+    read_barrier = Barrier(2)
+
+    def advance(owner):
+        with PostgresPersistence(DSN, namespace=namespace) as store:
+            with store.transaction() as uow:
+                assert store.simulation_position(owner_id=owner) == initial
+                read_barrier.wait(timeout=15)
+                uow.set_simulation_position(advanced, owner_id=owner)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        list(pool.map(advance, owners))
+
+    with PostgresPersistence(DSN, namespace=namespace) as verify:
+        for owner in owners:
+            assert verify.simulation_position(owner_id=owner) == advanced
