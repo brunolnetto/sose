@@ -9,6 +9,8 @@ from sose.examples.p2p import simulation as p2p
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
+REPLENISHMENT_OWNER_ID = "trading-company-replenishment-reference"
+
 @pytest.mark.parametrize(
     "cut,expected",
     [
@@ -48,7 +50,7 @@ def test_replenishment_r2r_accepted_effect_resumes_after_worker_death(
     monkeypatch.setattr(replenishment, "_execute_accounting", crash_before)
     monkeypatch.setattr(replenishment.r2r, "_dispatch", crash_after_dispatch)
     with pytest.raises(RuntimeError, match="replenishment accounting worker killed"):
-        replenishment.run_replenishment_path()
+        replenishment.run_replenishment_path(owner_id=REPLENISHMENT_OWNER_ID)
     monkeypatch.setattr(replenishment, "_execute_accounting", original_execute)
     monkeypatch.setattr(replenishment.r2r, "_dispatch", original_dispatch)
     opened[-1].close()
