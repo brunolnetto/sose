@@ -34,8 +34,8 @@ class RebuildBackend(Protocol):
 class DurableScheduler:
     """Persist future execution intent independently from any backend queue."""
 
-    def __init__(self, persistence: Persistence, *, owner_id: str | None = None) -> None:
-        if owner_id == "":
+    def __init__(self, persistence: Persistence, *, owner_id: str) -> None:
+        if not owner_id:
             raise ValueError("owner_id must not be empty")
         self._persistence = persistence
         self._owner_id = owner_id
@@ -232,10 +232,10 @@ class RuntimeRebuilder:
         context=None,
         participants: tuple[RecoveryParticipant, ...] = (),
         scheduled_work_filter: Callable[[DurableScheduledItem], bool] | None = None,
-        owner_id: str | None = None,
+        owner_id: str,
     ) -> None:
         self._persistence = persistence
-        if owner_id == "":
+        if not owner_id:
             raise ValueError("owner_id must not be empty")
         self._owner_id = owner_id
         self._context = context
