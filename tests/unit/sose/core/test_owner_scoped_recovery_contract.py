@@ -376,3 +376,38 @@ def test_engine_rejects_foreign_scheduled_callback_before_database_reads():
     # irrespective of whether its Command/StateChart type matches a local one.
     with pytest.raises(PermissionError, match="different owner"):
         engine._dispatch_scheduled_in_uow(DurableScheduledItem(work, command), object())
+
+
+def test_scheduled_work_requires_owner_even_when_constructed_directly():
+    from sose.core.runtime import ScheduledWork
+
+    values = dict(
+        work_id="test-work", command_id="test-command",
+        due_at=ORIGIN, priority=100, sequence=1,
+    )
+    with pytest.raises(TypeError, match="owner_id"):
+        ScheduledWork(**values)
+    with pytest.raises(ValueError, match="owner_id"):
+        ScheduledWork(**values, owner_id=None)
+    with pytest.raises(ValueError, match="owner_id"):
+        ScheduledWork(**values, owner_id="")
+    assert ScheduledWork(**values, owner_id="organization-a").owner_id == "organization-a"
+
+
+def test_all_scoped_temporal_fields_reject_explicit_none_owner():
+    from sose.scenarios.model import ScenarioRuntimeState
+
+    store = MemoryPersistence()
+    for reader in (store.simulation_position, store.scenario_state, store.committed_tick):
+        with pytest.raises(ValueError, match="owner_id"):
+            reader(owner_id=None)
+
+    with store.transaction() as uow:
+        actions = (
+            lambda: uow.set_simulation_position(_position(1, 1), owner_id=None),
+            lambda: uow.set_scenario_state(ScenarioRuntimeState(), owner_id=None),
+            lambda: uow.set_committed_tick(1, owner_id=None),
+        )
+        for action in actions:
+            with pytest.raises(ValueError, match="owner_id"):
+                action()
