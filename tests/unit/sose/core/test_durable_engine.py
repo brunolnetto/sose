@@ -279,7 +279,7 @@ def test_backend_callback_after_tick_execution_is_stale_and_harmless():
 
 
 def test_build_demo_schedule_remains_executable_without_backend_rebuild():
-    engine, persistence, work_order_id = build_demo()
+    engine, persistence, work_order_id = build_demo(owner_id="mro-durable-engine-test")
 
     engine.advance_tick()
 
