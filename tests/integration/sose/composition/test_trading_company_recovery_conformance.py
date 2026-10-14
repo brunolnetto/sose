@@ -162,7 +162,7 @@ def _customer_business_state(store, fixtures: customer._CustomerFixtures):
 def test_customer_path_is_continuous_equivalent_across_worker_death_and_restart(
     tmp_path,
 ) -> None:
-    continuous = customer.run_customer_demand_path()
+    continuous = customer.run_customer_demand_path(organization_id="trading-customer-reference")
     path = tmp_path / "customer-composition.sqlite3"
     store = SQLitePersistence(path)
     fixtures = _customer_fixtures(store)
