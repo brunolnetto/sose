@@ -141,3 +141,31 @@ def test_rebuilder_restores_the_selected_owner_clock_into_context():
     )
     assert context_b.clock.now == ORIGIN + timedelta(hours=2)
     assert context_b.clock.tick == 2
+
+
+def test_same_type_scheduled_work_is_dispatched_only_by_its_owner():
+    from sose.core.durable import DurableScheduler
+    from sose.core.events import Command
+
+    store = MemoryPersistence()
+    a = DurableScheduler(store, owner_id="organization-a")
+    b = DurableScheduler(store, owner_id="organization-b")
+    a_work = a.schedule(Command("a-cmd", "advance", "demo", "a", ORIGIN + timedelta(hours=3)))
+    b_work = b.schedule(Command("b-cmd", "advance", "demo", "b", ORIGIN + timedelta(hours=3)))
+    assert a_work.owner_id == "organization-a"
+    assert b_work.owner_id == "organization-b"
+    seen_a = []
+    seen_b = []
+    backend_a = RecordingBackend(ORIGIN)
+    backend_b = RecordingBackend(ORIGIN)
+    assert RuntimeRebuilder(store, owner_id="organization-a").rebuild(
+        backend_a, on_due=lambda item: seen_a.append(item.command.command_id)
+    ) == 1
+    assert RuntimeRebuilder(store, owner_id="organization-b").rebuild(
+        backend_b, on_due=lambda item: seen_b.append(item.command.command_id)
+    ) == 1
+    backend_a.calls[0][3]()
+    backend_b.calls[0][3]()
+    assert seen_a == ["a-cmd"]
+    assert seen_b == ["b-cmd"]
+    assert {w.work_id for w in store.scheduled_work()} == {a_work.work_id, b_work.work_id}
