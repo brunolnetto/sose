@@ -67,15 +67,25 @@ def test_recovery_never_invents_missing_or_conflicting_pick_evidence(case, error
     executed = customer.run_customer_demand_path(organization_id="test-org-reconciliation-guard-conditions")
     overlay = _ReadFault(executed.persistence, case)
     if error is None:
-        assert customer.reconcile_shipped_fulfillment_egress(
+        assert _owner_scoped_reconcile_shipped_fulfillment_egress(
             overlay, correlation_id=executed.correlation_id,
         ) == ()
     else:
         with pytest.raises(ValueError, match=error):
-            customer.reconcile_shipped_fulfillment_egress(
+            _owner_scoped_reconcile_shipped_fulfillment_egress(
                 overlay, correlation_id=executed.correlation_id,
             )
     # The injected read view cannot alter authoritative operational truth.
     assert executed.persistence.entity(
         "warehouse_fulfillment_order", executed.fulfillment_order_id,
     ).state == "shipped"
+
+
+def _owner_scoped_reconcile_shipped_fulfillment_egress(store, **kwargs):
+    """The fixture declares exactly one operational owner, not a global default."""
+    owners = {
+        receipt.correlation_id: "test-org-reconciliation-guard-conditions"
+        for receipt in store.business_effects()
+    }
+    assert owners, "fixture must supply a certified owner-bound flow"
+    return customer.reconcile_shipped_fulfillment_egress(store, organization_owners=owners, **kwargs)

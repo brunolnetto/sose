@@ -72,12 +72,12 @@ def scenario(*, request_count: int = 1, state: str = "delivered",
                                     "in_transfer", "out_for_delivery"])
 def test_logistics_outbound_requires_delivered_state(state):
     store, _ = scenario(state=state)
-    assert customer.reconcile_completed_logistics_egress(store) == ()
+    assert _owner_scoped_reconcile_completed_logistics_egress(store) == ()
 
 
 def test_ack_is_not_business_effect_and_later_checkpoint_unblocks():
     store, _ = scenario(pending_intent=True)
-    assert customer.reconcile_completed_logistics_egress(store) == ()
+    assert _owner_scoped_reconcile_completed_logistics_egress(store) == ()
     with store.transaction() as uow:
         consumed = next(
             uow.get_boundary_consumption(d.delivery_id)
@@ -86,14 +86,14 @@ def test_ack_is_not_business_effect_and_later_checkpoint_unblocks():
         )
         assert uow.get_command(consumed.consumer_effect_id)
         uow.delete_command(consumed.consumer_effect_id)
-    published = customer.reconcile_completed_logistics_egress(store)
+    published = _owner_scoped_reconcile_completed_logistics_egress(store)
     assert len(published) == 1
     assert published[0].contract_key == "logistics.delivery_completed.v1"
 
 
 def test_dispatch_claim_not_yet_acked_does_not_publish_outbound():
     store, _ = scenario(dispatch_ack=False)
-    assert customer.reconcile_completed_logistics_egress(store) == ()
+    assert _owner_scoped_reconcile_completed_logistics_egress(store) == ()
 
 
 def test_dispatch_without_shipment_proof_is_not_published():
@@ -101,44 +101,44 @@ def test_dispatch_without_shipment_proof_is_not_published():
     # A corrupted/missing state cannot be mistaken for successful delivery.
     with store.transaction() as uow:
         uow._working.entities.pop(("shipment", "shipment-1"))
-    assert customer.reconcile_completed_logistics_egress(store) == ()
+    assert _owner_scoped_reconcile_completed_logistics_egress(store) == ()
 
 
 def test_missing_or_nonunique_order_cause_is_rejected():
     store, _ = scenario(request_count=0)
     with pytest.raises(RuntimeError, match="unique durable sales order cause"):
-        customer.reconcile_completed_logistics_egress(store)
+        _owner_scoped_reconcile_completed_logistics_egress(store)
     store, _ = scenario(request_count=2)
     with pytest.raises(RuntimeError, match="unique durable sales order cause"):
-        customer.reconcile_completed_logistics_egress(store)
+        _owner_scoped_reconcile_completed_logistics_egress(store)
 
 
 def test_egress_is_bounded_retry_idempotent_and_correlation_scoped():
     store, dispatch = scenario()
     with pytest.raises(ValueError, match="max_new_messages"):
-        customer.reconcile_completed_logistics_egress(store, max_new_messages=-1)
-    assert customer.reconcile_completed_logistics_egress(store, correlation_id="other") == ()
-    assert customer.reconcile_completed_logistics_egress(store, max_new_messages=0) == ()
-    first = customer.reconcile_completed_logistics_egress(
+        _owner_scoped_reconcile_completed_logistics_egress(store, max_new_messages=-1)
+    assert _owner_scoped_reconcile_completed_logistics_egress(store, correlation_id="other") == ()
+    assert _owner_scoped_reconcile_completed_logistics_egress(store, max_new_messages=0) == ()
+    first = _owner_scoped_reconcile_completed_logistics_egress(
         store, correlation_id=dispatch.correlation_id, max_new_messages=1,
     )
     assert len(first) == 1
     assert first[0].causation_id == dispatch.message_id
     assert first[0].payload()["order_id"] == "sales-1"
-    assert customer.reconcile_completed_logistics_egress(store, max_new_messages=0) == first
-    assert customer.reconcile_completed_logistics_egress(store, max_new_messages=1) == first
+    assert _owner_scoped_reconcile_completed_logistics_egress(store, max_new_messages=0) == first
+    assert _owner_scoped_reconcile_completed_logistics_egress(store, max_new_messages=1) == first
 
 
 def test_existing_egress_identity_conflicting_with_durable_facts_is_rejected():
     store, dispatch = scenario()
-    outgoing = customer.reconcile_completed_logistics_egress(store)[0]
+    outgoing = _owner_scoped_reconcile_completed_logistics_egress(store)[0]
     with store.transaction() as uow:
         # Simulate a corrupted historical egress identity from another writer.
         uow._working.boundary_messages[outgoing.message_id] = replace(
             outgoing, correlation_id="other-order",
         )
     with pytest.raises(ValueError, match="conflicts with source facts"):
-        customer.reconcile_completed_logistics_egress(store)
+        _owner_scoped_reconcile_completed_logistics_egress(store)
 
 
 def test_consumed_dispatch_without_consumption_receipt_is_not_a_valid_causal_proof():
@@ -150,4 +150,10 @@ def test_consumed_dispatch_without_consumption_receipt_is_not_a_valid_causal_pro
         )
         uow._working.boundary_consumptions.pop(dispatch.delivery_id)
     with pytest.raises(RuntimeError, match="missing consumption evidence"):
-        customer.reconcile_completed_logistics_egress(store)
+        _owner_scoped_reconcile_completed_logistics_egress(store)
+
+
+def _owner_scoped_reconcile_completed_logistics_egress(store, **kwargs):
+    """The fixture declares exactly one operational owner, not a global default."""
+    owners = {"order-1": "logistics-egress-proof-organization"}
+    return customer.reconcile_completed_logistics_egress(store, organization_owners=owners, **kwargs)

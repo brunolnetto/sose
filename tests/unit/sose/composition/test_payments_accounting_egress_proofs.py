@@ -21,7 +21,7 @@ def test_accounting_entry_requires_durable_settled_payment(state):
         payment = uow.get_entity("card_payment", result.payment_id)
         payment.state = state
         uow.save_entity(payment)
-    assert customer.reconcile_settled_payment_egress(store) == ()
+    assert _owner_scoped_reconcile_settled_payment_egress(store) == ()
 
 
 def test_accounting_entry_needs_business_effect_not_transport_ack():
@@ -39,7 +39,7 @@ def test_accounting_entry_needs_business_effect_not_transport_ack():
             entity_type="card_payment", entity_id=result.payment_id,
             due_at=datetime(2026, 9, 1),
         ))
-    assert customer.reconcile_settled_payment_egress(store) == ()
+    assert _owner_scoped_reconcile_settled_payment_egress(store) == ()
 
 
 def test_accounting_egress_rejects_mismatched_payment_amount():
@@ -49,7 +49,7 @@ def test_accounting_egress_rejects_mismatched_payment_amount():
         payment.attributes["amount"] = -1
         uow.save_entity(payment)
     with pytest.raises(ValueError, match="settled card payment conflicts"):
-        customer.reconcile_settled_payment_egress(store)
+        _owner_scoped_reconcile_settled_payment_egress(store)
 
 
 @pytest.mark.parametrize("mode", ["missing", "ambiguous"])
@@ -67,9 +67,9 @@ def test_accounting_egress_requires_unique_persisted_journal_binding(mode):
             ))
     if mode == "missing":
         with pytest.raises(RuntimeError, match="bound journal is missing"):
-            customer.reconcile_settled_payment_egress(store)
+            _owner_scoped_reconcile_settled_payment_egress(store)
     else:
-        request = customer.reconcile_settled_payment_egress(store)
+        request = _owner_scoped_reconcile_settled_payment_egress(store)
         assert len(request) == 1
         assert request[0].payload()["journal_id"] == result.journal_id
 
@@ -83,25 +83,35 @@ def test_accounting_egress_rejects_ack_without_receipt():
         )
         uow._working.boundary_consumptions.pop(request.delivery_id)
     with pytest.raises(RuntimeError, match="durable payment ACK receipt"):
-        customer.reconcile_settled_payment_egress(store)
+        _owner_scoped_reconcile_settled_payment_egress(store)
 
 
 def test_accounting_egress_idempotent_bounded_and_correlation_scoped():
     store, result = completed()
-    first = customer.reconcile_settled_payment_egress(store)
+    first = _owner_scoped_reconcile_settled_payment_egress(store)
     assert len(first) == 1
     assert first[0].payload()["journal_id"] == result.journal_id
-    assert customer.reconcile_settled_payment_egress(store, max_new_messages=0) == first
-    assert customer.reconcile_settled_payment_egress(
+    assert _owner_scoped_reconcile_settled_payment_egress(store, max_new_messages=0) == first
+    assert _owner_scoped_reconcile_settled_payment_egress(
         store, correlation_id="unrelated-order",
     ) == ()
     with pytest.raises(ValueError, match="max_new_messages"):
-        customer.reconcile_settled_payment_egress(store, max_new_messages=-1)
+        _owner_scoped_reconcile_settled_payment_egress(store, max_new_messages=-1)
 
 
 def test_accounting_egress_rejects_conflicting_preexisting_identity():
     store, _ = completed()
-    first = customer.reconcile_settled_payment_egress(store)[0]
+    first = _owner_scoped_reconcile_settled_payment_egress(store)[0]
     store._state.boundary_messages[first.message_id] = replace(first, correlation_id="wrong")
     with pytest.raises(ValueError, match="conflicts with source facts"):
-        customer.reconcile_settled_payment_egress(store)
+        _owner_scoped_reconcile_settled_payment_egress(store)
+
+
+def _owner_scoped_reconcile_settled_payment_egress(store, **kwargs):
+    """The fixture declares exactly one operational owner, not a global default."""
+    owners = {
+        receipt.correlation_id: "test-org-payments-accounting-egress-proofs"
+        for receipt in store.business_effects()
+    }
+    assert owners, "fixture must supply a certified owner-bound flow"
+    return customer.reconcile_settled_payment_egress(store, organization_owners=owners, **kwargs)

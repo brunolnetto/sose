@@ -62,21 +62,21 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
     # remaining scheduler budget is exhausted, even after a crash.
     with recovered.transaction() as uow:
         before_messages = {d.message_id for d in uow.boundary_deliveries()}
-    customer.reconcile_shipped_fulfillment_egress(
+    _owner_scoped_reconcile_shipped_fulfillment_egress(
         recovered, correlation_id=reserved.correlation_id,
         max_new_messages=0,
     )
     with recovered.transaction() as uow:
         assert {d.message_id for d in uow.boundary_deliveries()} == before_messages
     with pytest.raises(ValueError, match="max_new_messages"):
-        customer.reconcile_shipped_fulfillment_egress(
+        _owner_scoped_reconcile_shipped_fulfillment_egress(
             recovered, correlation_id=reserved.correlation_id,
             max_new_messages=-1,
         )
 
     # First reconstruct from authoritative state, then consume through the
     # real BoundaryService with durable fencing/consumer-effect identity.
-    outgoing = customer.reconcile_shipped_fulfillment_egress(
+    outgoing = _owner_scoped_reconcile_shipped_fulfillment_egress(
         recovered, correlation_id=reserved.correlation_id,
         max_new_messages=1,
     )
@@ -184,11 +184,11 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
         },
     )
     assert outgoing[0].causation_id != decoy.message_id
-    assert customer.reconcile_shipped_fulfillment_egress(
+    assert _owner_scoped_reconcile_shipped_fulfillment_egress(
         recovered, correlation_id=reserved.correlation_id,
     )[0].message_id == outgoing[0].message_id
 
-    finished = customer.reconcile_shipped_fulfillment_egress(
+    finished = _owner_scoped_reconcile_shipped_fulfillment_egress(
         recovered, correlation_id=reserved.correlation_id,
     )
     assert len(finished) == 2
@@ -196,7 +196,7 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
     assert finished[1].contract_key == "warehouse.dispatch_ready.v1"
     assert finished[1].causation_id == finished[0].message_id
     assert finished[1].payload()["shipment_id"]
-    again = customer.reconcile_shipped_fulfillment_egress(
+    again = _owner_scoped_reconcile_shipped_fulfillment_egress(
         recovered, correlation_id=reserved.correlation_id,
     )
     assert [m.message_id for m in again] == [m.message_id for m in finished]
@@ -204,3 +204,13 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
         all_deliveries = tuple(uow.boundary_deliveries())
     assert len({delivery.delivery_id for delivery in all_deliveries}) == len(all_deliveries)
     recovered.close()
+
+
+def _owner_scoped_reconcile_shipped_fulfillment_egress(store, **kwargs):
+    """The fixture declares exactly one operational owner, not a global default."""
+    owners = {
+        receipt.correlation_id: "test-org-shipped-egress"
+        for receipt in store.business_effects()
+    }
+    assert owners, "fixture must supply a certified owner-bound flow"
+    return customer.reconcile_shipped_fulfillment_egress(store, organization_owners=owners, **kwargs)

@@ -64,9 +64,9 @@ def test_payment_egress_fails_closed_without_applied_invoicing(variant):
 
     if variant in {"wrong_receivable_amount", "wrong_receivable_order"}:
         with pytest.raises(ValueError, match="receivable does not certify"):
-            customer.reconcile_invoiced_o2c_egress(store)
+            _owner_scoped_reconcile_invoiced_o2c_egress(store)
     else:
-        assert customer.reconcile_invoiced_o2c_egress(store) == ()
+        assert _owner_scoped_reconcile_invoiced_o2c_egress(store) == ()
 
 
 @pytest.mark.parametrize("variant", ["missing_payment", "ambiguous_payment"])
@@ -84,9 +84,9 @@ def test_payment_egress_does_not_guess_binding_across_entities(variant):
             ))
     if variant == "missing_payment":
         with pytest.raises(RuntimeError, match="bound card payment is missing"):
-            customer.reconcile_invoiced_o2c_egress(store)
+            _owner_scoped_reconcile_invoiced_o2c_egress(store)
     else:
-        request = customer.reconcile_invoiced_o2c_egress(store)
+        request = _owner_scoped_reconcile_invoiced_o2c_egress(store)
         assert len(request) == 1
         assert request[0].payload()["payment_id"] == reference.payment_id
 
@@ -100,19 +100,29 @@ def test_receipt_deleted_is_not_proof_of_applied_o2c():
         )
         uow._working.boundary_consumptions.pop(delivery.delivery_id)
     with pytest.raises(RuntimeError, match="missing consumption evidence"):
-        customer.reconcile_invoiced_o2c_egress(store)
+        _owner_scoped_reconcile_invoiced_o2c_egress(store)
 
 
 def test_completed_invoice_request_is_stable_under_duplicate_reconciliation():
     store, reference = completed_fixture()
-    original = customer.reconcile_invoiced_o2c_egress(store)
+    original = _owner_scoped_reconcile_invoiced_o2c_egress(store)
     assert len(original) == 1
     assert original[0].payload()["payment_id"] == reference.payment_id
-    assert customer.reconcile_invoiced_o2c_egress(
+    assert _owner_scoped_reconcile_invoiced_o2c_egress(
         store, max_new_messages=0,
     ) == original
-    assert customer.reconcile_invoiced_o2c_egress(
+    assert _owner_scoped_reconcile_invoiced_o2c_egress(
         store, correlation_id="different-order",
     ) == ()
     with pytest.raises(ValueError, match="max_new_messages"):
-        customer.reconcile_invoiced_o2c_egress(store, max_new_messages=-1)
+        _owner_scoped_reconcile_invoiced_o2c_egress(store, max_new_messages=-1)
+
+
+def _owner_scoped_reconcile_invoiced_o2c_egress(store, **kwargs):
+    """The fixture declares exactly one operational owner, not a global default."""
+    owners = {
+        receipt.correlation_id: "test-org-o2c-egress-proofs"
+        for receipt in store.business_effects()
+    }
+    assert owners, "fixture must supply a certified owner-bound flow"
+    return customer.reconcile_invoiced_o2c_egress(store, organization_owners=owners, **kwargs)

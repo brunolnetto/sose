@@ -135,7 +135,7 @@ def test_payment_egress_requires_ack_and_completed_o2c_effect(tmp_path, monkeypa
     opened[-1].close()
 
     with SQLiteIncrementalPersistence(db) as store:
-        assert customer.reconcile_invoiced_o2c_egress(store) == ()
+        assert _owner_scoped_reconcile_invoiced_o2c_egress(store) == ()
         with store.transaction() as uow:
             inbound = next(
                 uow.get_boundary_message(d.message_id)
@@ -152,13 +152,13 @@ def test_payment_egress_requires_ack_and_completed_o2c_effect(tmp_path, monkeypa
         fenced = FencedEnginePersistence(
             store, WriterLease(owner_id="o2c", epoch=store.writer_epoch()),
         )
-        assert len(customer.reconcile_invoiced_o2c_egress(fenced)) == 1
-        assert customer.reconcile_invoiced_o2c_egress(fenced, max_new_messages=0)
-        assert not customer.reconcile_invoiced_o2c_egress(
+        assert len(_owner_scoped_reconcile_invoiced_o2c_egress(fenced)) == 1
+        assert _owner_scoped_reconcile_invoiced_o2c_egress(fenced, max_new_messages=0)
+        assert not _owner_scoped_reconcile_invoiced_o2c_egress(
             fenced, correlation_id="unrelated-order",
         )
         with pytest.raises(ValueError, match="max_new_messages"):
-            customer.reconcile_invoiced_o2c_egress(fenced, max_new_messages=-1)
+            _owner_scoped_reconcile_invoiced_o2c_egress(fenced, max_new_messages=-1)
 
 
 def test_payment_egress_rejects_tampered_durable_existing_output(tmp_path, monkeypatch):
@@ -185,7 +185,7 @@ def test_payment_egress_rejects_tampered_durable_existing_output(tmp_path, monke
                 if d.contract_name == "o2c.payment_requested"
             )
             assert payment is not None
-        assert customer.reconcile_invoiced_o2c_egress(store) == (payment,)
+        assert _owner_scoped_reconcile_invoiced_o2c_egress(store) == (payment,)
         from sose.composition.model import BoundaryMessage
         corrupt = BoundaryMessage.create(
             contract_name=payment.contract_name, contract_version=payment.contract_version,
@@ -199,4 +199,14 @@ def test_payment_egress_rejects_tampered_durable_existing_output(tmp_path, monke
         # contract, representing corrupted warehouse recovery state.
         store._state.boundary_messages[corrupt.message_id] = corrupt
         with pytest.raises(ValueError, match="conflicts"):
-            customer.reconcile_invoiced_o2c_egress(store)
+            _owner_scoped_reconcile_invoiced_o2c_egress(store)
+
+
+def _owner_scoped_reconcile_invoiced_o2c_egress(store, **kwargs):
+    """The fixture declares exactly one operational owner, not a global default."""
+    owners = {
+        receipt.correlation_id: "test-org-o2c-durable-recovery"
+        for receipt in store.business_effects()
+    }
+    assert owners, "fixture must supply a certified owner-bound flow"
+    return customer.reconcile_invoiced_o2c_egress(store, organization_owners=owners, **kwargs)

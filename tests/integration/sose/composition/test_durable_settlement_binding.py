@@ -32,8 +32,8 @@ def test_equal_value_unrelated_payment_and_journal_cannot_hijack_completed_causa
         correlation_id="independent-order",
     ))
 
-    out_payment = customer.reconcile_invoiced_o2c_egress(store)
-    out_accounting = customer.reconcile_settled_payment_egress(store)
+    out_payment = _owner_scoped_reconcile_invoiced_o2c_egress(store)
+    out_accounting = _owner_scoped_reconcile_settled_payment_egress(store)
     assert len(out_payment) == len(out_accounting) == 1
     assert out_payment[0].payload()["order_id"] == result.o2c_order_id
     assert out_payment[0].payload()["payment_id"] == result.payment_id
@@ -62,8 +62,27 @@ def test_sqlite_reopened_reference_recovers_same_causal_payment_journal_bindings
         assert binding.payment_id == original.payment_id
         assert binding.journal_id == original.journal_id
         assert binding.correlation_id == original.correlation_id
-        payment_requests = customer.reconcile_invoiced_o2c_egress(reopened)
-        journal_requests = customer.reconcile_settled_payment_egress(reopened)
+        payment_requests = _owner_scoped_reconcile_invoiced_o2c_egress(reopened)
+        journal_requests = _owner_scoped_reconcile_settled_payment_egress(reopened)
         assert len(payment_requests) == len(journal_requests) == 1
         assert payment_requests[0].payload()["payment_id"] == binding.payment_id
         assert journal_requests[0].payload()["journal_id"] == binding.journal_id
+
+
+def _owner_scoped_reconcile_invoiced_o2c_egress(store, **kwargs):
+    """The fixture declares exactly one operational owner, not a global default."""
+    owners = {
+        receipt.correlation_id: "trading-customer-reference"
+        for receipt in store.business_effects()
+    }
+    assert owners, "fixture must supply a certified owner-bound flow"
+    return customer.reconcile_invoiced_o2c_egress(store, organization_owners=owners, **kwargs)
+
+def _owner_scoped_reconcile_settled_payment_egress(store, **kwargs):
+    """The fixture declares exactly one operational owner, not a global default."""
+    owners = {
+        receipt.correlation_id: "trading-customer-reference"
+        for receipt in store.business_effects()
+    }
+    assert owners, "fixture must supply a certified owner-bound flow"
+    return customer.reconcile_settled_payment_egress(store, organization_owners=owners, **kwargs)
