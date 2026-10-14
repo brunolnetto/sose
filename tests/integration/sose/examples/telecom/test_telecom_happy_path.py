@@ -1,3 +1,5 @@
+REFERENCE_OWNER_ID = "telecom-integration-reference"
+
 from sose.examples.telecom.simulation import (
     run_happy_path,
     service_order_id,
@@ -7,7 +9,7 @@ from sose.examples.telecom.simulation import (
 
 
 def test_postpaid_order_activates_service_and_records_usage():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id=REFERENCE_OWNER_ID)
 
     order = persistence.entity("telecom_product_order", entities.product_order_id)
     service_order = persistence.entity(
