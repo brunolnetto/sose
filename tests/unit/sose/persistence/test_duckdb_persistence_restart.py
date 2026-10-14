@@ -1,3 +1,5 @@
+OWNER_ID = "test-duckdb_persistence_restart"
+
 from datetime import timedelta
 
 from sose.backends.simpy import SimPyBackend
@@ -14,8 +16,8 @@ from sose.testing.restart import restart_reference_runtime
 def test_duckdb_survives_close_reopen_and_backend_rebuild(tmp_path):
     path = tmp_path / "state.duckdb"
     first = DuckDBPersistence(path)
-    job = seed_job(first)
-    _, engine = build_runtime(first)
+    job = seed_job(owner_id=OWNER_ID, first)
+    _, engine = build_runtime(owner_id=OWNER_ID, first)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     complete_at = ORIGIN + timedelta(hours=2)
@@ -45,7 +47,7 @@ def test_duckdb_survives_close_reopen_and_backend_rebuild(tmp_path):
 
 def test_duckdb_persists_backend_neutral_records(tmp_path):
     persistence = DuckDBPersistence(tmp_path / "records.duckdb")
-    job = seed_job(persistence)
+    job = seed_job(owner_id=OWNER_ID, persistence)
 
     assert persistence.persisted_record_count() > 0
     row = persistence._connection.execute(
