@@ -523,9 +523,9 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             if work.due_at <= at
         )
 
-    def simulation_position(self):
+    def simulation_position(self, *, owner_id: str | None = None):
         self._fresh()
-        return super().simulation_position()
+        return super().simulation_position(owner_id=owner_id)
 
     def scenario_state(self):
         self._fresh()
