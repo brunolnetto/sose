@@ -11,10 +11,13 @@ from sose.examples.mro.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+MRO_REFERENCE_OWNER = "mro-review-regressions"
+
+
 def _released_runtime(quantity=1.0):
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence, quantity=quantity)
-    _, engine = build_runtime(persistence)
+    ids = seed_reference(persistence, owner_id=MRO_REFERENCE_OWNER, quantity=quantity)
+    _, engine = build_runtime(persistence, owner_id=MRO_REFERENCE_OWNER)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN.replace(hour=9))
@@ -47,6 +50,7 @@ def test_completed_part_issue_is_reconciled_after_crash_even_when_stock_is_zero(
 
     _, restarted_engine = build_runtime(
         persistence,
+        owner_id=MRO_REFERENCE_OWNER,
         now=backend.now,
     )
     restarted_backend = SimPyBackend(origin=backend.now)
@@ -65,8 +69,8 @@ def test_completed_part_issue_is_reconciled_after_crash_even_when_stock_is_zero(
 
 
 def test_reconcile_start_on_closed_work_does_not_reacquire_capacity():
-    persistence, ids = run_happy_path(quantity=1.0)
-    _, engine = build_runtime(persistence)
+    persistence, ids = run_happy_path(owner_id=MRO_REFERENCE_OWNER, quantity=1.0)
+    _, engine = build_runtime(persistence, owner_id=MRO_REFERENCE_OWNER)
     backend = SimPyBackend(origin=ORIGIN.replace(hour=9))
     engine.rebuild_backend(backend)
 
@@ -85,8 +89,8 @@ def test_reconcile_start_on_closed_work_does_not_reacquire_capacity():
 
 def test_planned_cancellation_invalidates_durable_release():
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence, quantity=1.0)
-    _, engine = build_runtime(persistence)
+    ids = seed_reference(persistence, owner_id=MRO_REFERENCE_OWNER, quantity=1.0)
+    _, engine = build_runtime(persistence, owner_id=MRO_REFERENCE_OWNER)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -234,7 +238,7 @@ def test_cancel_after_rebuild_removes_queued_demands_durably():
     ) is False
     assert persistence.entity("work_order", ids.work_order_id).state == "waiting_resource"
 
-    _, restarted_engine = build_runtime(persistence, now=backend.now)
+    _, restarted_engine = build_runtime(persistence, owner_id=MRO_REFERENCE_OWNER, now=backend.now)
     restarted_backend = SimPyBackend(origin=backend.now)
     restarted_engine.rebuild_backend(restarted_backend)
     restarted_backend.run_until(backend.now)
