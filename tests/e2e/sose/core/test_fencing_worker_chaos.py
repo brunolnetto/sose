@@ -138,7 +138,7 @@ def _control(definition, backend: str, *, path: Path | None, namespace: str | No
     runner = PersistentJobRunner(_job(definition, persistence), owner_id="control")
     for tick in range(1, 4):
         runner.run_tick(trigger_id=_trigger(definition.name, tick))
-    snapshot = operational_snapshot(persistence)
+    snapshot = operational_snapshot(persistence, owner_id=f"{definition.name}-fencing-chaos")
     persistence.close()
     return snapshot
 
@@ -158,7 +158,7 @@ def _finish_after_takeover(
     assert recovered.epoch == expected_previous_epoch + 1
     for tick in range(2, 4):
         runner.run_tick(trigger_id=_trigger(definition.name, tick))
-    snapshot = operational_snapshot(persistence)
+    snapshot = operational_snapshot(persistence, owner_id=f"{definition.name}-fencing-chaos")
     persistence.close()
     return snapshot
 
@@ -373,7 +373,7 @@ def test_takeover_waits_for_open_fenced_transaction_then_recovers(
     runner = PersistentJobRunner(_job(definition, persistence), owner_id="worker-b")
     for tick in range(2, 4):
         runner.run_tick(trigger_id=_trigger(definition.name, tick))
-    actual = operational_snapshot(persistence)
+    actual = operational_snapshot(persistence, owner_id=f"{definition.name}-fencing-chaos")
     persistence.close()
 
     assert actual == expected
@@ -446,7 +446,7 @@ def test_zombie_worker_cannot_commit_after_successor_claims_epoch(
         path=data_path if backend == "sqlite" else None,
         namespace=namespace,
     )
-    final_snapshot = operational_snapshot(final_persistence)
+    final_snapshot = operational_snapshot(final_persistence, owner_id=f"{definition.name}-fencing-chaos")
     final_persistence.close()
 
     assert actual == expected
