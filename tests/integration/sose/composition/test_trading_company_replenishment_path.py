@@ -4,8 +4,10 @@ from sose.composition.model import DeliveryStatus
 from sose.composition.trading_company_replenishment import run_replenishment_path
 
 
+REPLENISHMENT_OWNER_ID = "trading-company-replenishment-reference"
+
 def test_replenishment_path_keeps_warehouse_management_as_stock_owner() -> None:
-    result = run_replenishment_path(quantity=5.0)
+    result = run_replenishment_path(owner_id=REPLENISHMENT_OWNER_ID, quantity=5.0)
     store = result.persistence
 
     stock = store.entity("warehouse_management_stock", result.stock_id)
@@ -60,7 +62,7 @@ def test_replenishment_path_keeps_warehouse_management_as_stock_owner() -> None:
 
 
 def test_replenishment_receipt_replay_does_not_duplicate_stock() -> None:
-    result = run_replenishment_path(quantity=5.0)
+    result = run_replenishment_path(owner_id=REPLENISHMENT_OWNER_ID, quantity=5.0)
     store = result.persistence
 
     stock = store.entity("warehouse_management_stock", result.stock_id)
@@ -74,7 +76,7 @@ def test_replenishment_receipt_replay_does_not_duplicate_stock() -> None:
 
 
 def test_replenishment_domain_events_share_composition_correlation() -> None:
-    result = run_replenishment_path(quantity=5.0)
+    result = run_replenishment_path(owner_id=REPLENISHMENT_OWNER_ID, quantity=5.0)
     store = result.persistence
 
     relevant_types = {
