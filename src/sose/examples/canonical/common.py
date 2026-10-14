@@ -61,11 +61,11 @@ def build_runtime(
     return context, Engine(context=context, registry=registry, persistence=persistence, owner_id=owner_id)
 
 
-def seed_case(persistence, *, name: str, attributes: dict[str, object]):
+def seed_case(persistence, *, owner_id: str, name: str, attributes: dict[str, object]):
     stores = DurableStoreManager(persistence)
     if not any(definition.name == ACTION_STORE for definition in persistence.store_definitions()):
         stores.define(StoreDefinition(ACTION_STORE))
-    context, _ = build_runtime(persistence, CanonicalConfig(), ORIGIN, 0)
+    context, _ = build_runtime(persistence, CanonicalConfig(), ORIGIN, 0, owner_id=owner_id)
     case = context.entities.create(
         CanonicalCase,
         key=("canonical", name),
