@@ -102,7 +102,7 @@ class Engine:
                 for event in emitted:
                     uow.append_event(event)
                     self.context.scenarios.on_event(event)
-                uow.set_scenario_state(self.context.scenarios.snapshot_state())
+                uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
         except Exception:
             self.context.scenarios.restore_state(scenario_before)
             raise
@@ -140,7 +140,7 @@ class Engine:
         for event in emitted:
             uow.append_event(event)
             self.context.scenarios.on_event(event)
-        uow.set_scenario_state(self.context.scenarios.snapshot_state())
+        uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
 
         uow.delete_scheduled_work(work.work_id)
         uow.delete_command(command.command_id)
@@ -326,7 +326,7 @@ class Engine:
                 self.dispatch(command)
 
             with self.persistence.transaction() as uow:
-                uow.set_scenario_state(self.context.scenarios.snapshot_state())
+                uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
 
                 executed = 0
                 for item in self.scheduler.due(tick_end):
@@ -334,7 +334,7 @@ class Engine:
                         executed += 1
 
                 next_sequence = execution_sequence + executed
-                uow.set_committed_tick(current_tick)
+                uow.set_committed_tick(current_tick, owner_id=self.owner_id)
                 uow.set_simulation_position(
                     SimulationPosition(
                         logical_time=tick_end,
