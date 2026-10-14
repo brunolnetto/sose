@@ -74,7 +74,7 @@ def test_payment_continuation_restarts_from_persisted_stage_and_emits_r2r(
                         lambda *a, **kw: crash_after("settle", *a, **kw))
     monkeypatch.setattr(customer.payments, "_dispatch", crash_dispatch)
     with pytest.raises(RuntimeError, match="worker death in Payments"):
-        customer.run_customer_demand_path()
+        customer.run_customer_demand_path(organization_id="test-org-payments-durable-recovery")
 
     monkeypatch.setattr(customer, "_execute_intent", originals["execute"])
     monkeypatch.setattr(customer.payments, "reconcile_authorization", originals["authorize"])
