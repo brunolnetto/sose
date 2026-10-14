@@ -87,6 +87,8 @@ class Engine:
             uow.save_domain_delivery(DomainDelivery(mutation))
 
     def dispatch(self, command: Command) -> None:
+        if command.owner_id != self.owner_id:
+            raise PermissionError("command belongs to a different or missing owner")
         scenario_before = self.context.scenarios.snapshot_state()
         try:
             with self.persistence.transaction(owner_id=self.owner_id) as uow:
@@ -115,6 +117,8 @@ class Engine:
 
         command = item.command
         work = item.work
+        if command.owner_id != self.owner_id:
+            raise PermissionError("command belongs to a different or missing owner")
         if work.owner_id != self.owner_id:
             raise PermissionError("scheduled work belongs to a different owner")
         if command.command_id != work.command_id:
