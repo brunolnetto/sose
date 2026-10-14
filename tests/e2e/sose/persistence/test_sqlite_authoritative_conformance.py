@@ -41,12 +41,12 @@ class SQLiteIncrementalHarness:
         store = self._open()
         try:
             with store.transaction() as uow:
-                uow.set_committed_tick(1)
+                uow.set_committed_tick(1, owner_id='test-test_sqlite_authoritative_conformance')
             with pytest.raises(RuntimeError, match="fault injection"):
                 with store.transaction() as uow:
-                    uow.set_committed_tick(2)
+                    uow.set_committed_tick(2, owner_id='test-test_sqlite_authoritative_conformance')
                     raise RuntimeError("fault injection")
-            assert store.committed_tick() == 1
+            assert store.committed_tick(owner_id='test-test_sqlite_authoritative_conformance') == 1
         finally:
             store.close()
 
@@ -55,8 +55,8 @@ class SQLiteIncrementalHarness:
         reader = self._open()
         try:
             with writer.transaction() as uow:
-                uow.set_committed_tick(7)
-            assert reader.committed_tick() == 7
+                uow.set_committed_tick(7, owner_id='test-test_sqlite_authoritative_conformance')
+            assert reader.committed_tick(owner_id='test-test_sqlite_authoritative_conformance') == 7
         finally:
             reader.close()
             writer.close()
@@ -89,13 +89,13 @@ class SQLiteIncrementalHarness:
             assert lease_b.epoch == lease_a.epoch + 1
             with pytest.raises(StaleWriterError):
                 with first.transaction(owner_epoch=lease_a.epoch) as uow:
-                    uow.set_committed_tick(99)
+                    uow.set_committed_tick(99, owner_id='test-test_sqlite_authoritative_conformance')
             with pytest.raises(StaleWriterError, match="owner_epoch is required"):
                 with first.transaction() as uow:
-                    uow.set_committed_tick(100)
+                    uow.set_committed_tick(100, owner_id='test-test_sqlite_authoritative_conformance')
             with second.transaction(owner_epoch=lease_b.epoch) as uow:
-                uow.set_committed_tick(101)
-            assert second.committed_tick() == 101
+                uow.set_committed_tick(101, owner_id='test-test_sqlite_authoritative_conformance')
+            assert second.committed_tick(owner_id='test-test_sqlite_authoritative_conformance') == 101
         finally:
             second.close()
             first.close()
@@ -103,13 +103,13 @@ class SQLiteIncrementalHarness:
     def fresh_process_reconstruction(self):
         first = self._open()
         with first.transaction() as uow:
-            uow.set_committed_tick(11)
+            uow.set_committed_tick(11, owner_id='test-test_sqlite_authoritative_conformance')
         first.close()
 
         code = (
             "from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence;"
             f"p=SQLiteIncrementalPersistence({str(self.path)!r});"
-            "assert p.committed_tick()==11;"
+            "assert p.committed_tick(owner_id='test-test_sqlite_authoritative_conformance')==11;"
             "p.close()"
         )
         subprocess.run([sys.executable, "-c", code], check=True)
@@ -133,13 +133,13 @@ class SQLiteIncrementalHarness:
         with store.transaction() as uow:
             uow.save_command(command)
             uow.save_scheduled_work(work)
-            uow.set_committed_tick(20)
+            uow.set_committed_tick(20, owner_id='test-test_sqlite_authoritative_conformance')
 
     @staticmethod
     def _projection(store):
         command = store.command("cmd-1")
         return (
-            store.committed_tick(),
+            store.committed_tick(owner_id='test-test_sqlite_authoritative_conformance'),
             command,
             store.scheduled_work(),
         )
@@ -151,7 +151,7 @@ class SQLiteIncrementalHarness:
         reference = SQLiteIncrementalPersistence(reference_path)
         self._seed_representative_state(reference)
         with reference.transaction() as uow:
-            uow.set_committed_tick(21)
+            uow.set_committed_tick(21, owner_id='test-test_sqlite_authoritative_conformance')
         expected = self._projection(reference)
         reference.close()
 
@@ -160,7 +160,7 @@ class SQLiteIncrementalHarness:
         first.close()
         resumed = SQLiteIncrementalPersistence(restarted_path)
         with resumed.transaction() as uow:
-            uow.set_committed_tick(21)
+            uow.set_committed_tick(21, owner_id='test-test_sqlite_authoritative_conformance')
         actual = self._projection(resumed)
         resumed.close()
 
