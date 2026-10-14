@@ -70,6 +70,7 @@ class CommandFactory:
             payload=merged_payload,
             causation_id=cause_id,
             correlation_id=correlation or command_id,
+            owner_id=self._owner_id,
         )
 
 
