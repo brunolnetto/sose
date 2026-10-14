@@ -122,6 +122,13 @@ class TradingCustomerRecoveryRunner:
         ):
             raise TypeError("composition runner requires authoritative writer fencing")
 
+    def _egress_organization_owners(self) -> dict[str, str]:
+        """Bind every known correlation to its stable operational owner."""
+        correlations = set(self.organization_owners or ()) | set(self.resource_organizations or ())
+        if self.correlation_id is not None:
+            correlations = {self.correlation_id}
+        return {correlation: self._organization_for(correlation) for correlation in correlations}
+
     def _organization_for(self, correlation_id: str) -> str:
         """Resolve durable organizational ownership, never a worker lease identity."""
         configured = (
@@ -505,7 +512,8 @@ class TradingCustomerRecoveryRunner:
                     delivery.message_id for delivery in uow.boundary_deliveries()
                 }
             reconstructed = customer.reconcile_shipped_fulfillment_egress(
-                store, max_new_messages=self.max_actions - actions,
+                store, organization_owners=self._egress_organization_owners(),
+                max_new_messages=self.max_actions - actions,
                 recovery_job_id=self.job_id if active_trigger is not None else None,
                 correlation_id=self.correlation_id,
             )
@@ -521,7 +529,8 @@ class TradingCustomerRecoveryRunner:
                     delivery.message_id for delivery in uow.boundary_deliveries()
                 }
             reconstructed_logistics = customer.reconcile_completed_logistics_egress(
-                store, max_new_messages=self.max_actions - actions,
+                store, organization_owners=self._egress_organization_owners(),
+                max_new_messages=self.max_actions - actions,
                 recovery_job_id=self.job_id if active_trigger is not None else None,
                 correlation_id=self.correlation_id,
             )
@@ -538,7 +547,8 @@ class TradingCustomerRecoveryRunner:
                     delivery.message_id for delivery in uow.boundary_deliveries()
                 }
             reconstructed_o2c = customer.reconcile_invoiced_o2c_egress(
-                store, max_new_messages=self.max_actions - actions,
+                store, organization_owners=self._egress_organization_owners(),
+                max_new_messages=self.max_actions - actions,
                 recovery_job_id=self.job_id if active_trigger is not None else None,
                 correlation_id=self.correlation_id,
             )
@@ -555,7 +565,8 @@ class TradingCustomerRecoveryRunner:
                     delivery.message_id for delivery in uow.boundary_deliveries()
                 }
             reconstructed_payment = customer.reconcile_settled_payment_egress(
-                store, max_new_messages=self.max_actions - actions,
+                store, organization_owners=self._egress_organization_owners(),
+                max_new_messages=self.max_actions - actions,
                 recovery_job_id=self.job_id if active_trigger is not None else None,
                 correlation_id=self.correlation_id,
             )
