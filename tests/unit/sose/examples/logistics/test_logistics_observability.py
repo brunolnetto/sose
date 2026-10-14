@@ -21,8 +21,11 @@ from sose.examples.process_manifest import ProcessEvidence, ProcessMaturity
 from sose.persistence.memory import MemoryPersistence
 
 
+LOGISTICS_OWNER_ID = "logistics-observability-reference"
+
+
 def test_logistics_projection_is_read_only_and_idempotent() -> None:
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id=LOGISTICS_OWNER_ID)
     shipment = persistence.entity("shipment", entities.shipment_id)
     assert shipment is not None
     before_version = shipment.version
@@ -45,7 +48,7 @@ def test_logistics_projection_is_read_only_and_idempotent() -> None:
 
 
 def test_logistics_kpis_are_derived_from_durable_events() -> None:
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id=LOGISTICS_OWNER_ID)
 
     projection = logistics_projection(persistence, entities=entities)
     kpis = logistics_kpis(persistence, entities=entities)
@@ -70,7 +73,7 @@ def test_logistics_kpis_are_derived_from_durable_events() -> None:
 
 def test_logistics_projection_does_not_invent_terminal_outcome_before_execution() -> None:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id=LOGISTICS_OWNER_ID)
 
     projection = logistics_projection(persistence, entities=entities)
     kpis = logistics_kpis(persistence, entities=entities)
@@ -85,7 +88,7 @@ def test_logistics_projection_does_not_invent_terminal_outcome_before_execution(
 
 
 def test_logistics_kpis_preserve_failed_attempt_history_after_retry_success() -> None:
-    persistence, entities = run_failed_retry_path()
+    persistence, entities = run_failed_retry_path(owner_id=LOGISTICS_OWNER_ID)
 
     projection = logistics_projection(persistence, entities=entities)
     kpis = logistics_kpis(persistence, entities=entities)
@@ -101,8 +104,8 @@ def test_logistics_kpis_preserve_failed_attempt_history_after_retry_success() ->
 
 def test_logistics_kpis_include_uncorrelated_terminal_exception() -> None:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    context, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=LOGISTICS_OWNER_ID)
+    context, engine = build_runtime(persistence, owner_id=LOGISTICS_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
