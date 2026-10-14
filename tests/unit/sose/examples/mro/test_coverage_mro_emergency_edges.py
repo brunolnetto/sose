@@ -10,8 +10,8 @@ from tests.support.behavioral_conformance import operational_snapshot
 
 def _released_runtime():
     persistence = MemoryPersistence()
-    entities = mro.seed_reference(persistence, quantity=1.0)
-    _, engine = mro.build_runtime(persistence)
+    entities = mro.seed_reference(persistence, owner_id="mro-emergency-coverage", quantity=1.0)
+    _, engine = mro.build_runtime(persistence, owner_id="mro-emergency-coverage")
     backend = SimPyBackend(origin=mro.ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(mro.ORIGIN.replace(hour=9))
@@ -180,7 +180,7 @@ def test_interrupt_with_grant_but_no_displacement_withdraws_emergency(monkeypatc
 
 def test_resume_is_idempotent_after_work_is_already_running():
     persistence, entities, engine, backend = _active_work()
-    before = operational_snapshot(persistence)
+    before = operational_snapshot(persistence, owner_id=engine.owner_id)
 
     assert (
         mro.reconcile_emergency_resume(
@@ -192,7 +192,7 @@ def test_resume_is_idempotent_after_work_is_already_running():
         is True
     )
 
-    assert operational_snapshot(persistence) == before
+    assert operational_snapshot(persistence, owner_id=engine.owner_id) == before
 
 
 def test_scenario_reconciles_committed_preemption_then_resumes_work():
@@ -251,7 +251,7 @@ def test_scenario_with_active_emergency_but_no_interrupted_work_returns_false():
     backend.run_until(backend.now)
 
     assert persistence.entity("work_order", entities.work_order_id).state == "released"
-    before = operational_snapshot(persistence)
+    before = operational_snapshot(persistence, owner_id=engine.owner_id)
 
     assert mro.reconcile_scenario_emergency(
         persistence,
@@ -260,4 +260,4 @@ def test_scenario_with_active_emergency_but_no_interrupted_work_returns_false():
         entities=entities,
     ) is False
 
-    assert operational_snapshot(persistence) == before
+    assert operational_snapshot(persistence, owner_id=engine.owner_id) == before
