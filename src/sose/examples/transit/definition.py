@@ -17,9 +17,10 @@ def _build(
     config: TransitConfig,
     now: datetime,
     tick: int,
+    owner_id: str,
 ):
     return build_runtime(
-        persistence,
+        persistence, owner_id=owner_id,
         now=now,
         tick=tick,
         step=config.tick_step,
@@ -27,9 +28,9 @@ def _build(
     )
 
 
-def _seed(persistence: Persistence, config: TransitConfig):
+def _seed(persistence: Persistence, config: TransitConfig, owner_id: str):
     entities = seed_reference(
-        persistence,
+        persistence, owner_id=owner_id,
         now=config.start_at,
         vehicle_key=config.vehicle_key,
         block_id=config.block_id,
@@ -38,7 +39,7 @@ def _seed(persistence: Persistence, config: TransitConfig):
         layover=config.layover,
     )
     _, engine = build_runtime(
-        persistence,
+        persistence, owner_id=owner_id,
         now=config.start_at,
         step=config.tick_step,
         random_seed=config.random_seed,
