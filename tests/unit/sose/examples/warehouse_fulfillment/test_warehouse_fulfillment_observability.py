@@ -9,7 +9,7 @@ from sose.examples.warehouse_fulfillment.simulation import run_happy_path
 
 
 def test_warehouse_fulfillment_projection_and_kpis_are_read_only_and_complete() -> None:
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id="warehouse-fulfillment-reference-organization")
 
     before = tuple(
         (entity.entity_type, entity.id, entity.state, entity.version)
