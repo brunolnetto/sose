@@ -1,8 +1,11 @@
 from sose.examples.mro.simulation import flow_correlation_id, run_happy_path
 
 
+MRO_REFERENCE_OWNER = "mro-integration-reference"
+
+
 def test_mro_happy_path_reaches_closed_with_consumed_part_and_released_capacity():
-    persistence, ids = run_happy_path(quantity=1.0)
+    persistence, ids = run_happy_path(owner_id=MRO_REFERENCE_OWNER, quantity=1.0)
 
     assert persistence.entity("work_order", ids.work_order_id).state == "closed"
     assert persistence.entity("part_demand", ids.part_demand_id).state == "consumed"
@@ -18,7 +21,7 @@ def test_mro_happy_path_reaches_closed_with_consumed_part_and_released_capacity(
 
 
 def test_mro_happy_path_commits_part_issue_before_in_progress():
-    persistence, ids = run_happy_path(quantity=2.0)
+    persistence, ids = run_happy_path(owner_id=MRO_REFERENCE_OWNER, quantity=2.0)
     events = persistence.events()
     start_event = next(
         event for event in events if event.payload["trigger"] == "start"
