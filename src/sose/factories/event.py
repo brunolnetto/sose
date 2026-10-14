@@ -17,6 +17,14 @@ class EventFactory:
         self._now = now
         self._tick = tick
         self._sequence = 0
+        self._owner_id: str | None = None
+
+    def bind_owner(self, owner_id: str) -> None:
+        if not owner_id:
+            raise ValueError("owner_id must not be empty")
+        if self._owner_id is not None and self._owner_id != owner_id:
+            raise ValueError("event factory cannot be rebound to another owner")
+        self._owner_id = owner_id
 
     def create(
         self,
@@ -43,7 +51,11 @@ class EventFactory:
             cause_id or "root",
             self._sequence,
         )
-        event_id = deterministic_id("event", *identity_parts)
+        identity = (
+            (self._owner_id, *identity_parts)
+            if self._owner_id is not None else identity_parts
+        )
+        event_id = deterministic_id("event", *identity)
         return DomainEvent(
             event_id=event_id,
             name=name,
