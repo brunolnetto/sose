@@ -128,12 +128,13 @@ def schedule_procurement_cycle(
 def seed_happy_path(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     quantity: float = 10.0,
     schedule: bool = True,
 ) -> P2PEntities:
     _validate_quantity(quantity)
-    context, engine = build_runtime(persistence, now=now)
+    context, engine = build_runtime(persistence, owner_id=owner_id, now=now)
     correlation_id = flow_correlation_id()
 
     requisition = context.entities.create(
