@@ -18,9 +18,10 @@ def _build(
     config: P2PConfig,
     now: datetime,
     tick: int,
+    owner_id: str,
 ):
     return build_runtime(
-        persistence,
+        persistence, owner_id=owner_id,
         now=now,
         tick=tick,
         step=config.tick_step,
@@ -28,9 +29,9 @@ def _build(
     )
 
 
-def _seed(persistence: Persistence, config: P2PConfig):
+def _seed(persistence: Persistence, config: P2PConfig, owner_id: str):
     return seed_happy_path(
-        persistence,
+        persistence, owner_id=owner_id,
         now=config.start_at,
         quantity=config.quantity,
     )
