@@ -117,6 +117,7 @@ def build_runtime(
 def seed_reference(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     now: datetime = ORIGIN,
     requested_quantity: float = 10.0,
     primary_on_hand: float = 6.0,
@@ -126,7 +127,7 @@ def seed_reference(
     packing_station_capacity: int = 1,
     shipping_dock_capacity: int = 1,
 ) -> WarehouseEntities:
-    context, _ = build_runtime(persistence, now=now)
+    context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
     order = context.entities.create(
         FulfillmentOrder,
         key=("warehouse-reference", "order-1"),
