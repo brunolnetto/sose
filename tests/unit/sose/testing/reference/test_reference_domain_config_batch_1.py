@@ -32,12 +32,13 @@ def test_first_reference_configs_roundtrip_and_drive_runtime_tick_step():
         assert restored == config
 
         persistence = MemoryPersistence()
-        definition.seed(persistence, config)
+        definition.seed(persistence, config, owner_id=f"reference-{definition.name}")
         context, _ = definition.build_runtime(
             persistence,
             config,
             config.start_at,
             0,
+            owner_id=f"reference-{definition.name}",
         )
         assert context.clock.step == config.tick_step
 
@@ -86,11 +87,12 @@ def test_runtime_common_overrides_are_not_domain_specific():
         }
     )
     persistence = MemoryPersistence()
-    definition.seed(persistence, config)
+    definition.seed(persistence, config, owner_id=f"reference-{definition.name}")
     context, _ = definition.build_runtime(
         persistence,
         config,
         config.start_at,
         0,
+        owner_id=f"reference-{definition.name}",
     )
     assert context.clock.step == timedelta(minutes=15)
