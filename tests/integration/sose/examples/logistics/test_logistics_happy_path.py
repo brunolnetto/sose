@@ -6,8 +6,11 @@ from sose.examples.logistics.simulation import (
 )
 
 
+LOGISTICS_OWNER_ID = "logistics-integration-reference"
+
+
 def test_logistics_happy_path_reaches_delivered_with_no_live_capacity():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id=LOGISTICS_OWNER_ID)
 
     assert persistence.entity("shipment", entities.shipment_id).state == "delivered"
     assert persistence.entity("delivery_attempt", delivery_attempt_id(1)).state == "delivered"
@@ -22,7 +25,7 @@ def test_logistics_happy_path_reaches_delivered_with_no_live_capacity():
 
 
 def test_failed_attempt_is_preserved_when_retry_succeeds():
-    persistence, entities = run_failed_retry_path()
+    persistence, entities = run_failed_retry_path(owner_id=LOGISTICS_OWNER_ID)
 
     assert persistence.entity("shipment", entities.shipment_id).state == "delivered"
     assert persistence.entity("delivery_attempt", delivery_attempt_id(1)).state == "failed"
