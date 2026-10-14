@@ -1363,10 +1363,10 @@ def correct_lot_balance(
     )
 
 
-def run_happy_path() -> tuple[MemoryPersistence, WarehouseEntities]:
+def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, WarehouseEntities]:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=owner_id)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
 
     if not allocate_order(persistence, engine, entities=entities):
         raise RuntimeError("reference inventory could not satisfy order")
