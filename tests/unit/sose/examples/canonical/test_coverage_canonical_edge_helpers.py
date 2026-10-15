@@ -342,6 +342,7 @@ def test_canonical_common_and_other_helpers_cover_noop_edges(monkeypatch):
     seeded = canonical_common.seed_case(
         persistence,
         name="producer_consumer",
+        owner_id="canonical-coverage-organization",
         attributes={},
     )
     assert seeded.entity_type == "canonical_case"
