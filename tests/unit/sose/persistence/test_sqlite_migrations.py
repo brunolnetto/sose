@@ -42,7 +42,7 @@ def test_populated_v1_database_migrates_and_preserves_durable_state(tmp_path):
         resource_definitions={
             "bay": ResourceDefinition("bay", capacity=2),
         },
-        committed_tick=7,
+        committed_ticks={"migration-owner": 7},
     )
     _legacy_v1_database(path, state=state)
 
@@ -52,7 +52,7 @@ def test_populated_v1_database_migrates_and_preserves_durable_state(tmp_path):
         assert persistence.resource_definitions() == (
             ResourceDefinition("bay", capacity=2),
         )
-        assert persistence.committed_tick() == 7
+        assert persistence.committed_tick(owner_id="migration-owner") == 7
 
         columns = {
             row[1]
@@ -81,14 +81,14 @@ def test_migrated_database_reopens_without_reapplying_migration(tmp_path):
     path = tmp_path / "reopen.sqlite3"
     _legacy_v1_database(
         path,
-        state=_State(committed_tick=3),
+        state=_State(committed_ticks={"migration-owner": 3}),
     )
 
     with SQLitePersistence(path):
         pass
     with SQLitePersistence(path) as second:
         assert second.schema_info().schema_version == CURRENT_SCHEMA_VERSION
-        assert second.committed_tick() == 3
+        assert second.committed_tick(owner_id="migration-owner") == 3
 
 
 def test_future_schema_is_rejected_without_mutation(tmp_path):
@@ -107,7 +107,7 @@ def test_future_schema_is_rejected_without_mutation(tmp_path):
     connection.execute(
         "INSERT INTO sose_state(singleton, schema_version, codec_version, payload) "
         "VALUES (1, ?, 1, ?)",
-        (CURRENT_SCHEMA_VERSION + 1, dumps(_State(committed_tick=11))),
+        (CURRENT_SCHEMA_VERSION + 1, dumps(_State(committed_ticks={"migration-owner": 11}))),
     )
     connection.commit()
     connection.close()
@@ -211,7 +211,7 @@ def test_migration_v1_with_existing_codec_column_skips_alter_table(tmp_path):
     connection.execute(
         "INSERT INTO sose_state(singleton, schema_version, codec_version, payload) "
         "VALUES (1, 1, 1, ?)",
-        (dumps(_State(committed_tick=5)),),
+        (dumps(_State(committed_ticks={"migration-owner": 5})),),
     )
     connection.commit()
 
