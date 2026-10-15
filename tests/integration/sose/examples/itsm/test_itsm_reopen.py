@@ -14,8 +14,8 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_resolved_incident_can_reopen_without_erasing_resolution_history():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="itsm-reopen-organization")
+    _, engine = build_runtime(persistence, owner_id="itsm-reopen-organization")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
