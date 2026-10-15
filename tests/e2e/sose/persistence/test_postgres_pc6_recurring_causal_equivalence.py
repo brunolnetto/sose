@@ -78,7 +78,7 @@ def _seed(ns):
             )
             assert lease is not None
             consumed = service.consume(
-                lease=lease, registry=TradingCustomerRecoveryRunner._registry_for(source),
+                lease=lease, registry=TradingCustomerRecoveryRunner._registry_for(source, organization_id=org),
                 now=logistics.ORIGIN,
             )
             effects[org] = consumed.consumer_effect_id
