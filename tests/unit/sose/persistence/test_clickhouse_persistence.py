@@ -30,7 +30,7 @@ def test_clickhouse_appends_committed_canonical_snapshot(monkeypatch):
 
     persistence = ClickHousePersistence(host="clickhouse")
     with persistence.transaction() as uow:
-        uow.set_committed_tick(7)
+        uow.set_committed_tick(7, owner_id="clickhouse-reference")
 
     assert any("CREATE TABLE IF NOT EXISTS sose_record_snapshot" in sql for sql in client.commands)
     assert len(client.inserts) == 1
