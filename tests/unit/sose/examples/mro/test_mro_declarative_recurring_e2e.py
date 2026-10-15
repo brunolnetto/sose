@@ -127,7 +127,7 @@ def test_mro_declarative_recurring_job_applies_runtime_config_on_next_trigger(
     assert final_work_order.state == "in_progress"
     assert reopened.store_get_results()
     assert reopened.container_operation_results()
-    assert reopened.simulation_position().logical_tick == 2
+    assert reopened.simulation_position(owner_id=final_state.job_id).logical_tick == 2
     reopened.close()
 
     assert run_cli(["doctor", "--config", str(config)]) == 0
