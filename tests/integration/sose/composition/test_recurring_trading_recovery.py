@@ -66,7 +66,16 @@ def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
 
     recovered = SQLiteIncrementalPersistence(path)
     now = o2c.ORIGIN + timedelta(days=1)
+    with recovered.transaction() as uow:
+        correlations = {
+            message.correlation_id
+            for delivery in uow.boundary_deliveries()
+            if (message := uow.get_boundary_message(delivery.message_id)) is not None
+        }
+    assert len(correlations) == 1
+    owner_bindings = {next(iter(correlations)): "test-org-recurring-trading-recovery"}
     worker = TradingCustomerRecoveryRunner(
+        organization_owners=owner_bindings,
         persistence=recovered, owner_id="new-worker",
         job_id="trading-pc6-recovery-test",
     )
