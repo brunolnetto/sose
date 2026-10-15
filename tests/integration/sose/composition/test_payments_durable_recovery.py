@@ -88,7 +88,16 @@ def test_payment_continuation_restarts_from_persisted_stage_and_emits_r2r(
     with SQLiteIncrementalPersistence(path) as store:
         payment = next(x for x in store.entities() if x.entity_type == "card_payment")
         assert payment.state == expected_payment_state
+        with store.transaction() as uow:
+            correlations = {
+                message.correlation_id
+                for delivery in uow.boundary_deliveries()
+                if (message := uow.get_boundary_message(delivery.message_id)) is not None
+            }
+        assert len(correlations) == 1
+        owner_bindings = {next(iter(correlations)): "test-org-payments-durable-recovery"}
         runner = TradingCustomerRecoveryRunner(
+            organization_owners=owner_bindings,
             persistence=store, owner_id="payment-restart",
             job_id="payment-recovery-test", max_actions=16,
         )
