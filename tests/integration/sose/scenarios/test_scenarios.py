@@ -10,6 +10,8 @@ from sose.core.scheduler import Scheduler
 from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry
 from sose.persistence.memory import MemoryPersistence
+
+REFERENCE_OWNER_ID = "scenario-reference-organization"
 from sose.probability import StateConfiguration, TransitionGraphBuilder, probabilistic
 from sose.scenarios import (
     AttributeEffect,
@@ -265,6 +267,7 @@ def test_engine_evaluates_tick_scenarios_before_advancing_clock():
         registry=DomainRegistry(),
         persistence=MemoryPersistence(),
         scenarios=(scenario,),
+        owner_id=REFERENCE_OWNER_ID,
     )
 
     engine.advance_tick()

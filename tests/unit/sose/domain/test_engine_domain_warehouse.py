@@ -10,6 +10,8 @@ from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.domain.warehouse import DomainMutation, MemoryDomainWarehouse
 from sose.persistence.memory import MemoryPersistence
+
+REFERENCE_OWNER_ID = "warehouse-domain-organization"
 from statemachine import State, StateChart
 
 class DemoChart(StateChart):
@@ -26,7 +28,7 @@ def test_engine_can_transition_domain_entity_without_engine_entity_shadow():
     context = SimulationContext(clock=SimulationClock(now=now, step=timedelta(hours=1)), random=RandomSource(root_seed=1), scheduler=Scheduler())
     registry = DomainRegistry()
     registry.register(EntityType('work_order', DemoChart))
-    engine = Engine(context=context, registry=registry, persistence=persistence, domain_warehouse=warehouse)
+    engine = Engine(context=context, registry=registry, persistence=persistence, domain_warehouse=warehouse, owner_id=REFERENCE_OWNER_ID)
     command = context.commands.create('release', target=entity, key=('release', entity.id))
     engine.dispatch(command)
     assert persistence.entity('work_order', 'wo-1') is None

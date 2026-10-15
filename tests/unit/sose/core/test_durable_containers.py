@@ -20,6 +20,8 @@ from sose.core.containers import DurableContainerManager
 from sose.domain.registry import DomainRegistry
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "container-reference-organization"
+
 NOW = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 
 
@@ -295,6 +297,7 @@ def test_engine_rebuild_restores_container_level_and_pending_operation():
         context=context,
         registry=DomainRegistry(),
         persistence=store,
+        owner_id=REFERENCE_OWNER_ID,
     )
     backend = SimPyBackend(origin=NOW)
     engine.rebuild_backend(backend)

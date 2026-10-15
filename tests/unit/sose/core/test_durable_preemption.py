@@ -22,6 +22,8 @@ from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "preemption-reference-organization"
+
 NOW = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 
 
@@ -339,7 +341,7 @@ def test_engine_rebuild_restores_preemptive_resource_state():
         random=RandomSource(42),
         scheduler=Scheduler(),
     )
-    engine = Engine(context=context, registry=DomainRegistry(), persistence=store)
+    engine = Engine(context=context, registry=DomainRegistry(), persistence=store, owner_id=REFERENCE_OWNER_ID)
     backend = ControlledPreemptiveBackend()
 
     engine.rebuild_backend(backend)

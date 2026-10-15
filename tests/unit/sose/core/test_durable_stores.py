@@ -24,6 +24,8 @@ from sose.core.runtime import (
 from sose.core.stores import DurableStoreManager
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "store-reference-organization"
+
 NOW = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 
 
@@ -325,6 +327,7 @@ def _engine(store, *, filters=None):
         registry=DomainRegistry(),
         persistence=store,
         store_filters=filters,
+        owner_id=REFERENCE_OWNER_ID,
     )
 
 
