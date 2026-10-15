@@ -83,6 +83,7 @@ def test_typed_cause_rejects_temporal_inversion_and_correlation_fork(breakage, e
 def test_explicit_event_cause_requires_durable_event_and_consistent_clock():
     store = MemoryPersistence()
     event = DomainEvent(
+        owner_id="causal-audit-test-organization",
         event_id="domain-event-1", name="approved",
         entity_type="sales_order", entity_id="so-1",
         occurred_at=T0, correlation_id="order-A",
@@ -317,6 +318,7 @@ def test_typed_event_with_no_correlation_cannot_parent_correlated_message():
     store = MemoryPersistence()
     with store.transaction() as uow:
         uow.append_event(DomainEvent(
+        owner_id="causal-audit-test-organization",
             event_id="without-correlation", name="accepted",
             entity_type="sales_order", entity_id="sales-1",
             occurred_at=T0, correlation_id=None,
