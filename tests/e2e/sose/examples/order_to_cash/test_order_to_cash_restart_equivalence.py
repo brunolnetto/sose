@@ -17,10 +17,12 @@ from sose.examples.order_to_cash.simulation import (
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
+REFERENCE_OWNER_ID = "order-to-cash-reference-organization"
+
 
 def _prepare_fulfilled(persistence):
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     assert reconcile_credit(persistence, engine, entities=entities)
@@ -88,6 +90,7 @@ def test_invoiced_order_recovers_missing_receivable_after_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     rebuilt_engine = rebuilt.engine
     rebuilt_backend = rebuilt.backend
@@ -115,6 +118,7 @@ def test_overdue_receivable_recovers_missing_collection_case_after_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     rebuilt_engine = rebuilt.engine
     rebuilt_backend = rebuilt.backend
@@ -169,6 +173,7 @@ def test_collection_followup_is_restart_equivalent():
         build_runtime,
         r_backend_before,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     rebuilt_engine = rebuilt.engine
     rebuilt_backend = rebuilt.backend
@@ -185,8 +190,8 @@ def test_collection_followup_is_restart_equivalent():
 
 def test_pending_fulfillment_capacity_survives_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -217,6 +222,7 @@ def test_pending_fulfillment_capacity_survives_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     rebuilt_engine = rebuilt.engine
     rebuilt_backend = rebuilt.backend
@@ -280,6 +286,7 @@ def test_pending_collection_capacity_survives_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     rebuilt_engine = rebuilt.engine
     rebuilt_backend = rebuilt.backend
