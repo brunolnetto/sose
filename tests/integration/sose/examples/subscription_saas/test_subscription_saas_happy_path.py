@@ -2,7 +2,7 @@ from sose.examples.subscription_saas.simulation import run_happy_path
 
 
 def test_future_plan_change_replaces_entitlement_without_replacing_subscription():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id="subscription-reference-organization")
 
     subscription = persistence.entity("saas_subscription", entities.subscription_id)
     assert subscription is not None and subscription.state == "active"
