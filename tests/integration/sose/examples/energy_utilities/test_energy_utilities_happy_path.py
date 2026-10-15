@@ -8,7 +8,7 @@ from sose.examples.energy_utilities.simulation import (
 
 
 def test_energy_happy_path_commits_reading_and_completes_dr_event():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id="energy-happy-organization")
 
     reading = persistence.entity(
         "utility_meter_reading",
