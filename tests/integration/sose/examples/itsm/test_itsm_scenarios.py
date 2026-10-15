@@ -27,9 +27,10 @@ def test_itsm_scenario_builders_are_well_formed():
 
 def test_finite_staff_shortage_preserves_queue_and_recovers():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="itsm-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="itsm-scenarios-organization",
         scenarios=(staff_shortage_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
