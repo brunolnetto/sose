@@ -653,3 +653,22 @@ def test_recovery_snapshot_is_read_under_one_owner_scoped_uow():
     assert [call[2] for call in backend.calls] == [
         ("durable-work", "work-organization-a"),
     ]
+
+
+@pytest.mark.parametrize("invalid_owner", [None, "", "  "])
+def test_durable_domain_events_cannot_be_admitted_without_owner(invalid_owner):
+    from sose.core.events import DomainEvent
+
+    store = MemoryPersistence()
+    event = DomainEvent(
+        event_id="test-unowned-event",
+        name="audit.changed",
+        entity_type="demo",
+        entity_id="one",
+        occurred_at=ORIGIN,
+        owner_id=invalid_owner,
+    )
+    with pytest.raises(ValueError, match="operational owner_id"):
+        with store.transaction() as uow:
+            uow.append_event(event)
+    assert store.events() == ()
