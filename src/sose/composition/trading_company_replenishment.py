@@ -64,7 +64,9 @@ def _causal_scope(engine, *, correlation_id: str, caused_by):
         engine.context.commands = original
 
 
-def _intent_handler(*, name: str, entity_type: str, entity_id: str):
+def _intent_handler(*, name: str, entity_type: str, entity_id: str, owner_id: str):
+    if not isinstance(owner_id, str) or not owner_id.strip():
+        raise ValueError("composition intent requires operational owner_id")
     def handle(message: BoundaryMessage, uow) -> str:
         command_id = deterministic_id(
             "composition-domain-intent",
@@ -87,6 +89,7 @@ def _intent_handler(*, name: str, entity_type: str, entity_id: str):
             },
             causation_id=message.message_id,
             correlation_id=message.correlation_id,
+            owner_id=owner_id,
         )
         existing = uow.get_command(command_id)
         if existing is not None and existing != command:
@@ -98,7 +101,7 @@ def _intent_handler(*, name: str, entity_type: str, entity_id: str):
     return handle
 
 
-def _registry(fixtures: _Fixtures) -> BoundaryConsumerRegistry:
+def _registry(fixtures: _Fixtures, *, owner_id: str) -> BoundaryConsumerRegistry:
     registry = BoundaryConsumerRegistry()
     registry.register(
         destination_domain="procure_to_pay",
@@ -108,6 +111,7 @@ def _registry(fixtures: _Fixtures) -> BoundaryConsumerRegistry:
             name="composition.procure_replenishment",
             entity_type="purchase_order",
             entity_id=fixtures.procurement.purchase_order_id,
+            owner_id=owner_id,
         ),
     )
     registry.register(
@@ -118,6 +122,7 @@ def _registry(fixtures: _Fixtures) -> BoundaryConsumerRegistry:
             name="composition.receive_replenishment",
             entity_type="warehouse_management_stock",
             entity_id=fixtures.warehouse.origin_stock_id,
+            owner_id=owner_id,
         ),
     )
     registry.register(
@@ -128,6 +133,7 @@ def _registry(fixtures: _Fixtures) -> BoundaryConsumerRegistry:
             name="composition.post_replenishment_journal",
             entity_type="journal_entry",
             entity_id=fixtures.accounting.journal_id,
+            owner_id=owner_id,
         ),
     )
     return registry
@@ -391,7 +397,7 @@ def run_replenishment_path(*, owner_id: str, quantity: float = 5.0) -> Replenish
         fixtures.procurement.purchase_order_id,
     )
     service = BoundaryService(store)
-    registry = _registry(fixtures)
+    registry = _registry(fixtures, owner_id=owner_id)
     messages: list[BoundaryMessage] = []
     effects: list[str] = []
 
