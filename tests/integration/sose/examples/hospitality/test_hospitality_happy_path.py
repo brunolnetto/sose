@@ -6,7 +6,7 @@ from sose.examples.hospitality.simulation import (
 
 
 def test_confirmed_stay_completes_and_releases_interval():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id="hospitality-happy-organization")
 
     reservation = persistence.entity(
         "hospitality_reservation",
