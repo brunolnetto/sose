@@ -12,6 +12,8 @@ from sose.examples.cards_payments.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+REFERENCE_OWNER_ID = "cards-payments-reference-organization"
+
 def test_cards_payment_scenario_builders_are_well_formed():
     outage = processor_outage_scenario()
     fraud = fraud_pressure_scenario()
@@ -24,9 +26,10 @@ def test_cards_payment_scenario_builders_are_well_formed():
 
 def test_finite_processor_outage_gates_authorization_and_recovers():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
     context, engine = build_runtime(
-        persistence, scenarios=(processor_outage_scenario(),)
+        persistence, owner_id=REFERENCE_OWNER_ID,
+        scenarios=(processor_outage_scenario(),)
     )
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)

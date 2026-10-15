@@ -9,10 +9,12 @@ from sose.examples.cards_payments.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+REFERENCE_OWNER_ID = "cards-payments-reference-organization"
+
 def test_authorized_payment_can_reverse_before_capture():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 

@@ -11,9 +11,11 @@ from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
 
+REFERENCE_OWNER_ID = "cards-payments-reference-organization"
+
 def _progress_to_retry_wait(persistence):
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -39,11 +41,11 @@ def _snapshot(persistence, entities):
         "payment": persistence.entity("card_payment", entities.payment_id),
         "events": persistence.events(),
         "scheduled": persistence.scheduled_work(),
-        "position": persistence.simulation_position(),
+        "position": persistence.simulation_position(owner_id=REFERENCE_OWNER_ID),
         "resource_demands": persistence.resource_demands(),
         "resource_reservations": persistence.resource_reservations(),
         "release_intents": persistence.resource_release_intents(),
-        "scenario": persistence.scenario_state(),
+        "scenario": persistence.scenario_state(owner_id=REFERENCE_OWNER_ID),
     }
 
 
@@ -71,6 +73,7 @@ def test_settlement_retry_is_restart_equivalent():
     rebuilt = restart_reference_runtime(
         restarted,
         build_runtime,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine

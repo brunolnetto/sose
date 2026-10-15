@@ -5,8 +5,10 @@ from sose.examples.record_to_report.simulation import (
 )
 
 
+REFERENCE_OWNER_ID = "record-to-report-reference-organization"
+
 def test_r2r_happy_path_closes_period_and_releases_capacity():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id=REFERENCE_OWNER_ID)
 
     period = persistence.entity("accounting_period", entities.period_id)
     journal = persistence.entity("journal_entry", entities.journal_id)
@@ -27,7 +29,7 @@ def test_r2r_happy_path_closes_period_and_releases_capacity():
 
 
 def test_unmatched_item_uses_immutable_adjustment_path_before_close():
-    persistence, entities = run_adjustment_path()
+    persistence, entities = run_adjustment_path(owner_id=REFERENCE_OWNER_ID)
 
     reconciliation = persistence.entity(
         "reconciliation_item",

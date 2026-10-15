@@ -13,10 +13,12 @@ from sose.examples.record_to_report.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+REFERENCE_OWNER_ID = "record-to-report-reference-organization"
+
 def test_illegal_accounting_prerequisites_are_rejected():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 

@@ -27,8 +27,10 @@ from sose.examples.record_to_report.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+REFERENCE_OWNER_ID = "record-to-report-reference-organization"
+
 def test_r2r_projection_is_read_only_and_idempotent() -> None:
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id=REFERENCE_OWNER_ID)
     period = persistence.entity("accounting_period", entities.period_id)
     assert period is not None
     before_version = period.version
@@ -67,7 +69,7 @@ def test_r2r_projection_is_read_only_and_idempotent() -> None:
 
 def test_r2r_projection_does_not_invent_adjustment_or_close_before_execution() -> None:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
 
     projection = record_to_report_projection(persistence, entities=entities)
     kpis = record_to_report_kpis(persistence, entities=entities)
@@ -84,7 +86,7 @@ def test_r2r_projection_does_not_invent_adjustment_or_close_before_execution() -
 
 
 def test_r2r_kpis_preserve_adjustment_history() -> None:
-    persistence, entities = run_adjustment_path()
+    persistence, entities = run_adjustment_path(owner_id=REFERENCE_OWNER_ID)
 
     projection = record_to_report_projection(persistence, entities=entities)
     kpis = record_to_report_kpis(persistence, entities=entities)
@@ -99,11 +101,11 @@ def test_r2r_kpis_preserve_adjustment_history() -> None:
 
 
 def test_r2r_reopen_creates_new_observable_close_cycle_without_erasing_history() -> None:
-    persistence, entities = run_happy_path()
-    position = persistence.simulation_position()
+    persistence, entities = run_happy_path(owner_id=REFERENCE_OWNER_ID)
+    position = persistence.simulation_position(owner_id=REFERENCE_OWNER_ID)
     now = position.logical_time if position is not None else ORIGIN
     tick = position.logical_tick if position is not None else 0
-    _, engine = build_runtime(persistence, now=now, tick=tick)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID, now=now, tick=tick)
     backend = SimPyBackend(origin=now)
     engine.rebuild_backend(backend)
 

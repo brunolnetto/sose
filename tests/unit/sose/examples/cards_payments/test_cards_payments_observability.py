@@ -21,8 +21,10 @@ from sose.examples.process_manifest import ProcessEvidence, ProcessMaturity
 from sose.persistence.memory import MemoryPersistence
 
 
+REFERENCE_OWNER_ID = "cards-payments-reference-organization"
+
 def test_cards_projection_is_read_only_and_idempotent() -> None:
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id=REFERENCE_OWNER_ID)
     payment = persistence.entity("card_payment", entities.payment_id)
     assert payment is not None
     before_version = payment.version
@@ -47,7 +49,7 @@ def test_cards_projection_is_read_only_and_idempotent() -> None:
 
 def test_cards_projection_does_not_invent_settlement_before_execution() -> None:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
 
     projection = cards_payments_projection(persistence, entities=entities)
     kpis = cards_payments_kpis(persistence, entities=entities)
@@ -63,8 +65,8 @@ def test_cards_projection_does_not_invent_settlement_before_execution() -> None:
 
 
 def test_cards_settlement_timestamp_survives_later_refund() -> None:
-    settled_persistence, settled_entities = run_happy_path()
-    refund_persistence, refund_entities = run_refund_path()
+    settled_persistence, settled_entities = run_happy_path(owner_id=REFERENCE_OWNER_ID)
+    refund_persistence, refund_entities = run_refund_path(owner_id=REFERENCE_OWNER_ID)
 
     settled = cards_payments_projection(
         settled_persistence,
@@ -92,14 +94,14 @@ def test_cards_settlement_timestamp_survives_later_refund() -> None:
 
 
 def test_cards_kpis_preserve_retry_and_dispute_history() -> None:
-    retry_persistence, retry_entities = run_retry_path()
+    retry_persistence, retry_entities = run_retry_path(owner_id=REFERENCE_OWNER_ID)
     retry_kpis = cards_payments_kpis(retry_persistence, entities=retry_entities)
 
     assert retry_kpis.settled is True
     assert retry_kpis.settlement_retry_count == 1
     assert retry_kpis.authorization_decline_count == 0
 
-    dispute_persistence, dispute_entities = run_dispute_path(outcome="merchant")
+    dispute_persistence, dispute_entities = run_dispute_path(owner_id=REFERENCE_OWNER_ID, outcome="merchant")
     projection = cards_payments_projection(
         dispute_persistence,
         entities=dispute_entities,

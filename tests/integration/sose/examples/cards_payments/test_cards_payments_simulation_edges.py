@@ -455,12 +455,12 @@ def test_reconcile_dispute_raises_when_dispute_disappears_before_resolution(monk
 
 def test_prepare_authorized_raises_when_authorization_capacity_is_unavailable(monkeypatch):
     engine = SimpleNamespace(rebuild_backend=lambda backend: None)
-    monkeypatch.setattr(cards_simulation, "seed_reference", lambda persistence: SimpleNamespace())
-    monkeypatch.setattr(cards_simulation, "build_runtime", lambda persistence: (None, engine))
+    monkeypatch.setattr(cards_simulation, "seed_reference", lambda persistence, *, owner_id: SimpleNamespace())
+    monkeypatch.setattr(cards_simulation, "build_runtime", lambda persistence, *, owner_id: (None, engine))
     monkeypatch.setattr(cards_simulation, "reconcile_authorization", lambda *args, **kwargs: False)
 
     with pytest.raises(RuntimeError, match="authorization capacity unavailable"):
-        cards_simulation._prepare_authorized(MemoryPersistence())
+        cards_simulation._prepare_authorized(MemoryPersistence(), owner_id=REFERENCE_OWNER_ID)
 
 
 def test_run_retry_path_raises_when_retry_is_not_scheduled(monkeypatch):
@@ -471,7 +471,7 @@ def test_run_retry_path_raises_when_retry_is_not_scheduled(monkeypatch):
     monkeypatch.setattr(
         cards_simulation,
         "_prepare_authorized",
-        lambda persistence: (SimpleNamespace(), object(), backend),
+        lambda persistence, *, owner_id: (SimpleNamespace(), object(), backend),
     )
     monkeypatch.setattr(
         cards_simulation,
@@ -481,39 +481,39 @@ def test_run_retry_path_raises_when_retry_is_not_scheduled(monkeypatch):
     monkeypatch.setattr(cards_simulation, "reconcile_settlement", lambda *args, **kwargs: None)
 
     with pytest.raises(RuntimeError, match="settlement retry was not scheduled"):
-        run_retry_path()
+        run_retry_path(owner_id=REFERENCE_OWNER_ID)
 
 
 def test_run_refund_path_raises_when_refund_capacity_is_unavailable(monkeypatch):
     monkeypatch.setattr(
         cards_simulation,
         "run_happy_path",
-        lambda: (MemoryPersistence(), SimpleNamespace()),
+        lambda *, owner_id: (MemoryPersistence(), SimpleNamespace()),
     )
     monkeypatch.setattr(
         cards_simulation,
         "build_runtime",
-        lambda persistence, now, tick: (None, SimpleNamespace(rebuild_backend=lambda backend: None)),
+        lambda persistence, *, owner_id, now, tick: (None, SimpleNamespace(rebuild_backend=lambda backend: None)),
     )
     monkeypatch.setattr(cards_simulation, "reconcile_refund", lambda *args, **kwargs: False)
 
     with pytest.raises(RuntimeError, match="refund capacity unavailable"):
-        run_refund_path()
+        run_refund_path(owner_id=REFERENCE_OWNER_ID)
 
 
 def test_run_dispute_path_raises_when_dispute_analyst_is_unavailable(monkeypatch):
     monkeypatch.setattr(
         cards_simulation,
         "run_happy_path",
-        lambda: (MemoryPersistence(), SimpleNamespace()),
+        lambda *, owner_id: (MemoryPersistence(), SimpleNamespace()),
     )
     monkeypatch.setattr(
         cards_simulation,
         "build_runtime",
-        lambda persistence, now, tick: (None, SimpleNamespace(rebuild_backend=lambda backend: None)),
+        lambda persistence, *, owner_id, now, tick: (None, SimpleNamespace(rebuild_backend=lambda backend: None)),
     )
     monkeypatch.setattr(cards_simulation, "start_dispute", lambda *args, **kwargs: ORIGIN)
     monkeypatch.setattr(cards_simulation, "reconcile_dispute", lambda *args, **kwargs: False)
 
     with pytest.raises(RuntimeError, match="dispute analyst unavailable"):
-        run_dispute_path()
+        run_dispute_path(owner_id=REFERENCE_OWNER_ID, )

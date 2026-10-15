@@ -10,10 +10,12 @@ from sose.examples.record_to_report.simulation import (
 )
 
 
+REFERENCE_OWNER_ID = "record-to-report-reference-organization"
+
 def test_closed_period_reopens_with_distinct_close_task_and_recloses():
-    persistence, entities = run_happy_path()
-    restart_at = persistence.simulation_position().logical_time
-    _, engine = build_runtime(persistence, now=restart_at)
+    persistence, entities = run_happy_path(owner_id=REFERENCE_OWNER_ID)
+    restart_at = persistence.simulation_position(owner_id=REFERENCE_OWNER_ID).logical_time
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID, now=restart_at)
     backend = SimPyBackend(origin=restart_at)
     engine.rebuild_backend(backend)
     backend.run_until(restart_at)

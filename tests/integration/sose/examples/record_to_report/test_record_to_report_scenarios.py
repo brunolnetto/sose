@@ -17,11 +17,13 @@ from sose.examples.record_to_report.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+REFERENCE_OWNER_ID = "record-to-report-reference-organization"
+
 def test_posting_outage_defers_posting_without_capacity_leak():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
     context, engine = build_runtime(
-        persistence,
+        persistence, owner_id=REFERENCE_OWNER_ID,
         scenarios=(posting_outage_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
@@ -56,9 +58,9 @@ def test_posting_outage_defers_posting_without_capacity_leak():
 
 def test_close_team_shortage_preserves_in_progress_close_task_and_recovers():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
     context, engine = build_runtime(
-        persistence,
+        persistence, owner_id=REFERENCE_OWNER_ID,
         scenarios=(close_team_shortage_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)

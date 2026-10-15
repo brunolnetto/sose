@@ -424,9 +424,11 @@ def reconcile_dispute(
 
 def _prepare_authorized(
     persistence: MemoryPersistence,
+    *,
+    owner_id: str,
 ) -> tuple[PaymentEntities, Engine, SimPyBackend]:
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=owner_id)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     if not reconcile_authorization(
@@ -436,9 +438,9 @@ def _prepare_authorized(
     return entities, engine, backend
 
 
-def run_happy_path() -> tuple[MemoryPersistence, PaymentEntities]:
+def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, PaymentEntities]:
     persistence = MemoryPersistence()
-    entities, engine, backend = _prepare_authorized(persistence)
+    entities, engine, backend = _prepare_authorized(persistence, owner_id=owner_id)
     settlement_at = reconcile_capture_and_schedule_settlement(
         persistence, engine, backend, entities=entities
     )
@@ -449,9 +451,9 @@ def run_happy_path() -> tuple[MemoryPersistence, PaymentEntities]:
     return persistence, entities
 
 
-def run_retry_path() -> tuple[MemoryPersistence, PaymentEntities]:
+def run_retry_path(*, owner_id: str) -> tuple[MemoryPersistence, PaymentEntities]:
     persistence = MemoryPersistence()
-    entities, engine, backend = _prepare_authorized(persistence)
+    entities, engine, backend = _prepare_authorized(persistence, owner_id=owner_id)
     settlement_at = reconcile_capture_and_schedule_settlement(
         persistence, engine, backend, entities=entities
     )
@@ -468,12 +470,12 @@ def run_retry_path() -> tuple[MemoryPersistence, PaymentEntities]:
     return persistence, entities
 
 
-def run_refund_path() -> tuple[MemoryPersistence, PaymentEntities]:
-    persistence, entities = run_happy_path()
-    position = persistence.simulation_position()
+def run_refund_path(*, owner_id: str) -> tuple[MemoryPersistence, PaymentEntities]:
+    persistence, entities = run_happy_path(owner_id=owner_id)
+    position = persistence.simulation_position(owner_id=owner_id)
     now = position.logical_time if position is not None else ORIGIN
     tick = position.logical_tick if position is not None else 0
-    _, engine = build_runtime(persistence, now=now, tick=tick)
+    _, engine = build_runtime(persistence, owner_id=owner_id, now=now, tick=tick)
     backend = SimPyBackend(origin=now)
     engine.rebuild_backend(backend)
     if not reconcile_refund(persistence, engine, backend, entities=entities):
@@ -483,13 +485,14 @@ def run_refund_path() -> tuple[MemoryPersistence, PaymentEntities]:
 
 def run_dispute_path(
     *,
+    owner_id: str,
     outcome: str = "merchant",
 ) -> tuple[MemoryPersistence, PaymentEntities]:
-    persistence, entities = run_happy_path()
-    position = persistence.simulation_position()
+    persistence, entities = run_happy_path(owner_id=owner_id)
+    position = persistence.simulation_position(owner_id=owner_id)
     now = position.logical_time if position is not None else ORIGIN
     tick = position.logical_tick if position is not None else 0
-    _, engine = build_runtime(persistence, now=now, tick=tick)
+    _, engine = build_runtime(persistence, owner_id=owner_id, now=now, tick=tick)
     backend = SimPyBackend(origin=now)
     engine.rebuild_backend(backend)
     evidence_at = start_dispute(
