@@ -70,6 +70,32 @@ class PostgresPersistence(MemoryPersistence):
         self._correlation_owners_table = sql.Identifier(f"{namespace}_recovery_owner")
         self._connection = psycopg.connect(dsn, autocommit=True)
 
+        # Fast path for an *already committed* namespace: a new independent
+        # organization must not wait for an unrelated owner's open transaction
+        # merely because its adapter constructor would otherwise re-run DDL.
+        # Schema bootstrap/migration still uses the exclusive namespace lock
+        # below, so concurrent first-time provisioners remain serialized.
+        relations = self._connection.execute(
+            "SELECT to_regclass(%s), to_regclass(%s), "
+            "to_regclass(%s), to_regclass(%s)",
+            (
+                f"{namespace}_record_meta",
+                f"{namespace}_record",
+                f"{namespace}_writer_scope",
+                f"{namespace}_recovery_owner",
+            ),
+        ).fetchone()
+        if relations is not None and all(relation is not None for relation in relations):
+            committed_meta = self._connection.execute(
+                sql.SQL("SELECT schema_version FROM {} WHERE singleton = 1").format(
+                    self._meta_table
+                )
+            ).fetchone()
+            if committed_meta is not None and int(committed_meta[0]) == _SCHEMA_VERSION:
+                self._revision = -1
+                self._refresh_from_db(force=True)
+                return
+
         with self._connection.transaction():
             # CREATE TABLE IF NOT EXISTS does not serialize concurrent first
             # creation of PostgreSQL composite types/catalog rows. Use the
