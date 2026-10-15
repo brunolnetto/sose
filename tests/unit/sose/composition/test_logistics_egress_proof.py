@@ -52,6 +52,7 @@ def scenario(*, request_count: int = 1, state: str = "delivered",
                 contract_version=1, handler=customer._intent_handler(
                     intent_name="composition.deliver_shipment",
                     entity_type="shipment", entity_id="shipment-1",
+                    owner_id="organization-a",
                 ),
             )
         else:
