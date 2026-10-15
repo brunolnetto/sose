@@ -5,7 +5,7 @@ from sose.examples.field_service.simulation import (
 
 
 def test_installation_uses_eligible_technician_part_and_visit_evidence():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id="field-service-happy-organization")
 
     work_order = persistence.entity("field_work_order", entities.work_order_id)
     technicians = [
