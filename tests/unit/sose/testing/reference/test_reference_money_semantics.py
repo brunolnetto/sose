@@ -53,7 +53,7 @@ from sose.testing.restart import restart_reference_runtime
 
 def test_cards_payment_declares_currency_with_amount():
     persistence = MemoryPersistence()
-    entities = seed_cards(persistence)
+    entities = seed_cards(persistence, owner_id="cards-payments-reference-organization")
 
     payment = persistence.entity("card_payment", entities.payment_id)
 
@@ -64,8 +64,8 @@ def test_cards_payment_declares_currency_with_amount():
 
 def test_o2c_preserves_currency_from_order_to_receivable():
     persistence = MemoryPersistence()
-    entities = seed_o2c(persistence, amount=250.0)
-    _, engine = build_o2c_runtime(persistence)
+    entities = seed_o2c(persistence, amount=250.0, owner_id="order-to-cash-reference-organization")
+    _, engine = build_o2c_runtime(persistence, owner_id="order-to-cash-reference-organization")
     backend = SimPyBackend(origin=O2C_ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -90,8 +90,8 @@ def test_o2c_preserves_currency_from_order_to_receivable():
 
 def test_r2r_preserves_currency_across_adjustment_lineage():
     persistence = MemoryPersistence()
-    entities = seed_r2r(persistence, amount=1000.0, currency="BRL")
-    _, engine = build_r2r_runtime(persistence)
+    entities = seed_r2r(persistence, amount=1000.0, currency="BRL", owner_id="record-to-report-reference-organization")
+    _, engine = build_r2r_runtime(persistence, owner_id="record-to-report-reference-organization")
     backend = SimPyBackend(origin=R2R_ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -127,8 +127,9 @@ def test_insurance_preserves_currency_from_claim_to_reserve_and_payment():
         persistence,
         amount=5000.0,
         currency="EUR",
+        owner_id="insurance-reference-organization",
     )
-    _, engine = build_insurance_runtime(persistence)
+    _, engine = build_insurance_runtime(persistence, owner_id="insurance-reference-organization")
     backend = SimPyBackend(origin=INSURANCE_ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -162,8 +163,8 @@ def test_insurance_preserves_currency_from_claim_to_reserve_and_payment():
 
 def test_credit_preserves_currency_into_installment_and_payment():
     persistence = MemoryPersistence()
-    entities = seed_credit(persistence, principal=1200.0, installment_count=3)
-    _, engine = build_credit_runtime(persistence)
+    entities = seed_credit(persistence, principal=1200.0, installment_count=3, owner_id="credit-reference-organization")
+    _, engine = build_credit_runtime(persistence, owner_id="credit-reference-organization")
     backend = SimPyBackend(origin=CREDIT_ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -213,7 +214,7 @@ def test_p2p_amount_is_quantity_not_money():
     from sose.examples.p2p.simulation import seed_happy_path
 
     persistence = MemoryPersistence()
-    entities = seed_happy_path(persistence)
+    entities = seed_happy_path(persistence, owner_id="procure-to-pay-reference-organization")
     purchase_order = persistence.entity("purchase_order", entities.purchase_order_id)
 
     assert purchase_order is not None
@@ -223,13 +224,13 @@ def test_p2p_amount_is_quantity_not_money():
 
 def test_credit_rejects_fractional_cent_principal():
     with pytest.raises(ValueError, match="fractional cents"):
-        seed_credit(MemoryPersistence(), principal=100.001, installment_count=3)
+        seed_credit(MemoryPersistence(), principal=100.001, installment_count=3, owner_id="credit-reference-organization")
 
 
 def test_credit_allocation_preserves_odd_cent_principal_exactly():
     persistence = MemoryPersistence()
-    entities = seed_credit(persistence, principal=100.01, installment_count=3)
-    _, engine = build_credit_runtime(persistence)
+    entities = seed_credit(persistence, principal=100.01, installment_count=3, owner_id="credit-reference-organization")
+    _, engine = build_credit_runtime(persistence, owner_id="credit-reference-organization")
     backend = SimPyBackend(origin=CREDIT_ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -257,8 +258,8 @@ def test_credit_allocation_preserves_odd_cent_principal_exactly():
 
 def test_credit_rejects_fractional_cent_payment():
     persistence = MemoryPersistence()
-    entities = seed_credit(persistence, principal=100.00, installment_count=1)
-    _, engine = build_credit_runtime(persistence)
+    entities = seed_credit(persistence, principal=100.00, installment_count=1, owner_id="credit-reference-organization")
+    _, engine = build_credit_runtime(persistence, owner_id="credit-reference-organization")
     backend = SimPyBackend(origin=CREDIT_ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -292,8 +293,8 @@ def test_credit_rejects_fractional_cent_payment():
 
 def _prepare_insurance_payment(*, amount: float):
     persistence = MemoryPersistence()
-    entities = seed_insurance(persistence, amount=amount, currency="USD")
-    _, engine = build_insurance_runtime(persistence)
+    entities = seed_insurance(persistence, amount=amount, currency="USD", owner_id="insurance-reference-organization")
+    _, engine = build_insurance_runtime(persistence, owner_id="insurance-reference-organization")
     backend = SimPyBackend(origin=INSURANCE_ORIGIN)
     engine.rebuild_backend(backend)
     ensure_document_request(persistence, engine, backend, entities=entities)
@@ -326,7 +327,7 @@ def _prepare_insurance_payment(*, amount: float):
 
 def test_insurance_rejects_fractional_minor_unit_claim():
     with pytest.raises(ValueError, match="fractional minor units"):
-        seed_insurance(MemoryPersistence(), amount=100.001, currency="USD")
+        seed_insurance(MemoryPersistence(), amount=100.001, currency="USD", owner_id="insurance-reference-organization")
 
 
 def test_insurance_partial_payout_assigns_odd_cent_remainder_to_completion():
@@ -377,6 +378,7 @@ def test_insurance_odd_cent_partial_payout_is_restart_safe():
         build_insurance_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id="insurance-reference-organization",
     )
     assert reconcile_insurance_payment(
         persistence,
@@ -401,6 +403,7 @@ def test_credit_accepts_cent_aligned_binary_float_noise():
         persistence,
         principal=0.1 + 0.2,
         installment_count=1,
+        owner_id="credit-reference-organization",
     )
     application = persistence.entity("loan_application", entities.application_id)
 
@@ -414,6 +417,7 @@ def test_insurance_accepts_cent_aligned_binary_float_noise():
         persistence,
         amount=0.1 + 0.2,
         currency="USD",
+        owner_id="insurance-reference-organization",
     )
     claim = persistence.entity("insurance_claim", entities.claim_id)
 
@@ -426,6 +430,7 @@ def test_credit_accepts_large_cent_aligned_amount():
         persistence,
         principal=36556121.48,
         installment_count=1,
+        owner_id="credit-reference-organization",
     )
     application = persistence.entity("loan_application", entities.application_id)
 
@@ -439,6 +444,7 @@ def test_insurance_accepts_large_minor_unit_aligned_amount():
         persistence,
         amount=36556121.48,
         currency="USD",
+        owner_id="insurance-reference-organization",
     )
     claim = persistence.entity("insurance_claim", entities.claim_id)
 
@@ -476,6 +482,7 @@ def test_credit_rejects_true_half_cent_even_at_large_float_magnitude():
             MemoryPersistence(),
             principal=11258999068426.244,
             installment_count=1,
+            owner_id="credit-reference-organization",
         )
 
 
@@ -485,6 +492,7 @@ def test_insurance_rejects_true_half_minor_unit_even_at_large_float_magnitude():
             MemoryPersistence(),
             amount=11258999068426.244,
             currency="USD",
+            owner_id="insurance-reference-organization",
         )
 
 def test_credit_accepts_large_computed_cent_aligned_float():
@@ -494,6 +502,7 @@ def test_credit_accepts_large_computed_cent_aligned_float():
         persistence,
         principal=principal,
         installment_count=1,
+        owner_id="credit-reference-organization",
     )
     application = persistence.entity("loan_application", entities.application_id)
 
@@ -508,6 +517,7 @@ def test_insurance_accepts_large_computed_minor_unit_aligned_float():
         persistence,
         amount=amount,
         currency="USD",
+        owner_id="insurance-reference-organization",
     )
     claim = persistence.entity("insurance_claim", entities.claim_id)
 
@@ -523,6 +533,7 @@ def test_credit_accepts_cent_aligned_float_beyond_old_ulp_cutoff():
         persistence,
         principal=principal,
         installment_count=1,
+        owner_id="credit-reference-organization",
     )
     application = persistence.entity("loan_application", entities.application_id)
 
@@ -537,6 +548,7 @@ def test_insurance_accepts_minor_unit_aligned_float_beyond_old_ulp_cutoff():
         persistence,
         amount=amount,
         currency="USD",
+        owner_id="insurance-reference-organization",
     )
     claim = persistence.entity("insurance_claim", entities.claim_id)
 
@@ -550,6 +562,7 @@ def test_credit_rejects_large_computed_half_cent():
             MemoryPersistence(),
             principal=10_000_000_000.005,
             installment_count=1,
+            owner_id="credit-reference-organization",
         )
 
 
@@ -559,4 +572,5 @@ def test_insurance_rejects_large_computed_half_minor_unit():
             MemoryPersistence(),
             amount=10_000_000_000.005,
             currency="USD",
+            owner_id="insurance-reference-organization",
         )
