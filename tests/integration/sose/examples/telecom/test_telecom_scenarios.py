@@ -13,9 +13,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_provisioning_outage_defers_activation_without_fake_resource_demand():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="telecom-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="telecom-scenarios-organization",
         scenarios=(provisioning_outage_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
