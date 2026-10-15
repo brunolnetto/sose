@@ -182,12 +182,12 @@ def test_construction_prepare_ready_guard_raises(monkeypatch):
     monkeypatch.setattr(
         construction_simulation,
         "seed_reference",
-        lambda persistence, *, quantity: SimpleNamespace(activity_id="A1"),
+        lambda persistence, *, owner_id, quantity: SimpleNamespace(activity_id="A1"),
     )
     monkeypatch.setattr(
         construction_simulation,
         "build_runtime",
-        lambda persistence: (object(), _FakeEngine()),
+        lambda persistence, *, owner_id: (object(), _FakeEngine()),
     )
     monkeypatch.setattr(construction_simulation, "SimPyBackend", lambda origin: _FakeBackend())
     monkeypatch.setattr(construction_simulation, "reconcile_dependency", lambda *args, **kwargs: False)
@@ -217,7 +217,7 @@ def test_construction_run_happy_path_error_branches(monkeypatch):
     monkeypatch.setattr(
         construction_simulation,
         "_prepare_ready_with_material",
-        lambda persistence, *, quantity: (entities, engine, backend),
+        lambda persistence, *, owner_id, quantity: (entities, engine, backend),
     )
     monkeypatch.setattr(
         construction_simulation,
@@ -254,7 +254,7 @@ def test_construction_run_rework_path_error_branches(monkeypatch):
     monkeypatch.setattr(
         construction_simulation,
         "_prepare_ready_with_material",
-        lambda persistence, *, quantity: (entities, engine, backend),
+        lambda persistence, *, owner_id, quantity: (entities, engine, backend),
     )
     monkeypatch.setattr(
         construction_simulation,
@@ -318,7 +318,7 @@ def test_construction_run_rework_path_error_branches(monkeypatch):
 def _patch_hospital_runtime(monkeypatch):
     entities = SimpleNamespace(admission_id="ADM1", treatment_episode_id="EP1")
     monkeypatch.setattr(hospitals_simulation, "seed_reference", lambda *args, **kwargs: entities)
-    monkeypatch.setattr(hospitals_simulation, "build_runtime", lambda persistence: (object(), _FakeEngine()))
+    monkeypatch.setattr(hospitals_simulation, "build_runtime", lambda persistence, *, owner_id: (object(), _FakeEngine()))
     monkeypatch.setattr(hospitals_simulation, "SimPyBackend", lambda origin: _FakeBackend())
     monkeypatch.setattr(hospitals_simulation, "triage_and_queue", lambda *args, **kwargs: None)
     monkeypatch.setattr(hospitals_simulation, "deteriorate_to_icu_wait", lambda *args, **kwargs: None)
