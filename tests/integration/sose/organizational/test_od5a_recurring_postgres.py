@@ -664,6 +664,7 @@ def test_postgres_repeated_identical_domain_event_is_idempotent_but_conflicts_fa
     """Do not mistake exact replay for a conflicting event identity."""
     namespace = _namespace()
     event = DomainEvent(
+        owner_id="od5a-postgres-audit-organization",
         event_id="fixed-causal-event", name="audit.test",
         entity_type="shipment", entity_id="shipment:A",
         occurred_at=NOW, payload={"stage": "received"},
@@ -688,6 +689,7 @@ def test_postgres_legacy_duplicate_event_identity_conflicts_fail_closed():
 
     namespace = _namespace()
     event = DomainEvent(
+        owner_id="od5a-postgres-audit-organization",
         event_id="shared-legacy-event", name="audit.test",
         entity_type="shipment", entity_id="shipment:A", occurred_at=NOW,
         payload={"stage": "received"},
@@ -720,6 +722,7 @@ def test_postgres_concurrent_equal_events_with_distinct_codec_bytes_are_idempote
     from datetime import timezone, timedelta
     namespace = _namespace()
     event = DomainEvent(
+        owner_id="od5a-postgres-audit-organization",
         event_id="concurrent-semantic-event", name="audit.test",
         entity_type="shipment", entity_id="shipment:A", occurred_at=NOW,
         payload={"first": 1, "second": 2},
