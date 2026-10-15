@@ -30,7 +30,7 @@ def test_readers_writers_config_requires_at_least_one_writer():
 def test_producer_consumer_reconcile_ready_action_is_guarded_by_case_state(monkeypatch):
     persistence = MemoryPersistence()
     config = producer_consumer.definition.default_config()
-    case = producer_consumer.seed(persistence, config)
+    case = producer_consumer.seed(persistence, config, owner_id="producer-consumer-canonical-organization")
     current = persistence.entity("canonical_case", case.id)
     assert current is not None
     current.state = "active"
@@ -50,7 +50,7 @@ def test_producer_consumer_reconcile_ready_action_is_guarded_by_case_state(monke
 def test_producer_consumer_reconcile_active_action_is_guarded_by_case_state(monkeypatch):
     persistence = MemoryPersistence()
     config = producer_consumer.definition.default_config()
-    case = producer_consumer.seed(persistence, config)
+    case = producer_consumer.seed(persistence, config, owner_id="producer-consumer-canonical-organization")
 
     _, engine = producer_consumer.build_runtime(persistence)
     backend = SimPyBackend(origin=config.start_at)
@@ -114,7 +114,7 @@ def test_readers_writers_represents_concurrent_read_capacity():
     definition = builtin_catalog().get("readers_writers")
     config = definition.default_config()
     persistence = MemoryPersistence()
-    definition.seed(persistence, config)
+    definition.seed(persistence, config, owner_id="canonical-example-organization")
     resources = {item.name: item.capacity for item in persistence.resource_definitions()}
     assert resources["reader_slots"] == config.readers
     assert resources["writer_gate"] == 1
@@ -124,7 +124,7 @@ def test_dining_philosophers_has_one_exclusive_fork_per_participant():
     definition = builtin_catalog().get("dining_philosophers")
     config = definition.default_config()
     persistence = MemoryPersistence()
-    definition.seed(persistence, config)
+    definition.seed(persistence, config, owner_id="canonical-example-organization")
     resources = persistence.resource_definitions()
     assert len(resources) == config.participants
     assert all(resource.capacity == 1 for resource in resources)
