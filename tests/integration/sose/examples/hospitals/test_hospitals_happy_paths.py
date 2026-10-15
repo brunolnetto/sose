@@ -7,7 +7,7 @@ from sose.examples.hospitals.simulation import (
 
 
 def test_hospital_happy_path_discharges_without_live_capacity():
-    persistence, entities = run_happy_path()
+    persistence, entities = run_happy_path(owner_id="hospital-reference-organization")
 
     assert persistence.entity(
         "hospital_admission", entities.admission_id
@@ -20,7 +20,7 @@ def test_hospital_happy_path_discharges_without_live_capacity():
 
 
 def test_hospital_icu_path_discharges_and_releases_capacity():
-    persistence, entities = run_icu_path()
+    persistence, entities = run_icu_path(owner_id="hospital-reference-organization")
 
     assert persistence.entity(
         "hospital_admission", entities.admission_id
@@ -31,7 +31,7 @@ def test_hospital_icu_path_discharges_and_releases_capacity():
 
 
 def test_emergency_procedure_preemption_preserves_both_episode_histories():
-    persistence, entities = run_preemption_path()
+    persistence, entities = run_preemption_path(owner_id="hospital-reference-organization")
 
     assert persistence.entity(
         "hospital_admission", entities.admission_id
