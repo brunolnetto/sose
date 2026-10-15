@@ -371,7 +371,7 @@ def test_recovery_time_mismatch_does_not_mutate_resource_state():
                 execution_sequence=0,
                 committed_sequence=0,
                 logical_tick=0,
-            )
+            ),
             owner_id=OWNER_ID,
         )
         uow.save_resource_definition(ResourceDefinition("bay", capacity=1))
