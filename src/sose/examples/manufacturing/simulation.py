@@ -813,11 +813,12 @@ def reconcile_output(
 
 def run_happy_path(
     *,
+    owner_id: str,
     quantity: float = 10.0,
 ) -> tuple[MemoryPersistence, ManufacturingEntities]:
     persistence = MemoryPersistence()
-    entities = seed_happy_path(persistence, quantity=quantity)
-    _, engine = build_runtime(persistence)
+    entities = seed_happy_path(persistence, owner_id=owner_id, quantity=quantity)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
