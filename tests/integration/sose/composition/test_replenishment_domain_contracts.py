@@ -21,6 +21,7 @@ from sose.examples.warehouse_management.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+WAREHOUSE_OWNER_ID = "warehouse-reference-organization"
 
 
 def test_p2p_procurement_schedule_can_inherit_external_causality() -> None:
@@ -34,7 +35,7 @@ def test_p2p_procurement_schedule_can_inherit_external_causality() -> None:
     )
     assert store.scheduled_work() == ()
 
-    _, engine = build_p2p_runtime(store, now=P2P_ORIGIN)
+    _, engine = build_p2p_runtime(store, owner_id=REFERENCE_OWNER_ID, now=P2P_ORIGIN)
     cause = Command(
         command_id="boundary-intent",
         name="composition.replenish",
@@ -70,12 +71,13 @@ def test_warehouse_external_replenishment_is_idempotent_and_conflict_safe() -> N
     store = MemoryPersistence()
     entities = seed_reference(
         store,
+        owner_id=WAREHOUSE_OWNER_ID,
         now=WM_ORIGIN,
         origin_on_hand=2.0,
         transfer_quantity=1.0,
         sku=P2P_SKU,
     )
-    _, engine = build_wm_runtime(store, now=WM_ORIGIN)
+    _, engine = build_wm_runtime(store, owner_id=WAREHOUSE_OWNER_ID, now=WM_ORIGIN)
     cause = Command(
         command_id="p2p-receipt-intent",
         name="composition.receive-replenishment",
@@ -136,12 +138,13 @@ def test_warehouse_replenishment_rejects_sku_mismatch() -> None:
     store = MemoryPersistence()
     entities = seed_reference(
         store,
+        owner_id=WAREHOUSE_OWNER_ID,
         now=WM_ORIGIN,
         origin_on_hand=2.0,
         transfer_quantity=1.0,
         sku=P2P_SKU,
     )
-    _, engine = build_wm_runtime(store, now=WM_ORIGIN)
+    _, engine = build_wm_runtime(store, owner_id=WAREHOUSE_OWNER_ID, now=WM_ORIGIN)
 
     with pytest.raises(ValueError, match="replenishment SKU mismatch"):
         receive_external_replenishment(
