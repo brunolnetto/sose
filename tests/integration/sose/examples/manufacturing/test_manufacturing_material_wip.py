@@ -9,11 +9,13 @@ from sose.examples.manufacturing.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "manufacturing-reference-organization"
+
 
 def test_material_shortage_is_explicit_business_state_until_replenishment():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0)
-    _, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN.replace(hour=9))
@@ -31,7 +33,7 @@ def test_material_shortage_is_explicit_business_state_until_replenishment():
 
 
 def test_wip_is_consumed_before_finished_order_completes():
-    persistence, ids = run_happy_path(quantity=8.0)
+    persistence, ids = run_happy_path(quantity=8.0, owner_id=REFERENCE_OWNER_ID)
 
     assert persistence.entity("production_order", ids.production_order_id).state == "completed"
     assert persistence.store_items() == ()
