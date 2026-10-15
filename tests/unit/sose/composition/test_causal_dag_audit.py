@@ -189,9 +189,20 @@ def test_worker_death_and_restart_preserves_normalized_causal_dag(
     monkeypatch.setattr(BusinessEffectService, "complete", original)
     opened[-1].close()
     with SQLiteIncrementalPersistence(path) as store:
+        # Reconstitute the flow from persisted delivery evidence, but take its
+        # owning organization from the explicit fixture identity.
+        with store.transaction() as uow:
+            correlations = {
+                message.correlation_id
+                for delivery in uow.boundary_deliveries()
+                if (message := uow.get_boundary_message(delivery.message_id)) is not None
+            }
+        assert len(correlations) == 1
+        flow_id = next(iter(correlations))
         runner = TradingCustomerRecoveryRunner(
             persistence=store,
             owner_id="causal-dag-restart",
+            organization_owners={flow_id: "test-org-causal-dag-audit"},
             job_id="causal-equivalence",
             max_actions=32,
         )
