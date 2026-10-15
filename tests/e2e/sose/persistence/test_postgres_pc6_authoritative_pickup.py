@@ -354,7 +354,7 @@ def test_pg_real_pickup_statechart_is_booked_through_recovery_runner_and_restart
         )
         assert lease is not None
         receipt = service.consume(
-            lease=lease, registry=TradingCustomerRecoveryRunner._registry_for(source),
+            lease=lease, registry=TradingCustomerRecoveryRunner._registry_for(source, organization_id="company-a"),
             now=logistics.ORIGIN,
         )
         runner = TradingCustomerRecoveryRunner(
