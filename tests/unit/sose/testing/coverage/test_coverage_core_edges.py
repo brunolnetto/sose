@@ -368,7 +368,7 @@ def test_builtin_persistence_registry_validates_adapter_options(tmp_path, monkey
     }
 
     memory = registry.create("memory", base_dir=tmp_path)
-    assert memory.committed_tick() == -1
+    assert memory.committed_tick(owner_id="registry-memory-organization") == -1
 
     with pytest.raises(ValueError, match="namespace"):
         registry.create(
