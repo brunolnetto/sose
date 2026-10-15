@@ -285,8 +285,9 @@ from sose.persistence.postgres import PostgresPersistence
 dsn, domain_ns, physical_ns, corr, cut, *tail = sys.argv[1:]
 slot = int(tail[0]) if tail else 0
 old = TradingCustomerRecoveryRunner._execute_pending
-def killed(store, source, effect_id, *, authoritative_pickup=None, resource_persistence=None):
+def killed(store, source, effect_id, *, organization_id, authoritative_pickup=None, resource_persistence=None):
     old(store, source, effect_id,
+        organization_id=organization_id,
         authoritative_pickup=authoritative_pickup,
         resource_persistence=resource_persistence)
     selected = {
