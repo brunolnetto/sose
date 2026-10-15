@@ -194,6 +194,7 @@ def test_construction_prepare_ready_guard_raises(monkeypatch):
     with pytest.raises(RuntimeError, match="dependency is not satisfied"):
         construction_simulation._prepare_ready_with_material(
             object(),
+            owner_id="construction-guard-reference",
             quantity=1.0,
         )
 
@@ -204,6 +205,7 @@ def test_construction_prepare_ready_guard_raises(monkeypatch):
     with pytest.raises(RuntimeError, match="material was not staged"):
         construction_simulation._prepare_ready_with_material(
             object(),
+            owner_id="construction-guard-reference",
             quantity=1.0,
         )
 
@@ -228,7 +230,7 @@ def test_construction_run_happy_path_error_branches(monkeypatch):
         lambda *args, **kwargs: False,
     )
     with pytest.raises(RuntimeError, match="execution capacity unavailable"):
-        construction_simulation.run_happy_path(quantity=1.0)
+        construction_simulation.run_happy_path(quantity=1.0, owner_id="construction-guard-reference")
 
     monkeypatch.setattr(
         construction_simulation,
@@ -242,7 +244,7 @@ def test_construction_run_happy_path_error_branches(monkeypatch):
         lambda *args, **kwargs: False,
     )
     with pytest.raises(RuntimeError, match="inspection unavailable"):
-        construction_simulation.run_happy_path(quantity=1.0)
+        construction_simulation.run_happy_path(quantity=1.0, owner_id="construction-guard-reference")
 
 
 def test_construction_run_rework_path_error_branches(monkeypatch):
@@ -265,7 +267,7 @@ def test_construction_run_rework_path_error_branches(monkeypatch):
         lambda *args, **kwargs: False,
     )
     with pytest.raises(RuntimeError, match="execution capacity unavailable"):
-        construction_simulation.run_rework_path(quantity=1.0)
+        construction_simulation.run_rework_path(quantity=1.0, owner_id="construction-guard-reference")
 
     request_outcomes = iter([True, True])
     monkeypatch.setattr(
@@ -280,7 +282,7 @@ def test_construction_run_rework_path_error_branches(monkeypatch):
         lambda *args, **kwargs: False,
     )
     with pytest.raises(RuntimeError, match="first construction inspection unavailable"):
-        construction_simulation.run_rework_path(quantity=1.0)
+        construction_simulation.run_rework_path(quantity=1.0, owner_id="construction-guard-reference")
 
     request_outcomes = iter([True, False])
     inspect_outcomes = iter([True])
@@ -295,7 +297,7 @@ def test_construction_run_rework_path_error_branches(monkeypatch):
         lambda *args, **kwargs: next(inspect_outcomes),
     )
     with pytest.raises(RuntimeError, match="rework capacity unavailable"):
-        construction_simulation.run_rework_path(quantity=1.0)
+        construction_simulation.run_rework_path(quantity=1.0, owner_id="construction-guard-reference")
 
     request_outcomes = iter([True, True])
     inspect_outcomes = iter([True, False])
@@ -310,7 +312,7 @@ def test_construction_run_rework_path_error_branches(monkeypatch):
         lambda *args, **kwargs: next(inspect_outcomes),
     )
     with pytest.raises(RuntimeError, match="reinspection unavailable"):
-        construction_simulation.run_rework_path(quantity=1.0)
+        construction_simulation.run_rework_path(quantity=1.0, owner_id="construction-guard-reference")
 
 
 def _patch_hospital_runtime(monkeypatch):
@@ -331,42 +333,42 @@ def test_hospitals_happy_and_icu_guard_errors(monkeypatch):
 
     monkeypatch.setattr(hospitals_simulation, "claim_next_ward_admission", lambda *args, **kwargs: "OTHER")
     with pytest.raises(RuntimeError, match="reference admission was not allocated"):
-        hospitals_simulation.run_happy_path()
+        hospitals_simulation.run_happy_path(owner_id="hospital-guard-reference")
 
     with pytest.raises(RuntimeError, match="reference admission was not allocated"):
-        hospitals_simulation.run_icu_path()
+        hospitals_simulation.run_icu_path(owner_id="hospital-guard-reference")
 
     monkeypatch.setattr(hospitals_simulation, "claim_next_ward_admission", lambda *args, **kwargs: entities.admission_id)
     monkeypatch.setattr(hospitals_simulation, "reconcile_icu_allocation", lambda *args, **kwargs: False)
     with pytest.raises(RuntimeError, match="ICU capacity unavailable"):
-        hospitals_simulation.run_icu_path()
+        hospitals_simulation.run_icu_path(owner_id="hospital-guard-reference")
 
 
 def test_hospitals_preemption_guard_errors(monkeypatch):
     entities = _patch_hospital_runtime(monkeypatch)
     monkeypatch.setattr(hospitals_simulation, "claim_next_ward_admission", lambda *args, **kwargs: "OTHER")
     with pytest.raises(RuntimeError, match="reference admission was not allocated"):
-        hospitals_simulation.run_preemption_path()
+        hospitals_simulation.run_preemption_path(owner_id="hospital-guard-reference")
 
     monkeypatch.setattr(hospitals_simulation, "claim_next_ward_admission", lambda *args, **kwargs: entities.admission_id)
     monkeypatch.setattr(hospitals_simulation, "reconcile_procedure_start", lambda *args, **kwargs: False)
     with pytest.raises(RuntimeError, match="procedure capacity unavailable"):
-        hospitals_simulation.run_preemption_path()
+        hospitals_simulation.run_preemption_path(owner_id="hospital-guard-reference")
 
     monkeypatch.setattr(hospitals_simulation, "reconcile_procedure_start", lambda *args, **kwargs: True)
     monkeypatch.setattr(hospitals_simulation, "commit_emergency_preemption", lambda *args, **kwargs: False)
     with pytest.raises(RuntimeError, match="preemption was not committed"):
-        hospitals_simulation.run_preemption_path()
+        hospitals_simulation.run_preemption_path(owner_id="hospital-guard-reference")
 
     monkeypatch.setattr(hospitals_simulation, "commit_emergency_preemption", lambda *args, **kwargs: True)
     monkeypatch.setattr(hospitals_simulation, "reconcile_preemption_business", lambda *args, **kwargs: False)
     with pytest.raises(RuntimeError, match="preemption did not reach business state"):
-        hospitals_simulation.run_preemption_path()
+        hospitals_simulation.run_preemption_path(owner_id="hospital-guard-reference")
 
     monkeypatch.setattr(hospitals_simulation, "reconcile_preemption_business", lambda *args, **kwargs: True)
     monkeypatch.setattr(hospitals_simulation, "complete_emergency_and_resume", lambda *args, **kwargs: False)
     with pytest.raises(RuntimeError, match="elective procedure did not resume"):
-        hospitals_simulation.run_preemption_path()
+        hospitals_simulation.run_preemption_path(owner_id="hospital-guard-reference")
 
 
 def test_construction_materials_guard_and_helper_edges(monkeypatch):
