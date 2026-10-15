@@ -100,4 +100,4 @@ def test_rollback_restores_scheduled_work_and_position():
 
     assert store.scheduled_work() == (work,)
     assert store.command(cmd.command_id) == cmd
-    assert store.simulation_position() is None
+    assert store.simulation_position(owner_id="test-test_durable_runtime") is None
