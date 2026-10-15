@@ -387,4 +387,4 @@ def test_happy_path_fails_loudly_when_capacity_never_becomes_available(monkeypat
     )
 
     with pytest.raises(RuntimeError, match="manufacturing capacity is still unavailable"):
-        manufacturing.run_happy_path(quantity=5.0)
+        manufacturing.run_happy_path(owner_id=ORGANIZATION_ID, quantity=5.0)
