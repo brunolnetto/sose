@@ -173,7 +173,7 @@ def test_customer_path_is_continuous_equivalent_across_worker_death_and_restart(
     fixtures = _customer_fixtures(store)
     origin = o2c.ORIGIN
 
-    _, engine = o2c.build_runtime(store, now=origin)
+    _, engine = o2c.build_runtime(store, owner_id="trading-customer-reference", now=origin)
     assert o2c.reconcile_credit(store, engine, entities=fixtures.o2c)
 
     correlation_id = deterministic_id(
@@ -328,7 +328,7 @@ def test_customer_path_is_continuous_equivalent_across_worker_death_and_restart(
         store, lease, consumption = _claim_after_worker_death(
             store,
             path,
-            registry_factory=lambda: customer._registry(fixtures),
+            registry_factory=lambda: customer._registry(fixtures, owner_id="trading-customer-reference"),
             owner_id=stage["owner_id"],
             now=message.produced_at,
         )
@@ -345,7 +345,7 @@ def test_customer_path_is_continuous_equivalent_across_worker_death_and_restart(
 
         replay = BoundaryService(store).consume(
             lease=lease,
-            registry=customer._registry(fixtures),
+            registry=customer._registry(fixtures, owner_id="trading-customer-reference"),
             now=message.produced_at + timedelta(minutes=1),
         )
         assert replay.consumer_effect_id == consumption.consumer_effect_id
@@ -465,7 +465,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     store, _, consumption = _claim_after_worker_death(
         store,
         path,
-        registry_factory=lambda: replenishment._registry(fixtures),
+        registry_factory=lambda: replenishment._registry(fixtures, owner_id=REPLENISHMENT_OWNER_ID),
         owner_id="p2p-worker",
         now=message.produced_at,
     )
@@ -504,7 +504,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     store, receipt_lease, consumption = _claim_after_worker_death(
         store,
         path,
-        registry_factory=lambda: replenishment._registry(fixtures),
+        registry_factory=lambda: replenishment._registry(fixtures, owner_id=REPLENISHMENT_OWNER_ID),
         owner_id="warehouse-worker",
         now=message.produced_at,
     )
@@ -524,7 +524,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
 
     replay = BoundaryService(store).consume(
         lease=receipt_lease,
-        registry=replenishment._registry(fixtures),
+        registry=replenishment._registry(fixtures, owner_id=REPLENISHMENT_OWNER_ID),
         now=message.produced_at + timedelta(minutes=1),
     )
     assert replay == consumption
@@ -561,7 +561,7 @@ def test_replenishment_path_is_continuous_equivalent_across_restart_and_fencing(
     store, _, consumption = _claim_after_worker_death(
         store,
         path,
-        registry_factory=lambda: replenishment._registry(fixtures),
+        registry_factory=lambda: replenishment._registry(fixtures, owner_id=REPLENISHMENT_OWNER_ID),
         owner_id="r2r-worker",
         now=message.produced_at,
     )
@@ -634,7 +634,7 @@ def test_composed_consumer_fault_rolls_back_intent_before_retry(tmp_path) -> Non
     )
     assert lease is not None
 
-    real_registry = customer._registry(fixtures)
+    real_registry = customer._registry(fixtures, owner_id="trading-customer-reference")
     real_handler = real_registry.resolve(message)
     failing_registry = BoundaryConsumerRegistry()
     failed_effect_ids: list[str] = []
@@ -677,7 +677,7 @@ def test_composed_consumer_fault_rolls_back_intent_before_retry(tmp_path) -> Non
     assert reclaimed is not None and reclaimed.epoch == lease.epoch + 1
     consumption = service.consume(
         lease=reclaimed,
-        registry=customer._registry(fixtures),
+        registry=customer._registry(fixtures, owner_id="trading-customer-reference"),
         now=message.produced_at + timedelta(seconds=7),
     )
     assert store.command(consumption.consumer_effect_id) is not None
