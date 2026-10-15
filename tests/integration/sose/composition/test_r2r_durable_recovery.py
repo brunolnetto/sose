@@ -75,7 +75,16 @@ def test_restarted_r2r_consumer_resumes_committed_journal_without_duplicate(
             e for e in store.entities() if e.entity_type == "journal_entry"
         )
         assert journal.state == initial_state
+        with store.transaction() as uow:
+            correlations = {
+                message.correlation_id
+                for delivery in uow.boundary_deliveries()
+                if (message := uow.get_boundary_message(delivery.message_id)) is not None
+            }
+        assert len(correlations) == 1
+        owner_bindings = {next(iter(correlations)): "test-org-r2r-durable-recovery"}
         worker = TradingCustomerRecoveryRunner(
+            organization_owners=owner_bindings,
             persistence=store, owner_id="r2r-restart",
             job_id="r2r-recovery", max_actions=16,
         )
