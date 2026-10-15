@@ -10,9 +10,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_realtime_outage_blocks_new_update_without_faking_trip_state():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="transit-scenarios-organization")
     _, engine = build_runtime(
         persistence,
+        owner_id="transit-scenarios-organization",
         scenarios=(realtime_feed_outage(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
