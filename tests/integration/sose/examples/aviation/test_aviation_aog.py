@@ -17,11 +17,13 @@ from sose.examples.aviation.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+AVIATION_OWNER_ID = "aviation-aog-test-organization"
+
 
 def _prepare_failed_inspection():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=AVIATION_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=AVIATION_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     leg1_due, _ = schedule_rotation(
