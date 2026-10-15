@@ -24,9 +24,11 @@ from sose.examples.manufacturing.simulation import (
 from sose.examples.process_manifest import ProcessEvidence, ProcessMaturity
 from sose.persistence.memory import MemoryPersistence
 
+MANUFACTURING_OWNER_ID = "manufacturing-observability-organization"
+
 
 def test_manufacturing_projection_is_read_only_and_idempotent() -> None:
-    persistence, entities = run_happy_path(quantity=10.0)
+    persistence, entities = run_happy_path(owner_id=MANUFACTURING_OWNER_ID, quantity=10.0)
     order = persistence.entity("production_order", entities.production_order_id)
     operation = persistence.entity("manufacturing_operation", entities.operation_id)
     assert order is not None and operation is not None
@@ -55,7 +57,7 @@ def test_manufacturing_projection_is_read_only_and_idempotent() -> None:
 
 
 def test_manufacturing_kpis_are_derived_from_projection_and_events() -> None:
-    persistence, entities = run_happy_path(quantity=8.0)
+    persistence, entities = run_happy_path(owner_id=MANUFACTURING_OWNER_ID, quantity=8.0)
 
     projection = manufacturing_projection(persistence, entities=entities)
     kpis = manufacturing_kpis(persistence, entities=entities)
@@ -81,7 +83,7 @@ def test_manufacturing_kpis_are_derived_from_projection_and_events() -> None:
 
 def test_projection_exposes_incomplete_state_without_inventing_terminal_metrics() -> None:
     persistence = MemoryPersistence()
-    entities = seed_happy_path(persistence, quantity=5.0)
+    entities = seed_happy_path(persistence, owner_id=MANUFACTURING_OWNER_ID, quantity=5.0)
 
     projection = manufacturing_projection(persistence, entities=entities)
     kpis = manufacturing_kpis(persistence, entities=entities)
@@ -98,8 +100,8 @@ def test_projection_exposes_incomplete_state_without_inventing_terminal_metrics(
 
 def test_quality_hold_projects_wip_without_premature_yield() -> None:
     persistence = MemoryPersistence()
-    entities = seed_happy_path(persistence, quantity=5.0)
-    _, engine = build_runtime(persistence)
+    entities = seed_happy_path(persistence, owner_id=MANUFACTURING_OWNER_ID, quantity=5.0)
+    _, engine = build_runtime(persistence, owner_id=MANUFACTURING_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     seed_material(engine, backend, quantity=5.0)
