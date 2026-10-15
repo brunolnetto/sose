@@ -18,6 +18,8 @@ def test_causal_chain_can_be_persisted_and_reconstructed():
         scheduler=Scheduler(),
     )
     store = MemoryPersistence()
+    ctx.events.bind_owner("causal-chain-organization")
+    ctx.commands.bind_owner("causal-chain-organization")
     order = ctx.entities.create(Entity, entity_type="order", key=("order-1",))
 
     created = ctx.events.create("order.created", entity=order, key=("created", order.id))
