@@ -17,6 +17,8 @@ from sose.examples.mro.entities import WorkOrder
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
 
+OWNER_ID = "restart-equivalence-organization"
+
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 
@@ -57,7 +59,7 @@ def build_engine(
     )
     registry = DomainRegistry()
     registry.register(EntityType("work_order", WorkOrderChart))
-    return context, Engine(context=context, registry=registry, persistence=persistence)
+    return context, Engine(context=context, registry=registry, persistence=persistence, owner_id=OWNER_ID)
 
 
 def seed_workflow(persistence: MemoryPersistence) -> str:
@@ -90,7 +92,7 @@ def seed_workflow(persistence: MemoryPersistence) -> str:
 
 def snapshot(persistence: MemoryPersistence, work_order_id: str):
     entity = persistence.entity("work_order", work_order_id)
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=OWNER_ID)
     return {
         "entity": entity,
         "events": persistence.events(),
@@ -117,7 +119,7 @@ def test_restart_execution_is_equivalent_to_continuous_execution():
     assert first_engine.rebuild_backend(first_backend) == 4
     first_backend.run_until(ORIGIN + timedelta(hours=2))
 
-    position = restarted_store.simulation_position()
+    position = restarted_store.simulation_position(owner_id=OWNER_ID)
     assert position is not None
     assert position.logical_time == ORIGIN + timedelta(hours=2)
 
@@ -148,7 +150,7 @@ def test_restart_restores_nonzero_logical_tick():
     assert continuous_engine.rebuild_backend(continuous_backend) == 4
     continuous_backend.run_until(ORIGIN + timedelta(hours=2))
 
-    position = continuous_store.simulation_position()
+    position = continuous_store.simulation_position(owner_id=OWNER_ID)
     assert position is not None
     assert position.logical_tick == 7
     assert continuous_context.clock.tick == 7
@@ -161,7 +163,7 @@ def test_restart_restores_nonzero_logical_tick():
     assert first_engine.rebuild_backend(first_backend) == 4
     first_backend.run_until(ORIGIN + timedelta(hours=1))
 
-    restart_position = restarted_store.simulation_position()
+    restart_position = restarted_store.simulation_position(owner_id=OWNER_ID)
     assert restart_position is not None
     assert restart_position.logical_tick == 7
 
@@ -195,7 +197,7 @@ def test_advance_tick_persists_and_restores_next_tick_boundary():
 
     engine.advance_tick()
 
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=OWNER_ID)
     assert position is not None
     assert position.logical_time == ORIGIN + timedelta(hours=1)
     assert position.logical_tick == 4
@@ -262,7 +264,7 @@ def test_interrupted_tick_rolls_back_durable_items_and_preserves_tick_start():
     assert stored.state == "planned"
     assert context.clock.now == ORIGIN
     assert context.clock.tick == 0
-    assert store.simulation_position() == SimulationPosition(
+    assert store.simulation_position(owner_id=OWNER_ID) == SimulationPosition(
         logical_time=ORIGIN,
         execution_sequence=0,
         committed_sequence=0,

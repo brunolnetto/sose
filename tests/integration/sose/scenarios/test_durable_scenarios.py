@@ -9,6 +9,8 @@ from sose.domain.registry import DomainRegistry, EntityType
 from sose.examples.mro.entities import WorkOrder
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
+
+OWNER_ID = "scenario-recovery-organization"
 from sose.scenarios import AttributeEffect, EventTrigger, Scenario, TickTrigger, TransitionWeightEffect
 
 
@@ -26,6 +28,7 @@ def build(store, *, now=ORIGIN, tick=0, scenarios=()):
         registry=DomainRegistry(),
         persistence=store,
         scenarios=scenarios,
+        owner_id=OWNER_ID,
     )
     return context, engine
 
@@ -52,7 +55,7 @@ def test_rebuild_restores_active_scenario_effects_and_decisions():
     assert first_context.scenarios.attribute("plant.available", True) is False
     assert first_context.scenarios.transition_weight_multiplier("work_order", "wait") == 3.0
 
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=OWNER_ID)
     second_context, second_engine = build(
         store,
         now=position.logical_time,
@@ -88,7 +91,7 @@ def test_restored_decision_prevents_duplicate_activation_for_same_tick():
     _, first_engine = build(store, scenarios=(scenario,))
     first_engine.advance_tick()
 
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=OWNER_ID)
     second_context, second_engine = build(
         store,
         now=position.logical_time,
@@ -144,6 +147,7 @@ def test_event_triggered_scenario_state_is_durable_across_restart():
         registry=registry,
         persistence=store,
         scenarios=(scenario,),
+        owner_id=OWNER_ID,
     )
     command = context.commands.create(
         "release",
@@ -169,12 +173,13 @@ def test_event_triggered_scenario_state_is_durable_across_restart():
         registry=registry,
         persistence=store,
         scenarios=(scenario,),
+        owner_id=OWNER_ID,
     )
 
     class EmptyBackend:
         @property
         def now(self):
-            position = store.simulation_position()
+            position = store.simulation_position(owner_id=OWNER_ID)
             return position.logical_time if position is not None else ORIGIN
 
         def schedule_at(self, at, callback, *, priority=100, key=None):

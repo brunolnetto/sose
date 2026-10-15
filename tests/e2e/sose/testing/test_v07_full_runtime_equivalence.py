@@ -20,6 +20,8 @@ from sose.domain.registry import DomainRegistry, EntityType
 from sose.examples.mro.entities import WorkOrder
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
+
+OWNER_ID = "v07-runtime-organization"
 from sose.scenarios import AttributeEffect, EventTrigger, Scenario
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
@@ -47,6 +49,7 @@ def build(store: MemoryPersistence, *, now: datetime) -> tuple[SimulationContext
         registry=registry,
         persistence=store,
         scenarios=(scenario,),
+        owner_id=OWNER_ID,
     )
 
 
@@ -397,7 +400,7 @@ def durable_snapshot(store: MemoryPersistence, work_order_id: str) -> dict[str, 
         "entity": store.entity("work_order", work_order_id),
         "events": store.events(),
         "scheduled_work": store.scheduled_work(),
-        "position": store.simulation_position(),
+        "position": store.simulation_position(owner_id=OWNER_ID),
         "scenario_state": store.scenario_state(),
         "resource_definitions": store.resource_definitions(),
         "resource_demands": store.resource_demands(),
@@ -493,7 +496,7 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
     with store.transaction() as uow:
         uow.save_preemptive_resource_release_intent(interrupted_release)
 
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=OWNER_ID)
     assert position is not None
     _, engine2 = build(store, now=position.logical_time)
     backend2 = SimPyBackend(origin=position.logical_time)
@@ -522,7 +525,7 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
 
     backend2.run_until(ORIGIN + timedelta(hours=2))
     for boundary in (3, 4):
-        position = store.simulation_position()
+        position = store.simulation_position(owner_id=OWNER_ID)
         assert position is not None
         _, engine = build(store, now=position.logical_time)
         backend = SimPyBackend(origin=position.logical_time)

@@ -18,6 +18,8 @@ from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry
 from sose.persistence.memory import MemoryPersistence
 
+OWNER_ID = "resource-reference-organization"
+
 
 NOW = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 
@@ -310,6 +312,7 @@ def test_engine_rebuild_restores_durable_resource_state():
         context=context,
         registry=DomainRegistry(),
         persistence=store,
+        owner_id=OWNER_ID,
     )
     backend = CapacityBackend()
 
@@ -378,7 +381,7 @@ def test_recovery_time_mismatch_does_not_mutate_resource_state():
         random=RandomSource(42),
         scheduler=Scheduler(),
     )
-    engine = Engine(context=context, registry=DomainRegistry(), persistence=store)
+    engine = Engine(context=context, registry=DomainRegistry(), persistence=store, owner_id=OWNER_ID)
     backend = CapacityBackend(now=NOW + timedelta(hours=1))
 
     with pytest.raises(RuntimeError, match="recovery boundary"):

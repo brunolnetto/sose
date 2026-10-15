@@ -14,6 +14,8 @@ from sose.domain.registry import DomainRegistry, EntityType
 from sose.examples.mro.entities import WorkOrder
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
+
+OWNER_ID = "runtime-equivalence-organization"
 from sose.scenarios import AttributeEffect, Scenario, TickTrigger
 
 
@@ -112,6 +114,7 @@ def build(store, *, now, tick=0):
         registry=registry,
         persistence=store,
         scenarios=(scenario,),
+        owner_id=OWNER_ID,
     )
     return context, engine
 
@@ -148,7 +151,7 @@ def durable_snapshot(store, work_order_id):
         "entity": store.entity("work_order", work_order_id),
         "events": store.events(),
         "work": store.scheduled_work(),
-        "position": store.simulation_position(),
+        "position": store.simulation_position(owner_id=OWNER_ID),
         "scenario": store.scenario_state(),
         "definitions": store.resource_definitions(),
         "demands": store.resource_demands(),
@@ -228,7 +231,7 @@ def run_with_two_restarts():
     engine1.advance_tick()
     backend1.run_until(ORIGIN + timedelta(hours=2))
 
-    position1 = store.simulation_position()
+    position1 = store.simulation_position(owner_id=OWNER_ID)
     context2, engine2 = build(store, now=position1.logical_time)
     backend2 = IntegratedBackend(now=position1.logical_time)
     engine2.rebuild_backend(backend2)
@@ -237,7 +240,7 @@ def run_with_two_restarts():
     engine2.resources.release(backend2, holder.reservation_id)
     backend2.run_until(ORIGIN + timedelta(hours=3))
 
-    position2 = store.simulation_position()
+    position2 = store.simulation_position(owner_id=OWNER_ID)
     context3, engine3 = build(store, now=position2.logical_time)
     backend3 = IntegratedBackend(now=position2.logical_time)
     engine3.rebuild_backend(backend3)
@@ -296,7 +299,7 @@ def run_with_restart_after_each_recovery_boundary():
 
     # Boundary 1: the first fixed tick commits release at 09:00.
     engine1.advance_tick()
-    position1 = store.simulation_position()
+    position1 = store.simulation_position(owner_id=OWNER_ID)
     assert position1.logical_time == ORIGIN + timedelta(hours=1)
 
     context2, engine2 = build(store, now=position1.logical_time)
@@ -312,7 +315,7 @@ def run_with_restart_after_each_recovery_boundary():
     )
     engine2.resources.release(backend2, holder.reservation_id)
 
-    position2 = store.simulation_position()
+    position2 = store.simulation_position(owner_id=OWNER_ID)
     assert position2.logical_time == ORIGIN + timedelta(hours=2)
 
     context3, engine3 = build(store, now=position2.logical_time)
@@ -321,7 +324,7 @@ def run_with_restart_after_each_recovery_boundary():
 
     # Boundary 3: complete executes at 11:00.
     backend3.run_until(ORIGIN + timedelta(hours=3))
-    position3 = store.simulation_position()
+    position3 = store.simulation_position(owner_id=OWNER_ID)
     assert position3.logical_time == ORIGIN + timedelta(hours=3)
 
     context4, engine4 = build(store, now=position3.logical_time)
@@ -345,7 +348,7 @@ def test_multi_restart_equivalence_is_an_architectural_gate():
         continuous_id,
     )
 
-    position = restarted_store.simulation_position()
+    position = restarted_store.simulation_position(owner_id=OWNER_ID)
     assert position is not None
     assert position.logical_time == ORIGIN + timedelta(hours=4)
     assert position.execution_sequence == position.committed_sequence
