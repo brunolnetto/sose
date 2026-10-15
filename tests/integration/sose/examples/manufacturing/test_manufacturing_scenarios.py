@@ -15,12 +15,15 @@ from sose.examples.manufacturing.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "manufacturing-reference-organization"
+
 
 def test_yield_scenario_changes_finished_goods_without_changing_input_issue():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=10.0)
+    ids = seed_happy_path(persistence, quantity=10.0, owner_id=REFERENCE_OWNER_ID)
     context, engine = build_runtime(
-        persistence, scenarios=(yield_degradation_scenario(),)
+        persistence, scenarios=(yield_degradation_scenario(),),
+        owner_id=REFERENCE_OWNER_ID,
     )
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
@@ -42,9 +45,10 @@ def test_yield_scenario_changes_finished_goods_without_changing_input_issue():
 
 def test_machine_downtime_scenario_routes_through_durable_breakdown():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0)
+    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
     context, engine = build_runtime(
-        persistence, scenarios=(machine_downtime_scenario(),)
+        persistence, scenarios=(machine_downtime_scenario(),),
+        owner_id=REFERENCE_OWNER_ID,
     )
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
@@ -64,9 +68,10 @@ def test_machine_downtime_scenario_routes_through_durable_breakdown():
 
 def test_finite_manufacturing_scenario_expires_without_retriggering():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0)
+    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
     context, engine = build_runtime(
-        persistence, scenarios=(yield_degradation_scenario(),)
+        persistence, scenarios=(yield_degradation_scenario(),),
+        owner_id=REFERENCE_OWNER_ID,
     )
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
