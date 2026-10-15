@@ -325,6 +325,8 @@ class MemoryUnitOfWork:
         return deepcopy(matches[0]) if matches else None
 
     def append_event(self, event: DomainEvent) -> None:
+        if not isinstance(event.owner_id, str) or not event.owner_id.strip():
+            raise ValueError("durable domain event requires operational owner_id")
         self._working.events.append(deepcopy(event))
         self._mark_dirty("events", len(self._working.events) - 1)
 
