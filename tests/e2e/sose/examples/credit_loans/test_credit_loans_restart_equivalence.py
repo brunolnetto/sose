@@ -21,11 +21,13 @@ from sose.examples.credit_loans.simulation import (
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
+REFERENCE_OWNER_ID = "credit-reference-organization"
+
 
 def _prepare_servicing():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     assert reconcile_underwriting(
@@ -47,6 +49,7 @@ def test_pending_installment_schedule_survives_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     assert len(persistence.scheduled_work()) == 3
 
@@ -95,6 +98,7 @@ def test_posted_payment_is_applied_once_after_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     post_payment(
         persistence,
@@ -136,6 +140,7 @@ def test_overdue_installment_recovers_missing_delinquency_case_after_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     first = ensure_delinquency(
         persistence, rebuilt.engine, installment_id_value=iid
@@ -194,6 +199,7 @@ def test_collection_followup_is_restart_equivalent():
         build_runtime,
         r_backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     rebuilt.backend.run_until(r_followup.work.due_at)
 
@@ -206,8 +212,8 @@ def test_collection_followup_is_restart_equivalent():
 
 def test_approved_application_reconciles_missing_credit_decision_after_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -239,6 +245,7 @@ def test_approved_application_reconciles_missing_credit_decision_after_restart()
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     assert reconcile_underwriting(
         persistence,
@@ -275,6 +282,7 @@ def test_initiated_payment_is_posted_then_applied_once_after_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
     post_payment(
         persistence,
