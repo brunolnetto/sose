@@ -48,7 +48,7 @@ def _prepare(store: MemoryPersistence):
 
 
 def _rebuild(store, scenario):
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=REFERENCE_OWNER_ID)
     assert position is not None
     context, engine = build_runtime(
         store,
@@ -112,8 +112,8 @@ def _snapshot(store, ids):
         "operation": store.entity("manufacturing_operation", ids.operation_id),
         "events": store.events(),
         "scheduled_work": store.scheduled_work(),
-        "position": store.simulation_position(),
-        "scenario": store.scenario_state(),
+        "position": store.simulation_position(owner_id=REFERENCE_OWNER_ID),
+        "scenario": store.scenario_state(owner_id=REFERENCE_OWNER_ID),
         "resource_definitions": store.resource_definitions(),
         "resource_demands": store.resource_demands(),
         "resource_reservations": store.resource_reservations(),
