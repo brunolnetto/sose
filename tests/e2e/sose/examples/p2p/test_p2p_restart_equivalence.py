@@ -16,6 +16,8 @@ from sose.examples.p2p.simulation import (
 from sose.persistence.memory import MemoryPersistence
 from sose.scenarios import AttributeEffect, Scenario, ScheduledTrigger
 
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+
 
 def _scenario() -> Scenario:
     return Scenario(
@@ -27,9 +29,9 @@ def _scenario() -> Scenario:
 
 
 def _prepare(store: MemoryPersistence):
-    ids = seed_happy_path(store, quantity=5.0)
+    ids = seed_happy_path(store, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
     scenario = _scenario()
-    context, engine = build_runtime(store, scenarios=(scenario,))
+    context, engine = build_runtime(store, scenarios=(scenario,), owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -52,6 +54,7 @@ def _rebuild(store, scenario, *, now):
         store,
         now=now,
         scenarios=(scenario,),
+        owner_id=REFERENCE_OWNER_ID,
     )
     backend = SimPyBackend(origin=now)
     engine.rebuild_backend(backend)
