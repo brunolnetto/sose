@@ -274,7 +274,7 @@ def test_real_logistics_certified_crash_keeps_other_organization_progressing(mon
             assert boundary_lease is not None
             ack = service.consume(
                 lease=boundary_lease,
-                registry=TradingCustomerRecoveryRunner._registry_for(source),
+                registry=TradingCustomerRecoveryRunner._registry_for(source, organization_id=org),
                 now=logistics.ORIGIN,
             )
             effects[org] = ack.consumer_effect_id
