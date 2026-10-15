@@ -51,7 +51,7 @@ def message(name="accounting.entry_requested", source="cards_payments",
     ],
 )
 def test_registry_only_claims_expected_domain_contract(msg, domain, contract):
-    registry = TradingCustomerRecoveryRunner._registry_for(msg)
+    registry = TradingCustomerRecoveryRunner._registry_for(msg, organization_id="test-organization")
     assert registry.contracts_for(domain) == frozenset({(contract, 1)})
     assert callable(registry.resolve(msg))
     assert registry.contracts_for("unrelated_domain") == frozenset()
@@ -64,7 +64,7 @@ def test_registry_only_claims_expected_domain_contract(msg, domain, contract):
 ])
 def test_recovery_fails_closed_for_unknown_registry_routes(message_value, reason):
     with pytest.raises(ValueError, match=reason):
-        TradingCustomerRecoveryRunner._registry_for(message_value)
+        TradingCustomerRecoveryRunner._registry_for(message_value, organization_id="test-organization")
 
 
 @pytest.mark.parametrize("options,reason", [
