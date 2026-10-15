@@ -18,9 +18,12 @@ from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
 
+OWNER_ID = "o2c-collection-reference"
+
+
 def _prepare_promised_collection(store: MemoryPersistence):
-    entities = seed_reference(store)
-    _, engine = build_runtime(store)
+    entities = seed_reference(store, owner_id=OWNER_ID)
+    _, engine = build_runtime(store, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -60,8 +63,8 @@ def _snapshot(store, entities, receivable_id, case_id):
         "collection_case": store.entity("collection_case", case_id),
         "events": store.events(),
         "scheduled_work": store.scheduled_work(),
-        "position": store.simulation_position(),
-        "scenario": store.scenario_state(),
+        "position": store.simulation_position(owner_id=OWNER_ID),
+        "scenario": store.scenario_state(owner_id=OWNER_ID),
         "resource_definitions": store.resource_definitions(),
         "resource_demands": store.resource_demands(),
         "resource_reservations": store.resource_reservations(),
@@ -88,6 +91,7 @@ def _run_restarted():
         build_runtime,
         backend_before,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
     )
     _finish_collection(
         store,
