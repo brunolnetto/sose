@@ -27,6 +27,8 @@ from sose.examples.mro.entities import WorkOrder
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "core-engine-coverage-organization"
+
 
 NOW = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 
@@ -47,7 +49,7 @@ def _build_engine():
     )
     with persistence.transaction() as uow:
         uow.save_entity(entity)
-    engine = Engine(context=context, registry=registry, persistence=persistence)
+    engine = Engine(context=context, registry=registry, persistence=persistence, owner_id=REFERENCE_OWNER_ID)
     return engine, persistence, context, entity
 
 
@@ -238,7 +240,7 @@ def test_engine_advance_tick_executes_legacy_scheduler_and_ignores_stale_due_ite
     engine.advance_tick()
 
     assert dispatched == [command]
-    assert persistence.simulation_position() is not None
+    assert persistence.simulation_position(owner_id=REFERENCE_OWNER_ID) is not None
 
 
 def test_resource_manager_edge_branches():

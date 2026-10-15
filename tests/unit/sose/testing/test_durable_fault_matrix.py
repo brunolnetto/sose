@@ -17,6 +17,8 @@ from sose.examples.mro.entities import WorkOrder
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "durable-fault-organization"
+
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 
@@ -33,7 +35,7 @@ def build_engine(store: MemoryPersistence, *, now: datetime = ORIGIN):
         context=context,
         registry=registry,
         persistence=store,
-    )
+     owner_id=REFERENCE_OWNER_ID)
     return context, engine
 
 
