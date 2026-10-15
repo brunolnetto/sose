@@ -13,8 +13,8 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_two_leg_rotation_requires_previous_leg_release():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="aviation-reference")
+    _, engine = build_runtime(persistence, owner_id="aviation-reference")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -77,8 +77,8 @@ def test_two_leg_rotation_requires_previous_leg_release():
 
 def test_landing_releases_crew_but_not_aircraft_before_inspection():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="aviation-reference")
+    _, engine = build_runtime(persistence, owner_id="aviation-reference")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     leg1_due, _ = schedule_rotation(
