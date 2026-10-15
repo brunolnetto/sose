@@ -19,8 +19,8 @@ from sose.persistence.memory import MemoryPersistence
 
 def _prepare_approved_claim():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="insurance-happy-organization")
+    _, engine = build_runtime(persistence, owner_id="insurance-happy-organization")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
