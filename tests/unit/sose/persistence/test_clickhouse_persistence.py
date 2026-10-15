@@ -43,7 +43,7 @@ def test_clickhouse_appends_committed_canonical_snapshot(monkeypatch):
         "position",
         "payload",
     ]
-    assert any(row[1] == "committed_tick" and row[4] == "7" for row in rows)
+    assert any(row[1] == "committed_ticks" and row[2] == "clickhouse-reference" and row[4] == "7" for row in rows)
 
     persistence.close()
     assert client.closed is True
