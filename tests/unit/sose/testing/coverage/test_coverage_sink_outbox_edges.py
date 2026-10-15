@@ -32,6 +32,7 @@ def _state() -> SimulationJobState:
 
 def _event(event_id="e1") -> DomainEvent:
     return DomainEvent(
+        owner_id="sink-coverage-test-organization",
         event_id=event_id,
         name="created",
         entity_type="order",
