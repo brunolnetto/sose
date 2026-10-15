@@ -116,6 +116,7 @@ def test_engine_dispatch_missing_entity_restores_scenarios():
         payload={},
         causation_id=None,
         correlation_id=None,
+        owner_id=REFERENCE_OWNER_ID,
     )
     with pytest.raises(KeyError, match="entity not found"):
         engine.dispatch(missing)
@@ -137,8 +138,9 @@ def test_engine_dispatch_scheduled_input_guards():
             payload={},
             causation_id=None,
             correlation_id=None,
+        owner_id=REFERENCE_OWNER_ID,
         )
-        work = SimpleNamespace(work_id="w-1", command_id="cmd-1", due_at=NOW)
+        work = SimpleNamespace(work_id="w-1", command_id="cmd-1", due_at=NOW, owner_id=REFERENCE_OWNER_ID)
         item = SimpleNamespace(command=command, work=work)
 
         with pytest.raises(ValueError, match="does not match command"):
@@ -155,6 +157,7 @@ def test_engine_dispatch_scheduled_input_guards():
                         payload=command.payload,
                         causation_id=command.causation_id,
                         correlation_id=command.correlation_id,
+                        owner_id=REFERENCE_OWNER_ID,
                     ),
                     work=work,
                 ),
@@ -175,6 +178,7 @@ def test_engine_dispatch_scheduled_input_guards():
                         payload=command.payload,
                         causation_id=command.causation_id,
                         correlation_id=command.correlation_id,
+                        owner_id=REFERENCE_OWNER_ID,
                     ),
                     work=work,
                 ),
@@ -222,25 +226,18 @@ def test_engine_dispatch_probabilistic_and_evaluate_entity_edges(monkeypatch):
     assert dispatched[0].name == "release"
 
 
-def test_engine_advance_tick_executes_legacy_scheduler_and_ignores_stale_due_items(monkeypatch):
+def test_engine_advance_tick_refuses_unowned_in_memory_callbacks():
     engine, persistence, context, entity = _build_engine()
     command = context.commands.create(
-        "release",
-        target=entity,
-        due_at=NOW,
-        key=("legacy", entity.id),
+        "release", target=entity, due_at=NOW, key=("legacy", entity.id),
     )
     context.scheduler.schedule(command)
-    dispatched: list[Command] = []
-    monkeypatch.setattr(engine, "dispatch", lambda cmd: dispatched.append(cmd))
-    stale_item = SimpleNamespace(command=command, work=SimpleNamespace(work_id="w", command_id=command.command_id, due_at=NOW))
-    monkeypatch.setattr(engine.scheduler, "due", lambda *_args, **_kwargs: (stale_item,))
-    monkeypatch.setattr(engine, "_dispatch_scheduled_in_uow", lambda *_args, **_kwargs: False)
-
-    engine.advance_tick()
-
-    assert dispatched == [command]
-    assert persistence.simulation_position(owner_id=REFERENCE_OWNER_ID) is not None
+    with pytest.raises(RuntimeError, match="unowned in-memory scheduling"):
+        engine.advance_tick()
+    assert persistence.simulation_position(owner_id=REFERENCE_OWNER_ID) is None
+    assert persistence.events() == ()
+    assert context.clock.now == NOW
+    assert context.clock.tick == 0
 
 
 def test_resource_manager_edge_branches():
