@@ -19,6 +19,8 @@ from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
 
+REFERENCE_OWNER_ID = "warehouse-fulfillment-reference-organization"
+
 DURATION = timedelta(hours=1)
 
 
@@ -29,8 +31,9 @@ def _start_reference():
         picker_capacity=1,
         packing_station_capacity=1,
         shipping_dock_capacity=1,
+        owner_id=REFERENCE_OWNER_ID,
     )
-    _, engine = build_runtime(persistence)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     assert allocate_order(persistence, engine, entities=entities)
@@ -56,6 +59,7 @@ def _restart(persistence, backend):
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=REFERENCE_OWNER_ID,
     )
 
 
@@ -262,7 +266,7 @@ def test_restart_cleans_capacity_after_business_effect_was_already_committed():
     assert task.state == "completed"
 
     # Fault injection: business effect committed, process dies before resource cleanup.
-    _, engine = build_runtime(persistence, now=backend.now)
+    _, engine = build_runtime(persistence, now=backend.now, owner_id=REFERENCE_OWNER_ID)
     pick_allocation(
         persistence,
         engine,
@@ -293,7 +297,7 @@ def test_restart_finalizes_interrupted_release_intent_without_duplicate_business
 
     backend.run_until(ORIGIN + DURATION)
     task = _task(persistence, "pick", first_id)
-    _, engine = build_runtime(persistence, now=backend.now)
+    _, engine = build_runtime(persistence, now=backend.now, owner_id=REFERENCE_OWNER_ID)
     pick_allocation(
         persistence,
         engine,
