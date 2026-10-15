@@ -10,7 +10,7 @@ def test_transaction_commits_entity_and_tick():
 
     with store.transaction() as uow:
         uow.save_entity(entity)
-        uow.set_committed_tick(7)
+        uow.set_committed_tick(7, owner_id="organization-a")
 
     assert store.entity("demo", "1") is not None
-    assert store.committed_tick() == 7
+    assert store.committed_tick(owner_id="organization-a") == 7
