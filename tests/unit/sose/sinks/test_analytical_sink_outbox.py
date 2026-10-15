@@ -32,6 +32,7 @@ def _state() -> SimulationJobState:
 
 def _append_event(persistence: MemoryPersistence, ordinal: int) -> DomainEvent:
     event = DomainEvent(
+        owner_id="sink-outbox-test-organization",
         event_id=f"event-{ordinal}",
         name="changed",
         entity_type="demo",
