@@ -76,7 +76,7 @@ with PostgresPersistence(dsn, namespace=namespace) as store:
             time.sleep(.025)
     store.boundary_transaction = faulting_transaction
     receipt = service.consume(
-        lease=lease, registry=TradingCustomerRecoveryRunner._registry_for(message),
+        lease=lease, registry=TradingCustomerRecoveryRunner._registry_for(message, organization_id="a"),
         now=__import__("sose.examples.order_to_cash.simulation", fromlist=["ORIGIN"]).ORIGIN,
     )
     # A transport break may make the caller's apparent outcome uncertain.
@@ -219,7 +219,7 @@ def _uninterrupted_reference(phase):
             assert message is not None
             receipt = service.consume(
                 lease=lease,
-                registry=TradingCustomerRecoveryRunner._registry_for(message),
+                registry=TradingCustomerRecoveryRunner._registry_for(message, organization_id="a"),
                 now=o2c.ORIGIN,
             )
             assert receipt.consumer_effect_id == seeded["a"][1]
