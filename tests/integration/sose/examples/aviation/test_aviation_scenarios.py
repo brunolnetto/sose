@@ -15,9 +15,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_weather_delays_due_flight_and_recovers():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="aviation-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="aviation-scenarios-organization",
         scenarios=(departure_weather_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
@@ -65,9 +66,10 @@ def test_weather_delays_due_flight_and_recovers():
 
 def test_crew_shortage_does_not_leave_stale_crew_demand():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="aviation-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="aviation-scenarios-organization",
         scenarios=(crew_shortage_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
