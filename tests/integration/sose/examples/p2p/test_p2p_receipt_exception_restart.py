@@ -10,11 +10,13 @@ from sose.examples.p2p.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+
 
 def _prepare_partial():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0)
-    _, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN + timedelta(hours=10))
@@ -55,10 +57,10 @@ def test_partial_receipt_restart_is_semantically_equivalent():
     )
 
     restarted, restarted_ids, _, backend = _prepare_partial()
-    position = restarted.simulation_position()
+    position = restarted.simulation_position(owner_id=REFERENCE_OWNER_ID)
     now = position.logical_time if position is not None else backend.now
     tick = position.logical_tick if position is not None else 0
-    _, restarted_engine = build_runtime(restarted, now=now, tick=tick)
+    _, restarted_engine = build_runtime(restarted, now=now, tick=tick, owner_id=REFERENCE_OWNER_ID)
     restarted_backend = SimPyBackend(origin=now)
     restarted_engine.rebuild_backend(restarted_backend)
     restarted_backend.run_until(now)
@@ -87,8 +89,8 @@ def test_partial_receipt_restart_is_semantically_equivalent():
 
 def test_rejected_receipt_restart_preserves_terminal_inventory_neutral_state():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0)
-    _, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN + timedelta(hours=10))
@@ -102,10 +104,10 @@ def test_rejected_receipt_restart_preserves_terminal_inventory_neutral_state():
     ) is True
     before = _snapshot(persistence, ids)
 
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=REFERENCE_OWNER_ID)
     now = position.logical_time if position is not None else backend.now
     tick = position.logical_tick if position is not None else 0
-    _, restarted_engine = build_runtime(persistence, now=now, tick=tick)
+    _, restarted_engine = build_runtime(persistence, now=now, tick=tick, owner_id=REFERENCE_OWNER_ID)
     restarted_backend = SimPyBackend(origin=now)
     restarted_engine.rebuild_backend(restarted_backend)
     restarted_backend.run_until(now)
