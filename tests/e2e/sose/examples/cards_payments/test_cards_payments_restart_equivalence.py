@@ -67,7 +67,7 @@ def test_settlement_retry_is_restart_equivalent():
 
     restarted = MemoryPersistence()
     r_entities, _, _, r_retry_at = _progress_to_retry_wait(restarted)
-    position = restarted.simulation_position()
+    position = restarted.simulation_position(owner_id=REFERENCE_OWNER_ID)
     assert position is not None
 
     rebuilt = restart_reference_runtime(
