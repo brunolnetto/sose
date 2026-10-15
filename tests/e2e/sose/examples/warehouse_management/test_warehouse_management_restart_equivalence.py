@@ -14,8 +14,11 @@ from sose.examples.warehouse_management.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+OWNER_ID = "warehouse-management-reference"
+
+
 def _engine(store: MemoryPersistence, *, now):
-    _, engine = build_runtime(store, now=now)
+    _, engine = build_runtime(store, owner_id=OWNER_ID, now=now)
     return engine
 
 
@@ -45,13 +48,13 @@ def _snapshot(store: MemoryPersistence, ids):
         ),
         "events": store.events(),
         "scheduled_work": store.scheduled_work(),
-        "position": store.simulation_position(),
+        "position": store.simulation_position(owner_id=OWNER_ID),
     }
 
 
 def _run_continuous():
     store = MemoryPersistence()
-    ids = seed_reference(store, now=ORIGIN, origin_on_hand=20.0, transfer_quantity=8.0)
+    ids = seed_reference(store, owner_id=OWNER_ID, now=ORIGIN, origin_on_hand=20.0, transfer_quantity=8.0)
     engine = _engine(store, now=ORIGIN)
 
     assert start_transfer(store, engine, entities=ids) is True
@@ -67,7 +70,7 @@ def _run_continuous():
 
 def _run_with_restarts():
     store = MemoryPersistence()
-    ids = seed_reference(store, now=ORIGIN, origin_on_hand=20.0, transfer_quantity=8.0)
+    ids = seed_reference(store, owner_id=OWNER_ID, now=ORIGIN, origin_on_hand=20.0, transfer_quantity=8.0)
 
     engine1 = _engine(store, now=ORIGIN)
     assert start_transfer(store, engine1, entities=ids) is True
