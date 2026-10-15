@@ -58,8 +58,19 @@ def test_replenishment_r2r_accepted_effect_resumes_after_worker_death(
     with SQLiteIncrementalPersistence(path) as store:
         journal = next(e for e in store.entities() if e.entity_type == "journal_entry")
         assert journal.state == expected
+        # Reconstitute the flow from persisted delivery evidence, but take its
+        # owning organization from the explicit fixture identity.
+        with store.transaction() as uow:
+            correlations = {
+                message.correlation_id
+                for delivery in uow.boundary_deliveries()
+                if (message := uow.get_boundary_message(delivery.message_id)) is not None
+            }
+        assert len(correlations) == 1
+        flow_id = next(iter(correlations))
         worker = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="replenishment-r2r-restart",
+            organization_owners={flow_id: "trading-company-replenishment-reference"},
             job_id="replenishment-r2r-recovery", max_actions=16,
         )
         result = worker.run_trigger(
