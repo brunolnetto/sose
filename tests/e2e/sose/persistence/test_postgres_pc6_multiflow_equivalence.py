@@ -149,6 +149,7 @@ def _apply_once(store, message):
                 },
             ))
         uow.append_event(DomainEvent(
+        owner_id=f"pc6-flow-{flow}",
             event_id=event_id, name=f"pc6.business_applied.{stage}",
             entity_type=kind, entity_id=entity_id,
             occurred_at=message.produced_at,
