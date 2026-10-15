@@ -14,11 +14,13 @@ from sose.examples.manufacturing.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "manufacturing-reference-organization"
+
 
 def _prepare_quality_hold():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0)
-    _, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     seed_material(engine, backend, quantity=5.0)
@@ -86,10 +88,10 @@ def test_quality_rework_restart_is_semantically_equivalent():
     )
 
     restarted, restarted_ids, _, backend = _prepare_quality_hold()
-    position = restarted.simulation_position()
+    position = restarted.simulation_position(owner_id=REFERENCE_OWNER_ID)
     now = position.logical_time if position is not None else backend.now
     tick = position.logical_tick if position is not None else 0
-    _, restarted_engine = build_runtime(restarted, now=now, tick=tick)
+    _, restarted_engine = build_runtime(restarted, now=now, tick=tick, owner_id=REFERENCE_OWNER_ID)
     restarted_backend = SimPyBackend(origin=now)
     restarted_engine.rebuild_backend(restarted_backend)
     restarted_backend.run_until(now)
