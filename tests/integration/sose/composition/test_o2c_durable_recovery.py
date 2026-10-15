@@ -57,7 +57,16 @@ def test_restart_recovers_o2c_and_payment_request_from_durable_delivery(
     monkeypatch.setattr(customer.o2c, "ensure_receivable", original_receivable)
     opened[-1].close()
     with SQLiteIncrementalPersistence(path) as store:
+        with store.transaction() as uow:
+            correlations = {
+                message.correlation_id
+                for delivery in uow.boundary_deliveries()
+                if (message := uow.get_boundary_message(delivery.message_id)) is not None
+            }
+        assert len(correlations) == 1
+        owner_bindings = {next(iter(correlations)): "test-org-o2c-durable-recovery"}
         runner = TradingCustomerRecoveryRunner(
+            organization_owners=owner_bindings,
             persistence=store, owner_id="o2c-restart",
             job_id="o2c-recovery-test", max_actions=16,
         )
@@ -143,8 +152,16 @@ def test_payment_egress_requires_ack_and_completed_o2c_effect(tmp_path, monkeypa
                 if d.contract_name == "logistics.delivery_completed"
             )
         assert inbound is not None
+        with store.transaction() as uow:
+            correlations = {
+                message.correlation_id
+                for delivery in uow.boundary_deliveries()
+                if (message := uow.get_boundary_message(delivery.message_id)) is not None
+            }
+        assert len(correlations) == 1
+        owner_bindings = {next(iter(correlations)): "test-org-o2c-durable-recovery"}
         worker = TradingCustomerRecoveryRunner(
-            store, owner_id="o2c", job_id="o2c-proof", max_actions=16,
+            store, organization_owners=owner_bindings, owner_id="o2c", job_id="o2c-proof", max_actions=16,
         )
         worker.run_trigger(
             trigger_id="apply-o2c", now=o2c.ORIGIN + timedelta(days=1),
