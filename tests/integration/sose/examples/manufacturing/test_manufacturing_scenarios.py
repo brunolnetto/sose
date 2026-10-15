@@ -83,7 +83,7 @@ def test_finite_manufacturing_scenario_expires_without_retriggering():
         engine.advance_tick()
 
     assert context.scenarios.attribute("manufacturing.yield.factor", 1.0) == 1.0
-    state = persistence.scenario_state()
+    state = persistence.scenario_state(owner_id=REFERENCE_OWNER_ID)
     assert state is not None
     assert sum(
         decision.scenario_name == "manufacturing-yield-degradation"
