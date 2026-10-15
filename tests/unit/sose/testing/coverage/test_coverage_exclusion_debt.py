@@ -27,6 +27,8 @@ for name in list(sys.modules):
         del sys.modules[name]
 
 import sose.backends.simpy  # noqa: F401
+
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
 """
     completed = subprocess.run(
         [sys.executable, "-c", script],
@@ -56,8 +58,8 @@ def test_simpy_store_rejects_non_sose_native_item():
 
 def _fresh_runtime():
     persistence = MemoryPersistence()
-    entities = p2p.seed_happy_path(persistence)
-    _, engine = p2p.build_runtime(persistence)
+    entities = p2p.seed_happy_path(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = p2p.build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=p2p.ORIGIN)
     engine.rebuild_backend(backend)
     return persistence, entities, engine, backend
@@ -102,9 +104,9 @@ def test_p2p_stocking_detects_missing_seeded_receipt(monkeypatch):
 
 
 def test_p2p_consumption_detects_missing_material_demand(monkeypatch):
-    persistence, entities = p2p.run_happy_path()
-    _, engine = p2p.build_runtime(persistence)
-    position = persistence.simulation_position()
+    persistence, entities = p2p.run_happy_path(owner_id=REFERENCE_OWNER_ID)
+    _, engine = p2p.build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
+    position = persistence.simulation_position(owner_id=REFERENCE_OWNER_ID)
     assert position is not None
     backend = SimPyBackend(origin=position.logical_time)
     engine.rebuild_backend(backend)
@@ -141,4 +143,4 @@ def test_p2p_shortage_detects_missing_seeded_material_demand(monkeypatch):
     monkeypatch.setattr(p2p, "seed_happy_path", corrupt_seed)
 
     with pytest.raises(RuntimeError, match="material demand was not persisted"):
-        p2p.run_shortage_backorder()
+        p2p.run_shortage_backorder(owner_id=REFERENCE_OWNER_ID)
