@@ -28,9 +28,10 @@ def test_logistics_scenario_builders_are_well_formed():
 
 def test_finite_courier_loss_routes_through_delay_and_recovers():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="logistics-scenarios-organization")
     context, engine = build_runtime(
-        persistence, scenarios=(courier_capacity_loss_scenario(),)
+        persistence,
+        owner_id="logistics-scenarios-organization", scenarios=(courier_capacity_loss_scenario(),)
     )
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
