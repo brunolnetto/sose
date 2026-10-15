@@ -721,12 +721,13 @@ def _ensure_consumption_side_effects(
 
 def run_happy_path(
     *,
+    owner_id: str,
     quantity: float = 10.0,
 ) -> tuple[MemoryPersistence, P2PEntities]:
     _validate_quantity(quantity)
     persistence = MemoryPersistence()
-    entities = seed_happy_path(persistence, quantity=quantity)
-    _, engine = build_runtime(persistence)
+    entities = seed_happy_path(persistence, owner_id=owner_id, quantity=quantity)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
 
     engine.rebuild_backend(backend)
@@ -759,14 +760,15 @@ def run_happy_path(
 
 def run_shortage_backorder(
     *,
+    owner_id: str,
     quantity: float = 5.0,
 ) -> tuple[MemoryPersistence, P2PEntities]:
     """Exercise durable shortage waiting followed by exact-once replenishment."""
 
     _validate_quantity(quantity)
     persistence = MemoryPersistence()
-    entities = seed_happy_path(persistence, quantity=quantity)
-    context, engine = build_runtime(persistence)
+    entities = seed_happy_path(persistence, owner_id=owner_id, quantity=quantity)
+    context, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
