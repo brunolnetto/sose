@@ -210,7 +210,7 @@ class TradingCustomerRecoveryRunner:
         )
 
     @staticmethod
-    def _registry_for(message: BoundaryMessage) -> BoundaryConsumerRegistry:
+    def _registry_for(message: BoundaryMessage, *, organization_id: str) -> BoundaryConsumerRegistry:
         details = message.payload()
         registry = BoundaryConsumerRegistry()
         if message.contract_key == "warehouse.inventory_consumption_requested.v1":
@@ -222,6 +222,7 @@ class TradingCustomerRecoveryRunner:
                     intent_name="composition.consume_fulfillment_inventory",
                     entity_type="warehouse_management_stock",
                     entity_id=str(details["stock_id"]),
+                    owner_id=organization_id,
                 ),
             )
         elif message.contract_key == "warehouse.dispatch_ready.v1":
@@ -233,6 +234,7 @@ class TradingCustomerRecoveryRunner:
                     intent_name="composition.deliver_shipment",
                     entity_type="shipment",
                     entity_id=str(details["shipment_id"]),
+                    owner_id=organization_id,
                 ),
             )
         elif message.contract_key == "logistics.delivery_completed.v1":
@@ -244,6 +246,7 @@ class TradingCustomerRecoveryRunner:
                     intent_name="composition.complete_external_fulfillment",
                     entity_type="sales_order",
                     entity_id=str(details["order_id"]),
+                    owner_id=organization_id,
                 ),
             )
         elif message.contract_key == "o2c.payment_requested.v1":
@@ -255,6 +258,7 @@ class TradingCustomerRecoveryRunner:
                     intent_name="composition.settle_customer_payment",
                     entity_type="card_payment",
                     entity_id=str(details["payment_id"]),
+                    owner_id=organization_id,
                 ),
             )
         elif message.contract_key == "accounting.entry_requested.v1":
@@ -272,6 +276,7 @@ class TradingCustomerRecoveryRunner:
                     intent_name=intent_name,
                     entity_type="journal_entry",
                     entity_id=str(details["journal_id"]),
+                    owner_id=organization_id,
                 ),
             )
         else:
@@ -648,7 +653,9 @@ class TradingCustomerRecoveryRunner:
                             ),
                         ))
             service.consume(
-                lease=lease, registry=self._registry_for(message), now=now,
+                lease=lease, registry=self._registry_for(
+                    message, organization_id=self._organization_for(message.correlation_id),
+                ), now=now,
             )
             actions += 1
         return actions
