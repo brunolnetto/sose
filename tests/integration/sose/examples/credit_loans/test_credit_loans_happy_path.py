@@ -12,10 +12,12 @@ from sose.examples.credit_loans.simulation import (
 from sose.persistence.memory import MemoryPersistence
 
 
+CREDIT_OWNER_ID = "credit-loans-happy-path-organization"
+
 def test_approved_loan_generates_recurring_installments_and_pays_off():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, principal=1200.0, installment_count=3)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=CREDIT_OWNER_ID, principal=1200.0, installment_count=3)
+    _, engine = build_runtime(persistence, owner_id=CREDIT_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -75,8 +77,8 @@ def test_approved_loan_generates_recurring_installments_and_pays_off():
 
 def test_rejected_application_never_creates_loan():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=CREDIT_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=CREDIT_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -88,8 +90,8 @@ def test_rejected_application_never_creates_loan():
 
 def test_installment_rounding_preserves_full_principal():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, principal=100.0, installment_count=3)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=CREDIT_OWNER_ID, principal=100.0, installment_count=3)
+    _, engine = build_runtime(persistence, owner_id=CREDIT_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
