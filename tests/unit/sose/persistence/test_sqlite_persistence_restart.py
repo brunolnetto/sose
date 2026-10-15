@@ -52,8 +52,8 @@ def test_reference_restart_crosses_sqlite_process_boundary(tmp_path):
         rebuilt = restart_reference_runtime(
             reopened,
             build_runtime,
-            owner_id="sqlite-itsm-reference",
             backend_before,
+            owner_id="sqlite-itsm-reference",
             backend_factory=SimPyBackend,
         )
         rebuilt.backend.run_until(sla_at)
