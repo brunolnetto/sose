@@ -15,8 +15,8 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_triage_priority_claims_lower_acuity_number_first():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, acuity=50)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="hospitals-priority-organization", acuity=50)
+    _, engine = build_runtime(persistence, owner_id="hospitals-priority-organization")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
