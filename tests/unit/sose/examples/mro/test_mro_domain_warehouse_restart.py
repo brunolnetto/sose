@@ -7,9 +7,9 @@ from sose.examples.mro.warehouse import sync_mro_domain
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 def _run_to_closed(engine_store, warehouse):
-    ids = seed_reference(engine_store)
+    ids = seed_reference(engine_store, owner_id="mro-warehouse-reference")
     sync_mro_domain(engine_store, warehouse, ids)
-    _, engine = build_runtime(engine_store)
+    _, engine = build_runtime(engine_store, owner_id="mro-warehouse-reference")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN.replace(hour=9))
@@ -35,10 +35,10 @@ def test_mro_domain_warehouse_matches_continuous_and_restarted_execution(tmp_pat
 
     path = tmp_path / 'restarted-engine.db'
     first = SQLiteIncrementalPersistence(path)
-    ids = seed_reference(first)
+    ids = seed_reference(first, owner_id="mro-warehouse-reference")
     restarted_world = MemoryDomainWarehouse()
     sync_mro_domain(first, restarted_world, ids)
-    _, engine = build_runtime(first)
+    _, engine = build_runtime(first, owner_id="mro-warehouse-reference")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN.replace(hour=9))
@@ -51,10 +51,10 @@ def test_mro_domain_warehouse_matches_continuous_and_restarted_execution(tmp_pat
 
     reopened = SQLiteIncrementalPersistence(path)
     assert DomainMutationOutbox(reopened, restarted_world).flush() == 2
-    position = reopened.simulation_position()
+    position = reopened.simulation_position(owner_id="mro-warehouse-reference")
     now = position.logical_time if position is not None else ORIGIN
     tick = position.logical_tick if position is not None else 0
-    _, engine = build_runtime(reopened, now=now, tick=tick)
+    _, engine = build_runtime(reopened, owner_id="mro-warehouse-reference", now=now, tick=tick)
     backend = SimPyBackend(origin=now)
     engine.rebuild_backend(backend)
     backend.run_until(now)
