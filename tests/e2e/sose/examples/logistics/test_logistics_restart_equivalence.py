@@ -15,10 +15,12 @@ from sose.examples.logistics.simulation import (
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
+REFERENCE_OWNER_ID = "logistics-reference-organization"
+
 
 def _progress_to_retry_wait(persistence):
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(PICKUP_DUE)
@@ -42,7 +44,7 @@ def _snapshot(persistence, entities):
         "attempt2": persistence.entity("delivery_attempt", delivery_attempt_id(2)),
         "events": persistence.events(),
         "scheduled": persistence.scheduled_work(),
-        "position": persistence.simulation_position(),
+        "position": persistence.simulation_position(owner_id=REFERENCE_OWNER_ID),
         "resources": persistence.resource_reservations(),
         "demands": persistence.resource_demands(),
         "release_intents": persistence.resource_release_intents(),
@@ -72,12 +74,13 @@ def test_failed_retry_path_is_restart_equivalent():
 
     restarted = MemoryPersistence()
     r_entities, _, _, r_retry_at = _progress_to_retry_wait(restarted)
-    position = restarted.simulation_position()
+    position = restarted.simulation_position(owner_id=REFERENCE_OWNER_ID)
     assert position is not None
 
     rebuilt = restart_reference_runtime(
         restarted,
         build_runtime,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine

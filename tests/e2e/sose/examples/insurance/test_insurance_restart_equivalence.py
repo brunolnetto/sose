@@ -17,11 +17,13 @@ from sose.examples.insurance.simulation import (
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
+REFERENCE_OWNER_ID = "insurance-reference-organization"
+
 
 def test_document_deadline_survives_restart():
     continuous = MemoryPersistence()
-    c_entities = seed_reference(continuous)
-    _, c_engine = build_runtime(continuous)
+    c_entities = seed_reference(continuous, owner_id=REFERENCE_OWNER_ID)
+    _, c_engine = build_runtime(continuous, owner_id=REFERENCE_OWNER_ID)
     c_backend = SimPyBackend(origin=ORIGIN)
     c_engine.rebuild_backend(c_backend)
     c_request = ensure_document_request(
@@ -34,8 +36,8 @@ def test_document_deadline_survives_restart():
     c_backend.run_until(c_due)
 
     restarted = MemoryPersistence()
-    r_entities = seed_reference(restarted)
-    _, r_engine = build_runtime(restarted)
+    r_entities = seed_reference(restarted, owner_id=REFERENCE_OWNER_ID)
+    _, r_engine = build_runtime(restarted, owner_id=REFERENCE_OWNER_ID)
     r_backend_before = SimPyBackend(origin=ORIGIN)
     r_engine.rebuild_backend(r_backend_before)
     ensure_document_request(
@@ -49,6 +51,7 @@ def test_document_deadline_survives_restart():
         restarted,
         build_runtime,
         r_backend_before,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -70,8 +73,8 @@ def test_document_deadline_survives_restart():
 
 def test_pending_adjuster_demand_survives_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -103,6 +106,7 @@ def test_pending_adjuster_demand_survives_restart():
         persistence,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -131,8 +135,8 @@ def test_pending_adjuster_demand_survives_restart():
 
 
 def _prepare_scheduled_payment(persistence):
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     ensure_document_request(persistence, engine, backend, entities=entities)
@@ -183,6 +187,7 @@ def test_payment_date_is_restart_equivalent():
         restarted,
         build_runtime,
         r_backend_before,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine

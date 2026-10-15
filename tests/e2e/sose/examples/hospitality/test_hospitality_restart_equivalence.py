@@ -14,11 +14,13 @@ from sose.examples.hospitality.simulation import (
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
+REFERENCE_OWNER_ID = "hospitality-reference-organization"
+
 
 def test_pending_hold_expiry_survives_backend_rebuild():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     arrival = ORIGIN + timedelta(days=1)
@@ -38,6 +40,7 @@ def test_pending_hold_expiry_survives_backend_rebuild():
         persistence,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt.backend.run_until(ORIGIN + timedelta(hours=1))
@@ -61,8 +64,8 @@ def test_pending_hold_expiry_survives_backend_rebuild():
 
 def test_confirmed_no_show_boundary_and_occurrence_survive_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     arrival = ORIGIN + timedelta(days=1)
@@ -87,6 +90,7 @@ def test_confirmed_no_show_boundary_and_occurrence_survive_restart():
         persistence,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt.backend.run_until(arrival + timedelta(hours=1))

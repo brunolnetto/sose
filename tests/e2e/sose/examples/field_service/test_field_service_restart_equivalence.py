@@ -14,11 +14,13 @@ from sose.examples.field_service.simulation import (
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
+REFERENCE_OWNER_ID = "field-service-reference-organization"
+
 
 def test_replacement_appointment_part_and_booking_survive_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     seed_part_inventory(persistence, engine, backend)
@@ -76,6 +78,7 @@ def test_replacement_appointment_part_and_booking_survive_restart():
         persistence,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt.backend.run_until(ORIGIN + timedelta(hours=3))

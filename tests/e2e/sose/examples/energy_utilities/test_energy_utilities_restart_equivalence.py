@@ -15,11 +15,13 @@ from sose.persistence.memory import MemoryPersistence
 from sose.scenarios import AttributeEffect, Scenario, ScheduledTrigger
 from sose.testing.restart import restart_reference_runtime
 
+REFERENCE_OWNER_ID = "energy-utilities-reference-organization"
+
 
 def test_demand_response_window_survives_runtime_rebuild():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -36,6 +38,7 @@ def test_demand_response_window_survives_runtime_rebuild():
         persistence,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt.backend.run_until(start_at)
@@ -64,8 +67,8 @@ def test_demand_response_window_survives_runtime_rebuild():
 
 def test_captured_meter_reading_resumes_commit_after_rebuild():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -90,6 +93,7 @@ def test_captured_meter_reading_resumes_commit_after_rebuild():
         persistence,
         build_runtime,
         backend,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     recovered = record_meter_reading(
@@ -106,8 +110,8 @@ def test_captured_meter_reading_resumes_commit_after_rebuild():
 
 def test_persisted_reading_replay_ignores_new_ingestion_outage():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -121,7 +125,7 @@ def test_persisted_reading_replay_ignores_new_ingestion_outage():
     assert reading is not None and reading.state == "committed"
 
     _, unavailable_engine = build_runtime(
-        persistence,
+        persistence, owner_id=REFERENCE_OWNER_ID,
         scenarios=(
             Scenario(
                 name="metering-outage",

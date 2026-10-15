@@ -17,10 +17,12 @@ from sose.examples.construction.runtime import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "construction-reference-organization"
+
 
 def _ready_with_material(persistence):
-    entities = seed_reference(persistence, quantity=10.0)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID, quantity=10.0)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     assert reconcile_dependency(

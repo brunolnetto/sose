@@ -19,6 +19,8 @@ from sose.examples.hospitals.runtime import (
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
+REFERENCE_OWNER_ID = "hospitals-reference-organization"
+
 
 def _snapshot(persistence, entities):
     return {
@@ -54,8 +56,8 @@ def _snapshot(persistence, entities):
 
 
 def _prepare_triage_wait(persistence):
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     triage_and_queue(
@@ -102,6 +104,7 @@ def test_triage_wait_is_restart_equivalent():
         restarted,
         build_runtime,
         r_backend_before,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
@@ -121,8 +124,8 @@ def test_triage_wait_is_restart_equivalent():
 
 
 def _prepare_committed_preemption(persistence):
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -212,6 +215,7 @@ def test_committed_preemption_missing_interrupt_is_restart_equivalent():
         restarted,
         build_runtime,
         r_backend_before,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine

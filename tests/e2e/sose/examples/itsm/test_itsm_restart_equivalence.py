@@ -11,10 +11,12 @@ from sose.examples.itsm.simulation import (
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
+REFERENCE_OWNER_ID = "itsm-reference-organization"
+
 
 def _progress_to_owned_sla_wait(persistence):
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -58,7 +60,7 @@ def _snapshot(persistence, entities):
         ),
         "events": persistence.events(),
         "scheduled": persistence.scheduled_work(),
-        "position": persistence.simulation_position(),
+        "position": persistence.simulation_position(owner_id=REFERENCE_OWNER_ID),
         "items": persistence.store_items(),
         "get_results": persistence.store_get_results(),
         "demands": persistence.resource_demands(),
@@ -88,6 +90,7 @@ def test_pending_sla_escalation_is_restart_equivalent():
         restarted,
         build_runtime,
         r_backend_before,
+        owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
