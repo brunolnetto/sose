@@ -13,8 +13,8 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_priority_queue_claims_lower_severity_number_first():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, severity=50)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="itsm-priority-organization", severity=50)
+    _, engine = build_runtime(persistence, owner_id="itsm-priority-organization")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
