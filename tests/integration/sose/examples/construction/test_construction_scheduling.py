@@ -84,6 +84,7 @@ def test_planned_start_is_durable_and_restart_equivalent():
         restarted,
         build_runtime,
         r_backend_before,
+        owner_id="construction-scheduling-organization",
         backend_factory=SimPyBackend,
     )
     rebuilt_engine = rebuilt.engine
