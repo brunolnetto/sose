@@ -15,11 +15,13 @@ from sose.examples.construction.materials import (
 from sose.examples.construction.runtime import ORIGIN, build_runtime, seed_reference
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "construction-test-organization"
+
 
 def test_dependency_blocks_until_predecessor_is_durably_completed():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, predecessor_completed=False)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID, predecessor_completed=False)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
 
     assert reconcile_dependency(
         persistence, engine, entities=entities
@@ -43,8 +45,8 @@ def test_dependency_blocks_until_predecessor_is_durably_completed():
 
 def test_material_shortage_precedes_any_execution_capacity_demand():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, quantity=10.0)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID, quantity=10.0)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -80,8 +82,8 @@ def test_material_shortage_precedes_any_execution_capacity_demand():
 
     # Material staging is an orchestration prerequisite, not merely a state label.
     fresh = MemoryPersistence()
-    fresh_entities = seed_reference(fresh, quantity=10.0)
-    _, fresh_engine = build_runtime(fresh)
+    fresh_entities = seed_reference(fresh, owner_id=REFERENCE_OWNER_ID, quantity=10.0)
+    _, fresh_engine = build_runtime(fresh, owner_id=REFERENCE_OWNER_ID)
     fresh_backend = SimPyBackend(origin=ORIGIN)
     fresh_engine.rebuild_backend(fresh_backend)
     assert reconcile_dependency(
@@ -104,8 +106,8 @@ def test_completion_requires_durable_measurement_evidence():
     )
 
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, quantity=5.0)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID, quantity=5.0)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     reconcile_dependency(persistence, engine, entities=entities)
@@ -143,9 +145,10 @@ def test_predecessor_completion_requires_measurement_entity_evidence():
     persistence = MemoryPersistence()
     entities = seed_reference(
         persistence,
+        owner_id=REFERENCE_OWNER_ID,
         predecessor_completed=False,
     )
-    _, engine = build_runtime(persistence)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
 
     measurement = persistence.entity(
         "construction_measurement",

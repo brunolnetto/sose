@@ -9,11 +9,13 @@ from sose.examples.mro.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "mro-sad-path-test-organization"
+
 
 def _runtime(quantity=1.0):
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence, quantity=quantity)
-    _, engine = build_runtime(persistence)
+    ids = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID, quantity=quantity)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN.replace(hour=9))

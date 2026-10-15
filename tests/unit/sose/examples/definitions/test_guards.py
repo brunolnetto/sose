@@ -124,8 +124,8 @@ def test_definition_reconcile_guards_raise_for_missing_seeded_entities(
 
 def test_telecom_reconcile_exits_when_order_already_completed(monkeypatch):
     persistence = MemoryPersistence()
-    entities = telecom_simulation.seed_reference(persistence)
-    _, engine = telecom_simulation.build_runtime(persistence)
+    entities = telecom_simulation.seed_reference(persistence, owner_id="telecom-guards-organization")
+    _, engine = telecom_simulation.build_runtime(persistence, owner_id="telecom-guards-organization")
     backend = SimPyBackend(origin=telecom_simulation.ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -160,8 +160,8 @@ def test_telecom_reconcile_exits_when_order_already_completed(monkeypatch):
 
 def test_warehouse_reconcile_exits_when_order_already_shipped(monkeypatch):
     persistence = MemoryPersistence()
-    entities = warehouse_simulation.seed_reference(persistence)
-    _, engine = warehouse_simulation.build_runtime(persistence)
+    entities = warehouse_simulation.seed_reference(persistence, owner_id="warehouse-guards-organization")
+    _, engine = warehouse_simulation.build_runtime(persistence, owner_id="warehouse-guards-organization")
     backend = SimPyBackend(origin=warehouse_simulation.ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -190,8 +190,8 @@ def test_warehouse_reconcile_exits_when_order_already_shipped(monkeypatch):
 
 def test_subscription_reconcile_exits_when_target_plan_is_already_active(monkeypatch):
     persistence = MemoryPersistence()
-    entities = saas_simulation.seed_reference(persistence)
-    _, engine = saas_simulation.build_runtime(persistence)
+    entities = saas_simulation.seed_reference(persistence, owner_id="saas-guards-organization")
+    _, engine = saas_simulation.build_runtime(persistence, owner_id="saas-guards-organization")
     backend = SimPyBackend(origin=saas_simulation.ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -225,8 +225,8 @@ def test_subscription_reconcile_exits_when_target_plan_is_already_active(monkeyp
 
 def test_itsm_reconcile_handles_resolved_incident_branch(monkeypatch):
     persistence = MemoryPersistence()
-    entities = itsm_simulation.seed_reference(persistence)
-    _, engine = itsm_simulation.build_runtime(persistence)
+    entities = itsm_simulation.seed_reference(persistence, owner_id="itsm-guards-organization")
+    _, engine = itsm_simulation.build_runtime(persistence, owner_id="itsm-guards-organization")
     backend = SimPyBackend(origin=itsm_simulation.ORIGIN)
     engine.rebuild_backend(backend)
 

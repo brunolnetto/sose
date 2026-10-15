@@ -29,11 +29,13 @@ from sose.examples.order_to_cash.simulation import (
 from sose.examples.process_manifest import ProcessEvidence, ProcessMaturity
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "order-to-cash-observability-organization"
+
 
 def _prepare_collected(*, amount: float = 250.0):
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, amount=amount)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID, amount=amount)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -120,7 +122,7 @@ def test_o2c_kpis_are_derived_from_durable_state_and_events() -> None:
 
 def test_o2c_projection_does_not_invent_financial_or_terminal_metrics() -> None:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, amount=125.0)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID, amount=125.0)
 
     projection = order_to_cash_projection(persistence, entities=entities)
     kpis = order_to_cash_kpis(persistence, entities=entities)
@@ -140,8 +142,8 @@ def test_o2c_projection_does_not_invent_financial_or_terminal_metrics() -> None:
 
 def test_o2c_overdue_collection_projection_preserves_history() -> None:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 

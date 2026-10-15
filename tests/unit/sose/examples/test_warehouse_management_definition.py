@@ -15,12 +15,15 @@ from sose.examples.warehouse_management.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "warehouse-management-test-organization"
+
 
 def _runtime(**config_overrides):
     persistence = MemoryPersistence()
     config = WarehouseManagementConfig(**config_overrides)
     entities = seed_reference(
         persistence,
+        owner_id=REFERENCE_OWNER_ID,
         now=config.start_at,
         origin_on_hand=config.origin_on_hand,
         transfer_quantity=config.transfer_quantity,
@@ -30,6 +33,7 @@ def _runtime(**config_overrides):
     )
     _, engine = build_runtime(
         persistence,
+        owner_id=REFERENCE_OWNER_ID,
         now=config.start_at,
         step=config.tick_step,
         random_seed=config.random_seed,

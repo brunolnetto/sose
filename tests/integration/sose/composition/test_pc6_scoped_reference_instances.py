@@ -9,6 +9,8 @@ from sose.examples.order_to_cash import simulation as o2c
 from sose.examples.cards_payments import simulation as cards
 from sose.examples.record_to_report import simulation as r2r
 from sose.persistence.memory import MemoryPersistence
+
+REFERENCE_OWNER_ID = "pc6-reference-identity-organization"
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
@@ -18,12 +20,14 @@ def test_same_value_customer_fixture_instances_are_distinct_and_restartable(adap
     store = MemoryPersistence() if adapter == "memory" else SQLiteIncrementalPersistence(path)
     try:
         instances = {}
+        organization_owners = {"customer-a": "pc6-organization-a", "customer-b": "pc6-organization-b"}
         for key in ("customer-a", "customer-b"):
-            order = o2c.seed_reference(store, amount=250.0, instance_key=key)
-            payment = cards.seed_reference(store, amount=250.0, instance_key=key)
-            journal = r2r.seed_reference(store, amount=250.0, instance_key=key)
+            owner_id = organization_owners[key]
+            order = o2c.seed_reference(store, owner_id=owner_id, amount=250.0, instance_key=key)
+            payment = cards.seed_reference(store, owner_id=owner_id, amount=250.0, instance_key=key)
+            journal = r2r.seed_reference(store, owner_id=owner_id, amount=250.0, instance_key=key)
             instances[key] = (order, payment, journal)
-            _, engine = o2c.build_runtime(store)
+            _, engine = o2c.build_runtime(store, owner_id=owner_id)
             assert o2c.reconcile_credit(store, engine, entities=order)
             SettlementBindingService(store).bind(CustomerSettlementBinding.create(
                 order_id=order.order_id, payment_id=payment.payment_id,
@@ -61,9 +65,9 @@ def test_same_value_customer_fixture_instances_are_distinct_and_restartable(adap
 def test_legacy_fixture_default_identities_are_unchanged():
     from sose.core.identity import deterministic_id
     store = MemoryPersistence()
-    order = o2c.seed_reference(store)
-    payment = cards.seed_reference(store)
-    journal = r2r.seed_reference(store)
+    order = o2c.seed_reference(store, owner_id=REFERENCE_OWNER_ID)
+    payment = cards.seed_reference(store, owner_id=REFERENCE_OWNER_ID)
+    journal = r2r.seed_reference(store, owner_id=REFERENCE_OWNER_ID)
     assert order.order_id == deterministic_id("entity", "sales_order", "o2c-reference", "order-1")
     assert payment.payment_id == deterministic_id("entity", "card_payment", "cards-reference", "payment-1")
     assert journal.period_id == deterministic_id("entity", "accounting_period", "r2r-reference", "period-2026-09")
@@ -73,4 +77,4 @@ def test_legacy_fixture_default_identities_are_unchanged():
 @pytest.mark.parametrize("seed", [o2c.seed_reference, cards.seed_reference, r2r.seed_reference])
 def test_empty_fixture_instance_key_is_rejected(seed):
     with pytest.raises(ValueError, match="instance_key"):
-        seed(MemoryPersistence(), instance_key="")
+        seed(MemoryPersistence(), owner_id=REFERENCE_OWNER_ID, instance_key="")

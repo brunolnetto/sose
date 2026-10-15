@@ -4,6 +4,8 @@ from sose.examples.mro.simulation import build_runtime, seed_reference
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.statecharts.topology import policy_from_statechart
 from sose.persistence.memory import MemoryPersistence
+
+REFERENCE_OWNER_ID = "mro-probabilistic-test-organization"
 from sose.probability.graph import NoProbabilisticTransition
 
 
@@ -22,8 +24,8 @@ def test_mro_reconciler_only_events_are_not_probabilistically_dispatchable(
     blocked_event,
 ):
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    ids = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
 
     work_order = persistence.entity("work_order", ids.work_order_id)
     work_order.state = state
@@ -37,8 +39,8 @@ def test_mro_reconciler_only_events_are_not_probabilistically_dispatchable(
 
 def test_released_work_order_probabilistic_choice_cannot_select_start():
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    ids = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
 
     work_order = persistence.entity("work_order", ids.work_order_id)
     work_order.state = "released"
