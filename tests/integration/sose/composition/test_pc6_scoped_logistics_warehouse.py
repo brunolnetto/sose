@@ -13,15 +13,15 @@ def test_two_isolated_logistics_and_warehouse_instances_survive_restart(adapter,
     try:
         refs = {}
         for key in ("org-a", "org-b"):
-            wm_ref = warehouse.seed_reference(store, instance_key=key, sku="SKU-A")
-            ship_ref = logistics.seed_reference(store, instance_key=key)
-            _, engine = warehouse.build_runtime(store)
+            wm_ref = warehouse.seed_reference(store, owner_id=key, instance_key=key, sku="SKU-A")
+            ship_ref = logistics.seed_reference(store, owner_id=key, instance_key=key)
+            _, engine = warehouse.build_runtime(store, owner_id=key)
             assert warehouse.reserve_external_stock(
                 store, engine, stock_id=wm_ref.origin_stock_id, quantity=3.0,
                 sku="SKU-A", reservation_reference=f"reservation-{key}",
                 correlation_id=f"pc6-{key}",
             )
-            _, logistics_engine = logistics.build_runtime(store)
+            _, logistics_engine = logistics.build_runtime(store, owner_id=key)
             attempt = logistics.ensure_delivery_attempt(
                 store, logistics_engine, ordinal=1, shipment_id=ship_ref.shipment_id,
             )
@@ -53,8 +53,8 @@ def test_two_isolated_logistics_and_warehouse_instances_survive_restart(adapter,
 def test_legacy_logistics_and_warehouse_default_ids_unchanged():
     from sose.core.identity import deterministic_id
     store = MemoryPersistence()
-    ship = logistics.seed_reference(store)
-    site = warehouse.seed_reference(store)
+    ship = logistics.seed_reference(store, owner_id="logistics-reference")
+    site = warehouse.seed_reference(store, owner_id="warehouse-reference")
     assert ship.shipment_id == deterministic_id("entity", "shipment", "logistics-reference", "shipment-1")
     assert logistics.delivery_attempt_id(1) == deterministic_id(
         "entity", "delivery_attempt", "logistics-reference", "shipment-1", "attempt", 1,
@@ -65,4 +65,4 @@ def test_legacy_logistics_and_warehouse_default_ids_unchanged():
 @pytest.mark.parametrize("seed", [logistics.seed_reference, warehouse.seed_reference])
 def test_empty_warehouse_logistics_instance_key_is_rejected(seed):
     with pytest.raises(ValueError, match="instance_key"):
-        seed(MemoryPersistence(), instance_key="")
+        seed(MemoryPersistence(), owner_id="invalid-instance-test", instance_key="")
