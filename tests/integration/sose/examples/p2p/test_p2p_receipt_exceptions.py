@@ -13,11 +13,13 @@ from sose.examples.p2p.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+
 
 def _receipt_runtime(quantity=5.0):
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=quantity)
-    context, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, quantity=quantity, owner_id=REFERENCE_OWNER_ID)
+    context, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN + timedelta(hours=10))
