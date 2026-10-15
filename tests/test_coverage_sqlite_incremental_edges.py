@@ -180,7 +180,7 @@ def test_context_manager_closes_connection(tmp_path):
     path = tmp_path / "context.sqlite3"
     with SQLiteIncrementalPersistence(path) as persistence:
         connection = persistence._connection
-        assert persistence.committed_tick() == -1
+        assert persistence.committed_tick(owner_id="coverage-adapter") == -1
 
     with pytest.raises(sqlite3.ProgrammingError, match="closed"):
         connection.execute("SELECT 1")
@@ -224,9 +224,9 @@ def test_transaction_respects_explicit_uow_commit(tmp_path):
     persistence = SQLiteIncrementalPersistence(tmp_path / "explicit.sqlite3")
     try:
         with persistence.transaction() as uow:
-            uow.set_committed_tick(7)
+            uow.set_committed_tick(7, owner_id="coverage-adapter")
             uow.commit()
 
-        assert persistence.committed_tick() == 7
+        assert persistence.committed_tick(owner_id="coverage-adapter") == 7
     finally:
         persistence.close()
