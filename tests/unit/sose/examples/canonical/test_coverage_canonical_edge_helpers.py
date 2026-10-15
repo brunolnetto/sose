@@ -354,6 +354,7 @@ def test_canonical_common_and_other_helpers_cover_noop_edges(monkeypatch):
     producer_consumer.seed(
         preseeded,
         producer_consumer.ProducerConsumerConfig(participants=2, capacity=2),
+        owner_id="canonical-coverage-organization",
     )
     transitioned: list[str] = []
     monkeypatch.setattr(
