@@ -37,7 +37,7 @@ def test_producer_consumer_reconcile_ready_action_is_guarded_by_case_state(monke
     with persistence.transaction() as uow:
         uow.save_entity(current)
 
-    _, engine = producer_consumer.build_runtime(persistence)
+    _, engine = producer_consumer.build_runtime(persistence, owner_id="producer-consumer-canonical-organization")
     backend = SimPyBackend(origin=config.start_at)
     engine.rebuild_backend(backend)
 
@@ -52,7 +52,7 @@ def test_producer_consumer_reconcile_active_action_is_guarded_by_case_state(monk
     config = producer_consumer.definition.default_config()
     case = producer_consumer.seed(persistence, config, owner_id="producer-consumer-canonical-organization")
 
-    _, engine = producer_consumer.build_runtime(persistence)
+    _, engine = producer_consumer.build_runtime(persistence, owner_id="producer-consumer-canonical-organization")
     backend = SimPyBackend(origin=config.start_at)
     engine.rebuild_backend(backend)
 
