@@ -15,12 +15,15 @@ from sose.examples.construction.scenarios import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+CONSTRUCTION_OWNER_ID = "construction-scenarios-organization"
+
 
 def test_finite_procurement_delay_blocks_even_physically_available_material():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, quantity=10.0)
+    entities = seed_reference(persistence, owner_id=CONSTRUCTION_OWNER_ID, quantity=10.0)
     context, engine = build_runtime(
         persistence,
+        owner_id=CONSTRUCTION_OWNER_ID,
         scenarios=(procurement_delay_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
@@ -58,9 +61,10 @@ def test_finite_procurement_delay_blocks_even_physically_available_material():
 
 def test_finite_weather_delay_defers_resource_acquisition_and_recovers():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, quantity=10.0)
+    entities = seed_reference(persistence, owner_id=CONSTRUCTION_OWNER_ID, quantity=10.0)
     context, engine = build_runtime(
         persistence,
+        owner_id=CONSTRUCTION_OWNER_ID,
         scenarios=(weather_delay_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
@@ -102,9 +106,10 @@ def test_finite_weather_delay_defers_resource_acquisition_and_recovers():
 
 def test_weather_outage_cancels_pending_or_raced_execution_capacity():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, quantity=10.0)
+    entities = seed_reference(persistence, owner_id=CONSTRUCTION_OWNER_ID, quantity=10.0)
     context, engine = build_runtime(
         persistence,
+        owner_id=CONSTRUCTION_OWNER_ID,
         scenarios=(weather_delay_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
