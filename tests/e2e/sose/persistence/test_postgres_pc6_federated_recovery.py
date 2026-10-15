@@ -71,7 +71,7 @@ def _init_domain(dsn, ns, org):
         )
         assert lease is not None
         receipt = boundary.consume(
-            lease=lease, registry=TradingCustomerRecoveryRunner._registry_for(source),
+            lease=lease, registry=TradingCustomerRecoveryRunner._registry_for(source, organization_id=org),
             now=logistics.ORIGIN,
         )
         return (shipment.shipment_id, source.message_id, receipt.consumer_effect_id)
