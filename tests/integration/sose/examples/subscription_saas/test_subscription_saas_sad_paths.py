@@ -290,4 +290,4 @@ def test_request_cancellation_skips_non_scheduled_change_and_keeps_single_bounda
 def test_run_happy_path_raises_when_plan_change_not_reconciled(monkeypatch):
     monkeypatch.setattr(saas_simulation, "reconcile_plan_change", lambda *args, **kwargs: None)
     with pytest.raises(RuntimeError, match="did not become applicable"):
-        run_happy_path()
+        run_happy_path(owner_id=REFERENCE_OWNER_ID)
