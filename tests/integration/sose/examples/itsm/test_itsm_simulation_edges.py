@@ -404,4 +404,4 @@ def test_run_escalation_path_guard_when_escalation_capacity_is_unavailable(monke
 def test_reference_path_guards_are_executable(monkeypatch):
     monkeypatch.setattr(simulation, "claim_next_incident", lambda *args, **kwargs: "wrong")
     with pytest.raises(RuntimeError, match="reference incident was not claimed"):
-        simulation.run_happy_path()
+        simulation.run_happy_path(owner_id=REFERENCE_OWNER_ID)
