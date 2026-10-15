@@ -99,6 +99,7 @@ def _emit(
     eid = _event_id(job_id, kind, item_id, source, target)
     parents = sorted(causes or [])
     event = DomainEvent(
+        owner_id=job_id,
         event_id=eid,
         name=f"od5a.{kind}.v1",
         entity_type=_KIND,
