@@ -15,9 +15,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_credit_tightening_holds_then_releases_order():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="o2c-reference")
     context, engine = build_runtime(
         persistence,
+        owner_id="o2c-reference",
         scenarios=(credit_tightening_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
@@ -50,9 +51,10 @@ def test_credit_tightening_holds_then_releases_order():
 
 def test_fulfillment_outage_defers_capacity_and_recovers():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="o2c-reference")
     context, engine = build_runtime(
         persistence,
+        owner_id="o2c-reference",
         scenarios=(fulfillment_capacity_loss_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
