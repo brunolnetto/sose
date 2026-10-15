@@ -130,8 +130,8 @@ def test_p2p_consumption_detects_missing_material_demand(monkeypatch):
 def test_p2p_shortage_detects_missing_seeded_material_demand(monkeypatch):
     original_seed = p2p.seed_happy_path
 
-    def corrupt_seed(persistence, *, quantity=5.0):
-        entities = original_seed(persistence, quantity=quantity)
+    def corrupt_seed(persistence, *, owner_id: str, quantity=5.0):
+        entities = original_seed(persistence, owner_id=owner_id, quantity=quantity)
         _hide_entity(
             monkeypatch,
             persistence,
