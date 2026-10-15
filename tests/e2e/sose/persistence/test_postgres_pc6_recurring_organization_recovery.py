@@ -370,6 +370,16 @@ def test_scoped_job_cannot_silently_rebind_another_organization():
         )
         a.run_scheduled_trigger(scheduled_for=T0)
         original = store.job_state("shared-job")
+        wrong_owner = TradingCustomerRecoveryRunner(
+            persistence=store, owner_id="worker-a-rebind",
+            job_id="shared-job", scoped_writer=True,
+            correlation_id="organization-a",
+            organization_owners={"organization-a": "foreign-organization"},
+            max_actions=1,
+        )
+        with pytest.raises(ValueError, match="organizational binding changed"):
+            wrong_owner.run_scheduled_trigger(scheduled_for=T0 + timedelta(minutes=5))
+        assert store.job_state("shared-job") == original
         b = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker-b", job_id="shared-job",
             scoped_writer=True, correlation_id="organization-b", organization_owners={"organization-b": "organization-b"}, max_actions=1,

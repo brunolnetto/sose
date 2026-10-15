@@ -672,8 +672,9 @@ class TradingCustomerRecoveryRunner:
         config = {}
         if self.scoped_writer:
             config['correlation_id'] = self.correlation_id
-            if self.resource_organizations is not None:
-                config['organization_id'] = self.resource_organizations[self.correlation_id]
+            # Persist the operational organization even without physical
+            # resource policies. A restarted job cannot silently rebind it.
+            config['organization_id'] = self._organization_for(self.correlation_id)
         config_json = json.dumps(config, sort_keys=True, separators=(',', ':'))
         # Enroll all creation paths behind one job-scoped identity fence.
         # Preflight BEFORE any scoped/global writer claim: a failed foreign
