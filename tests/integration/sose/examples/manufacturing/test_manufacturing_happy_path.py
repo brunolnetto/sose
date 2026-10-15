@@ -11,9 +11,11 @@ from sose.examples.manufacturing.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "manufacturing-reference-organization"
+
 
 def test_manufacturing_happy_path_reaches_completed_output():
-    persistence, ids = run_happy_path(quantity=10.0)
+    persistence, ids = run_happy_path(quantity=10.0, owner_id=REFERENCE_OWNER_ID)
 
     assert persistence.entity("production_order", ids.production_order_id).state == "completed"
     assert persistence.entity("manufacturing_operation", ids.operation_id).state == "done"
@@ -28,7 +30,7 @@ def test_manufacturing_happy_path_reaches_completed_output():
 
 def test_release_and_readiness_are_durable_scheduled_work():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0)
+    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
 
     work = persistence.scheduled_work()
     assert len(work) == 2
@@ -43,4 +45,4 @@ def test_release_and_readiness_are_durable_scheduled_work():
 
 def test_quantity_must_fit_capacities():
     with pytest.raises(ValueError, match="capacity"):
-        run_happy_path(quantity=1001.0)
+        run_happy_path(quantity=1001.0, owner_id=REFERENCE_OWNER_ID)
