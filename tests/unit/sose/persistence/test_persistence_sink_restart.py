@@ -46,6 +46,7 @@ def test_sink_survives_close_reopen_and_backend_rebuild(tmp_path, factory, filen
         reopened,
         build_runtime,
         backend,
+        owner_id=OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt.backend.run_until(complete_at)
