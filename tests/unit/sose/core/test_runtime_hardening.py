@@ -39,7 +39,7 @@ def _scheduled_batch_snapshot(count: int = 48):
             for job in jobs
         ),
         persistence.events(),
-        persistence.simulation_position(),
+        persistence.simulation_position(owner_id=OWNER_ID),
     )
 
 
@@ -65,6 +65,7 @@ def test_repeated_rebuilds_do_not_mutate_pending_durable_truth():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
         count=8,
     )
 
@@ -96,6 +97,7 @@ def test_consumed_work_stays_stale_after_repeated_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
         count=3,
     )
     rebuilt.backend.run_until(complete_at)
