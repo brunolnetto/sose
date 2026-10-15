@@ -55,12 +55,13 @@ def test_mro_definition_applies_runtime_and_seed_configuration():
     )
     persistence = MemoryPersistence()
 
-    ids = definition.seed(persistence, config)
+    ids = definition.seed(persistence, config, owner_id="mro-config-test-organization")
     context, _ = definition.build_runtime(
         persistence,
         config,
         config.start_at,
         0,
+        owner_id="mro-config-test-organization",
     )
 
     assert context.clock.step == timedelta(minutes=20)
