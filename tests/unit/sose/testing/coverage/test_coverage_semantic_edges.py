@@ -68,6 +68,7 @@ def _event(
     entity_type: str = "order",
 ) -> DomainEvent:
     return DomainEvent(
+        owner_id="semantic-coverage-test-organization",
         event_id=event_id,
         name=name,
         entity_type=entity_type,
