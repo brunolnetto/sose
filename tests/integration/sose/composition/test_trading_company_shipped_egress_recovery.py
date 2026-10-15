@@ -96,6 +96,7 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
                 intent_name="composition.consume_fulfillment_inventory",
                 entity_type="warehouse_management_stock",
                 entity_id=consumption_info["stock_id"],
+                owner_id="test-org-shipped-egress-recovery",
             ),
         )
         service = BoundaryService(recovered)
