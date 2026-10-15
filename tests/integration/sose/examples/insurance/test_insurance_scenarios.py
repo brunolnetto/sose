@@ -21,9 +21,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_catastrophe_capacity_strain_defers_adjuster_and_recovers():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="insurance-reference")
     context, engine = build_runtime(
         persistence,
+        owner_id="insurance-reference",
         scenarios=(catastrophe_capacity_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
@@ -62,9 +63,10 @@ def test_catastrophe_capacity_strain_defers_adjuster_and_recovers():
 
 def test_payment_outage_preserves_due_payment_and_recovers():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="insurance-reference")
     context, engine = build_runtime(
         persistence,
+        owner_id="insurance-reference",
         scenarios=(payment_processor_outage_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
