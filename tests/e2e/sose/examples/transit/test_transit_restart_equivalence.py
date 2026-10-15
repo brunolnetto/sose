@@ -21,14 +21,17 @@ from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
 
+OWNER_ID = "transit-reference"
+
+
 def _at(value):
     return datetime.fromisoformat(str(value))
 
 
 def test_delay_projection_and_rescheduled_boundaries_survive_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     schedule_reference_block(persistence, engine, entities=entities)
@@ -51,6 +54,7 @@ def test_delay_projection_and_rescheduled_boundaries_survive_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
     )
     rebuilt.backend.run_until(projected_b_start)
 
@@ -62,8 +66,8 @@ def test_delay_projection_and_rescheduled_boundaries_survive_restart():
 
 def test_captured_position_resumes_commit_after_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     schedule_reference_block(persistence, engine, entities=entities)
@@ -104,6 +108,7 @@ def test_captured_position_resumes_commit_after_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
     )
     recovered = record_vehicle_position(
         persistence,
@@ -131,8 +136,8 @@ def test_captured_position_resumes_commit_after_restart():
 
 def test_committed_trip_update_reconciles_projection_after_crash():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     schedule_reference_block(persistence, engine, entities=entities)
@@ -159,6 +164,7 @@ def test_committed_trip_update_reconciles_projection_after_crash():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
     )
     recovered = record_trip_update(
         persistence,
