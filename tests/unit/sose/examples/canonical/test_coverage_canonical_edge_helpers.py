@@ -385,6 +385,7 @@ def test_canonical_common_and_other_helpers_cover_noop_edges(monkeypatch):
     readers_writers.seed(
         existing_resources,
         readers_writers.ReadersWritersConfig(participants=3, readers=2),
+        owner_id="canonical-coverage-organization",
     )
     assert readers_writers._reconcile_active_action(
         SimpleNamespace(resource_demands=lambda: (), resource_reservations=lambda: ()),
