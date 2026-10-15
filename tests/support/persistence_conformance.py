@@ -88,6 +88,7 @@ class PersistenceConformanceSuite:
     def test_sink_outbox_round_trip_and_rollback_are_durable(self):
         store = self.make_persistence()
         event = DomainEvent(
+        owner_id="persistence-conformance-organization",
             event_id="event-sink-1",
             name="changed",
             entity_type="demo",
@@ -210,6 +211,7 @@ class PersistenceConformanceSuite:
     def test_transaction_exception_rolls_back_every_write(self):
         store = self.make_persistence()
         event = DomainEvent(
+        owner_id="persistence-conformance-organization",
             event_id="event-rollback",
             name="demo",
             entity_type="demo",
@@ -257,6 +259,7 @@ class PersistenceConformanceSuite:
         store = self.make_persistence()
         payload = {"nested": {"value": 1}}
         event = DomainEvent(
+        owner_id="persistence-conformance-organization",
             event_id="event-1",
             name="demo",
             entity_type="demo",
