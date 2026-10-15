@@ -15,11 +15,13 @@ from sose.examples.subscription_saas.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "subscription-saas-reference-organization"
+
 
 def _runtime():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     return persistence, entities, engine, backend
