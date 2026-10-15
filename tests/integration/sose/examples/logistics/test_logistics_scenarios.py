@@ -57,7 +57,7 @@ def test_finite_courier_loss_routes_through_delay_and_recovers():
     ) is True
     assert persistence.entity("shipment", entities.shipment_id).state == "picked_up"
 
-    state = persistence.scenario_state()
+    state = persistence.scenario_state(owner_id="logistics-scenarios-organization")
     assert state is not None
     assert sum(
         decision.scenario_name == "logistics-courier-capacity-loss"
