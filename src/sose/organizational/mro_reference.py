@@ -175,6 +175,7 @@ class MROReferenceDomain:
         entities = seed_reference(persistence, owner_id="mro-reference-organization", quantity=quantity)
         _, engine = build_runtime(
             persistence,
+            owner_id="mro-reference-organization",
             random_seed=scoped_seed(request.root_seed, world.crn_group, request.replication),
         )
         backend = SimPyBackend(origin=ORIGIN)
