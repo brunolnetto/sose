@@ -14,7 +14,7 @@ from sose.testing.restart import restart_reference_runtime
 def test_sqlite_state_survives_close_and_reopen(tmp_path):
     path = tmp_path / "sose.sqlite3"
     with SQLitePersistence(path) as first:
-        entities = seed_reference(first)
+        entities = seed_reference(first, owner_id="sqlite-itsm-reference")
         incident = first.entity("itsm_incident", entities.incident_id)
         assert incident is not None
 
@@ -26,8 +26,8 @@ def test_sqlite_state_survives_close_and_reopen(tmp_path):
 def test_reference_restart_crosses_sqlite_process_boundary(tmp_path):
     path = tmp_path / "reference.sqlite3"
     with SQLitePersistence(path) as persistence:
-        entities = seed_reference(persistence)
-        _, engine = build_runtime(persistence)
+        entities = seed_reference(persistence, owner_id="sqlite-itsm-reference")
+        _, engine = build_runtime(persistence, owner_id="sqlite-itsm-reference")
         backend_before = SimPyBackend(origin=ORIGIN)
         engine.rebuild_backend(backend_before)
 
@@ -52,6 +52,7 @@ def test_reference_restart_crosses_sqlite_process_boundary(tmp_path):
         rebuilt = restart_reference_runtime(
             reopened,
             build_runtime,
+            owner_id="sqlite-itsm-reference",
             backend_before,
             backend_factory=SimPyBackend,
         )
