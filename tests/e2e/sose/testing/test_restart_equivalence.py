@@ -237,7 +237,7 @@ def test_interrupted_tick_rolls_back_durable_items_and_preserves_tick_start():
                 execution_sequence=0,
                 committed_sequence=0,
                 logical_tick=0,
-            )
+            ),
             owner_id=OWNER_ID,
         )
 
