@@ -244,7 +244,7 @@ def test_job_shop_noop_and_wrong_state_ready_action(monkeypatch):
     monkeypatch.setattr(
         module,
         "DurableStoreManager",
-        lambda persistence, *, owner_id: SimpleNamespace(ensure_put=lambda *a, **k: None),
+        lambda persistence: SimpleNamespace(ensure_put=lambda *a, **k: None),
     )
 
     module.reconcile(
