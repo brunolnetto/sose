@@ -51,8 +51,19 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
     monkeypatch.setattr(customer, "_execute_intent", original_execute)
 
     with SQLiteIncrementalPersistence(path) as store:
+        # Reconstitute the flow from persisted delivery evidence, but take its
+        # owning organization from the explicit fixture identity.
+        with store.transaction() as uow:
+            correlations = {
+                message.correlation_id
+                for delivery in uow.boundary_deliveries()
+                if (message := uow.get_boundary_message(delivery.message_id)) is not None
+            }
+        assert len(correlations) == 1
+        flow_id = next(iter(correlations))
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="recovered-logistics",
+            organization_owners={flow_id: "test-org-logistics-durable-recovery"},
             job_id="logistics-recovery-test", max_actions=16,
         )
         first = runner.run_trigger(
@@ -137,8 +148,19 @@ def test_mid_transition_worker_death_resumes_from_durable_logistics_state(
     with SQLiteIncrementalPersistence(path) as store:
         shipment = next(e for e in store.entities() if e.entity_type == "shipment")
         assert shipment.state == expected_state
+        # Reconstitute the flow from persisted delivery evidence, but take its
+        # owning organization from the explicit fixture identity.
+        with store.transaction() as uow:
+            correlations = {
+                message.correlation_id
+                for delivery in uow.boundary_deliveries()
+                if (message := uow.get_boundary_message(delivery.message_id)) is not None
+            }
+        assert len(correlations) == 1
+        flow_id = next(iter(correlations))
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="logistics-stage-restart",
+            organization_owners={flow_id: "test-org-logistics-durable-recovery"},
             job_id="recovery-after-midphase", max_actions=16,
         )
         result = runner.run_trigger(
