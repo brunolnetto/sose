@@ -399,7 +399,7 @@ def test_run_happy_path_raises_when_metering_ingestion_is_unavailable(monkeypatc
     monkeypatch.setattr(energy_simulation, "record_meter_reading", lambda *args, **kwargs: None)
 
     with pytest.raises(RuntimeError, match="meter reading ingestion unavailable"):
-        run_happy_path()
+        run_happy_path(owner_id=ORGANIZATION_ID)
 
 
 def test_run_happy_path_raises_when_demand_response_cannot_begin(monkeypatch):
@@ -420,7 +420,7 @@ def test_run_happy_path_raises_when_demand_response_cannot_begin(monkeypatch):
     monkeypatch.setattr(energy_simulation, "reconcile_demand_response", lambda *args, **kwargs: False)
 
     with pytest.raises(RuntimeError, match="participation failed to begin"):
-        run_happy_path()
+        run_happy_path(owner_id=ORGANIZATION_ID)
 
 
 def test_opt_out_is_idempotent_after_terminal_participation():
