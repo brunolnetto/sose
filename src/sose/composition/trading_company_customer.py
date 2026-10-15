@@ -736,35 +736,73 @@ def _execute_intent(
                     raise RuntimeError("logistics origin-hub handling failed")
 
             if current_state() in {"at_origin_hub", "in_transfer"}:
+                # Resource identities are physical; queue identities remain
+                # scoped to the owning organization.
+                waiting_resources = (
+                    ("transfer_vehicle", f"transfer-vehicle:{shipment_id}"),
+                    ("destination_dock", f"destination-dock:{shipment_id}"),
+                )
+                preexisting_grants = {
+                    request_id: engine.resources.reservation_for(request_id)
+                    for _, request_id in waiting_resources
+                }
                 if not logistics.reconcile_transfer(
                     persistence, engine, backend, entities=fixtures.logistics,
                 ):
-                    # Another organization's finite transfer vehicle/dock or
-                    # an outstanding store selection is backpressure, not an
-                    # irrecoverable failure. The Command remains durable.
-                    pending_resources = (
-                        ("transfer_vehicle", f"transfer-vehicle:{shipment_id}"),
-                        ("destination_dock", f"destination-dock:{shipment_id}"),
-                    )
-                    for resource_name, request_id in pending_resources:
-                        if engine.resources.has_request(request_id):
+                    for resource_name, request_id in waiting_resources:
+                        current_grant = engine.resources.reservation_for(request_id)
+                        if engine.resources.has_request(request_id) and (
+                            current_grant is None
+                            or preexisting_grants[request_id] is None
+                        ):
                             raise DurableResourceWait(resource_name, request_id)
-                    pending_stores = (
-                        f"origin-dequeue:{shipment_id}",
-                        f"destination-dequeue:{shipment_id}",
+
+                    origin_queue = logistics._organization_queue(
+                        organization_id, "origin_hub_queue",
                     )
-                    for request in persistence.store_get_requests():
-                        if request.request_id in pending_stores:
-                            raise DurableResourceWait(request.store_name, request.request_id)
-                    pending_puts = {
-                        f"origin-queue:{shipment_id}",
-                        f"destination-queue:{shipment_id}",
-                    }
-                    for intent_record in persistence.store_put_intents():
-                        if intent_record.item_id in pending_puts:
-                            raise DurableResourceWait(
-                                intent_record.store_name, intent_record.item_id,
-                            )
+                    destination_queue = logistics._organization_queue(
+                        organization_id, "destination_hub_queue",
+                    )
+                    origin_request = f"origin-dequeue:{shipment_id}"
+                    destination_id = f"destination-queue:{shipment_id}"
+                    if any(
+                        request.request_id == origin_request
+                        and request.store_name == origin_queue
+                        for request in persistence.store_get_requests()
+                    ):
+                        raise DurableResourceWait(origin_queue, origin_request)
+                    if any(
+                        intent_record.item_id == destination_id
+                        and intent_record.store_name == destination_queue
+                        for intent_record in persistence.store_put_intents()
+                    ):
+                        raise DurableResourceWait(destination_queue, destination_id)
+
+                    # A worker can commit a dequeue/put after the local
+                    # reconciliation returned False. Only exact matching
+                    # durable receipts justify retrying the original Command.
+                    if current_state() == "at_origin_hub":
+                        selection = engine.stores.selection(origin_request)
+                        if (
+                            selection is not None
+                            and selection.store_name == origin_queue
+                            and selection.item.item_id == f"origin-queue:{shipment_id}"
+                        ):
+                            raise DurableResourceWait(origin_queue, origin_request)
+                    if current_state() == "in_transfer" and (
+                        any(
+                            item.item_id == destination_id
+                            and item.store_name == destination_queue
+                            for item in persistence.store_items()
+                        )
+                        or any(
+                            result.item.item_id == destination_id
+                            and result.store_name == destination_queue
+                            for result in persistence.store_get_results()
+                        )
+                    ):
+                        raise DurableResourceWait(destination_queue, destination_id)
+                    # No exact durable evidence means a genuine domain failure.
                     raise RuntimeError("logistics transfer failed")
 
             if current_state() in {"at_destination_hub", "delayed_destination_hub"}:
