@@ -609,3 +609,47 @@ def test_cancel_rejects_foreign_command_even_when_work_is_labeled_as_owned():
         scheduler.cancel(work.work_id)
     assert store.command(command.command_id) == command
     assert work in store.scheduled_work()
+
+
+def test_recovery_snapshot_is_read_under_one_owner_scoped_uow():
+    """No mixed-generation clock, scenario or scheduled Command reads."""
+    from sose.core.events import Command
+    from sose.core.runtime import ScheduledWork
+    from sose.scenarios.model import ScenarioRuntimeState
+
+    class SnapshotOnlyPersistence(MemoryPersistence):
+        def simulation_position(self, *, owner_id):
+            raise AssertionError("unfenced position read during rebuild")
+
+        def scenario_state(self, *, owner_id):
+            raise AssertionError("unfenced scenario read during rebuild")
+
+        def scheduled_work(self):
+            raise AssertionError("split scheduled-work read during rebuild")
+
+    store = SnapshotOnlyPersistence()
+    due = ORIGIN + timedelta(hours=2)
+    command_a = Command("cmd-a", "advance", "demo", "shared", due, owner_id="organization-a")
+    command_b = Command("cmd-b", "advance", "demo", "shared", due, owner_id="organization-b")
+    with store.transaction() as uow:
+        uow.set_simulation_position(_position(1, 1), owner_id="organization-a")
+        uow.set_simulation_position(_position(1, 1), owner_id="organization-b")
+        uow.set_scenario_state(ScenarioRuntimeState(), owner_id="organization-a")
+        for command in (command_a, command_b):
+            uow.save_command(command)
+            uow.save_scheduled_work(ScheduledWork(
+                work_id=f"work-{command.owner_id}",
+                due_at=due,
+                priority=100,
+                sequence=1,
+                command_id=command.command_id,
+                owner_id=command.owner_id,
+            ))
+    backend = RecordingBackend(ORIGIN + timedelta(hours=1))
+    rebuilt = RuntimeRebuilder(store, owner_id="organization-a").rebuild(
+        backend, on_due=lambda _: None,
+    )
+    assert rebuilt == 1
+    assert [call[2] for call in backend.calls] == [
+        ("durable-work", "work-organization-a"),
+    ]
