@@ -95,6 +95,7 @@ def test_typed_domain_event_must_exist_and_match_trace_and_time():
 
     with store.transaction() as uow:
         uow.append_event(DomainEvent(
+        owner_id="causal-reference-test-organization",
             event_id="event-1", name="shipped", entity_type="shipment",
             entity_id="s1", occurred_at=NOW, correlation_id="order-1",
         ))
