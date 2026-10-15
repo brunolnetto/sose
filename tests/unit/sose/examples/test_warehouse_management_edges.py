@@ -17,11 +17,13 @@ from sose.examples.warehouse_management.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "warehouse-management-reference-organization"
+
 
 def _runtime(**seed_kwargs):
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, now=ORIGIN, **seed_kwargs)
-    _, engine = build_runtime(persistence, now=ORIGIN)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID, now=ORIGIN, **seed_kwargs)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID, now=ORIGIN)
     return persistence, engine, entities
 
 
@@ -42,7 +44,7 @@ def _save(persistence, entity):
 )
 def test_seed_rejects_invalid_reference_parameters(kwargs, message) -> None:
     with pytest.raises(ValueError, match=message):
-        seed_reference(MemoryPersistence(), **kwargs)
+        seed_reference(MemoryPersistence(), owner_id=REFERENCE_OWNER_ID, **kwargs)
 
 
 def test_missing_persisted_entity_is_reported_at_operation_boundary() -> None:
