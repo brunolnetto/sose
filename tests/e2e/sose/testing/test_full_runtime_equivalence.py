@@ -152,7 +152,7 @@ def durable_snapshot(store, work_order_id):
         "events": store.events(),
         "work": store.scheduled_work(),
         "position": store.simulation_position(owner_id=OWNER_ID),
-        "scenario": store.scenario_state(),
+        "scenario": store.scenario_state(owner_id=OWNER_ID),
         "definitions": store.resource_definitions(),
         "demands": store.resource_demands(),
         "reservations": store.resource_reservations(),
@@ -264,7 +264,7 @@ def test_full_runtime_is_equivalent_across_multiple_restarts():
     assert restarted_store.resource_release_intents() == ()
     assert [r.request_id for r in restarted_store.resource_reservations()] == ["urgent"]
     assert [d.request_id for d in restarted_store.resource_demands()] == ["normal"]
-    assert restarted_store.scenario_state() == continuous_store.scenario_state()
+    assert restarted_store.scenario_state(owner_id=OWNER_ID) == continuous_store.scenario_state(owner_id=OWNER_ID)
 
 
 

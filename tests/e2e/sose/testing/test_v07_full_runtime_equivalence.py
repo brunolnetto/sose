@@ -401,7 +401,7 @@ def durable_snapshot(store: MemoryPersistence, work_order_id: str) -> dict[str, 
         "events": store.events(),
         "scheduled_work": store.scheduled_work(),
         "position": store.simulation_position(owner_id=OWNER_ID),
-        "scenario_state": store.scenario_state(),
+        "scenario_state": store.scenario_state(owner_id=OWNER_ID),
         "resource_definitions": store.resource_definitions(),
         "resource_demands": store.resource_demands(),
         "resource_reservations": store.resource_reservations(),
@@ -428,7 +428,7 @@ def run_continuous() -> tuple[MemoryPersistence, str]:
     work_order_id = seed(store)
     engine, backend = start_operational_state(store, work_order_id)
     backend.run_until(ORIGIN + timedelta(hours=1))
-    scenario_state = store.scenario_state()
+    scenario_state = store.scenario_state(owner_id=OWNER_ID)
     assert scenario_state is not None
     assert len(scenario_state.decisions) == 1
     decision = scenario_state.decisions[0]
@@ -453,7 +453,7 @@ def run_with_three_restarts() -> tuple[MemoryPersistence, str]:
     _, backend1 = start_operational_state(store, work_order_id)
 
     backend1.run_until(ORIGIN + timedelta(hours=1))
-    scenario_state = store.scenario_state()
+    scenario_state = store.scenario_state(owner_id=OWNER_ID)
     assert scenario_state is not None
     assert len(scenario_state.decisions) == 1
     decision = scenario_state.decisions[0]
@@ -594,4 +594,4 @@ def test_v07_full_durable_runtime_is_multi_restart_equivalent():
         "refuel",
         "drain-waste",
     ]
-    assert restarted_store.scenario_state() is not None
+    assert restarted_store.scenario_state(owner_id=OWNER_ID) is not None

@@ -48,7 +48,7 @@ def test_rebuild_restores_active_scenario_effects_and_decisions():
 
     first_engine.advance_tick()
 
-    saved = store.scenario_state()
+    saved = store.scenario_state(owner_id=OWNER_ID)
     assert saved is not None
     assert len(saved.activations) == 1
     assert len(saved.decisions) == 1
@@ -115,7 +115,7 @@ def test_restored_decision_prevents_duplicate_activation_for_same_tick():
     decisions = second_context.scenarios.on_tick()
 
     assert len(decisions) == 1
-    assert decisions[0] == store.scenario_state().decisions[0]
+    assert decisions[0] == store.scenario_state(owner_id=OWNER_ID).decisions[0]
     assert len(second_context.scenarios.active_activations) == 1
 
 
@@ -158,7 +158,7 @@ def test_event_triggered_scenario_state_is_durable_across_restart():
     engine.dispatch(command)
 
     assert context.scenarios.attribute("release.pressure") == "high"
-    saved = store.scenario_state()
+    saved = store.scenario_state(owner_id=OWNER_ID)
     assert saved is not None
     assert len(saved.activations) == 1
     assert len(saved.decisions) == 1

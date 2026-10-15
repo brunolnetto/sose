@@ -72,7 +72,7 @@ def seed_workflow(persistence: MemoryPersistence) -> str:
     with persistence.transaction() as uow:
         uow.save_entity(work_order)
 
-    scheduler = DurableScheduler(persistence)
+    scheduler = DurableScheduler(persistence, owner_id=OWNER_ID)
     for offset, name in (
         (1, "release"),
         (2, "start"),
@@ -238,9 +238,10 @@ def test_interrupted_tick_rolls_back_durable_items_and_preserves_tick_start():
                 committed_sequence=0,
                 logical_tick=0,
             )
+            owner_id=OWNER_ID,
         )
 
-    scheduler = DurableScheduler(store)
+    scheduler = DurableScheduler(store, owner_id=OWNER_ID)
     release = context.commands.create(
         "release",
         target=work_order,
