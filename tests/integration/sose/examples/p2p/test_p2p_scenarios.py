@@ -7,12 +7,14 @@ from sose.examples.p2p.scenarios import (
 from sose.examples.p2p.simulation import ORIGIN, build_runtime, seed_happy_path
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+
 
 def test_supplier_delay_is_external_context_and_survives_restart():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence)
+    ids = seed_happy_path(persistence, owner_id=REFERENCE_OWNER_ID)
     scenario = supplier_delay_scenario()
-    context, engine = build_runtime(persistence, scenarios=(scenario,))
+    context, engine = build_runtime(persistence, scenarios=(scenario,), owner_id=REFERENCE_OWNER_ID)
 
     engine.advance_tick()
     engine.advance_tick()
@@ -41,12 +43,13 @@ def test_supplier_delay_is_external_context_and_survives_restart():
         for activation in saved.activations
     )
 
-    position = persistence.simulation_position()
+    position = persistence.simulation_position(owner_id=REFERENCE_OWNER_ID)
     assert position is not None
     restarted_context, restarted_engine = build_runtime(
         persistence,
         now=position.logical_time,
         scenarios=(scenario,),
+        owner_id=REFERENCE_OWNER_ID,
     )
     restarted_backend = SimPyBackend(origin=position.logical_time)
     restarted_engine.rebuild_backend(restarted_backend)
@@ -63,9 +66,9 @@ def test_supplier_delay_is_external_context_and_survives_restart():
 
 def test_demand_spike_and_receiving_congestion_are_policy_context_not_state_mutation():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence)
+    ids = seed_happy_path(persistence, owner_id=REFERENCE_OWNER_ID)
     scenarios = (demand_spike_scenario(), receiving_congestion_scenario())
-    context, engine = build_runtime(persistence, scenarios=scenarios)
+    context, engine = build_runtime(persistence, scenarios=scenarios, owner_id=REFERENCE_OWNER_ID)
 
     before = {
         entity_type: persistence.entity(entity_type, entity_id).state
@@ -98,9 +101,9 @@ def test_demand_spike_and_receiving_congestion_are_policy_context_not_state_muta
 
 def test_finite_supplier_delay_expires_without_retriggering():
     persistence = MemoryPersistence()
-    seed_happy_path(persistence)
+    seed_happy_path(persistence, owner_id=REFERENCE_OWNER_ID)
     scenario = supplier_delay_scenario()
-    context, engine = build_runtime(persistence, scenarios=(scenario,))
+    context, engine = build_runtime(persistence, scenarios=(scenario,), owner_id=REFERENCE_OWNER_ID)
 
     engine.advance_tick()
     assert context.scenarios.attribute("p2p.supplier.delay", False) is True
