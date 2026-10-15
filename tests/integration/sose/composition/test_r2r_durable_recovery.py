@@ -34,14 +34,14 @@ def test_restarted_r2r_consumer_resumes_committed_journal_without_duplicate(
     original_dispatch = customer.r2r._dispatch
     original_submit = customer.r2r.submit_and_post_journal
 
-    def interrupted_execute(persistence, *, effect_id, fixtures, correlation_id):
+    def interrupted_execute(persistence, *, effect_id, fixtures, correlation_id, organization_id):
         effect = persistence.command(effect_id)
         if cut == "before_r2r" and effect is not None and (
             effect.name == "composition.post_customer_journal"
         ):
             raise RuntimeError("R2R worker died")
         return original_execute(
-            persistence, effect_id=effect_id, fixtures=fixtures, correlation_id=correlation_id,
+            persistence, effect_id=effect_id, fixtures=fixtures, correlation_id=correlation_id, organization_id=organization_id,
         )
 
     def interrupted_dispatch(*args, **kwargs):
