@@ -9,6 +9,8 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.p2p import simulation as p2p
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+
 
 def test_simpy_optional_dependency_failure_is_user_visible():
     script = r"""
@@ -28,7 +30,6 @@ for name in list(sys.modules):
 
 import sose.backends.simpy  # noqa: F401
 
-REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
 """
     completed = subprocess.run(
         [sys.executable, "-c", script],
