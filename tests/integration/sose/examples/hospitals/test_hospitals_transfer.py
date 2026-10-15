@@ -12,8 +12,8 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_early_transfer_happens_before_ward_queue_commitment():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="hospitals-transfer-organization")
+    _, engine = build_runtime(persistence, owner_id="hospitals-transfer-organization")
 
     transfer_before_queue(
         persistence,
@@ -30,8 +30,8 @@ def test_early_transfer_happens_before_ward_queue_commitment():
 
 def test_icu_transfer_cancels_pending_demand_and_releases_partial_capacity():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, acuity=1)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="hospitals-transfer-organization", acuity=1)
+    _, engine = build_runtime(persistence, owner_id="hospitals-transfer-organization")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
