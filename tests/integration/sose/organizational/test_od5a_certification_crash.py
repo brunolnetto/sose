@@ -358,6 +358,7 @@ def test_certificate_falsifies_extra_event_with_wrong_source_entity(tmp_path):
         )
         before = _certificate(store, (org,))
         rogue = DomainEvent(
+        owner_id=org,
             event_id="rogue-event",
             name="od5a.execution.v1",
             entity_type="od5a_durable_pilot",
