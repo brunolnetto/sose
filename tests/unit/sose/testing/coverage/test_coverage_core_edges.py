@@ -88,11 +88,11 @@ def test_codec_resolve_and_decode_reject_invalid_payloads():
     assert _decode({"plain": 2}) == {"plain": 2}
 
 
-def test_state_records_round_trip_dict_list_and_scalar_shapes():
+def test_state_records_round_trip_dict_list_and_owner_scoped_ticks():
     state = _State(
         commands={"b": 2, "a": 1},
         events=[1, 2],
-        committed_tick=3,
+        committed_ticks={"organization-a": 3, "organization-b": 7},
     )
 
     records = state_to_records(state)
@@ -100,15 +100,22 @@ def test_state_records_round_trip_dict_list_and_scalar_shapes():
 
     assert restored.commands == {"b": 2, "a": 1}
     assert restored.events == [1, 2]
-    assert restored.committed_tick == 3
+    assert restored.committed_ticks == {
+        "organization-a": 3,
+        "organization-b": 7,
+    }
 
-    # Missing scalar records fall back to the _State default.
-    without_tick = [
+    # Removing one owner's record must not affect another owner's checkpoint.
+    without_a = [
         record
         for record in records.values()
-        if record.collection != "committed_tick"
+        if not (
+            record.collection == "committed_ticks"
+            and loads(record.key) == "organization-a"
+        )
     ]
-    assert records_to_state(without_tick).committed_tick == -1
+    assert records_to_state(without_a).committed_ticks == {"organization-b": 7}
+
 
 
 def test_diff_state_records_emits_deterministic_delete_and_upserts():
@@ -153,9 +160,9 @@ def test_dirty_record_changes_cover_dict_lifecycle():
     assert by_key["added"].position == 2
 
 
-def test_dirty_record_changes_cover_list_lifecycle_and_scalar_defaults():
-    before = _State(events=[1, 2], committed_tick=1)
-    after = _State(events=[1, 3, 4], committed_tick=2)
+def test_dirty_record_changes_cover_list_lifecycle_and_scoped_ticks():
+    before = _State(events=[1, 2], committed_ticks={"organization-a": 1})
+    after = _State(events=[1, 3, 4], committed_ticks={"organization-a": 2})
 
     changes = changes_for_dirty_records(
         before,
@@ -165,14 +172,15 @@ def test_dirty_record_changes_cover_list_lifecycle_and_scalar_defaults():
             ("events", 1),
             ("events", 2),
             ("events", 9),
-            ("committed_tick", "__scalar__"),
+            ("committed_ticks", "organization-a"),
         },
     )
     by_identity = {(change.collection, change.key): change for change in changes}
     assert ("events", "0") not in by_identity
     assert loads(by_identity[("events", "1")].payload) == 3
     assert loads(by_identity[("events", "2")].payload) == 4
-    assert loads(by_identity[("committed_tick", "__scalar__")].payload) == 2
+    tick_change = by_identity[("committed_ticks", dumps("organization-a"))]
+    assert loads(tick_change.payload) == 2
 
     deleted = changes_for_dirty_records(
         _State(events=[1, 2]),
@@ -182,17 +190,20 @@ def test_dirty_record_changes_cover_list_lifecycle_and_scalar_defaults():
     assert len(deleted) == 1
     assert deleted[0].operation == "delete"
 
-    defaulted = changes_for_dirty_records(
-        _State(committed_tick=5),
-        _State(committed_tick=None),
-        {("committed_tick", "__scalar__")},
+    removed = changes_for_dirty_records(
+        _State(committed_ticks={"organization-a": 5, "organization-b": 8}),
+        _State(committed_ticks={"organization-b": 8}),
+        {("committed_ticks", "organization-a")},
     )
-    assert loads(defaulted[0].payload) == -1
+    assert len(removed) == 1
+    assert removed[0].operation == "delete"
+    assert removed[0].key == dumps("organization-a")
     assert changes_for_dirty_records(
-        _State(committed_tick=5),
-        _State(committed_tick=5),
-        {("committed_tick", "__scalar__")},
+        _State(committed_ticks={"organization-a": 5}),
+        _State(committed_ticks={"organization-a": 5}),
+        {("committed_ticks", "organization-a")},
     ) == ()
+
 
 
 def _completed_trigger(**overrides):
