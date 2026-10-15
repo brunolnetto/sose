@@ -413,17 +413,35 @@ def reconcile_transfer(
         return False
 
     item_id = f"destination-queue:{shipment.id}"
-    if not any(item.item_id == item_id for item in persistence.store_items()):
-        engine.stores.put(
+    destination_queue = _organization_queue(
+        engine.owner_id, "destination_hub_queue",
+    )
+    if not any(
+        item.item_id == item_id and item.store_name == destination_queue
+        for item in persistence.store_items()
+    ):
+        # Reuse the exact pending PUT after finite-queue backpressure.
+        engine.stores.ensure_put(
             backend,
-            store_name=_organization_queue(engine.owner_id, "destination_hub_queue"),
+            store_name=destination_queue,
             item_id=item_id,
             value={"shipment_id": shipment.id},
             requested_at=backend.now,
         )
         backend.run_until(backend.now)
 
-    if not any(item.item_id == item_id for item in persistence.store_items()):
+    # A concurrent consumer may have accepted and removed the item already.
+    # Its durable receipt is equivalent to a live destination-queue item.
+    destination_available = any(
+        item.item_id == item_id and item.store_name == destination_queue
+        for item in persistence.store_items()
+    )
+    destination_consumed = any(
+        result.item.item_id == item_id
+        and result.store_name == destination_queue
+        for result in persistence.store_get_results()
+    )
+    if not destination_available and not destination_consumed:
         return False
 
     shipment = _shipment(persistence, entities)
