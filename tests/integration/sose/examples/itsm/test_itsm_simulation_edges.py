@@ -363,7 +363,7 @@ def test_run_escalation_path_guard_when_claim_returns_wrong_incident(monkeypatch
     monkeypatch.setattr(simulation, "claim_next_incident", lambda *args, **kwargs: "wrong")
 
     with pytest.raises(RuntimeError, match="reference incident was not claimed"):
-        simulation.run_escalation_path()
+        simulation.run_escalation_path(owner_id=REFERENCE_OWNER_ID)
 
 
 def test_run_escalation_path_guard_when_sla_escalation_does_not_fire(monkeypatch):
@@ -371,16 +371,16 @@ def test_run_escalation_path_guard_when_sla_escalation_does_not_fire(monkeypatch
     monkeypatch.setattr(
         simulation,
         "build_runtime",
-        lambda persistence: (None, SimpleNamespace(rebuild_backend=lambda active_backend: None)),
+        lambda persistence, *, owner_id: (None, SimpleNamespace(rebuild_backend=lambda active_backend: None)),
     )
     monkeypatch.setattr(simulation, "SimPyBackend", lambda origin: backend)
     monkeypatch.setattr(simulation, "triage_and_queue", lambda *args, **kwargs: ORIGIN)
     monkeypatch.setattr(simulation, "claim_next_incident", lambda *args, **kwargs: "INC-1")
-    monkeypatch.setattr(simulation, "seed_reference", lambda persistence: SimpleNamespace(incident_id="INC-1"))
+    monkeypatch.setattr(simulation, "seed_reference", lambda persistence, *, owner_id: SimpleNamespace(incident_id="INC-1"))
     monkeypatch.setattr(simulation, "_incident", lambda *args, **kwargs: SimpleNamespace(state="assigned"))
 
     with pytest.raises(RuntimeError, match="SLA escalation did not fire"):
-        simulation.run_escalation_path()
+        simulation.run_escalation_path(owner_id=REFERENCE_OWNER_ID)
 
 
 def test_run_escalation_path_guard_when_escalation_capacity_is_unavailable(monkeypatch):
@@ -388,17 +388,17 @@ def test_run_escalation_path_guard_when_escalation_capacity_is_unavailable(monke
     monkeypatch.setattr(
         simulation,
         "build_runtime",
-        lambda persistence: (None, SimpleNamespace(rebuild_backend=lambda active_backend: None)),
+        lambda persistence, *, owner_id: (None, SimpleNamespace(rebuild_backend=lambda active_backend: None)),
     )
     monkeypatch.setattr(simulation, "SimPyBackend", lambda origin: backend)
     monkeypatch.setattr(simulation, "triage_and_queue", lambda *args, **kwargs: ORIGIN)
     monkeypatch.setattr(simulation, "claim_next_incident", lambda *args, **kwargs: "INC-2")
-    monkeypatch.setattr(simulation, "seed_reference", lambda persistence: SimpleNamespace(incident_id="INC-2"))
+    monkeypatch.setattr(simulation, "seed_reference", lambda persistence, *, owner_id: SimpleNamespace(incident_id="INC-2"))
     monkeypatch.setattr(simulation, "_incident", lambda *args, **kwargs: SimpleNamespace(state="escalated"))
     monkeypatch.setattr(simulation, "reconcile_escalation", lambda *args, **kwargs: False)
 
     with pytest.raises(RuntimeError, match="escalation capacity unavailable"):
-        simulation.run_escalation_path()
+        simulation.run_escalation_path(owner_id=REFERENCE_OWNER_ID)
 
 
 def test_reference_path_guards_are_executable(monkeypatch):
