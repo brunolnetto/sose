@@ -20,6 +20,8 @@ from sose.examples.warehouse_management.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+
 
 def test_p2p_procurement_schedule_can_inherit_external_causality() -> None:
     store = MemoryPersistence()
@@ -28,6 +30,7 @@ def test_p2p_procurement_schedule_can_inherit_external_causality() -> None:
         now=P2P_ORIGIN,
         quantity=5.0,
         schedule=False,
+        owner_id=REFERENCE_OWNER_ID,
     )
     assert store.scheduled_work() == ()
 
