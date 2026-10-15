@@ -29,7 +29,7 @@ def test_restart_recovers_o2c_and_payment_request_from_durable_delivery(
     original_execute = customer._execute_intent
     original_receivable = customer.o2c.ensure_receivable
 
-    def interrupted_execute(persistence, *, effect_id, fixtures, correlation_id):
+    def interrupted_execute(persistence, *, effect_id, fixtures, correlation_id, organization_id):
         effect = persistence.command(effect_id)
         if crash_point == "before_o2c_effect" and effect is not None and (
             effect.name == "composition.complete_external_fulfillment"
@@ -37,7 +37,7 @@ def test_restart_recovers_o2c_and_payment_request_from_durable_delivery(
             raise RuntimeError("worker killed at O2C")
         return original_execute(
             persistence, effect_id=effect_id, fixtures=fixtures,
-            correlation_id=correlation_id,
+            correlation_id=correlation_id, organization_id=organization_id,
         )
 
     def interrupted_receivable(*args, **kwargs):
@@ -119,13 +119,13 @@ def test_payment_egress_requires_ack_and_completed_o2c_effect(tmp_path, monkeypa
     monkeypatch.setattr(customer, "MemoryPersistence", factory)
     original_execute = customer._execute_intent
 
-    def interrupted(persistence, *, effect_id, fixtures, correlation_id):
+    def interrupted(persistence, *, effect_id, fixtures, correlation_id, organization_id):
         effect = persistence.command(effect_id)
         if effect is not None and effect.name == "composition.complete_external_fulfillment":
             raise RuntimeError("crash before O2C effect")
         return original_execute(
             persistence, effect_id=effect_id, fixtures=fixtures,
-            correlation_id=correlation_id,
+            correlation_id=correlation_id, organization_id=organization_id,
         )
 
     monkeypatch.setattr(customer, "_execute_intent", interrupted)
