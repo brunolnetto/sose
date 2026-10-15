@@ -39,14 +39,14 @@ def test_payment_continuation_restarts_from_persisted_stage_and_emits_r2r(
         "dispatch": customer.payments._dispatch,
     }
 
-    def crash_before_effect(persistence, *, effect_id, fixtures, correlation_id):
+    def crash_before_effect(persistence, *, effect_id, fixtures, correlation_id, organization_id):
         current = persistence.command(effect_id)
         if cut == "ack_before_effect" and current is not None and (
             current.name == "composition.settle_customer_payment"
         ):
             raise RuntimeError("worker death in Payments")
         return originals["execute"](
-            persistence, effect_id=effect_id, fixtures=fixtures, correlation_id=correlation_id,
+            persistence, effect_id=effect_id, fixtures=fixtures, correlation_id=correlation_id, organization_id=organization_id,
         )
 
     def crash_after(target, *args, **kwargs):
