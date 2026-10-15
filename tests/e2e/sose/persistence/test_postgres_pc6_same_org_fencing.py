@@ -74,7 +74,7 @@ def _completed_state(dsn, namespaces, physical_ns, seeds):
 def _scenario(*, adversarial: str | None, tmp_path: Path):
     namespaces = {k: f"fence_{k}_{uuid4().hex[:12]}" for k in ("a", "b")}
     physical_ns = f"fence_physical_{uuid4().hex[:12]}"
-    seeded = {org: _seed_before_logistics_ack(DSN, ns)
+    seeded = {org: _seed_before_logistics_ack(DSN, ns, org)
               for org, ns in namespaces.items()}
     seeds = {org: values[:2] for org, values in seeded.items()}
     child = None

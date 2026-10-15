@@ -112,7 +112,7 @@ def _complete(dsn, domains, physical, seeds):
 def _scenario(tmp_path, *, phase, transport):
     domains = {org: f"commit_{org}_{uuid4().hex[:12]}" for org in ("a", "b")}
     physical = f"commit_phys_{uuid4().hex[:12]}"
-    seeded = {org: _seed_before_logistics_ack(DSN, ns)
+    seeded = {org: _seed_before_logistics_ack(DSN, ns, org)
               for org, ns in domains.items()}
     seeds = {org: data[:2] for org, data in seeded.items()}
     marker = tmp_path / f"{phase}-{transport}-paused"
@@ -197,7 +197,7 @@ def _uninterrupted_reference(phase):
     """Same durable starting ACK state, but no failed transport or DB service."""
     domains = {org: f"control_ack_{org}_{uuid4().hex[:12]}" for org in ("a", "b")}
     physical = f"control_ack_phys_{uuid4().hex[:12]}"
-    seeded = {org: _seed_before_logistics_ack(DSN, ns)
+    seeded = {org: _seed_before_logistics_ack(DSN, ns, org)
               for org, ns in domains.items()}
     seeds = {org: data[:2] for org, data in seeded.items()}
     assert seeds["a"] == seeds["b"]

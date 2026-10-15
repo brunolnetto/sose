@@ -81,7 +81,7 @@ def test_crash_during_recurrence_replays_only_its_job_slot(monkeypatch):
         return RecoverySchedule(
             runner=TradingCustomerRecoveryRunner(
                 persistence=store, owner_id=owner, job_id=job_id,
-                correlation_id=org, scoped_writer=True,
+                correlation_id=org, organization_owners={org: org}, scoped_writer=True,
             ),
             start_at=slots[org], interval=timedelta(minutes=5),
             max_slots=2,
@@ -144,6 +144,7 @@ def test_two_distinct_job_scopes_can_be_in_flight_together(monkeypatch):
             runner = TradingCustomerRecoveryRunner(
                 persistence=store, owner_id=f"worker-{key}",
                 job_id=f"job-{key}", scoped_writer=True, correlation_id=f"org-{key}",
+                organization_owners={f"org-{key}": f"org-{key}"},
             )
             return runner.run_scheduled_trigger(
                 scheduled_for=T0 + timedelta(minutes=5 if key == "b" else 0),
@@ -183,7 +184,7 @@ def test_recurring_jobs_claim_only_their_own_causal_boundary(monkeypatch):
         with PostgresPersistence(DSN, namespace=ns) as store:
             runner = TradingCustomerRecoveryRunner(
                 persistence=store, owner_id=f"worker-{org}", job_id=job_id,
-                correlation_id=org, scoped_writer=True, max_actions=1,
+                correlation_id=org, organization_owners={org: org}, scoped_writer=True, max_actions=1,
             )
             completed = runner.run_scheduled_trigger(scheduled_for=logical_time)
             assert completed.actions == 1
@@ -282,7 +283,7 @@ def test_real_logistics_certified_crash_keeps_other_organization_progressing(mon
         return RecoverySchedule(
             runner=TradingCustomerRecoveryRunner(
                 persistence=store, owner_id=owner, job_id="job-" + org,
-                correlation_id=org, scoped_writer=True, max_actions=1,
+                correlation_id=org, organization_owners={org: org}, scoped_writer=True, max_actions=1,
                 resource_policies={"composition.deliver_shipment": pool},
                 resource_organizations={org: org},
                 resource_slot_duration=timedelta(minutes=5),
@@ -365,13 +366,13 @@ def test_scoped_job_cannot_silently_rebind_another_organization():
     with PostgresPersistence(DSN, namespace=ns) as store:
         a = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker-a", job_id="shared-job",
-            scoped_writer=True, correlation_id="organization-a", max_actions=1,
+            scoped_writer=True, correlation_id="organization-a", organization_owners={"organization-a": "organization-a"}, max_actions=1,
         )
         a.run_scheduled_trigger(scheduled_for=T0)
         original = store.job_state("shared-job")
         b = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker-b", job_id="shared-job",
-            scoped_writer=True, correlation_id="organization-b", max_actions=1,
+            scoped_writer=True, correlation_id="organization-b", organization_owners={"organization-b": "organization-b"}, max_actions=1,
         )
         with pytest.raises(ValueError, match="organizational binding changed"):
             b.run_scheduled_trigger(scheduled_for=T0 + timedelta(minutes=5))
@@ -381,7 +382,7 @@ def test_scoped_job_cannot_silently_rebind_another_organization():
         owned_b = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker-b-legitimate",
             job_id="independent-job-b", scoped_writer=True,
-            correlation_id="organization-b", max_actions=1,
+            correlation_id="organization-b", organization_owners={"organization-b": "organization-b"}, max_actions=1,
         )
         owned_b.run_scheduled_trigger(scheduled_for=T0)
         assert store.job_state("independent-job-b").run_count == 1
@@ -396,13 +397,13 @@ def test_correlation_cannot_be_claimed_by_two_distinct_recurring_jobs():
     ):
         first = TradingCustomerRecoveryRunner(
             persistence=a, owner_id="worker-a", job_id="company-a-job",
-            scoped_writer=True, correlation_id="shared-correlation",
+            scoped_writer=True, correlation_id="shared-correlation", organization_owners={"shared-correlation": "company-a"},
             max_actions=1,
         )
         first.run_scheduled_trigger(scheduled_for=T0)
         different = TradingCustomerRecoveryRunner(
             persistence=b, owner_id="worker-b", job_id="other-job",
-            scoped_writer=True, correlation_id="shared-correlation",
+            scoped_writer=True, correlation_id="shared-correlation", organization_owners={"shared-correlation": "company-a"},
             max_actions=1,
         )
         with pytest.raises(ValueError, match="already owned by another job"):
@@ -426,7 +427,7 @@ def _child_die_during_scoped_trigger(namespace):
     with PostgresPersistence(DSN, namespace=namespace) as store:
         runner = _KilledAfterCheckpoint(
             persistence=store, owner_id="killed-process",
-            job_id="job-a", scoped_writer=True, correlation_id="org-a",
+            job_id="job-a", scoped_writer=True, correlation_id="org-a", organization_owners={"org-a": "org-a"},
             max_actions=1,
         )
         runner.run_scheduled_trigger(scheduled_for=T0)
@@ -455,7 +456,7 @@ def test_actual_sigkill_restarts_a_job_while_another_advances():
         other_runner = TradingCustomerRecoveryRunner(
             persistence=other, owner_id="unaffected-worker",
             job_id="job-b", scoped_writer=True,
-            correlation_id="org-b", max_actions=1,
+            correlation_id="org-b", organization_owners={"org-b": "org-b"}, max_actions=1,
         )
         other_runner.run_scheduled_trigger(scheduled_for=T0 + timedelta(hours=2))
         assert other.job_state("job-b").run_count == 1
@@ -465,7 +466,7 @@ def test_actual_sigkill_restarts_a_job_while_another_advances():
         runner = TradingCustomerRecoveryRunner(
             persistence=restored, owner_id="replacement-worker",
             job_id="job-a", scoped_writer=True,
-            correlation_id="org-a", max_actions=1,
+            correlation_id="org-a", organization_owners={"org-a": "org-a"}, max_actions=1,
         )
         slot = runner.run_scheduled_trigger(scheduled_for=T0)
         assert slot.actions == 0
