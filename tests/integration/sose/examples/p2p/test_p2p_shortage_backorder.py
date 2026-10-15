@@ -1,8 +1,10 @@
 from sose.examples.p2p.simulation import run_shortage_backorder
 
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+
 
 def test_shortage_waits_durably_then_consumes_replenishment_exactly_once():
-    persistence, ids = run_shortage_backorder(quantity=5.0)
+    persistence, ids = run_shortage_backorder(quantity=5.0, owner_id=REFERENCE_OWNER_ID)
 
     demand = persistence.entity("material_demand", ids.material_demand_id)
     assert demand is not None
@@ -39,7 +41,7 @@ def test_shortage_waits_durably_then_consumes_replenishment_exactly_once():
 
 
 def test_backorder_flow_leaves_no_hidden_inventory_after_consumption():
-    persistence, _ = run_shortage_backorder(quantity=7.0)
+    persistence, _ = run_shortage_backorder(quantity=7.0, owner_id=REFERENCE_OWNER_ID)
 
     state = next(
         state for state in persistence.container_states() if state.name == "inventory"
