@@ -91,8 +91,19 @@ def test_worker_death_after_business_effect_before_proof_is_idempotent(
         assert not any(
             x.entity_type == expected_type for x in store.business_effects()
         )
+        # Reconstitute the flow from persisted delivery evidence, but take its
+        # owning organization from the explicit fixture identity.
+        with store.transaction() as uow:
+            correlations = {
+                message.correlation_id
+                for delivery in uow.boundary_deliveries()
+                if (message := uow.get_boundary_message(delivery.message_id)) is not None
+            }
+        assert len(correlations) == 1
+        flow_id = next(iter(correlations))
         worker = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="recover-business-proof",
+            organization_owners={flow_id: "test-org-business-effect-recovery"},
             job_id="business-proof-recovery", max_actions=16,
         )
         first = worker.run_trigger(
