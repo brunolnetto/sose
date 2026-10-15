@@ -91,7 +91,7 @@ def test_build_reconcile_runtime_skips_run_until_when_not_callable():
         next_tick=3,
     )
     job.persistence = SimpleNamespace(
-        simulation_position=lambda: SimpleNamespace(
+        simulation_position=lambda *, owner_id: SimpleNamespace(
             logical_time=config.start_at,
             logical_tick=running.next_tick,
         )
