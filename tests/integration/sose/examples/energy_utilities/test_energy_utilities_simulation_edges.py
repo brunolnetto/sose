@@ -404,11 +404,11 @@ def test_run_happy_path_raises_when_metering_ingestion_is_unavailable(monkeypatc
 
 def test_run_happy_path_raises_when_demand_response_cannot_begin(monkeypatch):
     backend = SimpleNamespace(run_until=lambda due_at: None)
-    monkeypatch.setattr(energy_simulation, "seed_reference", lambda persistence: SimpleNamespace())
+    monkeypatch.setattr(energy_simulation, "seed_reference", lambda persistence, *, owner_id: SimpleNamespace())
     monkeypatch.setattr(
         energy_simulation,
         "build_runtime",
-        lambda persistence: (None, SimpleNamespace(rebuild_backend=lambda active_backend: None)),
+        lambda persistence, *, owner_id: (None, SimpleNamespace(rebuild_backend=lambda active_backend: None)),
     )
     monkeypatch.setattr(energy_simulation, "SimPyBackend", lambda origin: backend)
     monkeypatch.setattr(energy_simulation, "record_meter_reading", lambda *args, **kwargs: object())
