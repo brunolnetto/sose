@@ -14,11 +14,13 @@ from sose.examples.mro.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "mro-reference-organization"
+
 
 def _scenario_runtime(scenario, quantity=1.0):
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence, quantity=quantity)
-    context, engine = build_runtime(persistence, scenarios=(scenario,))
+    ids = seed_reference(persistence, quantity=quantity, owner_id=REFERENCE_OWNER_ID)
+    context, engine = build_runtime(persistence, scenarios=(scenario,), owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     engine.advance_tick()
