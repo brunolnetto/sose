@@ -73,6 +73,7 @@ class FakeConnection:
 def _batch() -> AnalyticalBatch:
     events = (
         DomainEvent(
+        owner_id="warehouse-sink-test-organization",
             event_id="event-1",
             name="created",
             entity_type="demo",
@@ -82,6 +83,7 @@ def _batch() -> AnalyticalBatch:
             payload={"value": 1},
         ),
         DomainEvent(
+        owner_id="warehouse-sink-test-organization",
             event_id="event-2",
             name="updated",
             entity_type="demo",
