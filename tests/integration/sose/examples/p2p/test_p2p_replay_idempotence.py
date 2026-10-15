@@ -2,13 +2,13 @@ from __future__ import annotations
 
 from sose.backends.simpy import SimPyBackend
 from sose.examples.p2p.simulation import (
-
-REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
     build_runtime,
     reconcile_consumption,
     reconcile_stocking,
     run_happy_path,
 )
+
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
 
 
 def _durable_snapshot(persistence, ids):
