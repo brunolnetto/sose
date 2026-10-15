@@ -539,10 +539,10 @@ def withdraw_cancellation(
     return _subscription_entity(persistence, entities)
 
 
-def run_happy_path() -> tuple[MemoryPersistence, SubscriptionEntities]:
+def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, SubscriptionEntities]:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=owner_id)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
