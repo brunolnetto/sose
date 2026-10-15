@@ -85,7 +85,7 @@ def test_reconcile_finishes_partial_startup_before_advancing_to_arrival(monkeypa
     with pytest.raises(RuntimeError, match="crash-before-truck"):
         start_transfer(persistence, engine, entities=entities)
 
-    _, recovered = build_runtime(persistence, now=ORIGIN + timedelta(hours=1))
+    _, recovered = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID, now=ORIGIN + timedelta(hours=1))
     _reconcile_tick(persistence, recovered, None, config, entities)
     shipment = persistence.entity("warehouse_management_shipment", entities.shipment_id)
     truck = persistence.entity("warehouse_management_truck", entities.truck_id)
