@@ -62,7 +62,7 @@ def test_dining_philosophers_seed_and_helper_edges(monkeypatch):
         lambda *args, **kwargs: "seeded",
     )
     config = dining_philosophers.DiningPhilosophersConfig(participants=3)
-    assert dining_philosophers.seed(persistence, config) == "seeded"
+    assert dining_philosophers.seed(persistence, config, owner_id="canonical-coverage-organization") == "seeded"
 
     resources = _Resources()
     assert dining_philosophers._active_candidate(resources, 2) == "active:noop"
@@ -173,7 +173,7 @@ def test_job_shop_seed_candidate_and_reconcile_exit_edges(monkeypatch):
     )
     monkeypatch.setattr(job_shop, "seed_case", lambda *args, **kwargs: "seeded")
     config = job_shop.JobShopConfig(participants=2, machines=1)
-    assert job_shop.seed(persistence, config) == "seeded"
+    assert job_shop.seed(persistence, config, owner_id="canonical-coverage-organization") == "seeded"
 
     noop_candidate = job_shop._candidate_state(
         current_state="done",
@@ -315,7 +315,7 @@ def test_sleeping_barber_edge_paths(monkeypatch):
     )
     monkeypatch.setattr(sleeping_barber, "seed_case", lambda *args, **kwargs: "seeded")
     config = sleeping_barber.SleepingBarberConfig(participants=2, waiting_chairs=0)
-    assert sleeping_barber.seed(persistence, config) == "seeded"
+    assert sleeping_barber.seed(persistence, config, owner_id="canonical-coverage-organization") == "seeded"
 
     assert not sleeping_barber._reconcile_ready_action(
         SimpleNamespace(store_items=lambda: ()),
