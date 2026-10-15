@@ -14,10 +14,13 @@ from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
 
+OWNER_ID = "telecom-reference"
+
+
 def _scheduled_activation():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     due_at = schedule_activation(
@@ -37,6 +40,7 @@ def test_activation_schedule_survives_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
     )
     assert len(persistence.scheduled_work()) == 1
 
@@ -86,6 +90,7 @@ def test_committed_usage_is_idempotent_after_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
     )
     second = record_usage(
         persistence,
@@ -134,6 +139,7 @@ def test_captured_usage_resumes_commit_after_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
     )
     recovered = record_usage(
         persistence,
