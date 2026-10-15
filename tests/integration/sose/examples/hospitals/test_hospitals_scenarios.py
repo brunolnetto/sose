@@ -17,9 +17,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_finite_occupancy_surge_preserves_triage_queue_and_recovers():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="hospitals-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="hospitals-scenarios-organization",
         scenarios=(occupancy_surge_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
@@ -61,9 +62,10 @@ def test_finite_occupancy_surge_preserves_triage_queue_and_recovers():
 
 def test_finite_emergency_procedure_surge_interrupts_then_resumes():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="hospitals-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="hospitals-scenarios-organization",
         scenarios=(emergency_procedure_surge_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
