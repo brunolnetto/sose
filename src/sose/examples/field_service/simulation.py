@@ -799,10 +799,10 @@ def record_visit(
     return _entity(persistence, "field_visit_occurrence", visit.id)
 
 
-def run_happy_path() -> tuple[MemoryPersistence, FieldServiceEntities]:
+def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, FieldServiceEntities]:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=owner_id)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     seed_part_inventory(persistence, engine, backend)
