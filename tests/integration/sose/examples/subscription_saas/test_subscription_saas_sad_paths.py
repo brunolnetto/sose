@@ -20,7 +20,7 @@ REFERENCE_OWNER_ID = "subscription-saas-reference-organization"
 
 def _runtime():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, owner_id="subscription-sad-organization", owner_id=REFERENCE_OWNER_ID)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
     _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
