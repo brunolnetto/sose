@@ -11,9 +11,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_macroeconomic_stress_blocks_underwriting_without_stale_capacity():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="credit-loans-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="credit-loans-scenarios-organization",
         scenarios=(macroeconomic_stress_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
