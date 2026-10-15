@@ -7,11 +7,13 @@ from sose.examples.manufacturing.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "manufacturing-reference-organization"
+
 
 def test_setup_waits_for_machine_capacity():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence)
-    _, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN.replace(hour=9))
@@ -34,8 +36,8 @@ def test_setup_waits_for_machine_capacity():
 
 def test_setup_requires_machine_and_operator_reservations():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence)
-    _, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN.replace(hour=9))
