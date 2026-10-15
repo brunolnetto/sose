@@ -172,7 +172,7 @@ class MROReferenceDomain:
             raise ValueError("MRO preflight interventions are mutually exclusive")
 
         persistence = MemoryPersistence()
-        entities = seed_reference(persistence, quantity=quantity)
+        entities = seed_reference(persistence, owner_id="mro-reference-organization", quantity=quantity)
         _, engine = build_runtime(
             persistence,
             random_seed=scoped_seed(request.root_seed, world.crn_group, request.replication),
