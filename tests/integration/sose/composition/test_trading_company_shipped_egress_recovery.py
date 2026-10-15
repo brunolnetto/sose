@@ -208,9 +208,22 @@ def test_reconcile_shipped_egress_after_worker_death_without_python_stage_list(
 
 def _owner_scoped_reconcile_shipped_fulfillment_egress(store, **kwargs):
     """The fixture declares exactly one operational owner, not a global default."""
-    owners = {
-        receipt.correlation_id: "test-org-shipped-egress"
-        for receipt in store.business_effects()
-    }
-    assert owners, "fixture must supply a certified owner-bound flow"
-    return customer.reconcile_shipped_fulfillment_egress(store, organization_owners=owners, **kwargs)
+    correlation = kwargs.get("correlation_id")
+    assert isinstance(correlation, str) and correlation, "explicit flow identity required"
+    # The crash may occur before any business-effect certificate exists.
+    # Authorize from the actual durable boundary message, never a synthetic
+    # worker identity or an unrelated decoy correlation.
+    with store.transaction() as uow:
+        sources = tuple(
+            uow.get_boundary_message(delivery.message_id)
+            for delivery in uow.boundary_deliveries()
+        )
+    assert any(
+        message is not None and message.correlation_id == correlation
+        for message in sources
+    ), "fixture must supply a durably published owner-bound flow"
+    return customer.reconcile_shipped_fulfillment_egress(
+        store,
+        organization_owners={correlation: "test-org-shipped-egress"},
+        **kwargs,
+    )
