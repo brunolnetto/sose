@@ -15,9 +15,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_dispatch_outage_defers_execution_without_inventing_ownership():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="field-service-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="field-service-scenarios-organization",
         scenarios=(technician_dispatch_outage(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
