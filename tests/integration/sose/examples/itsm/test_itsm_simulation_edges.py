@@ -21,11 +21,13 @@ from sose.examples.itsm.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "itsm-reference-organization"
+
 
 def _runtime(*, scenarios=(), **seed_kwargs):
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, **seed_kwargs)
-    context, engine = build_runtime(persistence, scenarios=scenarios)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID, **seed_kwargs)
+    context, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID, scenarios=scenarios)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     return persistence, entities, context, engine, backend
