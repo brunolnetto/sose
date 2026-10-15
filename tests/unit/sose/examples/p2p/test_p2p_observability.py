@@ -18,6 +18,8 @@ from sose.examples.p2p.simulation import (
 from sose.examples.process_manifest import ProcessEvidence, ProcessMaturity
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+
 
 def _entity_versions(persistence, entities) -> tuple[int, ...]:
     records = (
@@ -31,7 +33,7 @@ def _entity_versions(persistence, entities) -> tuple[int, ...]:
 
 
 def test_p2p_projection_is_read_only_idempotent_and_uses_durable_truth() -> None:
-    persistence, entities = run_happy_path(quantity=5.0)
+    persistence, entities = run_happy_path(quantity=5.0, owner_id=REFERENCE_OWNER_ID)
     before = _entity_versions(persistence, entities)
 
     left = p2p_projection(persistence, entities=entities)
@@ -56,7 +58,7 @@ def test_p2p_projection_is_read_only_idempotent_and_uses_durable_truth() -> None
 
 
 def test_p2p_kpis_are_derived_from_durable_events_and_state() -> None:
-    persistence, entities = run_happy_path(quantity=7.0)
+    persistence, entities = run_happy_path(quantity=7.0, owner_id=REFERENCE_OWNER_ID)
 
     projection = p2p_projection(persistence, entities=entities)
     kpis = p2p_kpis(persistence, entities=entities)
@@ -83,7 +85,7 @@ def test_p2p_kpis_are_derived_from_durable_events_and_state() -> None:
 
 def test_p2p_projection_does_not_invent_terminal_metrics_before_execution() -> None:
     persistence = MemoryPersistence()
-    entities = seed_happy_path(persistence, quantity=3.0)
+    entities = seed_happy_path(persistence, quantity=3.0, owner_id=REFERENCE_OWNER_ID)
 
     projection = p2p_projection(persistence, entities=entities)
     kpis = p2p_kpis(persistence, entities=entities)
@@ -102,7 +104,7 @@ def test_p2p_projection_does_not_invent_terminal_metrics_before_execution() -> N
 
 
 def test_p2p_kpis_preserve_shortage_backorder_history_after_recovery() -> None:
-    persistence, entities = run_shortage_backorder(quantity=5.0)
+    persistence, entities = run_shortage_backorder(quantity=5.0, owner_id=REFERENCE_OWNER_ID)
 
     projection = p2p_projection(persistence, entities=entities)
     kpis = p2p_kpis(persistence, entities=entities)
@@ -117,8 +119,8 @@ def test_p2p_kpis_preserve_shortage_backorder_history_after_recovery() -> None:
 
 def test_p2p_kpis_include_uncorrelated_supplier_delay_transition() -> None:
     persistence = MemoryPersistence()
-    entities = seed_happy_path(persistence)
-    context, engine = build_runtime(persistence)
+    entities = seed_happy_path(persistence, owner_id=REFERENCE_OWNER_ID)
+    context, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
 
     engine.advance_tick()
     engine.advance_tick()
