@@ -3,7 +3,7 @@ from sose.examples.construction.simulation import run_happy_path, run_rework_pat
 
 
 def test_construction_happy_path_completes_without_live_capacity():
-    persistence, entities = run_happy_path(quantity=10.0)
+    persistence, entities = run_happy_path(owner_id="construction-reference-organization", quantity=10.0)
 
     assert persistence.entity(
         "construction_activity", entities.activity_id
@@ -26,7 +26,7 @@ def test_construction_happy_path_completes_without_live_capacity():
 
 
 def test_failed_inspection_remains_durable_after_rework_passes():
-    persistence, entities = run_rework_path(quantity=10.0)
+    persistence, entities = run_rework_path(owner_id="construction-reference-organization", quantity=10.0)
 
     assert persistence.entity(
         "construction_activity", entities.activity_id
