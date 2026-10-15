@@ -14,9 +14,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_dr_communications_outage_defers_participation_within_event_window():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="energy-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="energy-scenarios-organization",
         scenarios=(demand_response_communications_outage(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
