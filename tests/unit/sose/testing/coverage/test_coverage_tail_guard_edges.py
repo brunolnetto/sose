@@ -50,7 +50,7 @@ def test_construction_runtime_guards_reject_invalid_inputs():
     with pytest.raises(ValueError, match="inspection ordinal must be >= 1"):
         construction_runtime.inspection_id("activity-1", 0)
     with pytest.raises(ValueError, match="quantity must fit construction material capacity"):
-        construction_runtime.seed_reference(MemoryPersistence(), quantity=0.0)
+        construction_runtime.seed_reference(MemoryPersistence(), quantity=0.0, owner_id="construction-reference-organization")
     with pytest.raises(RuntimeError, match="construction activity was not persisted"):
         construction_runtime.activity(MemoryPersistence(), "missing-activity")
 
