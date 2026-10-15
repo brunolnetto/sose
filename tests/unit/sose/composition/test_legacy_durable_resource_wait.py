@@ -18,20 +18,22 @@ def test_recovery_defers_a_transient_physical_wait_to_the_next_recurring_tick(
         contract_name="warehouse.dispatch_ready", contract_version=1,
         source_domain="warehouse_fulfillment", source_identity="order",
         destination_domain="logistics", occurrence_key="pickup",
-        correlation_id="organization-a", causation_id=None, produced_at=NOW,
+        correlation_id="flow-a", causation_id=None, produced_at=NOW,
         payload={"shipment_id": "shipment-a"},
     )
     cmd = Command(
         command_id="pending-delivery", name="composition.deliver_shipment",
         entity_type="shipment", entity_id="shipment-a", due_at=NOW, issued_at=NOW,
         causation_id=source.message_id, correlation_id=source.correlation_id,
+        owner_id="organization-a",
     )
     attempts = []
 
     def pending(store):
         return ((source, cmd.command_id),) if store.command(cmd.command_id) else ()
 
-    def process(store, source, effect_id):
+    def process(store, source, effect_id, *, organization_id):
+        assert organization_id == "organization-a"
         attempts.append(effect_id)
         if len(attempts) == 1:
             raise customer.DurableResourceWait("pickup_courier", "pickup-courier:shipment-a")
@@ -51,6 +53,7 @@ def test_recovery_defers_a_transient_physical_wait_to_the_next_recurring_tick(
             uow.save_command(cmd)
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker-before-death", max_actions=3,
+            organization_owners={"flow-a": "organization-a"},
         )
         first = runner.run_scheduled_trigger(scheduled_for=NOW)
         assert first.actions == 0
@@ -61,6 +64,7 @@ def test_recovery_defers_a_transient_physical_wait_to_the_next_recurring_tick(
     with SQLiteIncrementalPersistence(database) as restored:
         runner = TradingCustomerRecoveryRunner(
             persistence=restored, owner_id="worker-after-restart", max_actions=3,
+            organization_owners={"flow-a": "organization-a"},
         )
         second = runner.run_scheduled_trigger(scheduled_for=NOW.replace(minute=1))
         assert second.actions == 1
@@ -77,7 +81,7 @@ def test_synchronous_reference_path_retries_only_typed_temporary_capacity_wait(
     original = customer._execute_intent
     attempts = []
 
-    def transient_once(store, *, effect_id, fixtures, correlation_id):
+    def transient_once(store, *, effect_id, fixtures, correlation_id, organization_id):
         effect = store.command(effect_id)
         if effect is not None and effect.name == "composition.deliver_shipment":
             attempts.append(effect_id)
@@ -87,7 +91,7 @@ def test_synchronous_reference_path_retries_only_typed_temporary_capacity_wait(
                 )
         return original(
             store, effect_id=effect_id, fixtures=fixtures,
-            correlation_id=correlation_id,
+            correlation_id=correlation_id, organization_id=organization_id,
         )
 
     monkeypatch.setattr(customer, "_execute_intent", transient_once)
