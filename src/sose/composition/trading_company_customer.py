@@ -700,6 +700,32 @@ def _execute_intent(
                 if not logistics.reconcile_transfer(
                     persistence, engine, backend, entities=fixtures.logistics,
                 ):
+                    # Another organization's finite transfer vehicle/dock or
+                    # an outstanding store selection is backpressure, not an
+                    # irrecoverable failure. The Command remains durable.
+                    pending_resources = (
+                        ("transfer_vehicle", f"transfer-vehicle:{shipment_id}"),
+                        ("destination_dock", f"destination-dock:{shipment_id}"),
+                    )
+                    for resource_name, request_id in pending_resources:
+                        if engine.resources.has_request(request_id):
+                            raise DurableResourceWait(resource_name, request_id)
+                    pending_stores = (
+                        f"origin-dequeue:{shipment_id}",
+                        f"destination-dequeue:{shipment_id}",
+                    )
+                    for request in persistence.store_get_requests():
+                        if request.request_id in pending_stores:
+                            raise DurableResourceWait(request.store_name, request.request_id)
+                    pending_puts = {
+                        f"origin-queue:{shipment_id}",
+                        f"destination-queue:{shipment_id}",
+                    }
+                    for intent_record in persistence.store_put_intents():
+                        if intent_record.item_id in pending_puts:
+                            raise DurableResourceWait(
+                                intent_record.store_name, intent_record.item_id,
+                            )
                     raise RuntimeError("logistics transfer failed")
 
             if current_state() in {"at_destination_hub", "delayed_destination_hub"}:
