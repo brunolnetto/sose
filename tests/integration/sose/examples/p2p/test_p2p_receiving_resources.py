@@ -7,11 +7,13 @@ from sose.examples.p2p.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+
 
 def test_receipt_cannot_begin_receiving_until_dock_is_acquired():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence)
-    _, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -56,8 +58,8 @@ def test_receipt_cannot_begin_receiving_until_dock_is_acquired():
 
 def test_receipt_waits_for_inspector_while_holding_dock():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence)
-    _, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
