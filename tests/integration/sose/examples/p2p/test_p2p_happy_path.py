@@ -16,9 +16,11 @@ from sose.examples.p2p.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"
+
 
 def test_p2p_happy_path_reaches_consumed_inventory():
-    persistence, ids = run_happy_path(quantity=10.0)
+    persistence, ids = run_happy_path(quantity=10.0, owner_id=REFERENCE_OWNER_ID)
 
     assert persistence.entity("requisition", ids.requisition_id).state == "ordered"
     assert persistence.entity("purchase_order", ids.purchase_order_id).state == "closed"
@@ -57,7 +59,7 @@ def test_p2p_happy_path_reaches_consumed_inventory():
 
 def test_supplier_lead_time_is_durable_scheduled_work():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0)
+    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
 
     purchase_order_work = [
         work
@@ -87,8 +89,8 @@ def test_supplier_lead_time_is_durable_scheduled_work():
 
 def test_stocking_reconciliation_recovers_from_partial_inventory_commit():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0)
-    _, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN + timedelta(hours=10))
@@ -116,6 +118,7 @@ def test_stocking_reconciliation_recovers_from_partial_inventory_commit():
     restarted_context, restarted_engine = build_runtime(
         persistence,
         now=backend.now,
+        owner_id=REFERENCE_OWNER_ID,
     )
     restarted_backend = SimPyBackend(origin=backend.now)
     restarted_engine.rebuild_backend(restarted_backend)
@@ -143,13 +146,13 @@ def test_stocking_reconciliation_recovers_from_partial_inventory_commit():
 
 def test_quantity_must_fit_inventory_capacity():
     with pytest.raises(ValueError, match="inventory capacity"):
-        run_happy_path(quantity=INVENTORY_CAPACITY + 1.0)
+        run_happy_path(quantity=INVENTORY_CAPACITY + 1.0, owner_id=REFERENCE_OWNER_ID)
 
 
 def test_illegal_receipt_stock_transition_is_a_no_op():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence)
-    context, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, owner_id=REFERENCE_OWNER_ID)
+    context, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     receipt = persistence.entity("receipt", ids.receipt_id)
 
     command = context.commands.create(
