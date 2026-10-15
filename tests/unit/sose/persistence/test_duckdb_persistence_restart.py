@@ -35,6 +35,7 @@ def test_duckdb_survives_close_reopen_and_backend_rebuild(tmp_path):
         reopened,
         build_runtime,
         backend,
+        owner_id=OWNER_ID,
         backend_factory=SimPyBackend,
     )
     rebuilt.backend.run_until(complete_at)
