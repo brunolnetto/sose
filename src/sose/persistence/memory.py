@@ -379,6 +379,11 @@ class MemoryUnitOfWork:
         self._working.simulation_positions[owner_id] = deepcopy(position)
         self._mark_dirty("simulation_positions", owner_id)
 
+    def get_scenario_state(self, *, owner_id: str) -> ScenarioRuntimeState | None:
+        if not isinstance(owner_id, str) or not owner_id.strip():
+            raise ValueError("owner_id must not be empty")
+        return deepcopy(self._working.scenario_states.get(owner_id))
+
     def set_scenario_state(self, state: ScenarioRuntimeState, *, owner_id: str) -> None:
         if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
