@@ -30,7 +30,7 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
             raise RuntimeError("worker killed")
         return original_publish(service, contract_name=contract_name, **kwargs)
 
-    def interrupt_execute(persistence, *, effect_id, fixtures, correlation_id):
+    def interrupt_execute(persistence, *, effect_id, fixtures, correlation_id, organization_id):
         effect = persistence.command(effect_id)
         if (
             crash_point == "logistics_after_ack"
@@ -39,7 +39,7 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
         ):
             raise RuntimeError("worker killed")
         return original_execute(
-            persistence, effect_id=effect_id, fixtures=fixtures, correlation_id=correlation_id,
+            persistence, effect_id=effect_id, fixtures=fixtures, correlation_id=correlation_id, organization_id=organization_id,
         )
 
     monkeypatch.setattr(customer, "_publish", interrupt_publish)
