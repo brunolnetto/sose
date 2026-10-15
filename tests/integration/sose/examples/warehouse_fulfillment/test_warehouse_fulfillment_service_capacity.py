@@ -21,11 +21,12 @@ def _runtime(*, picker_capacity: int = 1):
     persistence = MemoryPersistence()
     entities = seed_reference(
         persistence,
+        owner_id="warehouse-fulfillment-capacity-reference",
         picker_capacity=picker_capacity,
         packing_station_capacity=1,
         shipping_dock_capacity=1,
     )
-    _, engine = build_runtime(persistence)
+    _, engine = build_runtime(persistence, owner_id="warehouse-fulfillment-capacity-reference")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     assert allocate_order(persistence, engine, entities=entities)
