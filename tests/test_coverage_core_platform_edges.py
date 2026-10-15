@@ -244,7 +244,7 @@ def test_job_shop_noop_and_wrong_state_ready_action(monkeypatch):
     monkeypatch.setattr(
         module,
         "DurableStoreManager",
-        lambda persistence: SimpleNamespace(ensure_put=lambda *a, **k: None),
+        lambda persistence, *, owner_id: SimpleNamespace(ensure_put=lambda *a, **k: None),
     )
 
     module.reconcile(
@@ -371,7 +371,8 @@ class _DoctorPersistence:
     def sink_deliveries(self, *, job_id=None):
         return self.deliveries
 
-    def simulation_position(self):
+    def simulation_position(self, *, owner_id):
+        assert owner_id == "job-1"
         return self.position
 
 
@@ -381,7 +382,7 @@ def test_job_doctor_uninitialized_job_is_healthy(monkeypatch):
     monkeypatch.setattr(
         module,
         "collect_runtime_diagnostics",
-        lambda persistence: SimpleNamespace(issues=()),
+        lambda persistence, *, owner_id: SimpleNamespace(issues=()),
     )
     report = module.inspect_open_job_health(
         _doctor_config(),
@@ -401,7 +402,7 @@ def test_job_doctor_reports_state_delivery_and_position_failures(monkeypatch):
     monkeypatch.setattr(
         module,
         "collect_runtime_diagnostics",
-        lambda persistence: SimpleNamespace(
+        lambda persistence, *, owner_id: SimpleNamespace(
             issues=(SimpleNamespace(code="runtime.issue", message="runtime problem"),)
         ),
     )
@@ -458,7 +459,7 @@ def test_job_doctor_reports_config_tick_and_time_drift(monkeypatch):
     monkeypatch.setattr(
         module,
         "collect_runtime_diagnostics",
-        lambda persistence: SimpleNamespace(issues=()),
+        lambda persistence, *, owner_id: SimpleNamespace(issues=()),
     )
     state = _doctor_state(config_json='{"enabled": false}')
     position = SimpleNamespace(
