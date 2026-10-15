@@ -10,11 +10,13 @@ from sose.examples.mro.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "mro-reference-organization"
+
 
 def _active_work():
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence, quantity=1.0)
-    _, engine = build_runtime(persistence)
+    ids = seed_reference(persistence, quantity=1.0, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     seed_spare_parts(engine, backend, quantity=1.0)
@@ -27,8 +29,8 @@ def _active_work():
 
 def test_emergency_requires_active_work_and_owned_bay():
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence, quantity=1.0)
-    _, engine = build_runtime(persistence)
+    ids = seed_reference(persistence, quantity=1.0, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -74,7 +76,7 @@ def test_reconcile_committed_preemption_after_crash_before_interrupt_transition(
         for r in persistence.preemptive_resource_reservations()
     )
 
-    _, restarted_engine = build_runtime(persistence, now=backend.now)
+    _, restarted_engine = build_runtime(persistence, now=backend.now, owner_id=REFERENCE_OWNER_ID)
     restarted_backend = SimPyBackend(origin=backend.now)
     restarted_engine.rebuild_backend(restarted_backend)
     restarted_backend.run_until(backend.now)
@@ -104,8 +106,8 @@ def test_emergency_resume_requires_reacquired_bay():
 
 def test_stale_resume_on_non_interrupted_work_does_not_acquire_bay():
     persistence = MemoryPersistence()
-    ids = seed_reference(persistence, quantity=1.0)
-    _, engine = build_runtime(persistence)
+    ids = seed_reference(persistence, quantity=1.0, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -167,7 +169,7 @@ def test_recovery_selects_second_active_preemption_after_prior_cycle():
     assert results[-1].preempting_request_id == second_id
     assert persistence.entity("work_order", ids.work_order_id).state == "in_progress"
 
-    _, restarted_engine = build_runtime(persistence, now=backend.now)
+    _, restarted_engine = build_runtime(persistence, now=backend.now, owner_id=REFERENCE_OWNER_ID)
     restarted_backend = SimPyBackend(origin=backend.now)
     restarted_engine.rebuild_backend(restarted_backend)
     restarted_backend.run_until(backend.now)
