@@ -374,7 +374,7 @@ def test_engine_rejects_foreign_scheduled_callback_before_database_reads():
     )
     # A foreign callback must never reach even the first authoritative read,
     # irrespective of whether its Command/StateChart type matches a local one.
-    with pytest.raises(PermissionError, match="different owner"):
+    with pytest.raises(PermissionError, match="different or missing owner"):
         engine._dispatch_scheduled_in_uow(DurableScheduledItem(work, command), object())
 
 
@@ -529,7 +529,7 @@ def test_tick_refuses_stale_pretransaction_position(monkeypatch):
             interleaving["injected"] = True
             with original_transaction(owner_id=owner) as uow:
                 uow.set_simulation_position(other_worker, owner_id=owner)
-        return original_transaction(owner_epoch=owner_epoch, owner_id=owner_id)
+        return original_transaction(owner_id=owner_id)
 
     monkeypatch.setattr(store, "transaction", competing_transaction)
     with pytest.raises(RuntimeError, match="stale|changed|position"):
