@@ -22,9 +22,10 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_gate_congestion_holds_then_assigns_gate():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="airports-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="airports-scenarios-organization",
         scenarios=(gate_congestion_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
@@ -73,9 +74,10 @@ def test_gate_congestion_holds_then_assigns_gate():
 
 def test_weather_delays_due_slot_without_consuming_it():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
+    entities = seed_reference(persistence, owner_id="airports-scenarios-organization")
     context, engine = build_runtime(
         persistence,
+        owner_id="airports-scenarios-organization",
         scenarios=(weather_departure_scenario(),),
     )
     backend = SimPyBackend(origin=ORIGIN)
