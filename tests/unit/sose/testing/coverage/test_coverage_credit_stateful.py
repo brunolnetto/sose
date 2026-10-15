@@ -6,11 +6,13 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.credit_loans import simulation as credit
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "credit-reference-organization"
+
 
 def _prepare_overdue():
     persistence = MemoryPersistence()
-    entities = credit.seed_reference(persistence)
-    _, engine = credit.build_runtime(persistence)
+    entities = credit.seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = credit.build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=credit.ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -44,8 +46,8 @@ def _prepare_overdue():
 
 def _prepare_servicing():
     persistence = MemoryPersistence()
-    entities = credit.seed_reference(persistence)
-    _, engine = credit.build_runtime(persistence)
+    entities = credit.seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = credit.build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=credit.ORIGIN)
     engine.rebuild_backend(backend)
     assert credit.reconcile_underwriting(
