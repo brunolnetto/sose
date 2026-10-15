@@ -44,7 +44,7 @@ def test_sqlite_refresh_guards_and_wrapper_methods():
     with SQLitePersistence(":memory:") as persistence:
         assert persistence.domain_delivery("missing") is None
         assert persistence.domain_deliveries() == ()
-        assert persistence.committed_tick() == -1
+        assert persistence.committed_tick(owner_id="adapter-coverage-organization") == -1
 
 
 def test_sqlite_refresh_rejects_schema_and_codec_mismatch():
@@ -118,7 +118,7 @@ def test_jsonl_journal_guard_paths_and_wrappers(tmp_path):
     persistence._fresh = persistence._refresh_from_journal
     assert persistence.domain_delivery("missing") is None
     assert persistence.domain_deliveries() == ()
-    assert persistence.committed_tick() == -1
+    assert persistence.committed_tick(owner_id="adapter-coverage-organization") == -1
 
     with pytest.raises(RuntimeError, match="unknown JSONL journal operation"):
         JSONLJournalPersistence._apply_change(
@@ -182,7 +182,7 @@ def test_duckdb_context_wrappers_and_closed_uow_branch():
 
         assert persistence.domain_delivery("missing") is None
         assert persistence.domain_deliveries() == ()
-        assert persistence.committed_tick() == -1
+        assert persistence.committed_tick(owner_id="adapter-coverage-organization") == -1
 
 
 def test_duckdb_rejects_unsupported_schema_version(tmp_path):
