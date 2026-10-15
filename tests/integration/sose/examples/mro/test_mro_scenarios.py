@@ -81,7 +81,7 @@ def test_finite_mro_scenario_expires_without_retriggering():
         engine.advance_tick()
 
     assert context.scenarios.attribute("mro.spare_parts.available", True) is True
-    state = persistence.scenario_state()
+    state = persistence.scenario_state(owner_id=REFERENCE_OWNER_ID)
     assert state is not None
     assert sum(
         decision.scenario_name == "mro-spare-parts-disruption"
