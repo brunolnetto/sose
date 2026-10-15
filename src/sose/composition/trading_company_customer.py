@@ -39,6 +39,31 @@ class DurableResourceWait(RuntimeError):
         super().__init__(f"physical resource still pending: {resource_name} / {request_id}")
 
 
+
+def _raise_delivery_dispatch_failure_or_wait(
+    persistence: MemoryPersistence, *, shipment_id: str, ordinal: int,
+) -> None:
+    """Distinguish a genuine finite courier wait from an unexplained false.
+
+    The exact request must still be an ungranted, durable delivery-courier
+    demand. In particular, a granted reservation or an unrelated business
+    failure must never be reclassified as transient contention.
+    """
+    attempt_id = logistics.delivery_attempt_id(ordinal, shipment_id=shipment_id)
+    request_id = f"delivery-courier:{attempt_id}"
+    pending = any(
+        demand.request_id == request_id and demand.resource_name == "delivery_courier"
+        for demand in persistence.resource_demands()
+    )
+    granted = any(
+        reservation.request_id == request_id
+        for reservation in persistence.resource_reservations()
+    )
+    if pending and not granted:
+        raise DurableResourceWait("delivery_courier", request_id)
+    raise RuntimeError("logistics delivery dispatch failed")
+
+
 @dataclass(frozen=True, slots=True)
 class CustomerDemandPathResult:
     persistence: MemoryPersistence
@@ -733,7 +758,9 @@ def _execute_intent(
                     persistence, engine, backend, entities=fixtures.logistics,
                     ordinal=1,
                 ):
-                    raise RuntimeError("logistics delivery dispatch failed")
+                    _raise_delivery_dispatch_failure_or_wait(
+                        persistence, shipment_id=shipment_id, ordinal=1,
+                    )
 
             if current_state() == "out_for_delivery":
                 attempt = persistence.entity(
