@@ -434,8 +434,8 @@ def test_cancel_returns_false_when_work_changes_mid_transaction():
 
     class _MismatchPersistence(MemoryPersistence):
         @contextmanager
-        def transaction(self):
-            with super().transaction() as uow:
+        def transaction(self, **kwargs):
+            with super().transaction(**kwargs) as uow:
                 class _Proxy:
                     def __getattr__(self, name):
                         return getattr(uow, name)
