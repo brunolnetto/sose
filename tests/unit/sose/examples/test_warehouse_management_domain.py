@@ -16,16 +16,18 @@ from sose.examples.warehouse_management.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "warehouse-management-reference-organization"
+
 
 def _runtime(**seed_kwargs):
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, now=ORIGIN, **seed_kwargs)
-    _, engine = build_runtime(persistence, now=ORIGIN)
+    entities = seed_reference(persistence, now=ORIGIN, **seed_kwargs, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, now=ORIGIN, owner_id=REFERENCE_OWNER_ID)
     return persistence, engine, entities
 
 
 def _fresh_engine(persistence, *, now=ORIGIN):
-    _, engine = build_runtime(persistence, now=now)
+    _, engine = build_runtime(persistence, now=now, owner_id=REFERENCE_OWNER_ID)
     return engine
 
 
