@@ -23,11 +23,13 @@ from sose.examples.credit_loans.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "credit-reference-organization"
+
 
 def _prepare_overdue():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     assert reconcile_underwriting(
@@ -195,8 +197,8 @@ def test_posted_payment_before_restructure_remains_reconcilable_without_double_o
 
 def test_curing_one_delinquency_keeps_loan_delinquent_while_another_is_active():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, principal=600.0, installment_count=3)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, principal=600.0, installment_count=3, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     assert reconcile_underwriting(
