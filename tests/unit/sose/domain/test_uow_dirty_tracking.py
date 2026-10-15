@@ -23,12 +23,12 @@ def test_unit_of_work_records_only_touched_semantic_identities():
         version=1,
     )
     uow.save_entity(entity)
-    uow.set_committed_tick(7)
+    uow.set_committed_tick(7, owner_id="dirty-tracking-reference")
 
     assert uow.dirty_records == frozenset(
         {
             ("entities", ("demo", "one")),
-            ("committed_tick", "__scalar__"),
+            ("committed_ticks", "dirty-tracking-reference"),
         }
     )
 
@@ -39,7 +39,7 @@ def test_unit_of_work_records_only_touched_semantic_identities():
     )
     assert {(change.collection, change.operation) for change in changes} == {
         ("entities", "upsert"),
-        ("committed_tick", "upsert"),
+        ("committed_ticks", "upsert"),
     }
 
 
