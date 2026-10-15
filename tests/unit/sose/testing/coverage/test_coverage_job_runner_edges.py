@@ -718,7 +718,7 @@ def test_run_tick_requires_position_after_reconciliation():
     persistence = MemoryPersistence()
 
     def clear_position(persistence, engine, backend, config, bootstrap):
-        persistence._state.simulation_position = None
+        persistence._state.simulation_positions.pop("job", None)
 
     job = _job(
         persistence,
