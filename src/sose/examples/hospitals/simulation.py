@@ -21,10 +21,10 @@ from .procedures import (
 from .runtime import HospitalEntities, ORIGIN, build_runtime, seed_reference
 
 
-def run_happy_path() -> tuple[MemoryPersistence, HospitalEntities]:
+def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, HospitalEntities]:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=owner_id)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -53,10 +53,10 @@ def run_happy_path() -> tuple[MemoryPersistence, HospitalEntities]:
     return persistence, entities
 
 
-def run_icu_path() -> tuple[MemoryPersistence, HospitalEntities]:
+def run_icu_path(*, owner_id: str) -> tuple[MemoryPersistence, HospitalEntities]:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, acuity=1)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=owner_id, acuity=1)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -99,10 +99,10 @@ def run_icu_path() -> tuple[MemoryPersistence, HospitalEntities]:
     return persistence, entities
 
 
-def run_preemption_path() -> tuple[MemoryPersistence, HospitalEntities]:
+def run_preemption_path(*, owner_id: str) -> tuple[MemoryPersistence, HospitalEntities]:
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=owner_id)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
