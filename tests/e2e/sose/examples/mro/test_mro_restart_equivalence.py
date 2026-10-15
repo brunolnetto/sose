@@ -17,12 +17,14 @@ from sose.examples.mro.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "mro-reference-organization"
+
 
 def _rebuild(store: MemoryPersistence):
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=REFERENCE_OWNER_ID)
     now = position.logical_time if position is not None else ORIGIN
     tick = position.logical_tick if position is not None else 0
-    _, engine = build_runtime(store, now=now, tick=tick)
+    _, engine = build_runtime(store, owner_id=REFERENCE_OWNER_ID, now=now, tick=tick)
     backend = SimPyBackend(origin=now)
     engine.rebuild_backend(backend)
     backend.run_until(now)
@@ -31,8 +33,8 @@ def _rebuild(store: MemoryPersistence):
 
 def _prepare_with_parts(quantity=1.0):
     store = MemoryPersistence()
-    ids = seed_reference(store, quantity=quantity)
-    _, engine = build_runtime(store)
+    ids = seed_reference(store, owner_id=REFERENCE_OWNER_ID, quantity=quantity)
+    _, engine = build_runtime(store, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN.replace(hour=9))
@@ -42,8 +44,8 @@ def _prepare_with_parts(quantity=1.0):
 
 def _prepare_without_parts(quantity=1.0):
     store = MemoryPersistence()
-    ids = seed_reference(store, quantity=quantity)
-    _, engine = build_runtime(store)
+    ids = seed_reference(store, owner_id=REFERENCE_OWNER_ID, quantity=quantity)
+    _, engine = build_runtime(store, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     backend.run_until(ORIGIN.replace(hour=9))
@@ -68,7 +70,7 @@ def _snapshot(store, ids):
         "part_demand": store.entity("part_demand", ids.part_demand_id),
         "events": store.events(),
         "scheduled_work": store.scheduled_work(),
-        "position": store.simulation_position(),
+        "position": store.simulation_position(owner_id=REFERENCE_OWNER_ID),
         "resource_definitions": store.resource_definitions(),
         "resource_demands": store.resource_demands(),
         "resource_reservations": store.resource_reservations(),

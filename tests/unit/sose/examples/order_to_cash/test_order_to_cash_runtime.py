@@ -19,12 +19,14 @@ from sose.examples.order_to_cash.simulation import (
     ship_invoice_and_ensure_receivable,
 )
 from sose.persistence.memory import MemoryPersistence
+
+REFERENCE_OWNER_ID = "order-to-cash-reference-organization"
 from sose.testing.restart import restart_reference_runtime
 
 
 def _prepare_invoiced(persistence):
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -86,8 +88,8 @@ def test_happy_path_collects_before_overdue_and_cancels_deadline():
 
 def test_partial_fulfillment_is_explicit_before_completion():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -181,8 +183,8 @@ def test_overdue_creates_collection_case_and_followup_escalates():
 
 def test_invoice_to_receivable_creation_is_idempotent_after_crash_boundary():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -268,6 +270,7 @@ def test_due_schedule_is_restart_equivalent():
         build_runtime,
         r_backend_before,
         backend_factory=SimPyBackend,
+    owner_id=REFERENCE_OWNER_ID,
     )
     rebuilt_engine = rebuilt.engine
     rebuilt_backend = rebuilt.backend
@@ -284,8 +287,8 @@ def test_due_schedule_is_restart_equivalent():
 
 def test_illegal_cross_entity_transitions_are_rejected():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -329,7 +332,7 @@ def test_illegal_cross_entity_transitions_are_rejected():
 def test_o2c_seed_and_order_guard_edges():
     persistence = MemoryPersistence()
     with pytest.raises(ValueError, match="amount must be positive"):
-        o2c_simulation.seed_reference(persistence, amount=0.0)
+        o2c_simulation.seed_reference(persistence, owner_id=REFERENCE_OWNER_ID, amount=0.0)
     with pytest.raises(RuntimeError, match="sales order was not persisted"):
         o2c_simulation._order(persistence, "missing")
 

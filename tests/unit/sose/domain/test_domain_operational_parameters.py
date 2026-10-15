@@ -8,7 +8,7 @@ def _seed(name: str, parameters: dict[str, object]):
     definition = builtin_catalog().get(name)
     config = definition.parse_config(parameters)
     persistence = MemoryPersistence()
-    seeded = definition.seed(persistence, config)
+    seeded = definition.seed(persistence, config, f"{name}-reference-organization")
     return persistence, config, seeded
 
 
