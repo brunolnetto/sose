@@ -11,11 +11,13 @@ from sose.examples.manufacturing.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
+REFERENCE_OWNER_ID = "manufacturing-reference-organization"
+
 
 def _producing_runtime():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0)
-    _, engine = build_runtime(persistence)
+    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=REFERENCE_OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
     seed_material(engine, backend, quantity=5.0)
