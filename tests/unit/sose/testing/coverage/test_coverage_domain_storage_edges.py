@@ -261,4 +261,4 @@ def test_domain_persistence_entities_rejects_equal_version_conflict():
 
 def test_domain_persistence_forwards_engine_attributes():
     engine, _, persistence = _domain_persistence()
-    assert persistence.committed_tick() == engine.committed_tick()
+    assert persistence.committed_tick(owner_id="domain-storage-coverage-organization") == engine.committed_tick(owner_id="domain-storage-coverage-organization")
