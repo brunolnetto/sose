@@ -28,10 +28,11 @@ from .scheduling import schedule_planned_start
 def _prepare_ready_with_material(
     persistence: MemoryPersistence,
     *,
+    owner_id: str,
     quantity: float,
 ):
-    entities = seed_reference(persistence, quantity=quantity)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=owner_id, quantity=quantity)
+    _, engine = build_runtime(persistence, owner_id=owner_id)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -65,11 +66,13 @@ def _prepare_ready_with_material(
 
 def run_happy_path(
     *,
+    owner_id: str,
     quantity: float = 10.0,
 ) -> tuple[MemoryPersistence, ConstructionEntities]:
     persistence = MemoryPersistence()
     entities, engine, backend = _prepare_ready_with_material(
         persistence,
+        owner_id=owner_id,
         quantity=quantity,
     )
 
@@ -121,11 +124,13 @@ def run_happy_path(
 
 def run_rework_path(
     *,
+    owner_id: str,
     quantity: float = 10.0,
 ) -> tuple[MemoryPersistence, ConstructionEntities]:
     persistence = MemoryPersistence()
     entities, engine, backend = _prepare_ready_with_material(
         persistence,
+        owner_id=owner_id,
         quantity=quantity,
     )
 
