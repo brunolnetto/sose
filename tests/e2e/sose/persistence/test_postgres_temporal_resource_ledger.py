@@ -234,6 +234,7 @@ def test_pg_domain_event_and_allocation_share_transactional_commit():
                     id="work-1", entity_type="work_order", state="processing",
                 ))
                 uow.append_event(DomainEvent(
+        owner_id="temporal-ledger-test-organization",
                     event_id="work-1:started", name="work.started",
                     entity_type="work_order", entity_id="work-1", occurred_at=T0,
                     causation_id="reserve:rolled-back",
@@ -248,6 +249,7 @@ def test_pg_domain_event_and_allocation_share_transactional_commit():
                 id="work-1", entity_type="work_order", state="processing",
             ))
             uow.append_event(DomainEvent(
+        owner_id="temporal-ledger-test-organization",
                 event_id="work-1:started", name="work.started",
                 entity_type="work_order", entity_id="work-1", occurred_at=T0,
                 causation_id="reserve:committed",
