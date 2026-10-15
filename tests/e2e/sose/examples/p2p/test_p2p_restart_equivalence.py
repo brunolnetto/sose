@@ -136,8 +136,8 @@ def _snapshot(store, ids):
         "material_demand": store.entity("material_demand", ids.material_demand_id),
         "events": store.events(),
         "scheduled_work": store.scheduled_work(),
-        "position": store.simulation_position(),
-        "scenario": store.scenario_state(),
+        "position": store.simulation_position(owner_id=REFERENCE_OWNER_ID),
+        "scenario": store.scenario_state(owner_id=REFERENCE_OWNER_ID),
         "resource_definitions": store.resource_definitions(),
         "resource_demands": store.resource_demands(),
         "resource_reservations": store.resource_reservations(),
@@ -166,7 +166,7 @@ def _run_with_restarts():
     store = MemoryPersistence()
     ids, scenario, _, _ = _prepare(store)
 
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=REFERENCE_OWNER_ID)
     assert position is not None
     context2, _, backend2 = _rebuild(
         store,
@@ -176,7 +176,7 @@ def _run_with_restarts():
     assert context2.scenarios.attribute("p2p.restart.window", False) is True
 
     backend2.run_until(ORIGIN + timedelta(hours=4))
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=REFERENCE_OWNER_ID)
     assert position is not None
     context3, engine3, backend3 = _rebuild(
         store,
@@ -187,7 +187,7 @@ def _run_with_restarts():
 
     _establish_blocked_boundary(store, ids, engine3, backend3)
 
-    position = store.simulation_position()
+    position = store.simulation_position(owner_id=REFERENCE_OWNER_ID)
     assert position is not None
     context4, engine4, backend4 = _rebuild(
         store,
@@ -244,7 +244,7 @@ def test_p2p_multi_restart_equivalence_is_an_architectural_gate():
         state.name: state.level for state in restarted_store.container_states()
     } == {"inventory": 0.0}
 
-    scenario = restarted_store.scenario_state()
+    scenario = restarted_store.scenario_state(owner_id=REFERENCE_OWNER_ID)
     assert scenario is not None
     assert any(
         activation.scenario_name == "p2p-restart-window"
