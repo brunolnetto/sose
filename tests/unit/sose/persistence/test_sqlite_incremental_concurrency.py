@@ -114,11 +114,11 @@ def test_second_writer_gets_explicit_lock_failure_while_first_holds_write_lock(
 def test_conflicting_engine_commands_re_evaluate_latest_committed_state(tmp_path):
     path = tmp_path / "semantic-conflict.sqlite3"
     first = SQLiteIncrementalPersistence(path)
-    job = seed_job(first, job_key="concurrent")
+    job = seed_job(first, owner_id="concurrent-job", job_key="concurrent")
     second = SQLiteIncrementalPersistence(path)
 
-    context_a, engine_a = build_runtime(first)
-    context_b, engine_b = build_runtime(second)
+    context_a, engine_a = build_runtime(first, owner_id="concurrent-job")
+    context_b, engine_b = build_runtime(second, owner_id="concurrent-job")
 
     command_a = context_a.commands.create(
         "start",
