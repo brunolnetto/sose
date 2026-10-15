@@ -11,8 +11,8 @@ from sose.testing.restart import restart_reference_runtime
 
 
 def _prepare_pending_start(persistence):
-    entities = seed_reference(persistence, quantity=10.0)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="construction-scheduling-organization", quantity=10.0)
+    _, engine = build_runtime(persistence, owner_id="construction-scheduling-organization")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
