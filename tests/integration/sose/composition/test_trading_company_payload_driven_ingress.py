@@ -162,3 +162,52 @@ def test_payload_ingress_needs_no_producer_private_sales_order_record():
         customer._materialize_fulfillment_from_request(
             persistence, intent=wrong_source, expected_sales_order_id=source_id, organization_id=REFERENCE_OWNER_ID,
         )
+
+
+@pytest.mark.parametrize("request_kind", ["no-demand", "wrong-resource", "already-granted"])
+def test_delivery_dispatch_without_pending_courier_demand_is_terminal(request_kind):
+    """A failed business transition cannot be converted to a wait by a guessed ID."""
+    from sose.core.runtime import ResourceDemand, ResourceReservation
+    from sose.examples.logistics import simulation as logistics
+
+    persistence = MemoryPersistence()
+    shipment_id = "courier-negative-shipment"
+    request_id = f"delivery-courier:{logistics.delivery_attempt_id(1, shipment_id=shipment_id)}"
+    with persistence.transaction() as uow:
+        if request_kind != "no-demand":
+            uow.save_resource_demand(ResourceDemand(
+                request_id, "other_resource" if request_kind == "wrong-resource" else "delivery_courier",
+                100, o2c.ORIGIN, 1,
+            ))
+        if request_kind == "already-granted":
+            uow.save_resource_reservation(ResourceReservation(
+                "courier-granted", request_id, "delivery_courier", o2c.ORIGIN, sequence=1,
+            ))
+    with pytest.raises(RuntimeError, match="logistics delivery dispatch failed"):
+        customer._raise_delivery_dispatch_failure_or_wait(
+            persistence, shipment_id=shipment_id, ordinal=1,
+        )
+
+
+def test_courier_dispatch_failure_has_authoritative_pending_demand():
+    """The observed PC6 overlap leaves a durable demand, not a terminal failure."""
+    from sose.core.runtime import ResourceDemand
+    from sose.examples.logistics import simulation as logistics
+
+    persistence = MemoryPersistence()
+    shipment_id = "courier-waiting-shipment"
+    request_id = f"delivery-courier:{logistics.delivery_attempt_id(1, shipment_id=shipment_id)}"
+    demand = ResourceDemand(request_id, "delivery_courier", 100, o2c.ORIGIN, 1)
+    with persistence.transaction() as uow:
+        uow.save_resource_demand(demand)
+
+    for _ in range(2):
+        with pytest.raises(customer.DurableResourceWait) as pending:
+            customer._raise_delivery_dispatch_failure_or_wait(
+                persistence, shipment_id=shipment_id, ordinal=1,
+            )
+        assert (pending.value.resource_name, pending.value.request_id) == (
+            "delivery_courier", request_id,
+        )
+    assert persistence.resource_demands() == (demand,)
+    assert persistence.resource_reservations() == ()
