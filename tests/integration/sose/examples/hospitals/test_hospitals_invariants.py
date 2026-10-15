@@ -11,8 +11,8 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_procedure_cannot_start_before_admission_treatment():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="hospitals-invariants-organization")
+    _, engine = build_runtime(persistence, owner_id="hospitals-invariants-organization")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -30,8 +30,8 @@ def test_procedure_cannot_start_before_admission_treatment():
 
 def test_business_interrupt_requires_durable_preemption_evidence():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="hospitals-invariants-organization")
+    _, engine = build_runtime(persistence, owner_id="hospitals-invariants-organization")
 
     # Force only the business state for this invariant test.
     admission = persistence.entity("hospital_admission", entities.admission_id)
