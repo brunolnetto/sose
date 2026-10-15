@@ -521,4 +521,4 @@ def test_run_happy_path_raises_when_activation_cannot_be_reconciled(monkeypatch)
     monkeypatch.setattr(telecom_simulation, "reconcile_activation", lambda *args, **kwargs: False)
 
     with pytest.raises(RuntimeError, match="telecom activation failed"):
-        telecom_simulation.run_happy_path()
+        telecom_simulation.run_happy_path(owner_id="telecom-integration-reference")
