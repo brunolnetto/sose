@@ -9,7 +9,7 @@ def test_incremental_sqlite_detects_external_commit_by_revision(tmp_path):
     first = SQLiteIncrementalPersistence(path)
     second = SQLiteIncrementalPersistence(path)
 
-    job = seed_job(first, job_key="shared")
+    job = seed_job(first, owner_id="shared-job", job_key="shared")
 
     restored = second.entity("tutorial_job", job.id)
     assert restored == job
@@ -27,7 +27,7 @@ def test_incremental_sqlite_revision_advances_only_on_change(tmp_path):
         pass
     assert persistence._database_revision() == initial
 
-    seed_job(persistence, job_key="changed")
+    seed_job(persistence, owner_id="revision-job", job_key="changed")
     assert persistence._database_revision() > initial
     persistence.close()
 
@@ -72,7 +72,7 @@ def test_incremental_sqlite_migrates_v1_meta_to_revision_schema(tmp_path):
 def test_incremental_sqlite_reuses_cached_state_when_revision_is_unchanged(tmp_path):
     path = tmp_path / "cache.sqlite3"
     persistence = SQLiteIncrementalPersistence(path)
-    job = seed_job(persistence, job_key="cached")
+    job = seed_job(persistence, owner_id="cached-job", job_key="cached")
 
     state_identity = id(persistence._state)
     assert persistence.entity("tutorial_job", job.id) == job
