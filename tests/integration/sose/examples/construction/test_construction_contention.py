@@ -10,8 +10,8 @@ from sose.persistence.memory import MemoryPersistence
 
 def test_execution_waits_for_complete_crew_equipment_bundle():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence, quantity=10.0)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id="construction-contention-organization", quantity=10.0)
+    _, engine = build_runtime(persistence, owner_id="construction-contention-organization")
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
