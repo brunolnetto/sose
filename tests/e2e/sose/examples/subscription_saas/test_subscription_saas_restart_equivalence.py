@@ -13,10 +13,13 @@ from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
 
+OWNER_ID = "subscription-saas-reference"
+
+
 def test_applied_change_reconciles_after_restart_without_duplicate_entitlement():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -36,6 +39,7 @@ def test_applied_change_reconciles_after_restart_without_duplicate_entitlement()
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
     )
     first = reconcile_plan_change(
         persistence,
@@ -59,8 +63,8 @@ def test_applied_change_reconciles_after_restart_without_duplicate_entitlement()
 
 def test_period_end_cancellation_boundaries_survive_restart():
     persistence = MemoryPersistence()
-    entities = seed_reference(persistence)
-    _, engine = build_runtime(persistence)
+    entities = seed_reference(persistence, owner_id=OWNER_ID)
+    _, engine = build_runtime(persistence, owner_id=OWNER_ID)
     backend = SimPyBackend(origin=ORIGIN)
     engine.rebuild_backend(backend)
 
@@ -74,6 +78,7 @@ def test_period_end_cancellation_boundaries_survive_restart():
         build_runtime,
         backend,
         backend_factory=SimPyBackend,
+        owner_id=OWNER_ID,
     )
     rebuilt.backend.run_until(term_end)
 
