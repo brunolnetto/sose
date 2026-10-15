@@ -95,7 +95,11 @@ def _intent_handler(
     intent_name: str,
     entity_type: str,
     entity_id: str,
+    owner_id: str,
 ):
+    if not isinstance(owner_id, str) or not owner_id.strip():
+        raise ValueError("composition intent requires operational owner_id")
+
     def handle(message: BoundaryMessage, uow) -> str:
         command_id = deterministic_id(
             "composition-domain-intent",
@@ -118,6 +122,7 @@ def _intent_handler(
             },
             causation_id=message.message_id,
             correlation_id=message.correlation_id,
+            owner_id=owner_id,
         )
         existing = uow.get_command(command_id)
         if existing is not None and existing != command:
@@ -129,7 +134,7 @@ def _intent_handler(
     return handle
 
 
-def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
+def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumerRegistry:
     registry = BoundaryConsumerRegistry()
     registry.register(
         destination_domain="warehouse_fulfillment",
@@ -139,6 +144,7 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
             intent_name="composition.request_fulfillment_inventory",
             entity_type="warehouse_fulfillment_order",
             entity_id=fixtures.fulfillment.order_id,
+            owner_id=owner_id,
         ),
     )
     registry.register(
@@ -149,6 +155,7 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
             intent_name="composition.request_fulfillment_inventory",
             entity_type="warehouse_fulfillment_order",
             entity_id=fixtures.fulfillment.order_id,
+            owner_id=owner_id,
         ),
     )
     registry.register(
@@ -159,6 +166,7 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
             intent_name="composition.reserve_fulfillment_inventory",
             entity_type="warehouse_management_stock",
             entity_id=fixtures.warehouse.origin_stock_id,
+            owner_id=owner_id,
         ),
     )
     registry.register(
@@ -169,6 +177,7 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
             intent_name="composition.accept_inventory_reservation",
             entity_type="warehouse_fulfillment_order",
             entity_id=fixtures.fulfillment.order_id,
+            owner_id=owner_id,
         ),
     )
     registry.register(
@@ -179,6 +188,7 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
             intent_name="composition.consume_fulfillment_inventory",
             entity_type="warehouse_management_stock",
             entity_id=fixtures.warehouse.origin_stock_id,
+            owner_id=owner_id,
         ),
     )
     registry.register(
@@ -189,6 +199,7 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
             intent_name="composition.deliver_shipment",
             entity_type="shipment",
             entity_id=fixtures.logistics.shipment_id,
+            owner_id=owner_id,
         ),
     )
     registry.register(
@@ -199,6 +210,7 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
             intent_name="composition.complete_external_fulfillment",
             entity_type="sales_order",
             entity_id=fixtures.o2c.order_id,
+            owner_id=owner_id,
         ),
     )
     registry.register(
@@ -209,6 +221,7 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
             intent_name="composition.settle_customer_payment",
             entity_type="card_payment",
             entity_id=fixtures.payments.payment_id,
+            owner_id=owner_id,
         ),
     )
     registry.register(
@@ -219,6 +232,7 @@ def _registry(fixtures: _CustomerFixtures) -> BoundaryConsumerRegistry:
             intent_name="composition.post_customer_journal",
             entity_type="journal_entry",
             entity_id=fixtures.r2r.journal_id,
+            owner_id=owner_id,
         ),
     )
     return registry
@@ -1649,7 +1663,7 @@ def run_customer_demand_path(
     ))
 
     service = BoundaryService(persistence)
-    registry = _registry(fixtures)
+    registry = _registry(fixtures, owner_id=organization_id)
     messages: list[BoundaryMessage] = []
     effects: list[str] = []
 
