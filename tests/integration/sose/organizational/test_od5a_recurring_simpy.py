@@ -139,7 +139,7 @@ def test_simpy_dispatched_recurring_physical_trace_matches_authoritative_reducer
     assert actions[-1] == "complete"
     assert _snapshot(recurring, "org:A") == _snapshot(reference, "org:A")
     with SQLitePersistence(recurring) as store:
-        assert store.simulation_position() is None  # Never invent shared global clock.
+        assert store.simulation_position(owner_id="org:A") is None  # No fabricated runtime clock.
         with store.transaction() as uow:
             assert not any(
                 uow.get_boundary_message(e.event_id)
@@ -340,7 +340,8 @@ def test_two_organizations_advance_local_clocks_and_fences_in_one_store(tmp_path
         assert {x.entity_id for x in store.events() if x.name.startswith("od5a.")} == {
             "org:A", "org:B",
         }
-        assert store.simulation_position() is None
+        assert store.simulation_position(owner_id="org:A") is None
+        assert store.simulation_position(owner_id="org:B") is None
         assert not store.resource_reservations()
 
 
