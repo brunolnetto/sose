@@ -127,6 +127,7 @@ def test_diagnostics_reports_failed_sink_delivery():
 
     persistence = MemoryPersistence()
     event = DomainEvent(
+        owner_id="runtime-diagnostics-test-organization",
         event_id="sink-event",
         name="changed",
         entity_type="demo",
