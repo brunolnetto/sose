@@ -43,7 +43,7 @@ def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
             raise RuntimeError("simulated process death")
         return original_publish(service, contract_name=contract_name, **kwargs)
 
-    def crashing_execute(persistence, *, effect_id, fixtures, correlation_id):
+    def crashing_execute(persistence, *, effect_id, fixtures, correlation_id, organization_id):
         intent = persistence.command(effect_id)
         if (
             crash_point == "ack_before_business_effect"
@@ -53,7 +53,7 @@ def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
             raise RuntimeError("simulated process death")
         return original_execute(
             persistence, effect_id=effect_id, fixtures=fixtures,
-            correlation_id=correlation_id,
+            correlation_id=correlation_id, organization_id=organization_id,
         )
 
     monkeypatch.setattr(customer, "_publish", crashing_publish)
