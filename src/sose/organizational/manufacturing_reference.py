@@ -217,9 +217,12 @@ class ManufacturingReferenceDomain:
             )
 
         persistence = MemoryPersistence()
-        entities = seed_happy_path(persistence, quantity=quantity)
+        entities = seed_happy_path(
+            persistence, owner_id="manufacturing-reference-organization", quantity=quantity,
+        )
         context, engine = build_runtime(
             persistence,
+            owner_id="manufacturing-reference-organization",
             scenarios=scenarios,
             random_seed=scoped_seed(
                 request.root_seed,
