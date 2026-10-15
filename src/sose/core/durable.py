@@ -187,7 +187,7 @@ class DurableScheduler:
             return tuple(item for item in items if item.work.owner_id == self._owner_id)
 
         # PostgreSQL and non-nested adapters read the pair in a single UoW.
-        with self._persistence.transaction() as uow:
+        with self._persistence.transaction(owner_id=self._owner_id) as uow:
             items: list[DurableScheduledItem] = []
             for work in uow.scheduled_work():
                 if work.owner_id != self._owner_id:
@@ -255,13 +255,41 @@ class RuntimeRebuilder:
             "scheduled-work",
         )
 
-    def _restore_context_from_position(self, position) -> None:
+    def _restore_context_from_position(self, position, scenario_state) -> None:
         if self._context is None:
             return
         if position is not None:
             self._context.clock.now = position.logical_time
             self._context.clock.tick = position.logical_tick
-        self._context.scenarios.restore_state(self._persistence.scenario_state(owner_id=self._owner_id))
+        self._context.scenarios.restore_state(scenario_state)
+
+    def _recovery_snapshot(self):
+        """Read one owner's clock, scenario and pending Commands in one fence."""
+        connection = getattr(self._persistence, "_connection", None)
+        if isinstance(connection, sqlite3.Connection) and connection.in_transaction:
+            # SQLite's caller-held transaction is already the active snapshot;
+            # beginning another transaction on that connection is invalid.
+            position = self._persistence.simulation_position(owner_id=self._owner_id)
+            scenario_state = self._persistence.scenario_state(owner_id=self._owner_id)
+            items = DurableScheduler(self._persistence, owner_id=self._owner_id).pending()
+            return position, scenario_state, items
+
+        with self._persistence.transaction(owner_id=self._owner_id) as uow:
+            position = uow.get_simulation_position(owner_id=self._owner_id)
+            scenario_state = uow.get_scenario_state(owner_id=self._owner_id)
+            items = []
+            for work in uow.scheduled_work():
+                if work.owner_id != self._owner_id:
+                    continue
+                command = uow.get_command(work.command_id)
+                if command is None:
+                    raise RuntimeError(
+                        f"scheduled work references missing command: {work.work_id}/{work.command_id}"
+                    )
+                if command.owner_id != self._owner_id:
+                    raise PermissionError("scheduled command belongs to a different owner")
+                items.append(DurableScheduledItem(work=work, command=command))
+            return position, scenario_state, tuple(items)
 
     def _validate_scheduled_items(
         self,
@@ -296,14 +324,13 @@ class RuntimeRebuilder:
         *,
         on_due: Callable[[DurableScheduledItem], None],
     ) -> int:
-        position = self._persistence.simulation_position(owner_id=self._owner_id)
+        position, scenario_state, items = self._recovery_snapshot()
         if position is not None and backend.now != position.logical_time:
             raise RuntimeError(
                 "backend logical time does not match persisted recovery boundary"
             )
 
         boundary = position.logical_time if position is not None else backend.now
-        items = DurableScheduler(self._persistence, owner_id=self._owner_id).pending()
         if self._scheduled_work_filter is not None:
             # Validate only work this domain is authorized to dispatch.
             # Foreign commands are authoritative persisted work: neither
@@ -318,7 +345,7 @@ class RuntimeRebuilder:
             participant.validate()
 
         # Reconstruct in one explicit and stable order.
-        self._restore_context_from_position(position)
+        self._restore_context_from_position(position, scenario_state)
 
         for participant in self._participants:
             participant.rebuild(backend)
