@@ -36,7 +36,7 @@ def test_supplier_delay_is_external_context_and_survives_restart():
 
     assert persistence.entity("purchase_order", ids.purchase_order_id).state == "delayed"
 
-    saved = persistence.scenario_state()
+    saved = persistence.scenario_state(owner_id=REFERENCE_OWNER_ID)
     assert saved is not None
     assert any(
         activation.scenario_name == "p2p-supplier-delay"
@@ -82,7 +82,7 @@ def test_demand_spike_and_receiving_congestion_are_policy_context_not_state_muta
 
     engine.context.scenarios.on_tick()
     with persistence.transaction() as uow:
-        uow.set_scenario_state(context.scenarios.snapshot_state())
+        uow.set_scenario_state(context.scenarios.snapshot_state(), owner_id=REFERENCE_OWNER_ID)
 
     assert context.scenarios.attribute("p2p.demand.multiplier", 1.0) == 2.0
     assert context.scenarios.attribute("p2p.receiving.capacity_factor", 1.0) == 0.5
