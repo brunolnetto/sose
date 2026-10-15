@@ -279,6 +279,7 @@ def _domain_registration_worker(dsn, namespace, domain, started, finished, resul
                 runner = TradingCustomerRecoveryRunner(
                     persistence=store, owner_id="worker:composition",
                     job_id="org:race", correlation_id="org:race",
+                    organization_owners={"org:race": "organization:race"},
                     scoped_writer=True,
                 )
                 # Isolate its real registration/fencing transaction from the
@@ -356,6 +357,7 @@ def _competing_domain_registrar(dsn, namespace, domain, barrier, results):
                 runner = TradingCustomerRecoveryRunner(
                     persistence=store, owner_id="worker:composition",
                     job_id="org:race", correlation_id="org:race",
+                    organization_owners={"org:race": "organization:race"},
                     scoped_writer=True,
                 )
                 # Isolate its real registration/fencing transaction from the
@@ -444,6 +446,7 @@ def test_composition_recovery_rejects_foreign_job_with_matching_config():
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker:composition",
             job_id="org:race", correlation_id="org:race",
+            organization_owners={"org:race": "organization:race"},
             scoped_writer=True,
         )
         writer_epoch_before = store.writer_epoch()
@@ -480,6 +483,7 @@ def test_foreign_job_never_consumes_writer_epoch_before_validation(scoped):
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="intruder", job_id="foreign-job",
             correlation_id="tenant:foreign" if scoped else None,
+            organization_owners={"tenant:foreign": "organization:foreign"} if scoped else None,
             scoped_writer=scoped,
         )
         with pytest.raises(ValueError, match="already belongs to another domain"):
@@ -507,6 +511,7 @@ def _die_after_postgres_atomic_recovery_registration(dsn, namespace, scoped):
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker:dead", job_id="org:crash",
             correlation_id="org:crash" if scoped else None,
+            organization_owners={"org:crash": "organization:crash"} if scoped else None,
             scoped_writer=scoped,
         )
         runner.run_trigger(trigger_id="stable-trigger", now=NOW)
@@ -541,6 +546,7 @@ def test_postgres_death_after_atomic_writer_claim_keeps_recoverable_domain_ident
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker:recovered", job_id="org:crash",
             correlation_id="org:crash" if scoped else None,
+            organization_owners={"org:crash": "organization:crash"} if scoped else None,
             scoped_writer=scoped,
         )
         with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
