@@ -133,8 +133,20 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
     path = tmp_path / f"native-grant-{arm}.db"
     _init(path, arm=arm)
     original_request = SimPyBackend.request_resource
+    original_save = MemoryUnitOfWork.save_resource_reservation
     requests: list[str] = []
     acquired: list[str] = []
+    witnessed_slots: set[str] = set()
+
+    def observed_save(self, reservation):
+        # Cross the real UoW persistence boundary: any durable physical grant
+        # that precedes the native on_acquired callback is unauthorized.
+        if reservation.resource_name.startswith("org:A/"):
+            assert reservation.resource_name in witnessed_slots, (
+                "SOSE committed a physical lease before native SimPy acquired "
+                f"the same instance: {reservation.resource_name}"
+            )
+        return original_save(self, reservation)
 
     def observed_request(
         self, name, *, request_id, on_acquired, priority=100,
@@ -144,6 +156,12 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
         def observed_acquisition(lease):
             assert lease.request_id == request_id
             assert lease.resource_name == name
+            assert self.resource_snapshot(name).in_use >= 1, (
+                "native callback did not observe occupied SimPy capacity"
+            )
+            witnessed_slots.add(
+                name if name.startswith("org:A/") else "org:A/" + name
+            )
             acquired.append(name)
             on_acquired(lease)
 
@@ -153,6 +171,7 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
         )
 
     monkeypatch.setattr(SimPyBackend, "request_resource", observed_request)
+    monkeypatch.setattr(MemoryUnitOfWork, "save_resource_reservation", observed_save)
     with SQLitePersistence(path) as store:
         outcome = run_od5a_recurring_tick(
             store, job_id="org:A", owner_id="worker:A",
