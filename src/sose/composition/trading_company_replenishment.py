@@ -106,6 +106,7 @@ def _registry(fixtures: _Fixtures, *, owner_id: str) -> BoundaryConsumerRegistry
     registry.register(
         destination_domain="procure_to_pay",
         contract_name="warehouse.replenishment_requested",
+        source_domain="warehouse_management",
         contract_version=1,
         handler=_intent_handler(
             name="composition.procure_replenishment",
@@ -117,6 +118,7 @@ def _registry(fixtures: _Fixtures, *, owner_id: str) -> BoundaryConsumerRegistry
     registry.register(
         destination_domain="warehouse_management",
         contract_name="p2p.inventory_receipt_ready",
+        source_domain="procure_to_pay",
         contract_version=1,
         handler=_intent_handler(
             name="composition.receive_replenishment",
@@ -128,6 +130,7 @@ def _registry(fixtures: _Fixtures, *, owner_id: str) -> BoundaryConsumerRegistry
     registry.register(
         destination_domain="record_to_report",
         contract_name="accounting.entry_requested",
+        source_domain="procure_to_pay",
         contract_version=1,
         handler=_intent_handler(
             name="composition.post_replenishment_journal",
