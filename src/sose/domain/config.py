@@ -65,8 +65,8 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
     )
 
     def __post_init__(self) -> None:
-        if isinstance(self.process_version, bool) or self.process_version < 1:
-            raise ValueError("process_version must be positive")
+        if type(self.process_version) is not int or self.process_version < 1:
+            raise ValueError("process_version must be a positive integer")
         if len({entry.name for entry in self.registered_entity_types}) != len(self.registered_entity_types):
             raise ValueError("duplicate declared runtime entity type")
         known = set(self.config_model.model_fields)
