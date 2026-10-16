@@ -13,7 +13,6 @@ from uuid import uuid4
 import pytest
 
 from sose.backends.simpy import SimPyBackend
-from sose.core.runtime import ResourceDefinition
 from sose.examples.logistics import simulation as logistics
 from sose.persistence.postgres import PostgresPersistence
 
@@ -66,21 +65,22 @@ def test_pg_transfer_finite_contention_retries_across_independent_sessions(
     holder_shipment = None
 
     with PostgresPersistence(DSN, namespace=namespace) as store:
+        # Physical capacity is immutable once seeded. Declare a second
+        # vehicle before any domain StateChart begins; the destination dock
+        # remains single-capacity and can independently become contended.
+        overrides = (
+            {"transfer_vehicle": 2} if blocker == "destination_dock" else None
+        )
         shipment = logistics.seed_reference(
             store, owner_id=SHIPMENT_OWNER, instance_key="customer:"+namespace,
-            resource_capacity=1, hub_queue_capacity=1,
+            resource_capacity=1, resource_capacities=overrides,
+            hub_queue_capacity=1,
         )
         holder_shipment = logistics.seed_reference(
             store, owner_id=HOLDER_OWNER, instance_key="holder:"+namespace,
-            resource_capacity=1, hub_queue_capacity=1,
+            resource_capacity=1, resource_capacities=overrides,
+            hub_queue_capacity=1,
         )
-        if blocker == "destination_dock":
-            # Two vehicles but only one dock: the second real StateChart can
-            # acquire a vehicle before it meets the *specific* dock contention.
-            with store.transaction() as uow:
-                uow.save_resource_definition(
-                    ResourceDefinition("transfer_vehicle", capacity=2)
-                )
         engine, backend = _rebuild(store, owner_id=SHIPMENT_OWNER)
         backend.run_until(logistics.PICKUP_DUE)
         assert logistics.reconcile_pickup(store, engine, backend, entities=shipment)
