@@ -472,7 +472,13 @@ class _RecurringNativePhysicalArbiter:
     ) -> None:
         self.backend = backend
         self.held: dict[str, tuple[str, str]] = {}
-        self.backend.run_until(_time(due))
+        # The caller already advanced the ephemeral environment to the due
+        # boundary BEFORE opening this transactional snapshot. Native
+        # resource reconstruction may process acquire callbacks at the
+        # boundary, but must never advance a preflight hook while holding a
+        # durable DB write transaction.
+        if self.backend.now != _time(due):
+            raise RuntimeError("OD-5a native recovery clock is not at source due boundary")
         definitions = {item.name: item for item in uow.resource_definitions()}
         reservations = uow.resource_reservations()
         resources = source.attributes["resources"]
@@ -590,10 +596,23 @@ def execute_od5a_claimed_tick(
         )
     dispatched: list[OD5aRecurringStep] = []
     backend = SimPyBackend(origin=_ORIGIN)
-    # The source state and its real ledger produce the *ephemeral* occupied
-    # instances at this tick. No native object becomes a persisted fact.
+    # A preflight hook or another worker may commit while SimPy advances
+    # to the due boundary. Never hold a database write transaction during
+    # this disposable, externally interceptable scheduling step.
+    backend.run_until(_time(due))
+    # Re-open a fresh, authoritative snapshot and recheck the complete
+    # scheduled action before deriving native physical occupancy from it.
+    # The final callback revalidates under the fenced commit transaction.
     with _job_transaction(store, claim.organization_id) as uow:
-        source, _ = _read_job(uow, claim.organization_id)
+        source, _, _ = _assert_claim(
+            uow, claim, _trusted_now(store, _wall_clock),
+        )
+        actions = source.attributes["actions"]
+        actual = min(actions, key=lambda x: (x["at"], x["seq"])) if actions else None
+        if actual != next_action:
+            raise StaleOD5aRunnerClaimError(
+                "OD-5a scheduled step changed before SimPy dispatch"
+            )
         native = _RecurringNativePhysicalArbiter(
             backend, uow=uow, source=source,
             job_id=claim.organization_id, due=due,
