@@ -31,5 +31,12 @@ class DomainRegistry:
     def get(self, name: str) -> EntityType:
         return self._types[name]
 
+    def registered_chart_names(self) -> frozenset[str]:
+        """Expose the actual runtime StateChart classes for admission checks."""
+        return frozenset(
+            getattr(definition.chart_factory, "__name__", "")
+            for definition in self._types.values()
+        )
+
     def chart_for(self, entity: Entity, **kwargs: Any) -> Any:
         return self.get(entity.entity_type).chart_factory(model=entity, **kwargs)
