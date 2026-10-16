@@ -316,3 +316,56 @@ def test_domain_definition_rejects_noninteger_process_versions(invalid_version):
 def test_domain_definition_accepts_positive_integer_process_version():
     original = builtin_catalog().get("warehouse_fulfillment")
     assert replace(original, process_version=2).process_version == 2
+
+
+def test_v2_domain_and_component_cannot_reuse_v1_manifest_evidence():
+    # The real builtin ProcessManifest is a v1-only claim. Merely changing
+    # both domain and component versions must not upgrade that evidence.
+    original_domain = builtin_catalog().get("warehouse_fulfillment")
+    custom_catalog = DomainCatalog()
+    custom_catalog.register(replace(original_domain, process_version=2))
+    spec = _real_definition()
+    versioned = replace(
+        spec, components=(replace(spec.components[0], process_version=2),),
+    )
+    with pytest.raises(ValueError, match="version-specific process manifest"):
+        _admit(versioned, catalog=custom_catalog)
+
+
+@pytest.mark.parametrize("not_handler", [None, 17, "not-callable", object()])
+def test_registry_rejects_noncallable_handler_before_admission(not_handler):
+    registry = BoundaryConsumerRegistry()
+    with pytest.raises(ValueError, match="callable"):
+        registry.register(
+            source_domain="warehouse_fulfillment",
+            destination_domain="warehouse_management",
+            contract_name="warehouse.inventory_reservation_requested",
+            contract_version=1,
+            handler=not_handler,
+        )
+    assert not registry.contracts_for_source(
+        source_domain="warehouse_fulfillment",
+        destination_domain="warehouse_management",
+    )
+    with pytest.raises(ValueError, match="unregistered consumer contract"):
+        _admit(
+            _real_definition(include_boundary=True),
+            manifests=_hypothetically_audited_wm_ingress(),
+            consumers=registry,
+        )
+
+
+def test_registry_accepts_executable_handler_for_admission():
+    registry = BoundaryConsumerRegistry()
+    registry.register(
+        source_domain="warehouse_fulfillment",
+        destination_domain="warehouse_management",
+        contract_name="warehouse.inventory_reservation_requested",
+        contract_version=1,
+        handler=lambda _message, _uow: "certified-effect",
+    )
+    spec = _real_definition(include_boundary=True)
+    assert _admit(
+        spec, manifests=_hypothetically_audited_wm_ingress(),
+        consumers=registry,
+    ) == spec.fingerprint()
