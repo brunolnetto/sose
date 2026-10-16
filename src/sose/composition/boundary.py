@@ -32,6 +32,7 @@ BoundaryHandler = Callable[[BoundaryMessage, "UnitOfWork"], str]
 class BoundaryConsumerRegistry:
     def __init__(self) -> None:
         self._handlers: dict[tuple[str, str, int], BoundaryHandler] = {}
+        self._producer_bindings: set[tuple[str, str, str, int]] = set()
 
     def register(
         self,
@@ -40,8 +41,11 @@ class BoundaryConsumerRegistry:
         contract_name: str,
         contract_version: int,
         handler: BoundaryHandler,
+        source_domain: str | None = None,
     ) -> None:
         key = (destination_domain, contract_name, contract_version)
+        if source_domain is not None and not source_domain.strip():
+            raise ValueError("source_domain must be nonempty")
         if not destination_domain or not contract_name or contract_version <= 0:
             raise ValueError("invalid boundary consumer contract")
         if key in self._handlers:
@@ -50,6 +54,8 @@ class BoundaryConsumerRegistry:
                 f"{destination_domain}:{contract_name}.v{contract_version}"
             )
         self._handlers[key] = handler
+        if source_domain is not None:
+            self._producer_bindings.add((source_domain, destination_domain, contract_name, contract_version))
 
     def contracts_for(self, destination_domain: str) -> frozenset[tuple[str, int]]:
         """Return the registered contract names and versions owned by one domain."""
@@ -59,6 +65,16 @@ class BoundaryConsumerRegistry:
             if domain == destination_domain
         )
 
+    def contracts_for_source(
+        self, *, source_domain: str, destination_domain: str,
+    ) -> frozenset[tuple[str, int]]:
+        """Only explicit producer/destination bindings count as admission evidence."""
+        return frozenset(
+            (name, version)
+            for src, dst, name, version in self._producer_bindings
+            if src == source_domain and dst == destination_domain
+        )
+
     def resolve(self, message: BoundaryMessage) -> BoundaryHandler:
         key = (
             message.destination_domain,
@@ -66,7 +82,12 @@ class BoundaryConsumerRegistry:
             message.contract_version,
         )
         handler = self._handlers.get(key)
-        if handler is None:
+        if handler is None or (
+            any(dst == message.destination_domain and name == message.contract_name
+                and version == message.contract_version
+                for _, dst, name, version in self._producer_bindings)
+            and (message.source_domain, *key) not in self._producer_bindings
+        ):
             raise UnsupportedBoundaryContractError(
                 "unsupported boundary contract: "
                 f"{message.destination_domain}:{message.contract_key}"
