@@ -1,6 +1,6 @@
 # Organization Composition — initial configuration contract (issue #495)
 
-Status: **immutable structural contract (#499) and fail-closed static runtime admission (#510) in `main`; ADR-0008 Proposed** (2026-10-16).
+Status: **immutable structural contract (#499) and fail-closed static runtime admission (#510) in `main`; [composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) Proposed** (2026-10-16).
 Follow-up: #496 executable runtime, #497 O2C/MRO domain falsifier, #468/#489 concurrency, #477 physical adapter.
 Master plan: #494; proposed documentation: #498.
 
@@ -28,7 +28,7 @@ SimPy, admit scientific runs or materialize a writable organization-level state.
 - `OrganizationDefinition(organization_id, version, components, boundaries, jobs, physical_pools, config_epoch)`
 
 Definitions validate nonempty canonical identities, version and epoch ranges,
-duplicate component/owner, duplicate job/trigger, dangling boundary or pool references,
+duplicate component IDs and duplicate `(domain, owner_id)` pairs (not owner IDs globally), duplicate job/trigger, dangling boundary or pool references,
 self-targeted cross-process boundaries, and duplicate exact boundary edges.
 Definitions are immutable, and a canonical SHA-256 fingerprint changes when
 the semantic configuration changes.
@@ -137,14 +137,14 @@ management lifecycle features do not retroactively gate it.
 
 | Original criterion | Demonstrated in `main` | Still unproven / necessary decision |
 | --- | --- | --- |
-| Identity and ownership | Distinct organization, component owner, job and pool-owner fields; duplicate durable process owner rejected (#499) | Formal source-entity/flow and shared-pool owner binding across running components (#496) |
+| Identity and ownership | Distinct organization, component owner, job and pool-owner fields; duplicate `(domain, owner_id)` **pairs** rejected (#499), but a raw `owner_id` may be reused across different domains | Formal source-entity/flow and shared-pool owner binding across running components (#496) |
 | Charts, versions, contracts | Real registry metadata and audited direction/version-specific manifests + callable handlers (#510) | Audited production WF→WM ingress; multiple connected same-domain owners require exact component/owner routing, or an explicit v1 unsupported limitation |
 | Topology | Dangling dependencies and self-boundaries rejected; cyclic execution admission fails closed (#499/#510) | Explicit certified liveness policy for allowed cycles, if supported |
 | Configuration | `config_epoch` is validated and included in immutable fingerprint (#499) | Validated policy/calendar/cost schemas, epoch transition, stale-worker fencing and invalidation contract |
 | Physical resources | Named external pool references with explicit owner IDs and known consumer IDs; duplicate pool IDs rejected (#499) | Pool existence, calendar/instance/capacity and transactional ownership checked against one authoritative ledger |
 | Causal execution | Exact registry admission but **no runnable composition** (#510) | Publication → claim → fenced ACK → Command → certified effect across components with restart and local clocks (#496) |
-| Read model / governance | Architectural separation described by ADR-0008 | Derived consistent snapshots, optional authority-changing governance StateChart and failure-path conformance (#496) |
-| Architecture ratification | ADR-0008 Proposed; schema + negative admission tests | Independent review of the full PRD/TRD, policy/epoch semantics, versioned API and explicit scope decision |
+| Read model / governance | Architectural separation described by [composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) | Derived consistent snapshots, optional authority-changing governance StateChart and failure-path conformance (#496) |
+| Architecture ratification | [Composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) Proposed; schema + negative admission tests. A different proposed [owner-qualified runtime ADR-0008](decisions/adr-0008-owner-qualified-runtime-only.md) currently has the same number and is **not** this decision | Independent review of the full PRD/TRD, policy/epoch semantics, versioned API and explicit scope decision |
 
 **Stop rule:** do not interpret #510's static validator, hypothetical manifest,
 or historical replay as a complete production composition, a ratified ADR or
