@@ -29,7 +29,7 @@ The objective is to gain a reusable operational semantics on top of the existing
 
 `OrganizationDefinition` is an **implemented immutable structural API** (#499), and `validate_organization_admission` provides **fail-closed static binding to real registry metadata** (#510). `OrganizationInstance` remains a **provisional runtime design**, not an implemented API. Neither structural construction nor static admission instantiates organizational jobs, proves physical resources exist, or ratifies the Proposed ADR-0008.
 
-A minimal organization definition records component identity/type/version, owned process boundaries, contract versions, explicit dependency edges, resource scope/owner, policy and calendar references, configuration epoch, and per-job schedule identities. It must not substitute one `GenericEnterprise` for distinct business domain models.
+The **target** organization definition requires component identity/type/version, owned process boundaries, exact contract versions, explicit dependency edges, resource scope/owner, policy and calendar references, configuration epoch, and per-job schedule identities. The implemented v1 schema already captures identities, boundaries, jobs, pool references and epoch; it **does not yet** model or validate policy/calendar/cost references. It must not substitute one `GenericEnterprise` for distinct business domain models.
 
 ### Composition diagram
 
