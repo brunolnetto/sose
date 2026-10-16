@@ -332,6 +332,63 @@ def test_od5a_native_pool_fifo_wait_survives_repeated_sqlite_restart(
     )
 
 
+def test_native_pool_released_specific_lease_cannot_certify_second_grant(
+    tmp_path, monkeypatch,
+):
+    """#477 P1: one live pool lease cannot witness another released permit."""
+    path = tmp_path / "released-specific-pool-lease.db"
+    items = (
+        OD5aWorkItem("item:A", 0.0, (("a", 10.0), ("b", 1.0), ("c", 1.0))),
+        OD5aWorkItem("item:B", 0.15, (("a", 10.0), ("b", 1.0), ("c", 1.0))),
+    )
+    with SQLitePersistence(path) as seed:
+        initialize_od5a_recurring_job(
+            seed, job_id="org:A", arm=_arms()["capacity_only"], items=items,
+        )
+    with SQLitePersistence(path) as store:
+        first = run_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="worker:A",
+            now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+            _wall_clock=lambda: CLOCK,
+        )
+        assert first.action == "advanced"
+        assert len(store.resource_reservations()) == 1
+
+    original_request = SimPyBackend.request_resource
+    pool_grants = []
+
+    def release_second_pool_lease(self, name, *, request_id, on_acquired, priority=100):
+        def observed(lease):
+            if name == "org:A/execution-pool":
+                pool_grants.append(lease.lease_id)
+                on_acquired(lease)
+                # The recovered first item's native pool lease remains live
+                # (in_use=1); ONLY the new item's exact permit is removed.
+                if len(pool_grants) == 2:
+                    self.release_resource(lease)
+                return
+            on_acquired(lease)
+        return original_request(
+            self, name, request_id=request_id,
+            on_acquired=observed, priority=priority,
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SimPyBackend, "request_resource", release_second_pool_lease)
+        with SQLitePersistence(path) as store:
+            with pytest.raises(RuntimeError, match="pool|native|lease"):
+                run_od5a_recurring_tick(
+                    store, job_id="org:A", owner_id="worker:A",
+                    now=CLOCK + timedelta(seconds=1),
+                    lease_duration=LEASE, trigger_id=_trigger(store),
+                    _wall_clock=lambda: CLOCK + timedelta(seconds=1),
+                )
+            assert len(pool_grants) == 2
+            assert store.job_state("org:A").next_tick == 1
+            assert len(store.resource_reservations()) == 1
+            assert len(od5a_durable_events(store, job_id="org:A")) == 1
+
+
 def test_od5a_native_pool_callback_is_required_before_durable_slot_commit(
     tmp_path, monkeypatch,
 ):
