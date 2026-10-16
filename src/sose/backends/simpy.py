@@ -565,6 +565,26 @@ class SimPyBackend:
         resource.requests.pop(state.lease.request_id, None)
         self._request_to_lease.pop(state.lease.request_id, None)
 
+    def resource_lease_active(
+        self, lease_id: str, *, resource_name: str, request_id: str,
+    ) -> bool:
+        """Prove the EXACT native resource permit is still held.
+
+        Aggregate ResourceSnapshot.in_use is insufficient when capacity > 1:
+        another request can occupy the pool after this particular lease has
+        ended. This read is deliberately side-effect free and runs during the
+        fenced SOSE commit; it never steps the SimPy event queue.
+        """
+        native = self._leases.get(lease_id)
+        state = self._resources.get(resource_name)
+        return bool(
+            native is not None
+            and state is not None
+            and native.resource_name == resource_name
+            and native.lease.request_id == request_id
+            and native.request in state.resource.users
+        )
+
     def resource_snapshot(self, name: str) -> ResourceSnapshot:
         state = self._resource(name)
         resource = state.resource
