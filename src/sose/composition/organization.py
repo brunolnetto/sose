@@ -257,6 +257,25 @@ def validate_organization_admission(
     _reject_unadmitted_cycles(definition.boundaries)
 
     components = {component.component_id: component for component in definition.components}
+    # Consumer registration is currently qualified by domain, not by the
+    # independently owned component/instance. A domain appearing twice in
+    # an active boundary would allow one handler to be mistaken for another
+    # owner's executable ingress/egress. Reject until both admission and
+    # dispatch carry the exact destination component/owner identity.
+    boundary_domains = {
+        components[endpoint].domain
+        for boundary in definition.boundaries
+        for endpoint in (boundary.producer_id, boundary.consumer_id)
+    }
+    domain_counts: dict[str, int] = {}
+    for component in definition.components:
+        domain_counts[component.domain] = domain_counts.get(component.domain, 0) + 1
+    for domain in sorted(boundary_domains):
+        if domain_counts[domain] > 1:
+            raise ValueError(
+                f"owner-qualified boundary registration required for "
+                f"multiple {domain} components"
+            )
     validated_manifests = {}
     for component in definition.components:
         domain = catalog.get(component.domain)
