@@ -226,3 +226,80 @@ def test_producer_must_match_explicit_consumer_handler_source():
     )
     with pytest.raises(ValueError, match="unregistered consumer contract"):
         _admit(spec, manifests=_hypothetically_audited_wm_ingress(), consumers=consumers)
+
+
+
+def test_complete_pc6_manifest_provenance_covers_every_declared_contract_version():
+    manifest = builtin_process_manifests()["warehouse_fulfillment"]
+    for direction in ("ingress", "egress"):
+        names = getattr(manifest, f"{direction}_contracts")
+        asserted_names = {
+            name for declared_direction, name, _ in manifest.contract_provenance
+            if declared_direction == direction
+        }
+        assert asserted_names == names
+        for name in names:
+            paths = manifest.contract_sources(direction, name)
+            assert paths
+            assert all(path.startswith(("src/", "tests/")) for path in paths)
+
+
+def test_registry_dispatches_distinct_producers_to_distinct_handlers():
+    from dataclasses import replace
+    from datetime import datetime, timezone
+    from sose.composition.boundary import BoundaryMessage, UnsupportedBoundaryContractError
+
+    registry = BoundaryConsumerRegistry()
+
+    def card_payment_handler(_message, _uow):
+        return "card-settlement"
+
+    def purchase_receipt_handler(_message, _uow):
+        return "purchase-accrual"
+
+    for source, handler in (
+        ("cards_payments", card_payment_handler),
+        ("procure_to_pay", purchase_receipt_handler),
+    ):
+        registry.register(
+            source_domain=source, destination_domain="record_to_report",
+            contract_name="accounting.entry_requested", contract_version=1,
+            handler=handler,
+        )
+
+    assert registry.contracts_for_source(
+        source_domain="cards_payments", destination_domain="record_to_report",
+    ) == frozenset({("accounting.entry_requested", 1)})
+    msg = BoundaryMessage.create(
+        contract_name="accounting.entry_requested", contract_version=1,
+        source_domain="cards_payments", source_identity="card:1",
+        destination_domain="record_to_report", occurrence_key="1",
+        correlation_id="corr:1", causation_id=None,
+        produced_at=datetime(2026, 10, 1, tzinfo=timezone.utc),
+        payload={"kind": "card"},
+    )
+    assert registry.resolve(msg) is card_payment_handler
+    assert registry.resolve(replace(msg, source_domain="procure_to_pay")) is purchase_receipt_handler
+    with pytest.raises(UnsupportedBoundaryContractError):
+        registry.resolve(replace(msg, source_domain="unknown_producer"))
+    with pytest.raises(ValueError, match="already registered"):
+        registry.register(
+            source_domain="cards_payments", destination_domain="record_to_report",
+            contract_name="accounting.entry_requested", contract_version=1,
+            handler=card_payment_handler,
+        )
+
+
+def test_unqualified_consumer_does_not_become_admission_evidence():
+    registry = BoundaryConsumerRegistry()
+    registry.register(
+        destination_domain="record_to_report",
+        contract_name="accounting.entry_requested", contract_version=1,
+        handler=lambda *_: "generic",
+    )
+    assert registry.contracts_for("record_to_report") == frozenset({
+        ("accounting.entry_requested", 1),
+    })
+    assert not registry.contracts_for_source(
+        source_domain="cards_payments", destination_domain="record_to_report",
+    )
