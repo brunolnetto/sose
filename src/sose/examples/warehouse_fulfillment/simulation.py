@@ -32,6 +32,14 @@ from .statecharts import (
 PRIMARY_SKU = "widget-a"
 SUBSTITUTE_SKU = "widget-b"
 
+REGISTERED_ENTITY_TYPES = (
+    EntityType("warehouse_fulfillment_order", FulfillmentOrderChart),
+    EntityType("warehouse_allocation", AllocationChart),
+    EntityType("warehouse_inventory_occurrence", InventoryOccurrenceChart),
+    EntityType("warehouse_fulfillment_service_task", FulfillmentServiceTaskChart),
+)
+
+
 PICKER_RESOURCE = "fulfillment_picker"
 PACKING_RESOURCE = "packing_station"
 SHIPPING_RESOURCE = "shipping_dock"
@@ -95,16 +103,8 @@ def build_runtime(
         scheduler=Scheduler(),
     )
     registry = DomainRegistry()
-    registry.register(
-        EntityType("warehouse_fulfillment_order", FulfillmentOrderChart)
-    )
-    registry.register(EntityType("warehouse_allocation", AllocationChart))
-    registry.register(
-        EntityType("warehouse_inventory_occurrence", InventoryOccurrenceChart)
-    )
-    registry.register(
-        EntityType("warehouse_fulfillment_service_task", FulfillmentServiceTaskChart)
-    )
+    for entity_type in REGISTERED_ENTITY_TYPES:
+        registry.register(entity_type)
     return context, Engine(
         context=context,
         registry=registry,
