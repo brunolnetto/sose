@@ -27,7 +27,7 @@ The objective is to gain a reusable operational semantics on top of the existing
 | Organizational Projection | **No new writable business owner** | A consistent, explicitly timestamped view of local states, queues, resources, causal boundary state and performance |
 | Optional Governance StateChart | Explicit governance domain owner | Only real organizational decisions with authenticated/observable operational consequences |
 
-`OrganizationDefinition` and `OrganizationInstance` below are **provisional design concepts**, not implemented SOSE APIs.
+`OrganizationDefinition` is an **implemented immutable structural API** (#499), and `validate_organization_admission` provides **fail-closed static binding to real registry metadata** (#510). `OrganizationInstance` remains a **provisional runtime design**, not an implemented API. Neither structural construction nor static admission instantiates organizational jobs, proves physical resources exist, or ratifies the Proposed ADR-0008.
 
 A minimal organization definition records component identity/type/version, owned process boundaries, contract versions, explicit dependency edges, resource scope/owner, policy and calendar references, configuration epoch, and per-job schedule identities. It must not substitute one `GenericEnterprise` for distinct business domain models.
 
@@ -125,7 +125,7 @@ Every PR carries isolated red/green tests, exact-head required CI, versioned doc
 
 **Consequence:** composed-state read model must specify snapshot consistency and event versioning. The generic engine remains stable while incremental domain composition demonstrates which interfaces are truly shared.
 
-**Provisional status:** #495 must review/ratify this ADR. No source-level organizational API or scientific seal is claimed by this document.
+**Provisional status:** #495 must review/ratify the full PRD/TRD and ADR-0008. The composition **definition and static admission API exist**, but no executable organizational instance, complete policy/calendar/epoch binding, certified heterogeneous runtime or scientific seal is claimed by this document. See [the criterion-by-criterion #495 reconciliation](organization-composition-contract-v1.md#495-acceptance-reconciliation-not-yet-ratified).
 
 ## Explicit scientific boundary
 
