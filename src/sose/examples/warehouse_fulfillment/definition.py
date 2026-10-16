@@ -7,6 +7,7 @@ from .config import WarehouseFulfillmentConfig
 from .simulation import (
     allocate_order,
     build_runtime,
+    REGISTERED_ENTITY_TYPES,
     reconcile_fulfillment_services,
     seed_reference,
 )
@@ -99,6 +100,7 @@ definition = DomainDefinition(
     description="Warehouse and fulfillment reference domain.",
     config_model=WarehouseFulfillmentConfig,
     build_runtime=_build,
+    registered_entity_types=REGISTERED_ENTITY_TYPES,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
     runtime_mutable_fields=frozenset(
