@@ -408,3 +408,42 @@ def test_consumer_registry_accepts_exact_integer_contract_version():
         source_domain="warehouse_fulfillment",
         destination_domain="warehouse_management",
     ) == frozenset({("warehouse.inventory_reservation_requested", 1)})
+
+
+
+def test_organization_admission_rejects_ambiguous_same_domain_boundary_ownership():
+    # A domain-only handler cannot identify which independently owned component
+    # is the actual producer/consumer. Do not certify two owners from one key.
+    spec = _real_definition(include_boundary=True)
+    second = replace(
+        spec.components[0],
+        component_id="fulfillment-secondary",
+        owner_id="wf:owner-b",
+    )
+    multi_owner = replace(spec, components=(*spec.components, second))
+    registry = BoundaryConsumerRegistry()
+    registry.register(
+        source_domain="warehouse_fulfillment",
+        destination_domain="warehouse_management",
+        contract_name="warehouse.inventory_reservation_requested",
+        contract_version=1,
+        handler=lambda _message, _uow: "first-owner-only",
+    )
+    with pytest.raises(ValueError, match="owner-qualified boundary"):
+        _admit(
+            multi_owner,
+            manifests=_hypothetically_audited_wm_ingress(),
+            consumers=registry,
+        )
+
+
+def test_organization_allows_disconnected_same_domain_components_without_boundaries():
+    # Static catalog introspection does not route any cross-process effect.
+    spec = _real_definition()
+    another = replace(
+        spec.components[0],
+        component_id="fulfillment-secondary",
+        owner_id="wf:owner-b",
+    )
+    independent = replace(spec, components=(*spec.components, another))
+    assert _admit(independent) == independent.fingerprint()
