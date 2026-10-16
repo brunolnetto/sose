@@ -27,6 +27,7 @@ from sose.organizational.od5a_recurring import (
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.memory import MemoryUnitOfWork
 from sose.core.identity import deterministic_id
+from sose.core.runtime import ResourceDefinition
 from sose.domain.entity import Entity
 
 
@@ -161,6 +162,22 @@ def test_od5a_native_grant_callback_barrier_prevents_unwitnessed_durable_commit(
         source = od5a_durable_state(store, job_id="org:A")
         assert source["step"] == 0
         assert not od5a_durable_events(store, job_id="org:A")
+
+
+def test_native_resource_definitions_are_visible_in_same_authoritative_uow(tmp_path):
+    """#477 regression: native reconstruction cannot read stale store metadata."""
+    path = tmp_path / "definition-snapshot.db"
+    with SQLitePersistence(path) as store:
+        with store.transaction() as uow:
+            assert uow.resource_definitions() == ()
+            uow.save_resource_definition(ResourceDefinition("owner:A/slot:0", 1))
+            assert uow.resource_definitions() == (
+                ResourceDefinition("owner:A/slot:0", 1),
+            )
+        with store.transaction() as reloaded:
+            assert reloaded.resource_definitions() == (
+                ResourceDefinition("owner:A/slot:0", 1),
+            )
 
 
 @pytest.mark.parametrize("arm", ["baseline", "capacity_only"])
