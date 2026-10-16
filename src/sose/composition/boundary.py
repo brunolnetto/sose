@@ -48,6 +48,8 @@ class BoundaryConsumerRegistry:
             raise ValueError("source_domain must be nonempty")
         if not destination_domain or not contract_name or contract_version <= 0:
             raise ValueError("invalid boundary consumer contract")
+        if not callable(handler):
+            raise ValueError("boundary consumer handler must be callable")
         key = (source_domain, destination_domain, contract_name, contract_version)
         if key in self._handlers:
             raise ValueError(
