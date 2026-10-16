@@ -251,6 +251,7 @@ def validate_organization_admission(
     registry is never treated as "accept any contract".
     """
     from sose.persistence.memory import MemoryPersistence
+    from sose.examples.process_manifest import ProcessEvidence
 
     if not isinstance(definition, OrganizationDefinition):
         raise TypeError("organization admission requires OrganizationDefinition")
@@ -291,11 +292,13 @@ def validate_organization_admission(
         contract = f"{boundary.contract_name}.v{boundary.contract_version}"
         source = validated_manifests[boundary.producer_id]
         destination = validated_manifests[boundary.consumer_id]
-        if contract not in source.egress_contracts:
+        if (ProcessEvidence.EGRESS_CONTRACTS not in source.evidence
+                or contract not in source.egress_contracts):
             raise ValueError(
                 f"missing egress manifest for {producer.domain}: {contract}"
             )
-        if contract not in destination.ingress_contracts:
+        if (ProcessEvidence.INGRESS_CONTRACTS not in destination.evidence
+                or contract not in destination.ingress_contracts):
             raise ValueError(
                 f"missing ingress manifest for {consumer.domain}: {contract}"
             )
