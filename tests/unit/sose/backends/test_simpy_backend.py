@@ -151,6 +151,39 @@ def test_resource_grants_up_to_capacity_and_queues_rest():
     assert [lease.request_id for lease in acquired] == ["wo-1"]
 
 
+def test_native_resource_lease_active_requires_exact_live_permit_not_pool_count():
+    runtime = backend()
+    runtime.create_resource("finite-pool", capacity=2)
+    acquired: list[ResourceLease] = []
+    for key in ("request-a", "request-b"):
+        runtime.request_resource(
+            "finite-pool", request_id=key, on_acquired=acquired.append,
+        )
+    runtime.run_until(ORIGIN)
+    a, b = acquired
+    assert runtime.resource_snapshot("finite-pool").in_use == 2
+    assert runtime.resource_lease_active(
+        a.lease_id, resource_name="finite-pool", request_id="request-a",
+    )
+    assert runtime.resource_lease_active(
+        b.lease_id, resource_name="finite-pool", request_id="request-b",
+    )
+    assert not runtime.resource_lease_active(
+        b.lease_id, resource_name="finite-pool", request_id="request-a",
+    )
+    assert not runtime.resource_lease_active(
+        b.lease_id, resource_name="wrong-pool", request_id="request-b",
+    )
+    runtime.release_resource(b)
+    assert runtime.resource_snapshot("finite-pool").in_use == 1
+    assert not runtime.resource_lease_active(
+        b.lease_id, resource_name="finite-pool", request_id="request-b",
+    )
+    assert runtime.resource_lease_active(
+        a.lease_id, resource_name="finite-pool", request_id="request-a",
+    )
+
+
 def test_releasing_resource_grants_next_queued_request():
     runtime = backend()
     runtime.create_resource("technicians", capacity=1)
