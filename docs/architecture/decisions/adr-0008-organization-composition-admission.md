@@ -18,14 +18,18 @@ capabilities. This was a dangerous admission boundary for #496/#497.
 2. Admit a declared StateChart only against **explicit, immutable EntityType
    registrations shared by the real domain runtime and its DomainDefinition**.
    Never call `default_config`, `build_runtime`, or `seed` for discovery: their
-   side effects are unconstrained. Unsupported process versions fail closed.
+   side effects are unconstrained. Only **process v1** is admissible against the
+   current domain-keyed audited manifests. Even when a DomainDefinition and
+   component both declare v2, admission refuses to inherit v1 evidence until
+   manifests have an independently certified process-version identity.
 3. Require an audited `ProcessManifest` for **both** components; each exact
    direction/name/version needs its own `contract_provenance` paths. The producer
    must explicitly declare the versioned egress contract **with** audited
    `ProcessEvidence.EGRESS_CONTRACTS`, the consumer the same versioned ingress
    **with** audited `ProcessEvidence.INGRESS_CONTRACTS`, including provenance;
    its actual `BoundaryConsumerRegistry` must have a handler installed for
-   that exact **source/destination/contract/version** tuple. Destination-only
+   that exact **source/destination/contract/version** tuple with a callable
+   handler, rejected otherwise during registry registration. Destination-only
    generic registrations do not prove composition admission.
    Unknown names, unsupported versions, missing manifests and unregistered
    handlers fail closed. Version 2 does not silently fall back to version 1.
