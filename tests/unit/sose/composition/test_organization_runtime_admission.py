@@ -303,3 +303,16 @@ def test_unqualified_consumer_does_not_become_admission_evidence():
     assert not registry.contracts_for_source(
         source_domain="cards_payments", destination_domain="record_to_report",
     )
+
+
+
+@pytest.mark.parametrize("invalid_version", [1.0, 2.5, True, False, "1", None])
+def test_domain_definition_rejects_noninteger_process_versions(invalid_version):
+    original = builtin_catalog().get("warehouse_fulfillment")
+    with pytest.raises(ValueError, match="process_version must be a positive integer"):
+        replace(original, process_version=invalid_version)
+
+
+def test_domain_definition_accepts_positive_integer_process_version():
+    original = builtin_catalog().get("warehouse_fulfillment")
+    assert replace(original, process_version=2).process_version == 2
