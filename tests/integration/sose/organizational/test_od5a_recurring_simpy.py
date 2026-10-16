@@ -135,17 +135,21 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
     original_request = SimPyBackend.request_resource
     original_save = MemoryUnitOfWork.save_resource_reservation
     requests: list[str] = []
-    acquired: list[str] = []
-    witnessed_slots: set[str] = set()
+    acquired: list[tuple[str, str]] = []
+    witnessed_grants: set[tuple[str, str]] = set()
+    saved_grants: list[tuple[str, str]] = []
 
     def observed_save(self, reservation):
-        # Cross the real UoW persistence boundary: any durable physical grant
-        # that precedes the native on_acquired callback is unauthorized.
+        # Check exact *resource name and request ID*, not a slot suffix.
+        # The authoritative grant must occur after its own native callback,
+        # not after an unrelated grant or a post-commit SimPy request.
+        identity = (reservation.resource_name, reservation.request_id)
         if reservation.resource_name.startswith("org:A/"):
-            assert reservation.resource_name in witnessed_slots, (
-                "SOSE committed a physical lease before native SimPy acquired "
-                f"the same instance: {reservation.resource_name}"
+            assert identity in witnessed_grants, (
+                "SOSE persisted a reservation without a prior matching native "
+                f"SimPy grant for {identity!r}"
             )
+            saved_grants.append(identity)
         return original_save(self, reservation)
 
     def observed_request(
@@ -159,10 +163,8 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
             assert self.resource_snapshot(name).in_use >= 1, (
                 "native callback did not observe occupied SimPy capacity"
             )
-            witnessed_slots.add(
-                name if name.startswith("org:A/") else "org:A/" + name
-            )
-            acquired.append(name)
+            witnessed_grants.add((lease.resource_name, lease.request_id))
+            acquired.append((lease.resource_name, lease.request_id))
             on_acquired(lease)
 
         return original_request(
@@ -192,12 +194,11 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
     # the reducer's persisted reservation after commit.
     assert requests, "SimPy must natively arbitrate an execution slot"
     assert acquired, "SimPy must acquire before SOSE certifies the grant"
-    assert set(acquired).issubset(set(requests))
-    assert all(
-        any(physical.endswith("/" + name.rsplit("/", 1)[-1])
-            for physical in reserved)
-        for name in acquired
-    ), "native physical leases must correspond to authoritative slot identities"
+    assert saved_grants, "expected a durable reservation requiring native acquisition"
+    assert set(saved_grants).issubset(witnessed_grants)
+    assert all(resource_name in reserved for resource_name, _ in saved_grants), (
+        "native physical leases must exactly match SOSE resource identities"
+    )
 
 
 @pytest.mark.parametrize("arm", [
