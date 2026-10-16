@@ -455,6 +455,110 @@ def claim_od5a_recurring_tick(
         return OD5aRunnerClaim(job_id, trigger_id, owner_id, epoch, expires_at)
 
 
+class _RecurringNativePhysicalArbiter:
+    """Recover native SimPy capacity from SOSE truth for one fenced source step.
+
+    Resource/lease objects are ephemeral; the authoritative occupancy remains
+    ResourceReservation. Every *new* reservation must first be granted by
+    SimPy on the exact physical instance and request ID. A native lease is
+    never released before the authoritative UoW completes.
+    """
+
+    def __init__(
+        self, backend: SimPyBackend, *,
+        uow: UnitOfWork, source: Entity, job_id: str, due: float,
+    ) -> None:
+        self.backend = backend
+        self.held: dict[str, tuple[str, str]] = {}
+        self.backend.run_until(_time(due))
+        definitions = {item.name: item for item in uow.resource_definitions()}
+        reservations = uow.resource_reservations()
+        resources = source.attributes["resources"]
+        for slot, reservation_id in resources.items():
+            resource_name = f"{job_id}/{slot}"
+            definition = definitions.get(resource_name)
+            if definition is None or definition.capacity != 1:
+                raise ValueError(
+                    f"OD-5a native instance lacks authoritative unit capacity: {resource_name}"
+                )
+            self.backend.create_resource(resource_name, capacity=1)
+            if reservation_id is None:
+                if any(r.resource_name == resource_name for r in reservations):
+                    raise RuntimeError(
+                        f"untracked foreign physical occupancy: {resource_name}"
+                    )
+                continue
+            saved = uow.get_resource_reservation(reservation_id)
+            if saved is None or saved.resource_name != resource_name:
+                raise ValueError(
+                    f"OD-5a physical lease contradicts resource ledger: {resource_name}"
+                )
+            if sum(r.resource_name == resource_name for r in reservations) != 1:
+                raise RuntimeError(
+                    f"conflicting durable physical occupancy: {resource_name}"
+                )
+            self._request(
+                resource_name=resource_name, request_id=saved.request_id,
+                reservation_id=reservation_id,
+            )
+        self.backend.run_until(_time(due))
+        for slot, reservation_id in resources.items():
+            if reservation_id is not None:
+                name = f"{job_id}/{slot}"
+                current = self.held.get(name)
+                if current is None or current[0] != reservation_id:
+                    raise RuntimeError(
+                        f"failed to reconstruct native occupancy: {name}"
+                    )
+
+    def _request(
+        self, *, resource_name: str, request_id: str,
+        reservation_id: str,
+    ) -> None:
+        def acquired(lease: object) -> None:
+            if (
+                getattr(lease, "resource_name") != resource_name
+                or getattr(lease, "request_id") != request_id
+                or self.backend.resource_snapshot(resource_name).in_use != 1
+            ):
+                raise RuntimeError("native SimPy lease identity or occupancy mismatch")
+            if resource_name in self.held:
+                raise RuntimeError("native SimPy allocated occupied physical instance")
+            self.held[resource_name] = (
+                reservation_id, getattr(lease, "lease_id"),
+            )
+
+        self.backend.request_resource(
+            resource_name, request_id=request_id, on_acquired=acquired,
+        )
+
+    def acquire(self, *, resource_name: str, request_id: str, at: float) -> bool:
+        if resource_name in self.held:
+            return False
+        reservation_id = deterministic_id("od5a-durable-reservation", request_id)
+        self._request(
+            resource_name=resource_name, request_id=request_id,
+            reservation_id=reservation_id,
+        )
+        self.backend.run_until(_time(at))
+        current = self.held.get(resource_name)
+        if current is None:
+            return False
+        if (
+            current[0] != reservation_id
+            or self.backend.resource_snapshot(resource_name).in_use != 1
+        ):
+            raise RuntimeError("native lease not held at authoritative grant")
+        return True
+
+    def release(self, *, resource_name: str, reservation_id: str) -> None:
+        current = self.held.get(resource_name)
+        if current is None or current[0] != reservation_id:
+            raise RuntimeError("native physical release lacks reconstructed lease")
+        self.backend.release_resource(current[1])
+        del self.held[resource_name]
+
+
 def execute_od5a_claimed_tick(
     store: Persistence, *, claim: OD5aRunnerClaim, now: datetime,
     _wall_clock: Callable[[], datetime] | None = None,
@@ -484,6 +588,14 @@ def execute_od5a_claimed_tick(
         )
     dispatched: list[OD5aRecurringStep] = []
     backend = SimPyBackend(origin=_ORIGIN)
+    # The source state and its real ledger produce the *ephemeral* occupied
+    # instances at this tick. No native object becomes a persisted fact.
+    with _job_transaction(store, claim.organization_id) as uow:
+        source, _ = _read_job(uow, claim.organization_id)
+        native = _RecurringNativePhysicalArbiter(
+            backend, uow=uow, source=source,
+            job_id=claim.organization_id, due=due,
+        )
 
     def commit_source_step() -> None:
         with _job_transaction(store, claim.organization_id) as uow:
@@ -495,7 +607,9 @@ def execute_od5a_claimed_tick(
             actual = min(actions, key=lambda x: (x["at"], x["seq"])) if actions else None
             if actual != next_action:
                 raise StaleOD5aRunnerClaimError("OD-5a scheduled step changed before SimPy dispatch")
-            advanced = _advance_od5a_in_uow(uow, job_id=claim.organization_id)
+            advanced = _advance_od5a_in_uow(
+                uow, job_id=claim.organization_id, native=native,
+            )
             committed = uow.get_entity(_KIND, claim.organization_id)
             assert committed is not None
             job = replace(
