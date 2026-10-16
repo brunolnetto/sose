@@ -15,16 +15,18 @@ capabilities. This was a dangerous admission boundary for #496/#497.
 
 1. Keep each process's immutable entity/StateChart owner and local clock.
    Organization identity and flow correlation identity remain distinct.
-2. Admit a declared StateChart only after constructing the real registered
-   domain runtime in a new empty `MemoryPersistence`, without seeding or
-   changing user business truth. Accept registered chart *factory names*, not
-   guessed entity aliases or a broad domain maturity label.
-3. Require an audited `ProcessManifest` for **both** components; the producer
+2. Admit a declared StateChart only against **explicit, immutable EntityType
+   registrations shared by the real domain runtime and its DomainDefinition**.
+   Never call `default_config`, `build_runtime`, or `seed` for discovery: their
+   side effects are unconstrained. Unsupported process versions fail closed.
+3. Require an audited `ProcessManifest` for **both** components; each exact
+   direction/name/version needs its own `contract_provenance` paths. The producer
    must explicitly declare the versioned egress contract **with** audited
    `ProcessEvidence.EGRESS_CONTRACTS`, the consumer the same versioned ingress
    **with** audited `ProcessEvidence.INGRESS_CONTRACTS`, including provenance;
-   its actual `BoundaryConsumerRegistry` must
-   have a handler installed for that destination/contract/version.
+   its actual `BoundaryConsumerRegistry` must have a handler installed for
+   that exact **source/destination/contract/version** tuple. Destination-only
+   generic registrations do not prove composition admission.
    Unknown names, unsupported versions, missing manifests and unregistered
    handlers fail closed. Version 2 does not silently fall back to version 1.
 4. Cyclic cross-component dependencies are conservatively **not admitted**
@@ -72,5 +74,5 @@ capabilities. This was a dangerous admission boundary for #496/#497.
 Exact-head Python matrix, PostgreSQL, coverage ≥95%, historical v1 replay
 3/3, negative registry/manifest/chart/version/cycle tests, no unresolved
 independent review findings, and audited production ingress/egress
-manifest entries. Keep this ADR **Proposed** until those gates and
+manifest entries, including per-version source provenance. Keep this ADR **Proposed** until those gates and
 the remaining #495 lifetime/epoch acceptance are reviewed.
