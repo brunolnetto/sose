@@ -8,6 +8,7 @@ from typing import Generic, Literal, TypeVar
 from pydantic import BaseModel, ConfigDict, Field
 
 from sose.core.context import SimulationContext
+from sose.domain.registry import EntityType
 from sose.core.engine import Engine
 from sose.persistence.base import Persistence
 
@@ -51,6 +52,10 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
     ]
     seed: Callable[[Persistence, ConfigT, str], SeedT]
     kind: Literal["domain", "canonical"] = "domain"
+    process_version: int = 1
+    # Side-effect-free executable chart registrations shared with build_runtime.
+    # Unknown domains have no admissible chart metadata until explicitly bound.
+    registered_entity_types: tuple["EntityType", ...] = ()
     reconcile_tick: Callable[
         [Persistence, Engine, object, ConfigT, SeedT],
         None,
@@ -60,6 +65,10 @@ class DomainDefinition(Generic[ConfigT, SeedT]):
     )
 
     def __post_init__(self) -> None:
+        if isinstance(self.process_version, bool) or self.process_version < 1:
+            raise ValueError("process_version must be positive")
+        if len({entry.name for entry in self.registered_entity_types}) != len(self.registered_entity_types):
+            raise ValueError("duplicate declared runtime entity type")
         known = set(self.config_model.model_fields)
         unknown = set(self.runtime_mutable_fields) - known
         if unknown:
