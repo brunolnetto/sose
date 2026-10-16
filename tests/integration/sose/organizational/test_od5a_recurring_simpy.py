@@ -27,7 +27,7 @@ from sose.organizational.od5a_recurring import (
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.memory import MemoryUnitOfWork
 from sose.core.identity import deterministic_id
-from sose.core.runtime import ResourceDefinition
+from sose.core.runtime import ResourceDefinition, ResourceReservation
 from sose.domain.entity import Entity
 
 
@@ -1455,6 +1455,52 @@ def test_native_callback_source_swap_is_rejected_before_commit(
         assert len(invocations) >= interception
         assert od5a_durable_events(store, job_id="org:A") == ()
         assert store.job_state("org:A").next_tick == 0
+
+
+@pytest.mark.parametrize("interception", [2, 3])
+def test_unrelated_owner_physical_commit_does_not_stale_native_source(
+    tmp_path, monkeypatch, interception,
+):
+    """#477: unrelated org changes cannot create a namespace-wide native lock."""
+    path = tmp_path / f"native-other-owner-{interception}.db"
+    _init(path)
+    original_run_until = SimPyBackend.run_until
+    calls = []
+
+    def commit_independent_physical_work(self, at):
+        calls.append(at)
+        if len(calls) == interception:
+            with SQLitePersistence(path) as unrelated:
+                with unrelated.transaction() as uow:
+                    uow.save_resource_definition(
+                        ResourceDefinition("org:unrelated/execution:0", 1)
+                    )
+                    uow.save_resource_reservation(ResourceReservation(
+                        reservation_id="unrelated-native-lease",
+                        request_id="unrelated-native-request",
+                        resource_name="org:unrelated/execution:0",
+                        acquired_at=datetime(2000, 1, 1, tzinfo=timezone.utc),
+                        sequence=0,
+                    ))
+        return original_run_until(self, at)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SimPyBackend, "run_until", commit_independent_physical_work)
+        with SQLitePersistence(path) as store:
+            outcome = run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker",
+                now=CLOCK, lease_duration=LEASE,
+                trigger_id=_trigger(store), _wall_clock=lambda: CLOCK,
+            )
+            assert outcome.action == "advanced"
+            owned = tuple(r for r in store.resource_reservations()
+                          if r.resource_name.startswith("org:A/"))
+            assert owned, "source physical grant was lost"
+            assert any(
+                r.reservation_id == "unrelated-native-lease"
+                for r in store.resource_reservations()
+            )
+    assert len(calls) >= interception
 
 
 def test_full_scheduled_action_identity_is_rechecked_inside_simpy_callback(
