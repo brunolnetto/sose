@@ -674,7 +674,17 @@ def execute_od5a_claimed_tick(
                 "OD-5a scheduled step changed before SimPy dispatch"
             )
         preflight_state = deepcopy(source.attributes)
-        preflight_reservations = uow.resource_reservations()
+        # Compare only this organization's physical addresses. An independent
+        # owner can legitimately commit disjoint reservations between preflight
+        # and this worker's fenced commit; no namespace-wide serialization.
+        owned_names = {
+            f"{claim.organization_id}/{slot}"
+            for slot in preflight_state["resources"]
+        }
+        preflight_reservations = tuple(
+            item for item in uow.resource_reservations()
+            if item.resource_name in owned_names
+        )
         preview = _PhysicalStepPreview(preflight_reservations)
         _transition(
             preview, deepcopy(preflight_state),
@@ -705,9 +715,13 @@ def execute_od5a_claimed_tick(
                 raise StaleOD5aRunnerClaimError(
                     "OD-5a source changed across native physical acquisition"
                 )
-            if uow.resource_reservations() != preflight_reservations:
+            current_owned = tuple(
+                item for item in uow.resource_reservations()
+                if item.resource_name in owned_names
+            )
+            if current_owned != preflight_reservations:
                 raise StaleOD5aRunnerClaimError(
-                    "OD-5a authoritative resource ledger changed before native commit"
+                    "OD-5a own physical ledger changed before native commit"
                 )
             advanced = _advance_od5a_in_uow(
                 uow, job_id=claim.organization_id, native=native,
