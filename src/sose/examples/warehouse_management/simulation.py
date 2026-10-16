@@ -19,6 +19,14 @@ from .statecharts import DockChart, ForkliftChart, ShipmentChart, TruckChart, Wa
 ORIGIN = datetime(2026, 1, 1, tzinfo=timezone.utc)
 REFERENCE_SKU = "widget-a"
 
+REGISTERED_ENTITY_TYPES = (
+    EntityType("warehouse_management_site", WarehouseSiteChart),
+    EntityType("warehouse_management_dock", DockChart),
+    EntityType("warehouse_management_truck", TruckChart),
+    EntityType("warehouse_management_forklift", ForkliftChart),
+    EntityType("warehouse_management_shipment", ShipmentChart),
+)
+
 
 @dataclass(frozen=True, slots=True)
 class WarehouseManagementEntities:
@@ -51,11 +59,8 @@ def build_runtime(
         scheduler=Scheduler(),
     )
     registry = DomainRegistry()
-    registry.register(EntityType("warehouse_management_site", WarehouseSiteChart))
-    registry.register(EntityType("warehouse_management_dock", DockChart))
-    registry.register(EntityType("warehouse_management_truck", TruckChart))
-    registry.register(EntityType("warehouse_management_forklift", ForkliftChart))
-    registry.register(EntityType("warehouse_management_shipment", ShipmentChart))
+    for entity_type in REGISTERED_ENTITY_TYPES:
+        registry.register(entity_type)
     return context, Engine(context=context, registry=registry, persistence=persistence, owner_id=owner_id)
 
 
