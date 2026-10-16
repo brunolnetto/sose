@@ -126,15 +126,23 @@ def test_crash_during_recurrence_replays_only_its_job_slot(monkeypatch):
 def test_two_distinct_job_scopes_can_be_in_flight_together(monkeypatch):
     assert DSN
     ns = _namespace()
-    barrier = Barrier(2)
+    both_in_flight = Barrier(2)
+    both_observed = Barrier(2)
 
     def bounded(self, store, *, now, logical_now=None):
-        barrier.wait(timeout=12)
+        # The first barrier only proves both workers entered _run_bounded.
+        # Without the second barrier, the faster worker can finish its job
+        # and clear active_trigger_id before its peer reads the PostgreSQL
+        # snapshot; that is not evidence of cross-owner serialization.
+        both_in_flight.wait(timeout=12)
         with store.transaction() as uow:
             own = uow.get_job_state(self.job_id)
             other = uow.get_job_state("job-b" if self.job_id == "job-a" else "job-a")
             assert own is not None and own.active_trigger_id is not None
             assert other is not None and other.active_trigger_id is not None
+        # Both observations complete *before* either worker may release its
+        # job lease; no artificial shared DB lock is introduced.
+        both_observed.wait(timeout=12)
         return 0
 
     monkeypatch.setattr(TradingCustomerRecoveryRunner, "_run_bounded", bounded)
