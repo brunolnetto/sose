@@ -51,12 +51,40 @@ admission fence**, not proof that the native backend chooses optimal instances,
 schedules the whole resource pool, persists fair queues, handles foreign
 capacity contention, or recovers from uncertain PostgreSQL COMMIT.
 
+### #477 follow-on: native finite execution pool (capacity N)
+
+Each independently named SOSE physical instance `execution:N` still retains
+its own authoritative `ResourceReservation` and capacity=1 definition.
+The ephemeral recurring adapter additionally derives a native SimPy
+`PriorityResource` named `<organization>/execution-pool` whose
+**capacity is exactly the number of durable physical execution instances**
+(1 for baseline, 2 for expanded-capacity arms). No extra pooled reservation,
+global shared lock or SimPy object is persisted.
+
+Every execution lease must hold **two native grants**: its specific
+`execution:N` instance and one capacity unit from the shared native
+execution pool. Reconstruction claims matching pool and instance units for
+all pre-existing authoritative reservations. During a completion, both native
+leases are released outside any database UoW; a new request may re-acquire
+both. Before committing a new durable instance lease, the fenced adapter
+verifies both matching native grants are still occupied. SimPy pool requests
+use stable deterministic IDs derived from the durable physical request.
+
+The bounded falsifiers exercise overlapping work requiring two independent
+physical slots and `in_use=2` in a capacity-2 native PriorityResource,
+reconstruction from a fresh backend each tick, and a suppressed pool callback
+where the per-instance callback fires but **no durable reservation/event**
+may commit. This is **local per-organization native finite arbitration**,
+not a shared resource pool across organizations and not durable wait/fairness
+under external contention. OD-5a remains `NOT_ADMITTED`.
+
 ## Next implementation slice
 
-1. Reconstruct the ephemeral native physical pool from authoritative
-   `ResourceDefinition`, `ResourceReservation`, and pending demands,
-   respecting unique per-instance identity and the organization's own
-   logical clock. No `simpy.Environment` or process is persisted.
+1. **Bounded capacity-N local pool implemented:** extend native resource
+   arbitration to independently owned **shared** physical pools, preserving
+   owner-qualified causal demand, unique instances, authoritative ledger
+   and local logical clocks. Add durable pending work and resource demands;
+   no `simpy.Environment` or process is persisted.
 2. Submit native requests through SimPy; do not claim a SOSE physical
    reservation before the backend has a matching native grant. Keep the
    authoritative commit fenced by the durable recurring lease/epoch.
