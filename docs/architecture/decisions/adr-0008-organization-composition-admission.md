@@ -51,6 +51,13 @@ capabilities. This was a dangerous admission boundary for #496/#497.
 - Reuse `DomainCatalog`, `DomainRegistry`, `ProcessManifest` and
   `BoundaryConsumerRegistry`. Do not add a second contract registry, legacy
   owner fallback, global clock, cross-domain COMMIT or writable aggregate.
+- Cross-domain bindings currently register handlers by **source and
+  destination domain**, not by component ID or physical owner. The admission
+  gate therefore rejects a domain reused by multiple components whenever
+  that domain participates in a boundary. Disconnected same-domain
+  components remain structurally valid. Do not claim a composed owner-unique
+  runtime until typed messages, admission, and dispatch are all explicitly
+  component/owner qualified and independently conformance tested.
 - The current built-in Warehouse Management manifest does **not** yet claim
   `warehouse.inventory_reservation_requested.v1` as an audited ingress.
   An actual WF→WM binder must therefore fail closed until the claim is
