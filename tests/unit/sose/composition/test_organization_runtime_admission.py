@@ -90,6 +90,7 @@ def test_real_pc6_edge_fails_when_consumer_manifest_has_not_declared_ingress():
         contract_name="warehouse.inventory_reservation_requested",
         contract_version=1,
         handler=lambda _message, _uow: "test-effect",
+        source_domain="warehouse_fulfillment",
     )
     with pytest.raises(ValueError, match="ingress manifest"):
         _admit(spec, consumers=consumers)
@@ -109,6 +110,11 @@ def _hypothetically_audited_wm_ingress():
         evidence=original.evidence | {ProcessEvidence.INGRESS_CONTRACTS},
         ingress_contracts=frozenset({"warehouse.inventory_reservation_requested.v1"}),
         evidence_sources=provenance,
+        contract_provenance=(
+            ("ingress", "warehouse.inventory_reservation_requested.v1",
+             ("src/sose/composition/trading_company_customer.py",
+              "tests/integration/sose/composition/test_pc6_two_real_customer_paths.py")),
+        ),
     )
     return manifests
 
@@ -131,6 +137,7 @@ def test_fully_qualified_versioned_edge_can_pass_when_registry_and_both_manifest
         contract_name="warehouse.inventory_reservation_requested",
         contract_version=1,
         handler=lambda _message, _uow: "test-effect",
+        source_domain="warehouse_fulfillment",
     )
     assert _admit(spec, manifests=manifests, consumers=consumers) == spec.fingerprint()
     with pytest.raises(ValueError, match="egress manifest"):
@@ -153,3 +160,69 @@ def test_feedback_cycle_requires_explicit_liveness_contract_and_is_not_admitted(
     _reject_unadmitted_cycles(
         (BoundaryBinding("first", "second", "first.done", 1),)
     )
+
+
+
+def test_process_version_is_matched_against_static_domain_registration():
+    spec = _real_definition()
+    revised = replace(spec.components[0], process_version=2)
+    with pytest.raises(ValueError, match="unsupported process_version"):
+        _admit(replace(spec, components=(revised,)))
+
+
+def test_runtime_admission_never_executes_config_or_builder():
+    spec = _real_definition()
+    catalog = builtin_catalog()
+    original = catalog.get("warehouse_fulfillment")
+
+    def forbidden(*_args, **_kwargs):
+        raise AssertionError("admission executed an impure domain callback")
+
+    from dataclasses import replace as copy_definition
+    custom = DomainCatalog()
+    custom.register(copy_definition(
+        original, build_runtime=forbidden, seed=forbidden,
+    ))
+    assert _admit(spec, catalog=custom) == spec.fingerprint()
+
+
+def test_version_specific_provenance_cannot_be_inherited_from_v1():
+    spec = _real_definition(include_boundary=True)
+    manifests = _hypothetically_audited_wm_ingress()
+    wf = manifests["warehouse_fulfillment"]
+    wm = manifests["warehouse_management"]
+    # Claim v2 as a string and as aggregate ProcessEvidence, but do NOT supply
+    # version-specific provenance: this must fail before handler resolution.
+    manifests["warehouse_fulfillment"] = replace(
+        wf, egress_contracts=wf.egress_contracts |
+        {"warehouse.inventory_reservation_requested.v2"},
+    )
+    manifests["warehouse_management"] = replace(
+        wm, ingress_contracts=wm.ingress_contracts |
+        {"warehouse.inventory_reservation_requested.v2"},
+    )
+    v2 = replace(spec, boundaries=(replace(spec.boundaries[0], contract_version=2),))
+    consumers = BoundaryConsumerRegistry()
+    consumers.register(
+        source_domain="warehouse_fulfillment",
+        destination_domain="warehouse_management",
+        contract_name="warehouse.inventory_reservation_requested",
+        contract_version=2,
+        handler=lambda _message, _uow: "v2-effect",
+    )
+    with pytest.raises(ValueError, match="egress manifest"):
+        _admit(v2, manifests=manifests, consumers=consumers)
+
+
+def test_producer_must_match_explicit_consumer_handler_source():
+    spec = _real_definition(include_boundary=True)
+    consumers = BoundaryConsumerRegistry()
+    consumers.register(
+        source_domain="cards_payments",
+        destination_domain="warehouse_management",
+        contract_name="warehouse.inventory_reservation_requested",
+        contract_version=1,
+        handler=lambda _message, _uow: "wrong-source-effect",
+    )
+    with pytest.raises(ValueError, match="unregistered consumer contract"):
+        _admit(spec, manifests=_hypothetically_audited_wm_ingress(), consumers=consumers)
