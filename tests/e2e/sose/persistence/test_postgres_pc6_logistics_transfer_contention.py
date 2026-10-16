@@ -20,6 +20,7 @@ DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
 SHIPMENT_OWNER = "pc6-transfer-shipment-organization"
 HOLDER_OWNER = "pc6-transfer-holder-organization"
+UNBLOCKED_OWNER = "pc6-transfer-unblocked-organization"
 
 
 def _rebuild(store, *, owner_id):
@@ -78,6 +79,11 @@ def test_pg_transfer_finite_contention_retries_across_independent_sessions(
         )
         holder_shipment = logistics.seed_reference(
             store, owner_id=HOLDER_OWNER, instance_key="holder:"+namespace,
+            resource_capacity=1, resource_capacities=overrides,
+            hub_queue_capacity=1,
+        )
+        unblocked_shipment = logistics.seed_reference(
+            store, owner_id=UNBLOCKED_OWNER, instance_key="unblocked:"+namespace,
             resource_capacity=1, resource_capacities=overrides,
             hub_queue_capacity=1,
         )
@@ -240,6 +246,63 @@ def test_pg_transfer_finite_contention_retries_across_independent_sessions(
                 ]
             events = store.events()
             assert len(events) == len({event.event_id for event in events})
+
+        # The foreign worker still holds its actual finite physical grant.
+        # A third organization must make durable progress through an
+        # unrelated physical resource, on another PostgreSQL connection,
+        # before that grant is released. A final-state-only assertion after
+        # release would not falsify namespace-wide serialization.
+        independent_errors: list[BaseException] = []
+        progressed = Event()
+
+        def advance_independent_owner():
+            try:
+                with PostgresPersistence(DSN, namespace=namespace) as other_store:
+                    other_engine, other_backend = _rebuild(
+                        other_store, owner_id=UNBLOCKED_OWNER,
+                    )
+                    other_backend.run_until(logistics.PICKUP_DUE)
+                    assert logistics.reconcile_pickup(
+                        other_store, other_engine, other_backend,
+                        entities=unblocked_shipment,
+                    )
+                    assert logistics.reconcile_origin_hub(
+                        other_store, other_engine, other_backend,
+                        entities=unblocked_shipment,
+                    )
+                    assert other_store.entity(
+                        "shipment", unblocked_shipment.shipment_id,
+                    ).state == "at_origin_hub"
+            except BaseException as error:
+                independent_errors.append(error)
+            finally:
+                progressed.set()
+
+        independent = Thread(target=advance_independent_owner, daemon=True)
+        independent.start()
+        assert progressed.wait(timeout=15), (
+            "unrelated owner blocked behind a live finite-resource holder"
+        )
+        independent.join(timeout=2)
+        assert not independent.is_alive()
+        assert not independent_errors, repr(independent_errors)
+        assert foreign.is_alive(), "physical holder released before independent progress"
+        assert not released.is_set()
+        with PostgresPersistence(DSN, namespace=namespace) as verify:
+            assert verify.entity(
+                "shipment", unblocked_shipment.shipment_id,
+            ).state == "at_origin_hub"
+            unrelated_events = [
+                event for event in verify.events()
+                if event.entity_id == unblocked_shipment.shipment_id
+            ]
+            assert unrelated_events
+            assert not {
+                event.event_id for event in unrelated_events
+            }.intersection(
+                event.event_id for event in verify.events()
+                if event.entity_id == shipment.shipment_id
+            )
     finally:
         release.set()
         foreign.join(timeout=35)
