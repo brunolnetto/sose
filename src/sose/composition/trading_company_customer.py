@@ -139,6 +139,7 @@ def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumer
     registry.register(
         destination_domain="warehouse_fulfillment",
         contract_name="o2c.fulfillment_requested",
+        source_domain="order_to_cash",
         contract_version=1,
         handler=_intent_handler(
             intent_name="composition.request_fulfillment_inventory",
@@ -150,6 +151,7 @@ def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumer
     registry.register(
         destination_domain="warehouse_fulfillment",
         contract_name="o2c.fulfillment_requested",
+        source_domain="order_to_cash",
         contract_version=2,
         handler=_intent_handler(
             intent_name="composition.request_fulfillment_inventory",
@@ -161,6 +163,7 @@ def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumer
     registry.register(
         destination_domain="warehouse_management",
         contract_name="warehouse.inventory_reservation_requested",
+        source_domain="warehouse_fulfillment",
         contract_version=1,
         handler=_intent_handler(
             intent_name="composition.reserve_fulfillment_inventory",
@@ -172,6 +175,7 @@ def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumer
     registry.register(
         destination_domain="warehouse_fulfillment",
         contract_name="warehouse.inventory_reserved",
+        source_domain="warehouse_management",
         contract_version=1,
         handler=_intent_handler(
             intent_name="composition.accept_inventory_reservation",
@@ -183,6 +187,7 @@ def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumer
     registry.register(
         destination_domain="warehouse_management",
         contract_name="warehouse.inventory_consumption_requested",
+        source_domain="warehouse_fulfillment",
         contract_version=1,
         handler=_intent_handler(
             intent_name="composition.consume_fulfillment_inventory",
@@ -194,6 +199,7 @@ def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumer
     registry.register(
         destination_domain="logistics",
         contract_name="warehouse.dispatch_ready",
+        source_domain="warehouse_fulfillment",
         contract_version=1,
         handler=_intent_handler(
             intent_name="composition.deliver_shipment",
@@ -205,6 +211,7 @@ def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumer
     registry.register(
         destination_domain="order_to_cash",
         contract_name="logistics.delivery_completed",
+        source_domain="logistics",
         contract_version=1,
         handler=_intent_handler(
             intent_name="composition.complete_external_fulfillment",
@@ -216,6 +223,7 @@ def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumer
     registry.register(
         destination_domain="cards_payments",
         contract_name="o2c.payment_requested",
+        source_domain="order_to_cash",
         contract_version=1,
         handler=_intent_handler(
             intent_name="composition.settle_customer_payment",
@@ -227,6 +235,7 @@ def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumer
     registry.register(
         destination_domain="record_to_report",
         contract_name="accounting.entry_requested",
+        source_domain="cards_payments",
         contract_version=1,
         handler=_intent_handler(
             intent_name="composition.post_customer_journal",
