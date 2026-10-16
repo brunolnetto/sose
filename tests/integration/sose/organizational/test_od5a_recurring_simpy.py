@@ -180,6 +180,115 @@ def test_native_resource_definitions_are_visible_in_same_authoritative_uow(tmp_p
             )
 
 
+def test_od5a_native_execution_pool_two_instances_share_finite_simpy_capacity(
+    tmp_path, monkeypatch,
+):
+    """#477: two distinct physical instances share one *native* capacity=2 pool.
+
+    The first stage intentionally outlives the second exogenous arrival.
+    Native PriorityResource must grant both distinct requests and observe
+    occupancy 1 then 2; a per-slot-only backend cannot pass this gate.
+    """
+    path = tmp_path / "physical-pool-two-slots.db"
+    items = (
+        OD5aWorkItem("item:A", 0.0, (("a", 10.0), ("b", 1.0), ("c", 1.0))),
+        OD5aWorkItem("item:B", 0.15, (("a", 10.0), ("b", 1.0), ("c", 1.0))),
+    )
+    with SQLitePersistence(path) as seed:
+        initialize_od5a_recurring_job(
+            seed, job_id="org:A", arm=_arms()["capacity_only"], items=items,
+        )
+
+    original_create = SimPyBackend.create_resource
+    original_request = SimPyBackend.request_resource
+    pool_definitions = []
+    pool_grants = []
+
+    def inspected_create(self, name, *, capacity=1):
+        if name == "org:A/execution-pool":
+            pool_definitions.append(capacity)
+        return original_create(self, name, capacity=capacity)
+
+    def inspected_request(self, name, *, request_id, on_acquired, priority=100):
+        def acquired(lease):
+            if name == "org:A/execution-pool":
+                snapshot = self.resource_snapshot(name)
+                assert snapshot.capacity == 2
+                assert lease.resource_name == name and lease.request_id == request_id
+                pool_grants.append((request_id, snapshot.in_use))
+            on_acquired(lease)
+        return original_request(
+            self, name, request_id=request_id, priority=priority,
+            on_acquired=acquired,
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SimPyBackend, "create_resource", inspected_create)
+        patch.setattr(SimPyBackend, "request_resource", inspected_request)
+        # Each tick recreates an ephemeral backend; the second tick must first
+        # reconstruct the first owner's outstanding physical allocation.
+        with SQLitePersistence(path) as store:
+            for step in range(2):
+                outcome = run_od5a_recurring_tick(
+                    store, job_id="org:A", owner_id="worker:A",
+                    now=CLOCK + timedelta(seconds=step),
+                    lease_duration=LEASE, trigger_id=_trigger(store),
+                    _wall_clock=lambda step=step: CLOCK + timedelta(seconds=step),
+                )
+                assert outcome.action == "advanced"
+            physical = tuple(r for r in store.resource_reservations()
+                             if r.resource_name.startswith("org:A/execution:"))
+            assert len(physical) == 2
+            assert len({r.resource_name for r in physical}) == 2
+            assert len({r.request_id for r in physical}) == 2
+            assert not any(r.resource_name.endswith("/execution-pool")
+                           for r in store.resource_reservations())
+
+    assert pool_definitions == [2, 2], (
+        "each recovered native runner must create a real finite pool of capacity 2"
+    )
+    assert any(in_use == 2 for _, in_use in pool_grants), (
+        "native pool never arbitrated two simultaneous physical grants"
+    )
+
+
+def test_od5a_native_pool_callback_is_required_before_durable_slot_commit(
+    tmp_path, monkeypatch,
+):
+    """#477: suppress *pool* grant only: instance callback is insufficient."""
+    path = tmp_path / "pool-grant-suppressed.db"
+    _init(path, arm="capacity_only")
+    original_request = SimPyBackend.request_resource
+    instance_requests = []
+    pool_requests = []
+
+    def suppress_pool(self, name, *, request_id, on_acquired, priority=100):
+        if name == "org:A/execution-pool":
+            pool_requests.append(request_id)
+            on_acquired = lambda _lease: None
+        elif name.startswith("org:A/execution:"):
+            instance_requests.append(request_id)
+        return original_request(
+            self, name, request_id=request_id, on_acquired=on_acquired,
+            priority=priority,
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SimPyBackend, "request_resource", suppress_pool)
+        with SQLitePersistence(path) as store:
+            with pytest.raises(RuntimeError, match="native|pool|grant"):
+                run_od5a_recurring_tick(
+                    store, job_id="org:A", owner_id="worker:A",
+                    now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+                    _wall_clock=lambda: CLOCK,
+                )
+            assert instance_requests, "control: physical instance was requested"
+            assert pool_requests, "a native shared-capacity pool must be requested"
+            assert store.resource_reservations() == ()
+            assert od5a_durable_events(store, job_id="org:A") == ()
+            assert store.job_state("org:A").next_tick == 0
+
+
 @pytest.mark.parametrize("arm", ["baseline", "capacity_only"])
 def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
     tmp_path, monkeypatch, arm,
