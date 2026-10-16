@@ -204,3 +204,106 @@ class OrganizationDefinition:
             ensure_ascii=False, allow_nan=False,
         )
         return sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def _reject_unadmitted_cycles(boundaries: tuple[BoundaryBinding, ...]) -> None:
+    """Fail closed on feedback until a typed liveness policy is certified.
+
+    Asynchronous business feedback can be legal, but a mere topology edge
+    cannot claim a bounded/recoverable cycle without that separate contract.
+    """
+    edges: dict[str, set[str]] = {}
+    for edge in boundaries:
+        edges.setdefault(edge.producer_id, set()).add(edge.consumer_id)
+
+    active: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node: str) -> None:
+        if node in active:
+            raise ValueError("cyclic organizational boundary requires liveness admission")
+        if node in visited:
+            return
+        active.add(node)
+        for destination in sorted(edges.get(node, ())):
+            visit(destination)
+        active.remove(node)
+        visited.add(node)
+
+    for component in sorted(edges):
+        visit(component)
+
+
+def validate_organization_admission(
+    definition: OrganizationDefinition,
+    *,
+    catalog,
+    manifests,
+    consumers,
+) -> str:
+    """Certify a static definition against executable PC6 registrations.
+
+    This is admission, not an organizational runner. The supplied domain
+    catalog is used to instantiate isolated *unseeded* runtime registries;
+    only actual registered StateChart factories are accepted. Real process
+    manifests must attest both sides of every boundary, and the consumer
+    handler must exist in the supplied BoundaryConsumerRegistry. An empty
+    registry is never treated as "accept any contract".
+    """
+    from sose.persistence.memory import MemoryPersistence
+
+    if not isinstance(definition, OrganizationDefinition):
+        raise TypeError("organization admission requires OrganizationDefinition")
+    _reject_unadmitted_cycles(definition.boundaries)
+
+    components = {component.component_id: component for component in definition.components}
+    validated_manifests = {}
+    for component in definition.components:
+        domain = catalog.get(component.domain)
+        manifest = manifests.get(component.domain)
+        if (
+            manifest is None
+            or manifest.domain != component.domain
+            or not manifest.assessment_complete
+        ):
+            raise ValueError(
+                f"missing audited process manifest for {component.domain}"
+            )
+
+        # Construction must not seed or change business truth. Use a separate
+        # ephemeral persistence per component, never another organization's
+        # live database as an introspection mechanism.
+        config = domain.default_config()
+        _, engine = domain.build_runtime(
+            MemoryPersistence(), config, config.start_at, 0, component.owner_id
+        )
+        chart_names = engine.registry.registered_chart_names()
+        unknown = set(component.statechart_types) - chart_names
+        if unknown:
+            raise ValueError(
+                f"unregistered StateChart for {component.domain}: {sorted(unknown)}"
+            )
+        validated_manifests[component.component_id] = manifest
+
+    for boundary in definition.boundaries:
+        producer = components[boundary.producer_id]
+        consumer = components[boundary.consumer_id]
+        contract = f"{boundary.contract_name}.v{boundary.contract_version}"
+        source = validated_manifests[boundary.producer_id]
+        destination = validated_manifests[boundary.consumer_id]
+        if contract not in source.egress_contracts:
+            raise ValueError(
+                f"missing egress manifest for {producer.domain}: {contract}"
+            )
+        if contract not in destination.ingress_contracts:
+            raise ValueError(
+                f"missing ingress manifest for {consumer.domain}: {contract}"
+            )
+        if (
+            boundary.contract_name, boundary.contract_version
+        ) not in consumers.contracts_for(consumer.domain):
+            raise ValueError(
+                f"unregistered consumer contract for {consumer.domain}: {contract}"
+            )
+
+    return definition.fingerprint()
