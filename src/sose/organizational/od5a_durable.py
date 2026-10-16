@@ -166,7 +166,14 @@ def _grant(
     if native is not None and not native.acquire(
         resource_name=resource_name, request_id=request_id, at=at,
     ):
-        return False
+        # A blocked native request must never certify an arrival or stage
+        # completion that has no acquired physical slot. Until an explicit
+        # durable waiting/retry protocol exists, fail closed and roll back
+        # the entire fenced source action rather than lose its causal parent.
+        raise RuntimeError(
+            f"native physical capacity blocked, durable wait not yet admitted: "
+            f"{resource_name}"
+        )
     uow.save_resource_reservation(ResourceReservation(
         reservation_id=reservation_id,
         request_id=request_id,
