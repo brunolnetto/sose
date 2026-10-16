@@ -250,7 +250,6 @@ def validate_organization_admission(
     handler must exist in the supplied BoundaryConsumerRegistry. An empty
     registry is never treated as "accept any contract".
     """
-    from sose.persistence.memory import MemoryPersistence
     from sose.examples.process_manifest import ProcessEvidence
 
     if not isinstance(definition, OrganizationDefinition):
@@ -271,14 +270,16 @@ def validate_organization_admission(
                 f"missing audited process manifest for {component.domain}"
             )
 
-        # Construction must not seed or change business truth. Use a separate
-        # ephemeral persistence per component, never another organization's
-        # live database as an introspection mechanism.
-        config = domain.default_config()
-        _, engine = domain.build_runtime(
-            MemoryPersistence(), config, config.start_at, 0, component.owner_id
+        # A validator must NEVER run default_config/build_runtime: those are
+        # unconstrained callables and may have arbitrary external side effects.
+        if component.process_version != domain.process_version:
+            raise ValueError(
+                f"unsupported process_version for {component.domain}: {component.process_version}"
+            )
+        chart_names = frozenset(
+            getattr(entry.chart_factory, "__name__", "")
+            for entry in domain.registered_entity_types
         )
-        chart_names = engine.registry.registered_chart_names()
         unknown = set(component.statechart_types) - chart_names
         if unknown:
             raise ValueError(
@@ -293,18 +294,22 @@ def validate_organization_admission(
         source = validated_manifests[boundary.producer_id]
         destination = validated_manifests[boundary.consumer_id]
         if (ProcessEvidence.EGRESS_CONTRACTS not in source.evidence
-                or contract not in source.egress_contracts):
+                or contract not in source.egress_contracts
+                or not source.contract_sources("egress", contract)):
             raise ValueError(
                 f"missing egress manifest for {producer.domain}: {contract}"
             )
         if (ProcessEvidence.INGRESS_CONTRACTS not in destination.evidence
-                or contract not in destination.ingress_contracts):
+                or contract not in destination.ingress_contracts
+                or not destination.contract_sources("ingress", contract)):
             raise ValueError(
                 f"missing ingress manifest for {consumer.domain}: {contract}"
             )
         if (
             boundary.contract_name, boundary.contract_version
-        ) not in consumers.contracts_for(consumer.domain):
+        ) not in consumers.contracts_for_source(
+            source_domain=producer.domain, destination_domain=consumer.domain,
+        ):
             raise ValueError(
                 f"unregistered consumer contract for {consumer.domain}: {contract}"
             )
