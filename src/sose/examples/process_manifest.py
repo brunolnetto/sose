@@ -177,8 +177,28 @@ class ProcessManifest:
         default_factory=EvidenceSources
     )
     assessment_complete: bool = False
+    # Exact direction/name/version -> evidence paths. Aggregate ProcessEvidence
+    # alone never certifies a newly added or version-bumped boundary contract.
+    contract_provenance: tuple[tuple[str, str, tuple[str, ...]], ...] = ()
+
+    def contract_sources(self, direction: str, contract: str) -> tuple[str, ...]:
+        return next((
+            paths for declared_direction, declared_name, paths in self.contract_provenance
+            if declared_direction == direction and declared_name == contract
+        ), ())
 
     def __post_init__(self) -> None:
+        seen_contracts = set()
+        for direction, contract, paths in self.contract_provenance:
+            if direction not in {"ingress", "egress"}:
+                raise ValueError("invalid contract provenance direction")
+            if contract not in getattr(self, direction + "_contracts"):
+                raise ValueError("contract provenance references undeclared contract")
+            if (direction, contract) in seen_contracts:
+                raise ValueError("duplicate contract provenance identity")
+            if not paths or any(not isinstance(path, str) or not _is_repository_relative(path) for path in paths):
+                raise ValueError("contract provenance needs repository-relative paths")
+            seen_contracts.add((direction, contract))
         if not self.domain.strip():
             raise ValueError("domain must be non-empty")
 
@@ -442,6 +462,10 @@ def _warehouse_fulfillment_manifest() -> ProcessManifest:
             "warehouse.inventory_consumption_requested.v1",
             "warehouse.dispatch_ready.v1",
         }),
+        contract_provenance=(
+            ("egress", "warehouse.inventory_reservation_requested.v1",
+             (composed_path, composed_contract_test, egress_test)),
+        ),
         evidence_sources=evidence_sources,
         assessment_complete=True,
     )
