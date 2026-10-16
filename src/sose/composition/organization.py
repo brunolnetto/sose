@@ -276,6 +276,14 @@ def validate_organization_admission(
             raise ValueError(
                 f"unsupported process_version for {component.domain}: {component.process_version}"
             )
+        # Builtin ProcessManifest entries are currently domain-keyed, not
+        # version-keyed. They attest the v1 process only; matching a v2
+        # DomainDefinition must never inherit v1 audited evidence.
+        if component.process_version != 1:
+            raise ValueError(
+                f"version-specific process manifest unavailable for "
+                f"{component.domain} v{component.process_version}"
+            )
         chart_names = frozenset(
             getattr(entry.chart_factory, "__name__", "")
             for entry in domain.registered_entity_types
