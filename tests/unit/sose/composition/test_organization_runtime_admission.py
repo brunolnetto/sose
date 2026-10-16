@@ -17,7 +17,7 @@ from sose.composition.organization import (
 )
 from sose.domain.config import DomainCatalog
 from sose.examples.catalog import builtin_catalog
-from sose.examples.process_manifest import builtin_process_manifests
+from sose.examples.process_manifest import ProcessEvidence, builtin_process_manifests
 
 
 def _real_definition(*, include_boundary=False):
@@ -95,13 +95,27 @@ def test_real_pc6_edge_fails_when_consumer_manifest_has_not_declared_ingress():
         _admit(spec, consumers=consumers)
 
 
+def _hypothetically_audited_wm_ingress():
+    """Local admission fixture; DOES NOT upgrade the built-in WM manifest."""
+    manifests = builtin_process_manifests()
+    original = manifests["warehouse_management"]
+    provenance = dict(original.evidence_sources)
+    provenance[ProcessEvidence.INGRESS_CONTRACTS] = (
+        "src/sose/composition/trading_company_customer.py",
+        "tests/integration/sose/composition/test_pc6_two_real_customer_paths.py",
+    )
+    manifests["warehouse_management"] = replace(
+        original,
+        evidence=original.evidence | {ProcessEvidence.INGRESS_CONTRACTS},
+        ingress_contracts=frozenset({"warehouse.inventory_reservation_requested.v1"}),
+        evidence_sources=provenance,
+    )
+    return manifests
+
+
 def test_registry_handler_must_be_registered_even_if_manifests_accept_edge():
     spec = _real_definition(include_boundary=True)
-    manifests = builtin_process_manifests()
-    manifests["warehouse_management"] = replace(
-        manifests["warehouse_management"],
-        ingress_contracts=frozenset({"warehouse.inventory_reservation_requested.v1"}),
-    )
+    manifests = _hypothetically_audited_wm_ingress()
     with pytest.raises(ValueError, match="unregistered consumer contract"):
         _admit(spec, manifests=manifests)
 
@@ -110,11 +124,7 @@ def test_fully_qualified_versioned_edge_can_pass_when_registry_and_both_manifest
     # Only this test fixture extends the as-yet-unratified WM ingress manifest.
     # Production builtin manifests must continue failing closed until audited.
     spec = _real_definition(include_boundary=True)
-    manifests = builtin_process_manifests()
-    manifests["warehouse_management"] = replace(
-        manifests["warehouse_management"],
-        ingress_contracts=frozenset({"warehouse.inventory_reservation_requested.v1"}),
-    )
+    manifests = _hypothetically_audited_wm_ingress()
     consumers = BoundaryConsumerRegistry()
     consumers.register(
         destination_domain="warehouse_management",
