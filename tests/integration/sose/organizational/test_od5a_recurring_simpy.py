@@ -1384,6 +1384,79 @@ def test_registration_failure_rolls_back_source_in_same_authoritative_uow(tmp_pa
         assert store.job_state("org:A") is not None
 
 
+@pytest.mark.parametrize("interception", [2, 3])
+def test_native_resource_events_execute_without_sqlite_write_transaction(
+    tmp_path, monkeypatch, interception,
+):
+    """#477 P1: reconstruction/grant run_until must not hold BEGIN IMMEDIATE.
+
+    Another connection can open and commit a SQLite transaction while native
+    request callbacks are processed, not only at the first preflight advance.
+    """
+    path = tmp_path / f"native-outside-uow-{interception}.db"
+    _init(path)
+    original_run_until = SimPyBackend.run_until
+    calls = []
+
+    def inspect_writer_availability(self, at):
+        calls.append(at)
+        if len(calls) == interception:
+            with SQLitePersistence(path) as independent:
+                with independent.transaction() as uow:
+                    assert uow.get_entity("od5a_durable_pilot", "org:A") is not None
+        return original_run_until(self, at)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SimPyBackend, "run_until", inspect_writer_availability)
+        with SQLitePersistence(path) as store:
+            outcome = run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker",
+                now=CLOCK, lease_duration=LEASE,
+                trigger_id=_trigger(store), _wall_clock=lambda: CLOCK,
+            )
+            assert outcome.action == "advanced"
+            assert store.resource_reservations()
+    assert len(calls) >= interception
+
+
+@pytest.mark.parametrize("interception", [2, 3])
+def test_native_callback_source_swap_is_rejected_before_commit(
+    tmp_path, monkeypatch, interception,
+):
+    """#477 P1: preflight authorization is invalid after any native callback."""
+    path = tmp_path / f"native-swap-{interception}.db"
+    _init(path)
+    original_run_until = SimPyBackend.run_until
+    invocations = []
+
+    def foreign_source_swap(self, at):
+        invocations.append(at)
+        if len(invocations) == interception:
+            with SQLitePersistence(path) as writer:
+                with writer.transaction() as uow:
+                    source = uow.get_entity("od5a_durable_pilot", "org:A")
+                    upcoming = min(
+                        source.attributes["actions"],
+                        key=lambda action: (action["at"], action["seq"]),
+                    )
+                    upcoming["item"] = "item:B"
+                    uow.save_entity(source)
+        return original_run_until(self, at)
+
+    with SQLitePersistence(path) as store:
+        with monkeypatch.context() as patch:
+            patch.setattr(SimPyBackend, "run_until", foreign_source_swap)
+            with pytest.raises(StaleOD5aRunnerClaimError, match="source changed|scheduled step changed"):
+                run_od5a_recurring_tick(
+                    store, job_id="org:A", owner_id="worker",
+                    now=CLOCK, lease_duration=LEASE,
+                    trigger_id=_trigger(store), _wall_clock=lambda: CLOCK,
+                )
+        assert len(invocations) >= interception
+        assert od5a_durable_events(store, job_id="org:A") == ()
+        assert store.job_state("org:A").next_tick == 0
+
+
 def test_full_scheduled_action_identity_is_rechecked_inside_simpy_callback(
     tmp_path, monkeypatch,
 ):
