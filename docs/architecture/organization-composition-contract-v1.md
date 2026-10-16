@@ -1,6 +1,6 @@
 # Organization Composition — initial configuration contract (issue #495)
 
-Status: **partial implementation slice / proposed ADR** (2026-10-13).
+Status: **immutable structural contract (#499) and fail-closed static runtime admission (#510) in `main`; ADR-0008 Proposed** (2026-10-16).
 Follow-up: #496 executable runtime, #497 O2C/MRO domain falsifier, #468/#489 concurrency, #477 physical adapter.
 Master plan: #494; proposed documentation: #498.
 
@@ -39,9 +39,10 @@ An organizational configuration does not silently create a new scoped PostgreSQL
 writer owner, global clock, or namespace-wide transaction.
 
 **Graph cycles:** structural feedback loops may be valid cross-domain business
-behavior. The schema intentionally does not reject *every* directed cycle; cyclic
-dependency admission, deadlock and liveness are separate typed operational
-contracts, to be specified before executing a cyclic dependency in #496.
+behavior. The definition constructor intentionally does not reject every
+directed cycle, but `validate_organization_admission` rejects any active
+cyclic boundary until a separately certified typed liveness policy exists.
+Schema validity is deliberately weaker than execution admission.
 
 ## Mermaid — composition versus ownership
 
@@ -75,6 +76,40 @@ triggers, explicit physical ownership and stable/sensitive fingerprints.
 The test contract was committed before the production implementation.
 No PostgreSQL/SimPy behavior is claimed by these structural tests.
 
+## Static admission now implemented in `main` (#510)
+
+`validate_organization_admission(definition, catalog=..., manifests=..., consumers=...)`
+rejects configurations that cannot be attested by the *real* domain
+registrations. Its validated fingerprint is a configuration identity, **not**
+an executable job, runtime state snapshot or scientific certificate.
+
+- StateChart classes come from immutable `DomainDefinition.registered_entity_types`
+  metadata shared with runtime registration. Introspection never calls
+  `seed()`, `default_config()` or `build_runtime()`.
+- Each component needs an audited domain `ProcessManifest`, the exact
+  process version and actually registered chart names. Current manifests
+  attest process **v1 only**: v2 cannot reuse v1 evidence.
+- Every directed boundary requires audited, per-direction/name/version
+  ingress/egress provenance and a callable
+  `BoundaryConsumerRegistry` handler registered for the exact
+  source-domain / destination-domain / contract / version tuple.
+- Cycles without independently certified liveness fail closed.
+- The registry currently dispatches by domain, **not by component/owner**.
+  Therefore connected duplicate-domain components with independent owners
+  are rejected; disconnected same-domain components can be admitted.
+- Warehouse Management's built-in manifest does not currently attest
+  `warehouse.inventory_reservation_requested.v1` ingress. Tests using a
+  *hypothetical* audited manifest are validator falsifiers, not evidence
+  that this production ingress exists.
+
+Evidence: `src/sose/composition/organization.py`,
+`tests/unit/sose/composition/test_organization_runtime_admission.py`,
+`src/sose/composition/boundary.py`, and
+[ADR-0008](decisions/adr-0008-organization-composition-admission.md).
+The CI and historical three-domain replay on
+[#510](https://github.com/brunolnetto/sose/pull/510) passed before merge
+[`11af3b9`](https://github.com/brunolnetto/sose/commit/11af3b96c952b0c8cf4afa5d85ec646c8b90d6e9).
+
 ## ADR (proposed — full #495 ratification still outstanding)
 
 **Decision:** put these immutable composition-definition types **above the
@@ -86,26 +121,33 @@ DomainEvent, Command, boundary claim/ACK and certified effects.
 organization-state snapshot, reusing flow correlation as organization ID,
 shadow physical ledger, implicit shared clock and global UoW.
 
-**Consequence:** the executable binder in #496 must independently verify
-that every named boundary exists in the versioned ingress/egress contract
-registry and that every StateChart type is actually supported by its
-domain. This initial syntactic contract **does not validate registry
-capabilities**. A constructor accepting a string does not mean a domain
-runtime implements that StateChart, a physical pool exists, or a cyclic
-dependency can run. Admission must fail closed at runtime binding.
+**Consequence:** the *static* runtime binder now validates registered chart
+types, audited manifest contracts, exact consumer handlers and unsupported
+cycles; the constructor by itself still does not. This attestation does
+**not** prove that an external physical pool exists, policy/calendar/cost
+references are well-formed, jobs are instantiated, an organizational
+projection is consistent, or a boundary effect survives a worker restart.
+Those require separate, fail-closed execution and persistence contracts.
 
 **No scientific gate added:** OD-5a #461 remains NOT_ADMITTED pending its
 existing #477 and prospective freeze gates; O2C/MRO #497 and actor or
 management lifecycle features do not retroactively gate it.
 
-## Remaining #495 acceptance before close
+## #495 acceptance reconciliation (not yet ratified)
 
-1. Binding validation against the real versioned PC6 ingress/egress
-   registry and the domain process manifest (not just names).
-2. An explicit topology policy and rejection behavior for impossible
-   dependency cycles and missing ownership, with small happy/sad
-   executable examples.
-3. Ratification of governance StateChart versus projection semantics
-   and lifecycle/epoch binding contracts.
-4. Architecture review, type/schema conformance and source-linked
-   evidence, before claiming this provisional contract is a stable API.
+| Original criterion | Demonstrated in `main` | Still unproven / necessary decision |
+| --- | --- | --- |
+| Identity and ownership | Distinct organization, component owner, job and pool-owner fields; duplicate durable process owner rejected (#499) | Formal source-entity/flow and shared-pool owner binding across running components (#496) |
+| Charts, versions, contracts | Real registry metadata and audited direction/version-specific manifests + callable handlers (#510) | Audited production WF→WM ingress; multiple connected same-domain owners require exact component/owner routing, or an explicit v1 unsupported limitation |
+| Topology | Dangling dependencies and self-boundaries rejected; cyclic execution admission fails closed (#499/#510) | Explicit certified liveness policy for allowed cycles, if supported |
+| Configuration | `config_epoch` is validated and included in immutable fingerprint (#499) | Validated policy/calendar/cost schemas, epoch transition, stale-worker fencing and invalidation contract |
+| Physical resources | Named/owned external pool references cannot silently alias a component ID (#499) | Pool existence, calendar/instance/capacity and transactional ownership checked against one authoritative ledger |
+| Causal execution | Exact registry admission but **no runnable composition** (#510) | Publication → claim → fenced ACK → Command → certified effect across components with restart and local clocks (#496) |
+| Read model / governance | Architectural separation described by ADR-0008 | Derived consistent snapshots, optional authority-changing governance StateChart and failure-path conformance (#496) |
+| Architecture ratification | ADR-0008 Proposed; schema + negative admission tests | Independent review of the full PRD/TRD, policy/epoch semantics, versioned API and explicit scope decision |
+
+**Stop rule:** do not interpret #510's static validator, hypothetical manifest,
+or historical replay as a complete production composition, a ratified ADR or
+the five-arm OD-5a scientific seal. Close #495 only after the missing
+contract-level acceptance is either implemented and tested or explicitly
+resolved by an independently reviewed ADR scope decision.
