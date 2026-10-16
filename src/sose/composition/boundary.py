@@ -46,7 +46,9 @@ class BoundaryConsumerRegistry:
     ) -> None:
         if source_domain is not None and not source_domain.strip():
             raise ValueError("source_domain must be nonempty")
-        if not destination_domain or not contract_name or contract_version <= 0:
+        if type(contract_version) is not int or contract_version < 1:
+            raise ValueError("contract_version must be a positive integer")
+        if not destination_domain or not contract_name:
             raise ValueError("invalid boundary consumer contract")
         if not callable(handler):
             raise ValueError("boundary consumer handler must be callable")
