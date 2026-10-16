@@ -518,6 +518,18 @@ class _RecurringNativePhysicalArbiter:
         self.held: dict[str, tuple[str, str]] = {}
         self.expected: dict[str, str] = {}
         self.prepared_releases: dict[str, str] = {}
+        # SOSE persists the *physical instances*. Derive ephemeral pooled
+        # capacity from that immutable physical slot inventory, never from
+        # an invented namespace-wide counter or shared organization clock.
+        execution_slots = tuple(
+            slot for slot in resources if slot.startswith("execution:")
+        )
+        if not execution_slots:
+            raise ValueError("OD-5a requires at least one execution instance")
+        self.execution_pool = f"{job_id}/execution-pool"
+        self.pool_capacity = len(execution_slots)
+        self.pool_leases: dict[str, str] = {}
+        self.backend.create_resource(self.execution_pool, capacity=self.pool_capacity)
         if self.backend.now != _time(due):
             raise RuntimeError("OD-5a native recovery clock is not at source due boundary")
         definitions_by_name = {item.name: item for item in definitions}
@@ -545,6 +557,30 @@ class _RecurringNativePhysicalArbiter:
             )
 
     def _request(self, *, resource_name: str, request_id: str, reservation_id: str) -> None:
+        # A native pool with capacity N and a distinct per-instance native
+        # resource must BOTH grant this request. The pool lease is a transient
+        # projection of the durable per-instance reservation; no fake extra
+        # ResourceReservation is saved for the pool.
+        if resource_name.startswith(self.execution_pool.removesuffix("-pool") + ":"):
+            pool_request_id = deterministic_id("od5a-native-pool-request", request_id)
+
+            def pool_acquired(lease: object) -> None:
+                snapshot = self.backend.resource_snapshot(self.execution_pool)
+                if (
+                    getattr(lease, "resource_name") != self.execution_pool
+                    or getattr(lease, "request_id") != pool_request_id
+                    or snapshot.in_use < 1
+                    or snapshot.in_use > self.pool_capacity
+                    or reservation_id in self.pool_leases
+                ):
+                    raise RuntimeError("OD-5a physical pool grant identity/capacity mismatch")
+                self.pool_leases[reservation_id] = getattr(lease, "lease_id")
+
+            self.backend.request_resource(
+                self.execution_pool,
+                request_id=pool_request_id, on_acquired=pool_acquired,
+            )
+
         def acquired(lease: object) -> None:
             if (
                 getattr(lease, "resource_name") != resource_name
@@ -572,6 +608,11 @@ class _RecurringNativePhysicalArbiter:
             current = self.held.get(resource_name)
             if current is None or current[0] != reservation_id:
                 raise RuntimeError(f"native lease reconstruction failed: {resource_name}")
+            if (
+                resource_name.startswith(self.execution_pool.removesuffix("-pool") + ":")
+                and reservation_id not in self.pool_leases
+            ):
+                raise RuntimeError("native pool occupancy reconstruction failed")
 
         for released in releases:
             resource_name = released.resource_name
@@ -580,6 +621,11 @@ class _RecurringNativePhysicalArbiter:
                 raise RuntimeError(f"native physical release was not reconstructed: {resource_name}")
             self.backend.release_resource(current[1])
             del self.held[resource_name]
+            if resource_name.startswith(self.execution_pool.removesuffix("-pool") + ":"):
+                pool_lease_id = self.pool_leases.pop(released.reservation_id, None)
+                if pool_lease_id is None:
+                    raise RuntimeError("native execution pool release lacks lease")
+                self.backend.release_resource(pool_lease_id)
             self.prepared_releases[resource_name] = released.reservation_id
 
         for reservation in grants:
@@ -602,6 +648,15 @@ class _RecurringNativePhysicalArbiter:
                 )
             if self.backend.resource_snapshot(reservation.resource_name).in_use != 1:
                 raise RuntimeError("native lease no longer occupies physical capacity")
+            if (
+                reservation.resource_name.startswith(
+                    self.execution_pool.removesuffix("-pool") + ":"
+                )
+                and reservation.reservation_id not in self.pool_leases
+            ):
+                raise RuntimeError(
+                    "native execution pool did not grant the physical instance"
+                )
 
     def acquire(self, *, resource_name: str, request_id: str, at: float) -> bool:
         # Fenced authoritative commit never advances SimPy or runs callbacks.
@@ -609,10 +664,19 @@ class _RecurringNativePhysicalArbiter:
             raise RuntimeError("native physical grant clock differs from source action")
         reservation_id = deterministic_id("od5a-durable-reservation", request_id)
         current = self.held.get(resource_name)
+        pool_ok = (
+            not resource_name.startswith(self.execution_pool.removesuffix("-pool") + ":")
+            or (
+                reservation_id in self.pool_leases
+                and 1 <= self.backend.resource_snapshot(self.execution_pool).in_use
+                <= self.pool_capacity
+            )
+        )
         return (
             current is not None
             and current[0] == reservation_id
             and self.backend.resource_snapshot(resource_name).in_use == 1
+            and pool_ok
         )
 
     def release(self, *, resource_name: str, reservation_id: str) -> None:
