@@ -1,6 +1,6 @@
 # OD-5a #477 — native SimPy physical arbitration promotion (RED gate)
 
-**Status:** Draft / RED falsifier. **Scientific admission:** `NOT_ADMITTED`.
+**Status:** RED reproduced; first native-grant slice implemented (not yet certified). **Scientific admission:** `NOT_ADMITTED`.
 **Parent:** [#477](https://github.com/brunolnetto/sose/issues/477), scientific successor [#461](https://github.com/brunolnetto/sose/issues/461).
 
 ## Counterexample
@@ -14,10 +14,30 @@ an ephemeral SimPy resource request nor its physical acquisition.
 The RED test
 `test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition`
 asserts a first persisted execution-slot allocation corresponds to a real
-`SimPyBackend.request_resource` and `on_acquired` callback. Baseline and
-capacity-only are both exercised. It should **fail** on this initial
-implementation: a green test without a native acquisition is an invalid
-promotion signal.
+`SimPyBackend.request_resource` and `on_acquired` callback with exactly
+equal `resource_name` and `request_id`. The actual SQLite persistence
+boundary is instrumented to prove native capacity remains occupied *through*
+the durable write, not just when a callback ran. A second negative test
+suppresses the native callback and refuses to let the durable source advance.
+Baseline and capacity-only are both exercised. The earlier
+[RED CI evidence](https://github.com/brunolnetto/sose/actions/runs/38898074065)
+proved the original scheduling-only implementation could not pass.
+
+### Bounded native-grant implementation
+
+The recurring job now creates a fresh SimPy PriorityResource for **each named
+authoritative capacity-1 instance**, reconstitutes the current occupied
+leases from the same authoritative UoW, and obtains real native
+`on_acquired` grants before any new durable `ResourceReservation` save.
+Stage-completion releases native and durable representations together inside
+the fenced source step; new leases stay acquired across the durable transaction
+commit. An unadmitted blocked native request causes a fail-closed source
+rollback, **not** a false completed stage or an invented durable wait.
+
+The independent reference reducer remains unchanged. This is a **bounded
+admission fence**, not proof that the native backend chooses optimal instances,
+schedules the whole resource pool, persists fair queues, handles foreign
+capacity contention, or recovers from uncertain PostgreSQL COMMIT.
 
 ## Next implementation slice
 
@@ -41,9 +61,12 @@ promotion signal.
 
 ## Scope and stop rule
 
-This first PR is a **RED test and specification**, not an implementation of
-native arbitration. It is intentionally **not** merge-ready while the
-new test fails; CI must not be weakened or the test marked xfail/skip to
-improve status. It must not modify frozen Manufacturing/O2C/MRO v1
-science, certify an ACK as a terminal effect, claim a five-arm result or
-change `NOT_ADMITTED` to `ADMITTED`.
+This PR now contains a **first implementation slice** that is eligible
+for integration only if the exact-head CI, historical replay and independent
+review pass. Its grant test must become GREEN by an actual native request,
+never xfail/skip/mock/disabled coverage. Integrating a bounded slice does
+**not** close #477: full native pool scheduling, durable wait, capacity >1
+concurrency, preemption, PostgreSQL server/network uncertainty and certified
+three-way equivalence remain explicit blockers. The change must not alter
+Manufacturing/O2C/MRO v1 frozen science, certify ACK alone as a terminal
+business effect or change `NOT_ADMITTED` to `ADMITTED`.
