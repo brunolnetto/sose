@@ -20,8 +20,10 @@ capabilities. This was a dangerous admission boundary for #496/#497.
    changing user business truth. Accept registered chart *factory names*, not
    guessed entity aliases or a broad domain maturity label.
 3. Require an audited `ProcessManifest` for **both** components; the producer
-   must explicitly declare the versioned egress contract, the consumer the
-   same versioned ingress, and its actual `BoundaryConsumerRegistry` must
+   must explicitly declare the versioned egress contract **with** audited
+   `ProcessEvidence.EGRESS_CONTRACTS`, the consumer the same versioned ingress
+   **with** audited `ProcessEvidence.INGRESS_CONTRACTS`, including provenance;
+   its actual `BoundaryConsumerRegistry` must
    have a handler installed for that destination/contract/version.
    Unknown names, unsupported versions, missing manifests and unregistered
    handlers fail closed. Version 2 does not silently fall back to version 1.
