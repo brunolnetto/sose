@@ -13,6 +13,7 @@ from uuid import uuid4
 import pytest
 
 from sose.backends.simpy import SimPyBackend
+from sose.core.runtime import ResourceDefinition
 from sose.examples.logistics import simulation as logistics
 from sose.persistence.postgres import PostgresPersistence
 
@@ -59,145 +60,220 @@ def test_pg_transfer_finite_contention_retries_across_independent_sessions(
 ):
     assert DSN is not None
     namespace = "pc6_transfer_finite_" + uuid4().hex[:12]
-    held = Event()
-    release = Event()
-    released = Event()
-    holder_errors = []
-    holder_request = f"foreign-holder:{blocker}"
+    held, release, released = Event(), Event(), Event()
+    holder_errors: list[BaseException] = []
+    blocker_id = f"destination-queue:foreign-filler:{blocker}"
+    holder_shipment = None
 
-    # Bootstrap real business truth; the contender must be at the origin hub,
-    # not a synthetic pre-granted reservation or an unowned fixture.
     with PostgresPersistence(DSN, namespace=namespace) as store:
         shipment = logistics.seed_reference(
-            store, owner_id=SHIPMENT_OWNER, instance_key=namespace,
+            store, owner_id=SHIPMENT_OWNER, instance_key="customer:"+namespace,
             resource_capacity=1, hub_queue_capacity=1,
         )
+        holder_shipment = logistics.seed_reference(
+            store, owner_id=HOLDER_OWNER, instance_key="holder:"+namespace,
+            resource_capacity=1, hub_queue_capacity=1,
+        )
+        if blocker == "destination_dock":
+            # Two vehicles but only one dock: the second real StateChart can
+            # acquire a vehicle before it meets the *specific* dock contention.
+            with store.transaction() as uow:
+                uow.save_resource_definition(
+                    ResourceDefinition("transfer_vehicle", capacity=2)
+                )
         engine, backend = _rebuild(store, owner_id=SHIPMENT_OWNER)
         backend.run_until(logistics.PICKUP_DUE)
         assert logistics.reconcile_pickup(store, engine, backend, entities=shipment)
         assert logistics.reconcile_origin_hub(store, engine, backend, entities=shipment)
         assert store.entity("shipment", shipment.shipment_id).state == "at_origin_hub"
 
-    def hold_foreign_capacity():
+    def foreign_real_statechart():
         try:
-            # A live second SQL connection owns the finite capacity until the
-            # contender proves a durable wait. No transaction is held open
-            # across Event.wait(): only committed physical truth is shared.
             with PostgresPersistence(DSN, namespace=namespace) as store:
                 engine, backend = _rebuild(store, owner_id=HOLDER_OWNER)
+                backend.run_until(logistics.PICKUP_DUE)
                 if blocked_resource is not None:
-                    granted = engine.resources.ensure_requested(
-                        backend, resource_name=blocked_resource,
-                        request_id=holder_request, requested_at=backend.now,
+                    # A *second* independently owned Logistics StateChart
+                    # reaches the origin, then owns physical grants while
+                    # its destination queue is blocked.
+                    assert logistics.reconcile_pickup(
+                        store, engine, backend, entities=holder_shipment,
                     )
-                    assert granted is not None
-                    assert engine.resources.reservation_for(holder_request) == granted
+                    assert logistics.reconcile_origin_hub(
+                        store, engine, backend, entities=holder_shipment,
+                    )
+                    assert store.entity(
+                        "shipment", holder_shipment.shipment_id
+                    ).state == "at_origin_hub"
+                    queue = logistics._organization_queue(
+                        HOLDER_OWNER, "destination_hub_queue",
+                    )
                 else:
-                    queued = engine.stores.ensure_put(
-                        backend,
-                        store_name=logistics._organization_queue(
-                            SHIPMENT_OWNER, "destination_hub_queue",
-                        ),
-                        item_id=holder_request,
-                        value={"shipment_id": "independent-holder"},
-                        requested_at=backend.now,
+                    # A second session controls a consumer of the shipment's
+                    # finite destination queue. Its GET receipt must survive
+                    # after the item itself is removed.
+                    queue = logistics._organization_queue(
+                        SHIPMENT_OWNER, "destination_hub_queue",
                     )
-                    backend.run_until(backend.now)
-                    assert queued is not None
+
+                engine.stores.ensure_put(
+                    backend, store_name=queue, item_id=blocker_id,
+                    value={"shipment_id": "finite-queue-filler"},
+                    requested_at=backend.now,
+                )
+                backend.run_until(backend.now)
+                assert any(
+                    item.store_name == queue and item.item_id == blocker_id
+                    for item in store.store_items()
+                )
+                if blocked_resource is not None:
+                    assert logistics.reconcile_transfer(
+                        store, engine, backend, entities=holder_shipment,
+                    ) is False
+                    assert store.entity(
+                        "shipment", holder_shipment.shipment_id
+                    ).state == "in_transfer"
+                    assert engine.resources.reservation_for(
+                        f"transfer-vehicle:{holder_shipment.shipment_id}"
+                    ) is not None
+                    assert engine.resources.reservation_for(
+                        f"destination-dock:{holder_shipment.shipment_id}"
+                    ) is not None
+
                 held.set()
                 if not release.wait(timeout=40):
                     raise TimeoutError("contender never reached blocked transfer")
+
+                taken = engine.stores.ensure_selection(
+                    backend, store_name=queue,
+                    request_id=f"foreign-dequeue:{blocker}",
+                    requested_at=backend.now,
+                )
+                assert taken is not None and taken.item.item_id == blocker_id
+                backend.run_until(backend.now)
+
                 if blocked_resource is not None:
-                    assert engine.resources.withdraw(backend, holder_request)
+                    # The holder StateChart itself releases the vehicle/dock
+                    # via arrive_destination_hub; not a manual manager release.
+                    assert logistics.reconcile_transfer(
+                        store, engine, backend, entities=holder_shipment,
+                    ) is True
+                    assert store.entity(
+                        "shipment", holder_shipment.shipment_id
+                    ).state == "at_destination_hub"
+                    assert engine.resources.has_request(
+                        f"transfer-vehicle:{holder_shipment.shipment_id}"
+                    ) is False
+                    assert engine.resources.has_request(
+                        f"destination-dock:{holder_shipment.shipment_id}"
+                    ) is False
                 else:
-                    selection = engine.stores.ensure_selection(
-                        backend,
-                        store_name=logistics._organization_queue(
-                            SHIPMENT_OWNER, "destination_hub_queue",
-                        ),
-                        request_id=f"foreign-dequeue:{blocker}",
+                    # A pending PUT was committed by the contender in a
+                    # different SimPy Environment. Rebuild it here, fill the
+                    # newly vacant slot, and GET the actual shipment before
+                    # its original owner resumes after PostgreSQL reopen.
+                    backend = SimPyBackend(origin=backend.now)
+                    engine.rebuild_backend(backend)
+                    backend.run_until(backend.now)
+                    result = engine.stores.ensure_selection(
+                        backend, store_name=queue,
+                        request_id=f"foreign-receive:{shipment.shipment_id}",
                         requested_at=backend.now,
                     )
-                    assert selection is not None
-                    assert selection.item.item_id == holder_request
+                    assert result is not None
+                    assert result.item.item_id == (
+                        f"destination-queue:{shipment.shipment_id}"
+                    )
                     backend.run_until(backend.now)
-        except BaseException as exc:
-            holder_errors.append(exc)
+                    assert any(
+                        receipt.request_id == result.request_id
+                        and receipt.item.item_id == result.item.item_id
+                        for receipt in store.store_get_results()
+                    )
+                    assert not any(
+                        item.item_id == result.item.item_id
+                        for item in store.store_items()
+                    )
+        except BaseException as error:
+            holder_errors.append(error)
             held.set()
         finally:
             released.set()
 
-    thread = Thread(target=hold_foreign_capacity, daemon=True)
-    thread.start()
+    foreign = Thread(target=foreign_real_statechart, daemon=True)
+    foreign.start()
     try:
-        assert held.wait(timeout=30), "second PostgreSQL worker never held capacity"
-        assert not holder_errors, f"foreign worker failed before contention: {holder_errors!r}"
-
+        assert held.wait(timeout=30), "independent worker never reached holding phase"
+        assert not holder_errors, repr(holder_errors)
         with PostgresPersistence(DSN, namespace=namespace) as store:
             engine, backend = _rebuild(store, owner_id=SHIPMENT_OWNER)
             assert logistics.reconcile_transfer(
                 store, engine, backend, entities=shipment,
             ) is False
-            business = store.entity("shipment", shipment.shipment_id)
-            assert business is not None
-            expected = (
+            state = store.entity("shipment", shipment.shipment_id)
+            assert state is not None
+            assert state.state == (
                 "at_origin_hub" if blocker == "transfer_vehicle" else "in_transfer"
             )
-            assert business.state == expected
-            transfer_request = f"transfer-vehicle:{shipment.shipment_id}"
-            dock_request = f"destination-dock:{shipment.shipment_id}"
-            destination_item = f"destination-queue:{shipment.shipment_id}"
+            vehicle_id = f"transfer-vehicle:{shipment.shipment_id}"
+            dock_id = f"destination-dock:{shipment.shipment_id}"
             if blocker == "transfer_vehicle":
-                assert engine.resources.has_request(transfer_request)
-                assert engine.resources.reservation_for(transfer_request) is None
+                assert engine.resources.has_request(vehicle_id)
+                assert engine.resources.reservation_for(vehicle_id) is None
             elif blocker == "destination_dock":
-                assert engine.resources.reservation_for(transfer_request) is not None
-                assert engine.resources.has_request(dock_request)
-                assert engine.resources.reservation_for(dock_request) is None
+                assert engine.resources.reservation_for(vehicle_id) is not None
+                assert engine.resources.has_request(dock_id)
+                assert engine.resources.reservation_for(dock_id) is None
             else:
-                assert engine.resources.reservation_for(dock_request) is not None
+                assert engine.resources.reservation_for(dock_id) is not None
                 assert sum(
-                    item.item_id == destination_item
-                    for item in store.store_put_intents()
+                    intent.item_id == f"destination-queue:{shipment.shipment_id}"
+                    for intent in store.store_put_intents()
                 ) == 1
-            # No second active physical reservation can be granted while the
-            # foreign one is still committed. Queue PUTs retain one intent.
             if blocked_resource is not None:
                 assert [
-                    reservation.request_id
-                    for reservation in store.resource_reservations()
-                    if reservation.resource_name == blocked_resource
-                ] == [holder_request]
+                    r.request_id for r in store.resource_reservations()
+                    if r.resource_name == blocked_resource
+                ] == [
+                    f"{'transfer-vehicle' if blocker == 'transfer_vehicle' else 'destination-dock'}:"
+                    f"{holder_shipment.shipment_id}"
+                ]
             events = store.events()
             assert len(events) == len({event.event_id for event in events})
     finally:
         release.set()
-        thread.join(timeout=35)
+        foreign.join(timeout=35)
 
-    assert not thread.is_alive(), "foreign worker blocked after release signal"
-    assert not holder_errors, f"foreign worker failed: {holder_errors!r}"
+    assert not foreign.is_alive(), "second worker did not release finite resource"
     assert released.is_set()
+    assert not holder_errors, repr(holder_errors)
 
-    # Real connection death/reopen: the contender's old SimPy Environment is
-    # discarded. Rehydrate durable demand/selection/PUT exactly once.
     with PostgresPersistence(DSN, namespace=namespace) as store:
+        if blocker == "destination_put":
+            item_id = f"destination-queue:{shipment.shipment_id}"
+            assert any(
+                r.item.item_id == item_id
+                and r.request_id == f"foreign-receive:{shipment.shipment_id}"
+                for r in store.store_get_results()
+            )
+            assert not any(i.item_id == item_id for i in store.store_items())
         engine, backend = _rebuild(store, owner_id=SHIPMENT_OWNER)
         assert logistics.reconcile_transfer(
             store, engine, backend, entities=shipment,
         ) is True
         assert store.entity("shipment", shipment.shipment_id).state == "at_destination_hub"
-        assert engine.resources.has_request(f"transfer-vehicle:{shipment.shipment_id}") is False
-        assert engine.resources.has_request(f"destination-dock:{shipment.shipment_id}") is False
+        assert engine.resources.has_request(
+            f"transfer-vehicle:{shipment.shipment_id}"
+        ) is False
+        assert engine.resources.has_request(
+            f"destination-dock:{shipment.shipment_id}"
+        ) is False
         assert not any(
-            intent.item_id == f"destination-queue:{shipment.shipment_id}"
-            for intent in store.store_put_intents()
-        )
-        assert not any(
-            reservation.request_id == holder_request
-            for reservation in store.resource_reservations()
+            i.item_id == f"destination-queue:{shipment.shipment_id}"
+            for i in store.store_put_intents()
         )
         canonical = _snapshot(store)
-        assert len(store.events()) == len({event.event_id for event in store.events()})
+        assert len(store.events()) == len({e.event_id for e in store.events()})
 
     with PostgresPersistence(DSN, namespace=namespace) as store:
         engine, backend = _rebuild(store, owner_id=SHIPMENT_OWNER)
