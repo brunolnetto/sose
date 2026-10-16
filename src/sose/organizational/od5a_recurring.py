@@ -1,10 +1,12 @@
 """Per-organization recurring OD-5a source step driven by ephemeral native SimPy.
 
-First bounded #485 bridge only: SimPy dispatches a committed source-step
-callback, while the authoritative OD-5a reducer still arbitrates physical
-reservations and causal transitions. This does NOT yet make native SimPy
-resource scheduling the authoritative production operational mechanism,
-nor does it drain the read-side boundary reconciler (#484).
+First bounded #477 native-grant slice: the authoritative reducer still
+selects a deterministic free physical instance and owns causal transitions,
+but a recurring source tick may NOT certify a new ResourceReservation unless
+the ephemeral SimPy PriorityResource grants the exact same request/instance.
+Preexisting occupancy is reconstructed from the durable ledger each tick.
+This is NOT yet independent native pool scheduling, durable wait/fairness,
+preemption, network/uncertain-COMMIT qualification or full OD-5a admission.
 
 A scoped durable lease and SimulationJobState checkpoint fence a worker. The
 physical event, resource ledger and job checkpoint commit in ONE transaction.
