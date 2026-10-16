@@ -369,3 +369,42 @@ def test_registry_accepts_executable_handler_for_admission():
         spec, manifests=_hypothetically_audited_wm_ingress(),
         consumers=registry,
     ) == spec.fingerprint()
+
+
+
+@pytest.mark.parametrize("invalid_version", [1.0, 2.5, True, False, "1", None])
+def test_consumer_registry_rejects_noninteger_contract_versions(invalid_version):
+    registry = BoundaryConsumerRegistry()
+    with pytest.raises(ValueError, match="contract_version must be a positive integer"):
+        registry.register(
+            source_domain="warehouse_fulfillment",
+            destination_domain="warehouse_management",
+            contract_name="warehouse.inventory_reservation_requested",
+            contract_version=invalid_version,
+            handler=lambda _message, _uow: "never-authorized",
+        )
+    assert registry.contracts_for_source(
+        source_domain="warehouse_fulfillment",
+        destination_domain="warehouse_management",
+    ) == frozenset()
+    with pytest.raises(ValueError, match="unregistered consumer contract"):
+        _admit(
+            _real_definition(include_boundary=True),
+            manifests=_hypothetically_audited_wm_ingress(),
+            consumers=registry,
+        )
+
+
+def test_consumer_registry_accepts_exact_integer_contract_version():
+    registry = BoundaryConsumerRegistry()
+    registry.register(
+        source_domain="warehouse_fulfillment",
+        destination_domain="warehouse_management",
+        contract_name="warehouse.inventory_reservation_requested",
+        contract_version=1,
+        handler=lambda _message, _uow: "authorized",
+    )
+    assert registry.contracts_for_source(
+        source_domain="warehouse_fulfillment",
+        destination_domain="warehouse_management",
+    ) == frozenset({("warehouse.inventory_reservation_requested", 1)})
