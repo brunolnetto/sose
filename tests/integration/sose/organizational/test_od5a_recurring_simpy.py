@@ -179,6 +179,7 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
     _init(path, arm=arm)
     original_request = SimPyBackend.request_resource
     original_save = MemoryUnitOfWork.save_resource_reservation
+    original_commit = SQLitePersistence._write_state
     requests: list[str] = []
     acquired: list[tuple[str, str]] = []
     witnessed_grants: dict[tuple[str, str], SimPyBackend] = {}
@@ -222,8 +223,21 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
             on_acquired=observed_acquisition, priority=priority,
         )
 
+    def observed_commit(self):
+        # Saving a ResourceReservation alone is not the transaction's durable
+        # commit. Re-check native occupancy at SQLite's actual persistence
+        # boundary, catching a release after save but before transaction exit.
+        for resource_name, request_id in saved_grants:
+            native_backend = witnessed_grants[(resource_name, request_id)]
+            assert native_backend.resource_snapshot(resource_name).in_use >= 1, (
+                "native lease was released before SOSE's durable transaction "
+                f"committed: {(resource_name, request_id)!r}"
+            )
+        return original_commit(self)
+
     monkeypatch.setattr(SimPyBackend, "request_resource", observed_request)
     monkeypatch.setattr(MemoryUnitOfWork, "save_resource_reservation", observed_save)
+    monkeypatch.setattr(SQLitePersistence, "_write_state", observed_commit)
     with SQLitePersistence(path) as store:
         outcome = run_od5a_recurring_tick(
             store, job_id="org:A", owner_id="worker:A",
