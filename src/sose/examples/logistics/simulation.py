@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections.abc import Mapping
 from contextlib import nullcontext
 from datetime import datetime, timedelta, timezone
 
@@ -90,6 +91,7 @@ def seed_reference(
     service_level: str = "standard",
     route: str = "origin-a:destination-b",
     resource_capacity: int = 1,
+    resource_capacities: Mapping[str, int] | None = None,
     hub_queue_capacity: int = 10,
     pickup_delay: timedelta = timedelta(hours=1),
     instance_key: str | None = None,
@@ -104,16 +106,28 @@ def seed_reference(
         state="created",
         attributes={"service_level": service_level, "route": route},
     )
+    resource_names = (
+        "pickup_courier", "origin_dock", "transfer_vehicle",
+        "destination_dock", "delivery_courier",
+    )
+    capacities = {} if resource_capacities is None else dict(resource_capacities)
+    if set(capacities) - set(resource_names):
+        raise ValueError("unknown Logistics physical resource capacity override")
+    if any(
+        isinstance(capacity, bool)
+        or not isinstance(capacity, int)
+        or capacity < 1
+        for capacity in capacities.values()
+    ):
+        raise ValueError("physical resource capacities must be positive integers")
     with persistence.transaction() as uow:
         uow.save_entity(shipment)
-        for name in (
-            "pickup_courier",
-            "origin_dock",
-            "transfer_vehicle",
-            "destination_dock",
-            "delivery_courier",
-        ):
-            uow.save_resource_definition(ResourceDefinition(name, capacity=resource_capacity))
+        for name in resource_names:
+            uow.save_resource_definition(
+                ResourceDefinition(
+                    name, capacity=capacities.get(name, resource_capacity),
+                )
+            )
 
     engine.stores.define(StoreDefinition(_organization_queue(owner_id, "origin_hub_queue"), kind="fifo", capacity=hub_queue_capacity))
     engine.stores.define(
