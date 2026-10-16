@@ -11,6 +11,7 @@ from multiprocessing import get_context
 
 import pytest
 
+from sose.backends.simpy import SimPyBackend
 from sose.organizational.model_spec import EvidenceClass, ModelSpec
 from sose.organizational.od5a_admission import OD5aChargedCost, compile_od5a_arms
 from sose.organizational.od5a_durable import (
@@ -115,6 +116,69 @@ def _drain(path, *, job_id="org:A", owner="worker:A", start_tick=0):
         assert current.next_tick == source["step"]
         assert source["done"]
         return tuple(actions)
+
+
+@pytest.mark.parametrize("arm", ["baseline", "capacity_only"])
+def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
+    tmp_path, monkeypatch, arm,
+):
+    """RED #477: a scheduled callback is not native physical arbitration.
+
+    The first exogenous arrival in the real persistent source produces a
+    committed execution-slot reservation. The ephemeral backend must itself
+    acquire a native SimPy resource *before* that authoritative grant is
+    certified. A callback that merely calls the durable reducer cannot pass.
+    This is a minimal falsifier, NOT five-arm recovered trace conformance.
+    """
+    path = tmp_path / f"native-grant-{arm}.db"
+    _init(path, arm=arm)
+    original_request = SimPyBackend.request_resource
+    requests: list[str] = []
+    acquired: list[str] = []
+
+    def observed_request(
+        self, name, *, request_id, on_acquired, priority=100,
+    ):
+        requests.append(name)
+
+        def observed_acquisition(lease):
+            assert lease.request_id == request_id
+            assert lease.resource_name == name
+            acquired.append(name)
+            on_acquired(lease)
+
+        return original_request(
+            self, name, request_id=request_id,
+            on_acquired=observed_acquisition, priority=priority,
+        )
+
+    monkeypatch.setattr(SimPyBackend, "request_resource", observed_request)
+    with SQLitePersistence(path) as store:
+        outcome = run_od5a_recurring_tick(
+            store, job_id="org:A", owner_id="worker:A",
+            now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+            _wall_clock=lambda: CLOCK,
+        )
+        assert outcome.action == "advanced"
+        reserved = {
+            lease.resource_name for lease in store.resource_reservations()
+        }
+        assert any(name.endswith("/execution:0") for name in reserved), (
+            "control fixture must reach a real durable physical reservation"
+        )
+
+    # A backend schedule_at callback alone is not a resource request.
+    # Require the actual native acquisition callback and its correspondence
+    # to the authoritative identity; never fabricate a native grant from
+    # the reducer's persisted reservation after commit.
+    assert requests, "SimPy must natively arbitrate an execution slot"
+    assert acquired, "SimPy must acquire before SOSE certifies the grant"
+    assert set(acquired).issubset(set(requests))
+    assert all(
+        any(physical.endswith("/" + name.rsplit("/", 1)[-1])
+            for physical in reserved)
+        for name in acquired
+    ), "native physical leases must correspond to authoritative slot identities"
 
 
 @pytest.mark.parametrize("arm", [
