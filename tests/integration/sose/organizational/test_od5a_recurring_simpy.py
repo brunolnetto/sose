@@ -252,6 +252,86 @@ def test_od5a_native_execution_pool_two_instances_share_finite_simpy_capacity(
     )
 
 
+def test_od5a_native_pool_fifo_wait_survives_repeated_sqlite_restart(
+    tmp_path, monkeypatch,
+):
+    """#477: four arrivals for two instances; FIFO pending work survives restarts.
+
+    This validates existing owner-scoped pending_execution semantics and a
+    native pool release/reacquisition in the *same* source step. It does not
+    claim fairness among different owners or durable external pool requests.
+    """
+    path = tmp_path / "physical-pool-fifo-recovery.db"
+    items = (
+        OD5aWorkItem("item:A", 0.0, (("a", 1.0), ("b", 1.0), ("c", 1.0))),
+        OD5aWorkItem("item:B", 0.1, (("a", 1.5), ("b", 1.0), ("c", 1.0))),
+        OD5aWorkItem("item:C", 0.2, (("a", 0.4), ("b", 1.0), ("c", 1.0))),
+        OD5aWorkItem("item:D", 0.3, (("a", 0.4), ("b", 1.0), ("c", 1.0))),
+    )
+    with SQLitePersistence(path) as seed:
+        initialize_od5a_recurring_job(
+            seed, job_id="org:A", arm=_arms()["capacity_only"], items=items,
+        )
+    original_request = SimPyBackend.request_resource
+    in_use_at_grant = []
+
+    def observe_pool(self, name, *, request_id, on_acquired, priority=100):
+        def callback(lease):
+            if name == "org:A/execution-pool":
+                snapshot = self.resource_snapshot(name)
+                assert snapshot.capacity == 2
+                assert 1 <= snapshot.in_use <= 2
+                in_use_at_grant.append(snapshot.in_use)
+            on_acquired(lease)
+        return original_request(
+            self, name, request_id=request_id,
+            on_acquired=callback, priority=priority,
+        )
+
+    with monkeypatch.context() as patch:
+        patch.setattr(SimPyBackend, "request_resource", observe_pool)
+        for tick in range(4):
+            # Distinct persistence object / SimPy Environment each tick.
+            with SQLitePersistence(path) as store:
+                result = run_od5a_recurring_tick(
+                    store, job_id="org:A", owner_id="worker:A",
+                    now=CLOCK + timedelta(seconds=tick),
+                    lease_duration=LEASE, trigger_id=_trigger(store),
+                    _wall_clock=lambda tick=tick: CLOCK + timedelta(seconds=tick),
+                )
+                assert result.action == "advanced"
+        with SQLitePersistence(path) as store:
+            source = od5a_durable_state(store, job_id="org:A")
+            assert [x["item"] for x in source["pending_execution"]] == [
+                "item:C", "item:D",
+            ]
+            assert {a["item"] for a in source["active"].values()
+                    if a["kind"] == "execution"} == {"item:A", "item:B"}
+            assert sum(r.resource_name.startswith("org:A/execution:")
+                       for r in store.resource_reservations()) == 2
+        # First physical completion frees a native pool permit and the FIFO
+        # head C acquires that permit in the same fenced source transition.
+        with SQLitePersistence(path) as store:
+            result = run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker:A",
+                now=CLOCK + timedelta(seconds=4),
+                lease_duration=LEASE, trigger_id=_trigger(store),
+                _wall_clock=lambda: CLOCK + timedelta(seconds=4),
+            )
+            assert result.action == "advanced"
+            source = od5a_durable_state(store, job_id="org:A")
+            assert [x["item"] for x in source["pending_execution"]] == ["item:D"]
+            assert {a["item"] for a in source["active"].values()
+                    if a["kind"] == "execution"} == {"item:B", "item:C"}
+            leases = [r for r in store.resource_reservations()
+                      if r.resource_name.startswith("org:A/execution:")]
+            assert len(leases) == 2
+            assert len({r.request_id for r in leases}) == 2
+    assert in_use_at_grant.count(2) >= 2, (
+        "native pooled capacity must remain occupied through FIFO recovery"
+    )
+
+
 def test_od5a_native_pool_callback_is_required_before_durable_slot_commit(
     tmp_path, monkeypatch,
 ):
