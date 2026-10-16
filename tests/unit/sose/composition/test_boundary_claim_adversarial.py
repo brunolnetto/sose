@@ -38,19 +38,19 @@ def registry(effect="effect"):
     return result
 
 
-@pytest.mark.parametrize("fields", [
-    {"destination_domain": ""},
-    {"contract_name": ""},
-    {"contract_version": 0},
+@pytest.mark.parametrize("fields, expected_message", [
+    ({"destination_domain": ""}, "invalid boundary consumer contract"),
+    ({"contract_name": ""}, "invalid boundary consumer contract"),
+    ({"contract_version": 0}, "contract_version must be a positive integer"),
 ])
-def test_consumer_registry_rejects_invalid_contracts(fields):
+def test_consumer_registry_rejects_invalid_contracts(fields, expected_message):
     options = {
         "destination_domain": "destination",
         "contract_name": "test.ready",
         "contract_version": 1,
         "handler": lambda m, u: "effect",
     }
-    with pytest.raises(ValueError, match="invalid boundary consumer contract"):
+    with pytest.raises(ValueError, match=expected_message):
         BoundaryConsumerRegistry().register(**{**options, **fields})
 
 
