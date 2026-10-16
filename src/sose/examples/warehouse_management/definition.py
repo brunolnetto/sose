@@ -10,6 +10,7 @@ from .simulation import (
     arrive_truck,
     assign_forklift,
     build_runtime,
+    REGISTERED_ENTITY_TYPES,
     complete_unload,
     seed_reference,
     start_transfer,
@@ -83,6 +84,7 @@ definition = DomainDefinition(
     ),
     config_model=WarehouseManagementConfig,
     build_runtime=_build,
+    registered_entity_types=REGISTERED_ENTITY_TYPES,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
     runtime_mutable_fields=frozenset(
