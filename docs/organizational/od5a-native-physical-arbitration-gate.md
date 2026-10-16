@@ -26,13 +26,25 @@ proved the original scheduling-only implementation could not pass.
 ### Bounded native-grant implementation
 
 The recurring job now creates a fresh SimPy PriorityResource for **each named
-authoritative capacity-1 instance**, reconstitutes the current occupied
-leases from the same authoritative UoW, and obtains real native
-`on_acquired` grants before any new durable `ResourceReservation` save.
-Stage-completion releases native and durable representations together inside
-the fenced source step; new leases stay acquired across the durable transaction
-commit. An unadmitted blocked native request causes a fail-closed source
-rollback, **not** a false completed stage or an invented durable wait.
+authoritative capacity-1 instance** using definitions and reservations read
+from one UoW. It previews the next reducer transition in a **discardable**
+physical ledger, without persisting its events or proposed reservations.
+Reconstruction, speculative native releases, and real `on_acquired` grants
+for the preview's **exact** `resource_name`/`request_id` are processed
+**outside all database transactions**. Only then does a new fenced UoW
+revalidate the complete source state and that organization's physical ledger
+and atomically commit the source event, actual reservations/releases and job
+checkpoint. During the commit the native adapter performs only identity and
+capacity checks; it never advances callbacks under a database write lock.
+Newly acquired native leases remain held through durable commit.
+
+Speculatively released native leases are not durable releases: if the commit
+fails, the ephemeral backend is discarded and a future runner reconstructs
+the unchanged authoritative occupancy. An unadmitted blocked native request
+causes a fail-closed source rollback, **not** a false completed stage or an
+invented durable wait. Tests use separate SQLite writers during *both* native
+reconstruction and grant callbacks, including source mutation to prove the
+last-moment causal fence rejects stale plans.
 
 The independent reference reducer remains unchanged. This is a **bounded
 admission fence**, not proof that the native backend chooses optimal instances,
