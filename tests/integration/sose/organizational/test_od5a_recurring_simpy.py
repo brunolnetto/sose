@@ -118,6 +118,51 @@ def _drain(path, *, job_id="org:A", owner="worker:A", start_tick=0):
         return tuple(actions)
 
 
+def test_od5a_native_grant_callback_barrier_prevents_unwitnessed_durable_commit(
+    tmp_path, monkeypatch,
+):
+    """RED #477: a native request without on_acquired cannot certify a grant.
+
+    Simulate a delayed native acquisition callback without fabricating a
+    persistent reservation. The worker may report a pending action or fail
+    closed, but it must never commit physical truth while its actual native
+    witness is missing. This falsifies post-commit dummy acquisitions.
+    """
+    path = tmp_path / "native-blocked.db"
+    _init(path)
+    original_request = SimPyBackend.request_resource
+    suppressed: list[tuple[str, str]] = []
+
+    def block_native_callback(
+        self, name, *, request_id, on_acquired, priority=100,
+    ):
+        suppressed.append((name, request_id))
+        return original_request(
+            self, name, request_id=request_id,
+            on_acquired=lambda _lease: None, priority=priority,
+        )
+
+    monkeypatch.setattr(SimPyBackend, "request_resource", block_native_callback)
+    with SQLitePersistence(path) as store:
+        try:
+            run_od5a_recurring_tick(
+                store, job_id="org:A", owner_id="worker:A",
+                now=CLOCK, lease_duration=LEASE, trigger_id=_trigger(store),
+                _wall_clock=lambda: CLOCK,
+            )
+        except RuntimeError:
+            # Fail-closed is allowed until the adapter persists durable waiting.
+            pass
+
+        assert suppressed, "the real recurring adapter never requested native capacity"
+        assert not store.resource_reservations(), (
+            "native acquisition callback was withheld but SOSE granted capacity"
+        )
+        source = od5a_durable_state(store, job_id="org:A")
+        assert source["step"] == 0
+        assert not od5a_durable_events(store, job_id="org:A")
+
+
 @pytest.mark.parametrize("arm", ["baseline", "capacity_only"])
 def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
     tmp_path, monkeypatch, arm,
