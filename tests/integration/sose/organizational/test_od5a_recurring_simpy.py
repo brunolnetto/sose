@@ -181,7 +181,7 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
     original_save = MemoryUnitOfWork.save_resource_reservation
     requests: list[str] = []
     acquired: list[tuple[str, str]] = []
-    witnessed_grants: set[tuple[str, str]] = set()
+    witnessed_grants: dict[tuple[str, str], SimPyBackend] = {}
     saved_grants: list[tuple[str, str]] = []
 
     def observed_save(self, reservation):
@@ -190,9 +190,14 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
         # not after an unrelated grant or a post-commit SimPy request.
         identity = (reservation.resource_name, reservation.request_id)
         if reservation.resource_name.startswith("org:A/"):
-            assert identity in witnessed_grants, (
+            native_backend = witnessed_grants.get(identity)
+            assert native_backend is not None, (
                 "SOSE persisted a reservation without a prior matching native "
                 f"SimPy grant for {identity!r}"
+            )
+            assert native_backend.resource_snapshot(reservation.resource_name).in_use >= 1, (
+                "SOSE committed a physical reservation after its native lease "
+                f"was already released: {identity!r}"
             )
             saved_grants.append(identity)
         return original_save(self, reservation)
@@ -208,7 +213,7 @@ def test_od5a_recurring_physical_grant_requires_actual_native_simpy_acquisition(
             assert self.resource_snapshot(name).in_use >= 1, (
                 "native callback did not observe occupied SimPy capacity"
             )
-            witnessed_grants.add((lease.resource_name, lease.request_id))
+            witnessed_grants[(lease.resource_name, lease.request_id)] = self
             acquired.append((lease.resource_name, lease.request_id))
             on_acquired(lease)
 
