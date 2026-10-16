@@ -396,6 +396,17 @@ class MemoryUnitOfWork:
         value = self._working.resource_demands.get(request_id)
         return deepcopy(value) if value else None
 
+    def resource_definitions(self) -> tuple[ResourceDefinition, ...]:
+        """Read the same transaction-local definitions used to certify grants.
+
+        An independent store-level read could race a concurrent PostgreSQL
+        writer or omit definitions staged earlier in this UoW.
+        """
+        return tuple(
+            deepcopy(self._working.resource_definitions[name])
+            for name in sorted(self._working.resource_definitions)
+        )
+
     def save_resource_definition(self, definition: ResourceDefinition) -> None:
         existing = self._working.resource_definitions.get(definition.name)
         if existing is not None and existing != definition:
