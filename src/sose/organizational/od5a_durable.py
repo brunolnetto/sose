@@ -15,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from math import isfinite
 import json
-from typing import Any, Callable
+from typing import Any, Callable, Protocol
 
 from sose.core.events import DomainEvent
 from sose.core.identity import deterministic_id
@@ -29,6 +29,14 @@ from .od5a_mechanisms import OD5aWorkItem
 
 _ORIGIN = datetime(2000, 1, 1, tzinfo=timezone.utc)
 _KIND = "od5a_durable_pilot"
+
+
+class _NativePhysicalArbiter(Protocol):
+    """Ephemeral native acquisition fence used only by the recurring adapter."""
+
+    def acquire(self, *, resource_name: str, request_id: str, at: float) -> bool: ...
+    def release(self, *, resource_name: str, reservation_id: str) -> None: ...
+
 
 
 def _time_us(value: float | int, label: str) -> int:
@@ -124,7 +132,8 @@ def _grant(
     uow: Any, state: dict[str, Any], *,
     job_id: str, resource: str, at: float,
     kind: str, request: dict[str, Any],
-) -> None:
+    native: _NativePhysicalArbiter | None = None,
+) -> bool:
     if resource in state["active"]:
         raise RuntimeError(f"double allocation of physical resource {resource}")
     if state["resources"][resource] not in (None, ""):
@@ -151,6 +160,13 @@ def _grant(
         state["services"][request["item"]][request["target"]]
         if kind == "execution" else state["coordination_latency"]
     )
+    # The recurrent adapter cannot persist capacity on a reducer-only grant.
+    # The native backend grants the *exact* resource and request identity;
+    # the lease remains live until the caller's authoritative UoW commits.
+    if native is not None and not native.acquire(
+        resource_name=resource_name, request_id=request_id, at=at,
+    ):
+        return False
     uow.save_resource_reservation(ResourceReservation(
         reservation_id=reservation_id,
         request_id=request_id,
@@ -167,20 +183,30 @@ def _grant(
         state, at=_add_exact_seconds(at, duration), kind=f"{kind}_done",
         resource=resource,
     )
+    return True
 
 
-def _dispatch(uow: Any, state: dict[str, Any], *, job_id: str, at: float) -> None:
+def _dispatch(
+    uow: Any, state: dict[str, Any], *,
+    job_id: str, at: float, native: _NativePhysicalArbiter | None = None,
+) -> None:
     for resource in state["resources"]:
         if not resource.startswith("execution:") or state["resources"][resource] is not None:
             continue
         if state["pending_execution"]:
             request = state["pending_execution"].pop(0)
-            _grant(uow, state, job_id=job_id, resource=resource,
-                   at=at, kind="execution", request=request)
+            if not _grant(
+                uow, state, job_id=job_id, resource=resource,
+                at=at, kind="execution", request=request, native=native,
+            ):
+                state["pending_execution"].insert(0, request)
     if state["resources"]["coordination:0"] is None and state["pending_coordination"]:
         request = state["pending_coordination"].pop(0)
-        _grant(uow, state, job_id=job_id, resource="coordination:0",
-               at=at, kind="coordination", request=request)
+        if not _grant(
+            uow, state, job_id=job_id, resource="coordination:0",
+            at=at, kind="coordination", request=request, native=native,
+        ):
+            state["pending_coordination"].insert(0, request)
 
 
 def _queue_stage(
@@ -195,7 +221,10 @@ def _queue_stage(
     })
 
 
-def _transition(uow: Any, state: dict[str, Any], job_id: str) -> bool:
+def _transition(
+    uow: Any, state: dict[str, Any], job_id: str,
+    native: _NativePhysicalArbiter | None = None,
+) -> bool:
     if not state["actions"]:
         if not state["active"] and not state["pending_execution"] and not state["pending_coordination"]:
             if len(state["completed"]) != len(state["services"]):
@@ -230,6 +259,11 @@ def _transition(uow: Any, state: dict[str, Any], job_id: str) -> bool:
             raise RuntimeError("physical resource truth differs from active allocation")
         if uow.get_resource_reservation(reservation_id) is None:
             raise RuntimeError("physical lease disappeared before completion")
+        if native is not None:
+            native.release(
+                resource_name=f"{job_id}/{resource}",
+                reservation_id=reservation_id,
+            )
         uow.delete_resource_reservation(reservation_id)
         state["resources"][resource] = None
         item = allocation["item"]
@@ -261,7 +295,7 @@ def _transition(uow: Any, state: dict[str, Any], job_id: str) -> bool:
                 )
     else:
         raise RuntimeError(f"unknown scheduled durable action: {kind}")
-    _dispatch(uow, state, job_id=job_id, at=now)
+    _dispatch(uow, state, job_id=job_id, at=now, native=native)
     if not state["actions"] and len(state["completed"]) == len(state["services"]):
         if state["active"] or state["pending_execution"] or state["pending_coordination"]:
             raise RuntimeError("completed world retains unresolved physical work")
@@ -392,7 +426,9 @@ def initialize_od5a_durable(
             _bind_uow(uow)
 
 
-def _advance_od5a_in_uow(uow: Any, *, job_id: str) -> bool:
+def _advance_od5a_in_uow(
+    uow: Any, *, job_id: str, native: _NativePhysicalArbiter | None = None,
+) -> bool:
     """Advance physical truth inside a caller-owned authoritative UoW.
 
     The recurring adapter couples its fenced job checkpoint and the physical
@@ -405,7 +441,7 @@ def _advance_od5a_in_uow(uow: Any, *, job_id: str) -> bool:
     state = deepcopy(entity.attributes)
     if state["done"]:
         return False
-    advanced = _transition(uow, state, job_id)
+    advanced = _transition(uow, state, job_id, native=native)
     entity.attributes = state
     entity.state = "done" if state["done"] else "running"
     entity.touch(_time(state["clock"]))
