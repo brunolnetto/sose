@@ -160,7 +160,10 @@ def test_two_distinct_job_scopes_can_be_in_flight_together(monkeypatch):
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(worker, key) for key in ("a", "b")]
-        results = [future.result(timeout=25) for future in futures]
+        # Worst case is two sequential 12 s barrier budgets plus separate
+        # PostgreSQL connection/bootstrap and observation transaction costs.
+        # The outer future timeout must exceed their combined budget.
+        results = [future.result(timeout=45) for future in futures]
     assert {result.job_id for result in results} == {"job-a", "job-b"}
     with PostgresPersistence(DSN, namespace=ns) as recovered:
         assert recovered.job_state("job-a").run_count == 1
