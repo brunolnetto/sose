@@ -132,6 +132,78 @@ def _registry_edges(path: str, aliases: dict[str, str]) -> set[tuple]:
     return found
 
 
+def _observed_boundary_contract_assertions(test: ast.FunctionDef | ast.AsyncFunctionDef) -> set[str]:
+    """Collect only literals compared to contract keys read from persisted messages.
+
+    A bare string under an assert, or an unrelated comparison in a flow test,
+    must NEVER count as an executed boundary. Track the exact variable bound
+    by a real UoW.get_boundary_message call, and list comprehensions over
+    collections of those messages.
+    """
+    observed = set()
+    for node in ast.walk(test):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if node.value is None or not any(
+            isinstance(call, ast.Call)
+            and isinstance(call.func, ast.Attribute)
+            and call.func.attr == "get_boundary_message"
+            for call in ast.walk(node.value)
+        ):
+            continue
+        observed.update(
+            target.id for target in targets if isinstance(target, ast.Name)
+        )
+
+    def is_observation(node: ast.AST) -> bool:
+        if isinstance(node, ast.Attribute) and node.attr == "contract_key":
+            return isinstance(node.value, ast.Name) and node.value.id in observed
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.GeneratorExp)):
+            return (
+                isinstance(node.elt, ast.Attribute)
+                and node.elt.attr == "contract_key"
+                and isinstance(node.elt.value, ast.Name)
+                and any(
+                    isinstance(gen.target, ast.Name)
+                    and gen.target.id == node.elt.value.id
+                    and isinstance(gen.iter, ast.Name)
+                    and gen.iter.id in observed
+                    for gen in node.generators
+                )
+            )
+        return False
+
+    def literal_values(node: ast.AST) -> set[str]:
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            return {node.value}
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            if all(
+                isinstance(item, ast.Constant) and isinstance(item.value, str)
+                for item in node.elts
+            ):
+                return {item.value for item in node.elts}
+        return set()
+
+    contracts = set()
+    for node in ast.walk(test):
+        if not isinstance(node, ast.Assert):
+            continue
+        comparison = node.test
+        if not isinstance(comparison, ast.Compare):
+            continue
+        if len(comparison.ops) != 1 or not isinstance(comparison.ops[0], ast.Eq):
+            continue
+        if len(comparison.comparators) != 1:
+            continue
+        left, right = comparison.left, comparison.comparators[0]
+        if is_observation(left):
+            contracts.update(literal_values(right))
+        elif is_observation(right):
+            contracts.update(literal_values(left))
+    return contracts
+
+
 def _assert_flow_test_coverage(flow: dict) -> None:
     """Require a real test that calls the flow AND asserts each contract key.
 
@@ -161,15 +233,9 @@ def _assert_flow_test_coverage(flow: dict) -> None:
             )
             if not executes_flow:
                 continue
-            for assertion in ast.walk(test):
-                if not isinstance(assertion, ast.Assert):
-                    continue
-                tested_contracts.update(
-                    node.value
-                    for node in ast.walk(assertion.test)
-                    if isinstance(node, ast.Constant)
-                    and isinstance(node.value, str)
-                )
+            tested_contracts.update(
+                _observed_boundary_contract_assertions(test)
+            )
     for edge in flow["boundary_registrations"]:
         identity = f'{edge["contract_name"]}.v{edge["contract_version"]}'
         assert identity in tested_contracts, (
@@ -241,7 +307,6 @@ def _assert_organizations(matrix: dict) -> None:
                 "wire alias has no corresponding domain implementation import: "
                 f"{wire_domain} -> {catalog_domain}"
             )
-        _assert_flow_test_coverage(flow)
         registrations = _registry_edges(
             flow["implementation_path"], flow["boundary_domain_aliases"],
         )
@@ -267,6 +332,10 @@ def _assert_organizations(matrix: dict) -> None:
         assert recorded == registrations, (
             "the executable registry changed; update the architecture matrix"
         )
+        # Validate that the *registered* identity is exercised after checking
+        # real registry equivalence. An invented contract must fail on the
+        # primary registry mismatch, not an earlier incidental test assertion.
+        _assert_flow_test_coverage(flow)
 
 
 def test_architecture_matrix_matches_real_catalog_and_audited_manifest() -> None:
@@ -336,3 +405,31 @@ def test_registered_but_untested_v2_boundary_is_not_execution_evidence() -> None
     ]
     with pytest.raises(AssertionError, match="lacks a flow-calling test assertion"):
         _assert_organizations(matrix)
+
+
+def test_unrelated_assert_string_is_not_flow_execution_evidence() -> None:
+    """P2 falsifier: a random literal inside assert must not imply a grant."""
+    fake = ast.parse("""
+def test_fake():
+    result = run_customer_demand_path(organization_id="test")
+    with result.persistence.transaction() as uow:
+        ingress = uow.get_boundary_message(result.message_ids[0])
+    assert "invented.contract.v1"
+    assert "invented.contract.v1" == "invented.contract.v1"
+    assert ingress is not None
+""").body[0]
+    assert isinstance(fake, ast.FunctionDef)
+    assert not _observed_boundary_contract_assertions(fake)
+
+
+def test_asserted_contract_must_reference_observed_boundary_message() -> None:
+    fake = ast.parse("""
+def test_fake():
+    result = run_customer_demand_path(organization_id="test")
+    with result.persistence.transaction() as uow:
+        ingress = uow.get_boundary_message(result.message_ids[0])
+    assert "invented.contract.v1" == unrelated.contract_key
+    assert ingress.contract_key == "real.contract.v1"
+""").body[0]
+    assert isinstance(fake, ast.FunctionDef)
+    assert _observed_boundary_contract_assertions(fake) == {"real.contract.v1"}
