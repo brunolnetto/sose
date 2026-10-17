@@ -75,20 +75,14 @@ def _post_commit_actor_worker(dsn, namespace, actor_id, ready):
 
 
 def _join_workers(workers, *, timeout=45):
-    try:
-        for worker in workers:
-            worker.join(timeout=timeout)
-            assert not worker.is_alive(), "actor PG worker hung under concurrent admission"
-            assert worker.exitcode == 0, (
-                f"actor PG worker crashed with exit code {worker.exitcode}"
-            )
-    finally:
-        for worker in workers:
-            if worker.is_alive():
-                worker.kill()
-                worker.join(timeout=10)
-            if worker.pid is not None:
-                worker.close()
+    # Caller owns Process lifecycle/cleanup; don't close handles early:
+    # it must still collect results and enforce exit status on error paths.
+    for worker in workers:
+        worker.join(timeout=timeout)
+        assert not worker.is_alive(), "actor PG worker hung under concurrent admission"
+        assert worker.exitcode == 0, (
+            f"actor PG worker crashed with exit code {worker.exitcode}"
+        )
 
 
 def test_pg_competing_actor_claims_are_fenced_and_peer_is_independent():
