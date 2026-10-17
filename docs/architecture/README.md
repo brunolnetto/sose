@@ -38,6 +38,7 @@ SOSE Runtime
 | `runtime.md` | Canonical execution lifecycle. |
 | `factories.md` | Canonical object construction. |
 | `persistence.md` | State, event, schedule, and commit durability. |
+| [Canonical × Domain × Organization matrix](canonical-domain-organization-matrix.md) | Evidence-labelled crosswalk of 5 canonical mechanisms, 22 business domains, 10 proposed organization archetypes, audited resources, and executable typed boundaries; machine-readable [v1 JSON](canonical-domain-organization-matrix.v1.json). |
 
 ## Architectural invariants
 
