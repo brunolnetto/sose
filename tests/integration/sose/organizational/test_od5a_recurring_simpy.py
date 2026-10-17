@@ -1864,6 +1864,9 @@ def test_native_three_way_physical_and_causal_ledger_matches_after_every_tick(
                 assert evidence(restarted) == evidence(reference)
                 assert evidence(restarted) == evidence(steady)
                 assert restarted.job_state("org:A") == steady.job_state("org:A")
+                assert restarted.entity("od5a_runner_lease", "org:A") == (
+                    steady.entity("od5a_runner_lease", "org:A")
+                ), "ephemeral backend restart altered the durable fencing lease"
                 assert_no_overlap(restarted)
             assert_no_overlap(steady)
             assert steady_result.action == (
@@ -1877,3 +1880,70 @@ def test_native_three_way_physical_and_causal_ledger_matches_after_every_tick(
                 break
         else:
             pytest.fail(f"three-way native/restart conformance did not finish: {arm}")
+
+
+@pytest.mark.parametrize("arm", [
+    "baseline", "capacity_only", "topology_only",
+    "coordination_only", "structural_combined",
+])
+def test_native_reopened_claimed_checkpoint_matches_before_physical_commit(
+    tmp_path, arm,
+):
+    """#477 preserve lease epoch/owner/expiry while crash-window is claimed.
+
+    A source/JobState comparison after the source commit is not enough:
+    reopen the real SQLite store *between* claim and native acquisition and
+    inspect the authoritative `od5a_runner_lease` before executing the tick.
+    """
+    steady_path = tmp_path / f"{arm}-claim-steady.sqlite"
+    reopened_path = tmp_path / f"{arm}-claim-reopened.sqlite"
+    _init(steady_path, arm=arm)
+    _init(reopened_path, arm=arm)
+    with SQLitePersistence(steady_path) as steady:
+        triggered = _trigger(steady)
+        steady_claim = claim_od5a_recurring_tick(
+            steady, job_id="org:A", owner_id="worker:A",
+            now=CLOCK, lease_duration=LEASE, trigger_id=triggered,
+            _wall_clock=lambda: CLOCK,
+        )
+        assert steady_claim is not None
+        with SQLitePersistence(reopened_path) as first:
+            restored_claim = claim_od5a_recurring_tick(
+                first, job_id="org:A", owner_id="worker:A",
+                now=CLOCK, lease_duration=LEASE, trigger_id=triggered,
+                _wall_clock=lambda: CLOCK,
+            )
+            assert restored_claim == steady_claim
+            assert first.job_state("org:A") == steady.job_state("org:A")
+            assert first.entity("od5a_runner_lease", "org:A") == (
+                steady.entity("od5a_runner_lease", "org:A")
+            )
+            assert first.job_state("org:A").phase == "advance"
+            assert first.entity("od5a_runner_lease", "org:A").state == "claimed"
+        # Actual SQLite reopen while the source tick is still unfinished.
+        with SQLitePersistence(reopened_path) as second:
+            assert second.entity("od5a_runner_lease", "org:A") == (
+                steady.entity("od5a_runner_lease", "org:A")
+            )
+            assert second.job_state("org:A") == steady.job_state("org:A")
+            a = execute_od5a_claimed_tick(
+                steady, claim=steady_claim, now=CLOCK,
+                _wall_clock=lambda: CLOCK,
+            )
+            b = execute_od5a_claimed_tick(
+                second, claim=restored_claim, now=CLOCK,
+                _wall_clock=lambda: CLOCK,
+            )
+            assert a == b
+            assert second.job_state("org:A") == steady.job_state("org:A")
+            assert second.entity("od5a_runner_lease", "org:A") == (
+                steady.entity("od5a_runner_lease", "org:A")
+            )
+            assert second.entity("od5a_runner_lease", "org:A").state == "released"
+            assert od5a_durable_state(second, job_id="org:A") == (
+                od5a_durable_state(steady, job_id="org:A")
+            )
+            assert od5a_durable_events(second, job_id="org:A") == (
+                od5a_durable_events(steady, job_id="org:A")
+            )
+            assert second.resource_reservations() == steady.resource_reservations()
