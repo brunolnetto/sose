@@ -110,7 +110,7 @@ raise AssertionError("certification transaction cut did not interrupt the worker
 def _read_authoritative_outcome(dsn: str, namespace: str, effect_id: str):
     """A new direct SQL session resolves whether the atomic commit happened."""
     with PostgresPersistence(dsn, namespace=namespace) as store:
-        with store.boundary_transaction() as uow:
+        with store.boundary_transaction(owner_epoch=store.writer_epoch()) as uow:
             certificate = uow.get_business_effect(effect_id)
             command = uow.get_command(effect_id)
             matching = [
