@@ -7,6 +7,8 @@ Neither a random multiworker rerun nor a mocked resource failure qualifies.
 from __future__ import annotations
 
 import os
+import signal
+from multiprocessing import get_context
 from threading import Event, Thread
 from uuid import uuid4
 
@@ -45,6 +47,57 @@ def _snapshot(store):
         tuple(store.store_get_requests()),
         tuple(store.store_get_results()),
     )
+
+
+def _pg_transfer_wait_then_hold_process(dsn, namespace, shipment, ready):
+    """OS child commits a real finite-resource wait; parent sends SIGKILL.
+
+    Child does not simply exit or close its session: kill terminates the
+    interpreter while its PostgreSQL session and ephemeral SimPy remain live.
+    Only the durable SOSE ledger may be recovered by a replacement worker.
+    """
+    with PostgresPersistence(dsn, namespace=namespace) as store:
+        engine, backend = _rebuild(store, owner_id=SHIPMENT_OWNER)
+        backend.run_until(logistics.PICKUP_DUE)
+        assert logistics.reconcile_transfer(
+            store, engine, backend, entities=shipment,
+        ) is False
+        assert store.entity("shipment", shipment.shipment_id).state in (
+            "at_origin_hub", "in_transfer",
+        )
+        # This follows the committed transaction, not a pre-COMMIT signal.
+        ready.set()
+        # Intentionally remain alive with a real PG connection. No response
+        # from this process is required for the parent to reconstruct truth.
+        Event().wait(timeout=60)
+
+
+def _kill_after_committed_transfer_wait(dsn, namespace, shipment):
+    """Falsify recovery from a terminated OS worker, not connection.close()."""
+    ctx = get_context("spawn")
+    ready = ctx.Event()
+    worker = ctx.Process(
+        target=_pg_transfer_wait_then_hold_process,
+        args=(dsn, namespace, shipment, ready),
+    )
+    try:
+        worker.start()
+        assert ready.wait(timeout=35), (
+            f"child did not certify durable transfer wait; exit={worker.exitcode}"
+        )
+        assert worker.is_alive(), "worker exited instead of awaiting real OS kill"
+        worker.kill()
+        worker.join(timeout=15)
+        assert not worker.is_alive(), "killed OS worker retained a PG session"
+        if os.name == "posix":
+            assert worker.exitcode == -signal.SIGKILL
+        else:
+            assert worker.exitcode not in (None, 0)
+    finally:
+        if worker.is_alive():
+            worker.kill()
+            worker.join(timeout=15)
+        worker.close()
 
 
 @pytest.mark.parametrize(
@@ -347,8 +400,9 @@ def test_pg_transfer_finite_contention_retries_across_independent_sessions(
 
 
 @pytest.mark.parametrize("blocker", ["transfer_vehicle", "destination_dock"])
+@pytest.mark.parametrize("os_worker_death", [False, True], ids=["reconnect", "sigkill"])
 def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledger(
-    blocker,
+    blocker, os_worker_death,
 ):
     """#489 bounded PG differential on the exact finite resource boundary.
 
@@ -357,8 +411,10 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
     throughout; recovered path reconnects after each causally meaningful
     step and rebuilds the SimPy environment from authoritative reservations.
     Unlike existing one-arm final-state checks this tests each intermediate
-    source ledger and terminal after retry; OS-process SIGKILL and certified
-    BusinessEffectApplied remain independent acceptance gates.
+    source ledger and terminal after retry. The SIGKILL arm forces actual OS
+    worker death with a live PostgreSQL connection *after* a resource wait
+    is committed; a replacement worker reconstructs solely durable truth.
+    Cross-domain BusinessEffectApplied remains a separate acceptance gate.
     """
     assert DSN is not None
     capacities = {"transfer_vehicle": 2} if blocker == "destination_dock" else None
@@ -376,7 +432,7 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
                 uow.scheduled_work(),
             )
 
-    def run_world(*, reconnect: bool):
+    def run_world(*, reconnect: bool, kill_os_process: bool = False):
         namespace = "pc6_transfer_diff_" + uuid4().hex[:12]
         observations = []
         with PostgresPersistence(DSN, namespace=namespace) as persistent:
@@ -472,7 +528,16 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
                     "at_origin_hub", "in_transfer",
                 )
 
-            checkpoint(contend_real_shipment)
+            if kill_os_process:
+                assert reconnect
+                # Run the same deterministic contender action in a distinct
+                # interpreter. Its committed wait survives OS SIGKILL.
+                _kill_after_committed_transfer_wait(
+                    DSN, namespace, contender,
+                )
+                checkpoint(lambda st: None)
+            else:
+                checkpoint(contend_real_shipment)
 
             def release_holder(store):
                 engine, backend = _rebuild(store, owner_id=HOLDER_OWNER)
@@ -516,7 +581,7 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
         return tuple(observations)
 
     uninterrupted = run_world(reconnect=False)
-    recovered = run_world(reconnect=True)
+    recovered = run_world(reconnect=True, kill_os_process=os_worker_death)
     assert len(uninterrupted) == len(recovered) == 7
     for stage, (continuous, restarted) in enumerate(zip(uninterrupted, recovered)):
         assert restarted == continuous, (
