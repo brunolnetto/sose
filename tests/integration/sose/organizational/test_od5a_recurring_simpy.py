@@ -1788,3 +1788,92 @@ def test_full_scheduled_action_identity_is_rechecked_inside_simpy_callback(
         assert od5a_durable_events(store, job_id="org:A") == ()
         assert store.job_state("org:A").next_tick == 0
         assert store.job_state("org:A").active_trigger_id is not None
+
+
+@pytest.mark.parametrize("arm", [
+    "baseline", "capacity_only", "topology_only",
+    "coordination_only", "structural_combined",
+])
+def test_native_three_way_physical_and_causal_ledger_matches_after_every_tick(
+    tmp_path, arm,
+):
+    """#477 bounded 3-way differential: every durable semantic commit matters.
+
+    Compare (1) unowned reference reducer, (2) native recurring runner
+    retaining its open SQLite store, and (3) native recurring runner opening a
+    fresh store/backend on EACH tick. The two latter jobs must reproduce exactly
+    the same full physical ledger, source clock, causal DAG and checkpoint.
+    This is intentionally NOT a network/unknown-COMMIT or inter-org test.
+    """
+    reference_path = tmp_path / f"{arm}-reference.sqlite"
+    steady_path = tmp_path / f"{arm}-native-steady.sqlite"
+    reconnect_path = tmp_path / f"{arm}-native-reconnect.sqlite"
+    _init(steady_path, arm=arm)
+    _init(reconnect_path, arm=arm)
+    with SQLitePersistence(reference_path) as initialize:
+        initialize_od5a_durable(
+            initialize, job_id="org:A", arm=_arms()[arm], items=_items(),
+        )
+
+    def evidence(store):
+        # Physical occupations are source-of-truth ResourceReservations;
+        # preserve their exact instance IDs/acquisition times, not only count.
+        return (
+            od5a_durable_state(store, job_id="org:A"),
+            od5a_durable_events(store, job_id="org:A"),
+            store.resource_demands(),
+            store.resource_reservations(),
+            store.resource_release_intents(),
+            store.resource_definitions(),
+        )
+
+    def assert_no_overlap(store):
+        reservations = store.resource_reservations()
+        resources = [reservation.resource_name for reservation in reservations]
+        assert len(resources) == len(set(resources)), (
+            "two workers hold the same finite capacity-1 instance"
+        )
+        assert all(name.startswith("org:A/") for name in resources)
+        assert len([name for name in resources if "/execution:" in name]) <= (
+            1 if arm != "capacity_only" and arm != "structural_combined" else 2
+        )
+
+    with (
+        SQLitePersistence(reference_path) as reference,
+        SQLitePersistence(steady_path) as steady,
+    ):
+        for tick in range(150):
+            # The reference reducer uses NO recurring-job lease at all.
+            reference_advanced = advance_od5a_durable(reference, job_id="org:A")
+            instant = CLOCK + timedelta(seconds=tick)
+            steady_result = run_od5a_recurring_tick(
+                steady, job_id="org:A", owner_id="worker:A",
+                now=instant, lease_duration=LEASE, trigger_id=_trigger(steady),
+                _wall_clock=lambda instant=instant: instant,
+            )
+            # Process-like persistence restart at EVERY next triggering edge.
+            # The SimPy Environment is always reconstructed from SOSE truth.
+            with SQLitePersistence(reconnect_path) as restarted:
+                restart_result = run_od5a_recurring_tick(
+                    restarted, job_id="org:A", owner_id="worker:A",
+                    now=instant, lease_duration=LEASE,
+                    trigger_id=_trigger(restarted),
+                    _wall_clock=lambda instant=instant: instant,
+                )
+                assert restart_result.action == steady_result.action
+                assert evidence(restarted) == evidence(reference)
+                assert evidence(restarted) == evidence(steady)
+                assert restarted.job_state("org:A") == steady.job_state("org:A")
+                assert_no_overlap(restarted)
+            assert_no_overlap(steady)
+            assert steady_result.action == (
+                "advanced" if reference_advanced else "complete"
+            )
+            assert len(steady.events()) == len({
+                event.event_id for event in steady.events()
+            }), "duplicate causal event after native grant/recovery"
+            if steady_result.action == "complete":
+                assert od5a_durable_state(reference, job_id="org:A")["done"]
+                break
+        else:
+            pytest.fail(f"three-way native/restart conformance did not finish: {arm}")
