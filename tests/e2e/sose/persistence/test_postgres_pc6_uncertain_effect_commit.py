@@ -194,7 +194,10 @@ def _faulting_world(tmp_path: Path, *, intent_name: str, phase: str):
     # The wire failure and nonzero worker exit do NOT prove rollback. Only
     # independent durable SQL observation can classify the commit.
     with PostgresPersistence(DSN, namespace=domains["a"]) as store:
-        with store.transaction() as uow:
+        # The recovery worker claimed an exclusive writer epoch. SQL reads
+        # crossing the active fencing boundary must supply that same epoch;
+        # avoid weakening PostgresPersistence's owner validation to audit truth.
+        with store.transaction(owner_epoch=store.writer_epoch()) as uow:
             commands = [c for c in uow.commands() if c.name == intent_name]
         effect_ids = [c.command_id for c in commands]
         certs = [c for c in store.business_effects()
