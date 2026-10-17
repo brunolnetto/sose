@@ -15,7 +15,7 @@ import subprocess
 import sys
 from datetime import timedelta
 from pathlib import Path
-from uuid import uuid4
+from unittest.mock import patch
 
 import pytest
 
@@ -24,9 +24,11 @@ from sose.persistence.postgres import PostgresPersistence
 from tests.e2e.sose.persistence.test_postgres_infrastructure_chaos import (
     _free_port, _start_proxy,
 )
+from tests.e2e.sose.persistence import test_postgres_pc6_full_real_domain_recovery as full
 from tests.e2e.sose.persistence.test_postgres_pc6_full_real_domain_recovery import (
-    DOMAINS, ORIGIN, INTERVAL, _name, _pending_domain_effect, _proof,
-    _run_real_domain_cut, _schedule, _seed_real_workflow, _terminal, _tick,
+    DOMAINS, ORIGIN, INTERVAL, _canonical_objects, _name,
+    _pending_domain_effect, _proof, _run_real_domain_cut,
+    _schedule, _seed_real_workflow, _terminal, _tick,
 )
 from tests.support.chaos_waits import wait_for_marker_exists, wait_for_process_exit
 
@@ -48,10 +50,13 @@ from sose.composition.scheduler import RecoverySchedule
 from sose.core.resource_identity import ResourcePoolContract
 from sose.examples.order_to_cash import simulation as o2c
 from sose.persistence.postgres import PostgresPersistence
+from psycopg import sql
 
 dsn, domain_ns, physical_dsn, physical_ns, correlation, name, phase, slot, marker, release = sys.argv[1:]
 slot = int(slot)
 old_complete = BusinessEffectService.complete
+old_apply = PostgresPersistence._apply_changes
+certificate_target = [None]
 
 def wait_for_cut():
     deadline = time.monotonic() + 35
@@ -60,26 +65,51 @@ def wait_for_cut():
             raise TimeoutError("missing transport fault injection")
         time.sleep(.025)
 
+def after_real_postgresql_dml(self, before, after, dirty_records):
+    # The real store calls _apply_changes only AFTER the in-memory UoW has
+    # committed, while its OUTER SQL transaction is still open. Therefore
+    # the original INSERT and DELETE have actually reached PostgreSQL before
+    # the marker and before the parent breaks this same live TCP connection.
+    changed = old_apply(self, before, after, dirty_records)
+    effect_id = certificate_target[0]
+    if phase == "before_commit" and effect_id and self.namespace == domain_ns:
+        rows = self._connection.execute(
+            sql.SQL("SELECT collection, record_key FROM {} "
+                    "WHERE collection IN ('business_effects', 'commands')").format(
+                self._record_table,
+            )
+        ).fetchall()
+        assert any(coll == "business_effects" and effect_id in key
+                   for coll, key in rows), (
+            "certificate INSERT was not emitted on the live PostgreSQL session"
+        )
+        assert not any(coll == "commands" and effect_id in key
+                       for coll, key in rows), (
+            "pending Command DELETE was not emitted on the live PostgreSQL session"
+        )
+        certificate_target[0] = None
+        Path(marker).write_text("after_dml_before_commit")
+        wait_for_cut()
+    return changed
+
+PostgresPersistence._apply_changes = after_real_postgresql_dml
+
 def faulted_complete(self, *, effect_id, completed_at):
     command = self.persistence.command(effect_id)
     if command is None or command.name != name:
         return old_complete(self, effect_id=effect_id, completed_at=completed_at)
+    # Exact certificate identity, not some unrelated SQL write in the
+    # same namespace, triggers the pre-COMMIT SQL DML cut above.
+    certificate_target[0] = effect_id
     original_transaction = self._transaction
     @contextmanager
     def cut_transaction():
         with original_transaction() as uow:
             yield uow
-            if phase == "before_commit":
-                # The real certificate and delete exist only in this still
-                # uncommitted SQL transaction. Disconnect must roll both back.
-                assert uow.get_business_effect(effect_id) is not None
-                assert uow.get_command(effect_id) is None
-                Path(marker).write_text(phase)
-                wait_for_cut()
         if phase == "after_commit":
             # COMMIT completed; the caller has not yet observed the result.
             # The next SQL operation must fail over the severed real TCP link.
-            Path(marker).write_text(phase)
+            Path(marker).write_text("committed_before_response")
             wait_for_cut()
     self._transaction = cut_transaction
     return old_complete(self, effect_id=effect_id, completed_at=completed_at)
@@ -133,6 +163,26 @@ def _read_authoritative_outcome(dsn: str, namespace: str, effect_id: str):
             return certificate is not None
 
 
+def _full_canonical_truth(dsn, domains, physical_ns, seeds):
+    """Include every pending Command beyond the existing immutable #451 oracle."""
+    proof = _proof(dsn, domains, physical_ns, seeds)
+    for org, namespace in sorted(domains.items()):
+        with PostgresPersistence(dsn, namespace=namespace) as store:
+            with store.transaction(owner_epoch=store.writer_epoch()) as uow:
+                commands = tuple(uow.commands())
+            certificates = store.business_effects()
+        command_ids = [command.command_id for command in commands]
+        certificate_ids = {receipt.effect_id for receipt in certificates}
+        assert len(command_ids) == len(set(command_ids)), (
+            "duplicate durable Commands under recovered causal boundary"
+        )
+        assert not (set(command_ids) & certificate_ids), (
+            "certified effect is still present as a pending Command"
+        )
+        proof["organizations"][org]["all_commands"] = _canonical_objects(commands)
+    return proof
+
+
 def _faulting_world(tmp_path: Path, *, intent_name: str, phase: str):
     assert DSN
     domains = {org: _name("pc6_certificate_" + org) for org in ("a", "b")}
@@ -178,9 +228,16 @@ def _faulting_world(tmp_path: Path, *, intent_name: str, phase: str):
             stdout, stderr = worker.communicate(timeout=20)
         except subprocess.TimeoutExpired:
             worker.kill()
-            stdout, stderr = worker.communicate(timeout=10)
+            worker.communicate(timeout=10)
+            pytest.fail("worker never observed the severed TCP transport")
         assert worker.returncode != 0, (
             "client silently accepted an uncertain SQL result",
+            stdout[-1200:], stderr[-2500:],
+        )
+        assert "psycopg" in stderr.lower() and (
+            "connection" in stderr.lower() or "operationalerror" in stderr.lower()
+        ), (
+            "worker exited for a non-transport reason, not a lost SQL response",
             stdout[-1200:], stderr[-2500:],
         )
     finally:
@@ -232,7 +289,7 @@ def _faulting_world(tmp_path: Path, *, intent_name: str, phase: str):
                 break
             _tick(DSN, domains[org], physical_ns, org, seeds[org][0], tick)
         assert _terminal(DSN, domains[org]), org
-    proof = _proof(DSN, domains, physical_ns, seeds)
+    proof = _full_canonical_truth(DSN, domains, physical_ns, seeds)
     for org in ("a", "b"):
         certificates = proof["organizations"][org]["certificates"]
         assert len(certificates) == 4
@@ -251,9 +308,12 @@ def test_pg_real_business_certificate_tcp_loss_recovers_full_canonical_truth(
     PostgreSQL server restart nor a complete #489/OD-5a promotion.
     """
     assert DSN
-    reference = _run_real_domain_cut(
-        DSN, name=intent_name, killed=False,
-    )
+    # The historical _proof is intentionally unchanged. Extend its evidence
+    # for this new certification only, on BOTH reference and recovered arms.
+    with patch.object(full, "_proof", side_effect=_full_canonical_truth):
+        reference = _run_real_domain_cut(
+            DSN, name=intent_name, killed=False,
+        )
     recovered = _faulting_world(
         tmp_path, intent_name=intent_name, phase=phase,
     )
