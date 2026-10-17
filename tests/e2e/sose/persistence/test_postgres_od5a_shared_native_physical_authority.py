@@ -7,6 +7,8 @@ network ambiguity, complete five-arm equivalence or scientific admission.
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
@@ -19,6 +21,7 @@ from sose.core.resource_reservations import (
 )
 from sose.core.runtime import ResourceReservation
 from sose.organizational.od5a_mechanisms import OD5aWorkItem
+from sose.organizational import od5a_recurring
 from sose.organizational.od5a_recurring import (
     SharedPhysicalGrantAuthority, SharedPhysicalPoolBinding,
     initialize_od5a_recurring_job, run_od5a_recurring_tick,
@@ -142,39 +145,91 @@ def test_pg_two_independent_native_sources_grant_distinct_shared_instances_and_r
         assert ledger.audit()
 
 
-def test_pg_contested_native_shared_unit_rolls_back_source_and_peer_progresses():
+def test_pg_contested_native_shared_unit_rolls_back_source_and_peer_progresses(
+    monkeypatch,
+):
+    """Two distinct PG connections speculatively acquire SimPy then race to COMMIT.
+
+    Both native witnesses are deliberately held at the same pre-commit barrier.
+    Only the pool-scoped *PostgreSQL* arbitration can decide a winner; removing
+    it must cause double booking or an otherwise visible causal inconsistency.
+    """
     assert DSN
     ns = _namespace()
     occupied = _binding("unit-1")
     independent = _binding("unit-2")
-    with PostgresPersistence(DSN, namespace=ns) as store:
-        for org, binding in (("org:holder", occupied),
-                             ("org:contender", occupied),
-                             ("org:peer", independent)):
-            _seed(store, org, binding)
-        assert _tick(store, "org:holder", occupied).action == "advanced"
-        before = store.temporal_resources().snapshot()
-        with pytest.raises(ResourceCapacityError, match="finite resource"):
-            _tick(store, "org:contender", occupied)
-        assert store.temporal_resources().snapshot() == before
-        assert _source(store, "org:contender")["step"] == 0
-        assert not any(
-            r.resource_name.startswith("org:contender/")
-            for r in store.resource_reservations()
-        )
-        assert not any(
-            e.owner_id == "org:contender" for e in store.events()
-        )
-        # Same PostgreSQL namespace, but no global-clock or global-owner lock.
-        assert _tick(store, "org:peer", independent).action == "advanced"
-        assert _source(store, "org:holder")["step"] == 1
+    racers = ("org:racer-a", "org:racer-b")
+    with PostgresPersistence(DSN, namespace=ns) as seed:
+        for org in racers:
+            _seed(seed, org, occupied)
+        _seed(seed, "org:peer", independent)
 
-    with PostgresPersistence(DSN, namespace=ns) as reopened:
-        assert {r.owner_id for r in reopened.temporal_resources().reservations()} == {
-            "org:holder", "org:peer",
+    barrier = Barrier(2)
+    original_prepare = od5a_recurring._RecurringNativePhysicalArbiter.prepare
+
+    def two_real_grants_before_commit(self, *, releases, grants, at):
+        original_prepare(self, releases=releases, grants=grants, at=at)
+        if self.execution_pool in {
+            f"{org}/execution-pool" for org in racers
+        }:
+            assert grants, "contenders never reached native SimPy acquisition"
+            # This synchronization is OUTSIDE any PostgreSQL UoW or pool lock.
+            # Both worker connections must reach the pool arbiter concurrently.
+            barrier.wait(timeout=30)
+
+    monkeypatch.setattr(
+        od5a_recurring._RecurringNativePhysicalArbiter,
+        "prepare", two_real_grants_before_commit,
+    )
+
+    def worker(org):
+        with PostgresPersistence(DSN, namespace=ns) as store:
+            try:
+                assert _tick(store, org, occupied).action == "advanced"
+                return (org, "granted")
+            except ResourceCapacityError:
+                return (org, "capacity-wait")
+
+    with ThreadPoolExecutor(max_workers=2) as workers:
+        future_a = workers.submit(worker, racers[0])
+        future_b = workers.submit(worker, racers[1])
+        outcomes = dict((
+            future_a.result(timeout=60),
+            future_b.result(timeout=60),
+        ))
+
+    assert sorted(outcomes.values()) == ["capacity-wait", "granted"], outcomes
+    winner = next(org for org in racers if outcomes[org] == "granted")
+    loser = next(org for org in racers if outcomes[org] == "capacity-wait")
+    with PostgresPersistence(DSN, namespace=ns) as check:
+        ledger = check.temporal_resources()
+        bookings = ledger.reservations()
+        assert len(bookings) == 1 and bookings[0].owner_id == winner
+        assert bookings[0].address.instance_id == "unit-1"
+        assert _source(check, winner)["step"] == 1
+        assert _source(check, loser)["step"] == 0
+        assert check.job_state(winner).run_count == 1
+        assert check.job_state(loser).run_count == 0
+        assert check.job_state(loser).last_completed_trigger_id is None
+        assert not any(
+            r.resource_name.startswith(f"{loser}/")
+            for r in check.resource_reservations()
+        )
+        assert not any(e.owner_id == loser for e in check.events())
+        assert ledger.audit()
+        # A third independent owner must still progress, even though the
+        # winner retains this instance's durable reservation.
+        assert _tick(check, "org:peer", independent).action == "advanced"
+        assert _source(check, "org:peer")["step"] == 1
+        assert _source(check, winner)["step"] == 1
+        assert len(ledger.reservations()) == 2
+
+    with PostgresPersistence(DSN, namespace=ns) as restarted:
+        assert {r.owner_id for r in restarted.temporal_resources().reservations()} == {
+            winner, "org:peer",
         }
-        assert reopened.temporal_resources().audit()
-        assert _source(reopened, "org:contender")["step"] == 0
+        assert _source(restarted, loser)["step"] == 0
+        assert restarted.temporal_resources().audit()
 
 
 def test_pg_stale_physical_booking_is_rejected_before_source_commit():
