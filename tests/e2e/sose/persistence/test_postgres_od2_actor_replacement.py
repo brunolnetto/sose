@@ -11,6 +11,7 @@ import signal
 from datetime import timedelta
 from multiprocessing import get_context
 from threading import Event
+from time import monotonic, sleep
 from uuid import uuid4
 
 import pytest
@@ -45,7 +46,10 @@ def _retired_actor(store) -> str:
 def _replace_worker(dsn, namespace, predecessor, actor_key, barrier, reports):
     try:
         with PostgresPersistence(dsn, namespace=namespace) as store:
-            # Open separate SQL connections before simultaneous admission.
+            # Parent checks BOTH backends are waiting for the *same* specific
+            # predecessor SQL advisory lock (not merely past a Python barrier).
+            pid = store._connection.execute("SELECT pg_backend_pid()").fetchone()[0]
+            reports.put(("backend:" + actor_key, "connected", pid))
             barrier.wait(timeout=30)
             successor_id = seed_actor(
                 store, owner_id=OWNER, actor_key=actor_key,
@@ -114,9 +118,48 @@ def test_pg_competing_successors_linearize_predecessor_claim_without_global_lock
             with locked.business_resource_guard("od2-actor:" + predecessor):
                 for proc in procs:
                     proc.start()
-                independent = reports.get(timeout=35)
-                assert independent[:2] == ("independent", "accepted"), independent
+                # Three reports: both contender SQL backend IDs plus the
+                # independent peer commit. Their delivery order is arbitrary.
+                entered = [reports.get(timeout=35) for _ in range(3)]
+                pids = {
+                    key.removeprefix("backend:"): detail
+                    for key, status, detail in entered
+                    if key.startswith("backend:") and status == "connected"
+                }
+                assert set(pids) == set(contenders), entered
+                independent = next(
+                    (item for item in entered if item[0] == "independent"),
+                    None,
+                )
+                assert independent is not None and independent[1] == "accepted", entered
+
                 with PostgresPersistence(DSN, namespace=ns) as observer:
+                    # PostgreSQL pg_locks reports UNGRANTED requests against
+                    # the precise 2-key predecessor lock. That falsifies an
+                    # implementation which drops _guard and happens to commit
+                    # a peer before either contender reaches its real lock.
+                    lock_key = "od2-actor:" + predecessor
+                    deadline = monotonic() + 25
+                    waiting = set()
+                    while monotonic() < deadline:
+                        rows = observer._connection.execute(
+                            """
+                            SELECT pid FROM pg_locks
+                            WHERE locktype='advisory'
+                              AND NOT granted AND objsubid = 2
+                              AND classid = hashtext(%s)::oid
+                              AND objid = hashtext(%s)::oid
+                            """,
+                            (ns, lock_key),
+                        ).fetchall()
+                        waiting = {int(row[0]) for row in rows}
+                        if waiting == set(pids.values()):
+                            break
+                        sleep(0.05)
+                    assert waiting == set(pids.values()), (
+                        "both contenders did not reach the identical "
+                        f"predecessor advisory lock; pids={pids} waiting={waiting}"
+                    )
                     assert observer.entity(ACTOR_KIND, peer).attributes[
                         "assigned_work_id"
                     ] == "work:unrelated"
