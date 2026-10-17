@@ -14,6 +14,7 @@ from uuid import uuid4
 
 import pytest
 
+from sose.core.identity import deterministic_id
 from sose.organizational.od2_actor import ACTOR_KIND, seed_actor, transition_actor
 from sose.persistence.postgres import PostgresPersistence
 
@@ -21,40 +22,46 @@ from sose.persistence.postgres import PostgresPersistence
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
 OWNER = "od2-pg-organization"
+PEER_OWNER = "od2-pg-independent-organization"
 MODEL = "od2-pg-actor-model-v1"
 T0 = datetime(2026, 10, 17, 9, tzinfo=timezone.utc)
 
 
-def _enroll(store, *, key):
+def _enroll(store, *, key, owner_id=OWNER):
     actor_id = seed_actor(
-        store, owner_id=OWNER, actor_key=key, model_spec_hash=MODEL,
+        store, owner_id=owner_id, actor_key=key, model_spec_hash=MODEL,
         config_epoch=1, at=T0,
     )
     transition_actor(
-        store, owner_id=OWNER, actor_id=actor_id, action="activate",
+        store, owner_id=owner_id, actor_id=actor_id, action="activate",
         cause_id=f"activate:{key}", at=T0 + timedelta(hours=1),
         model_spec_hash=MODEL, config_epoch=1,
     )
     return actor_id
 
 
-def _assign(store, actor_id, cause_id, work_id):
+def _assign(store, actor_id, cause_id, work_id, *, owner_id=OWNER):
     return transition_actor(
-        store, owner_id=OWNER, actor_id=actor_id,
+        store, owner_id=owner_id, actor_id=actor_id,
         action="assign", cause_id=cause_id, work_id=work_id,
         at=T0 + timedelta(hours=2),
         model_spec_hash=MODEL, config_epoch=1,
     )
 
 
-def _actor_assignment_worker(dsn, namespace, barrier, results, actor_id, tag):
+def _actor_assignment_worker(
+    dsn, namespace, barrier, results, actor_id, tag, owner_id,
+):
     try:
         with PostgresPersistence(dsn, namespace=namespace) as store:
             barrier.wait(timeout=30)
-            _assign(store, actor_id, f"assign:{tag}", f"work:{tag}")
-        results.put((tag, "applied", ""))
+            _assign(
+                store, actor_id, f"assign:{tag}", f"work:{tag}",
+                owner_id=owner_id,
+            )
+        results.put((tag, "applied", "", ""))
     except BaseException as exc:
-        results.put((tag, "rejected", type(exc).__name__))
+        results.put((tag, "rejected", type(exc).__name__, str(exc)))
 
 
 def _post_commit_actor_worker(dsn, namespace, actor_id, ready):
@@ -67,10 +74,8 @@ def _post_commit_actor_worker(dsn, namespace, actor_id, ready):
         Event().wait(timeout=60)
 
 
-def _spawn_workers(context, workers, *, timeout=45):
+def _join_workers(workers, *, timeout=45):
     try:
-        for worker in workers:
-            worker.start()
         for worker in workers:
             worker.join(timeout=timeout)
             assert not worker.is_alive(), "actor PG worker hung under concurrent admission"
@@ -92,38 +97,73 @@ def test_pg_competing_actor_claims_are_fenced_and_peer_is_independent():
     namespace = "od2_actor_claim_" + uuid4().hex[:12]
     with PostgresPersistence(DSN, namespace=namespace) as store:
         contested = _enroll(store, key="contested")
-        peer = _enroll(store, key="peer")
+        peer = _enroll(store, key="peer", owner_id=PEER_OWNER)
 
     ctx = get_context("spawn")
     barrier = ctx.Barrier(3)
     results = ctx.Queue()
-    actors = ((contested, "claim-a"), (contested, "claim-b"), (peer, "peer"))
+    actors = (
+        (contested, "claim-a", OWNER),
+        (contested, "claim-b", OWNER),
+        (peer, "peer", PEER_OWNER),
+    )
     workers = [
         ctx.Process(
             target=_actor_assignment_worker,
-            args=(DSN, namespace, barrier, results, actor_id, tag),
+            args=(DSN, namespace, barrier, results, actor_id, tag, owner),
         )
-        for actor_id, tag in actors
+        for actor_id, tag, owner in actors
     ]
+    first = None
     try:
-        _spawn_workers(ctx, workers)
-        outcomes = {tag: (status, reason) for tag, status, reason in (
-            results.get(timeout=5) for _ in workers
-        )}
+        with PostgresPersistence(DSN, namespace=namespace) as locker:
+            # Block only the contested actor. The separately owned peer
+            # must complete and commit before the guard is released.
+            with locker.business_resource_guard("od2-actor:" + contested):
+                for worker in workers:
+                    worker.start()
+                first = results.get(timeout=30)
+                assert first[:2] == ("peer", "applied"), (
+                    "independent organization stalled behind actor-specific "
+                    f"contention: {first}"
+                )
+                with PostgresPersistence(DSN, namespace=namespace) as observer:
+                    assert observer.entity(ACTOR_KIND, contested).state == "eligible"
+                    assert observer.entity(ACTOR_KIND, peer).state == "active"
+        # Two claims resume after release. Only one may commit.
+        _join_workers(workers)
+        outcomes = {
+            tag: (status, kind, message)
+            for tag, status, kind, message in (
+                first, *(results.get(timeout=5) for _ in range(2))
+            )
+        }
     finally:
+        for worker in workers:
+            if worker.is_alive():
+                worker.kill()
+                worker.join(timeout=10)
+            if worker.pid is not None:
+                try:
+                    worker.close()
+                except ValueError:
+                    pass
         results.close()
         results.join_thread()
 
-    assert outcomes["peer"] == ("applied", "")
+    assert outcomes["peer"] == ("applied", "", "")
     winners = [tag for tag in ("claim-a", "claim-b")
                if outcomes[tag][0] == "applied"]
     assert len(winners) == 1, f"actor double-assigned or no progress: {outcomes}"
     loser = next(tag for tag in ("claim-a", "claim-b") if tag not in winners)
     assert outcomes[loser][0] == "rejected"
-    # A lawful statechart transition rejection is different from SQL outage.
-    assert outcomes[loser][1] in (
-        "TransitionNotAllowed", "ValueError", "InvalidTransition",
-    ), f"unexpected infrastructure failure rather than actor fencing: {outcomes}"
+    # Unrelated codec/persistence ValueError is not actor-fencing evidence.
+    loser_kind, loser_message = outcomes[loser][1:]
+    if loser_kind == "ValueError":
+        assert "already assigned" in loser_message.lower(), outcomes
+    else:
+        assert loser_kind == "TransitionNotAllowed", outcomes
+        assert "assign" in loser_message.lower(), outcomes
 
     with PostgresPersistence(DSN, namespace=namespace) as store:
         actor = store.entity(ACTOR_KIND, contested)
@@ -131,6 +171,9 @@ def test_pg_competing_actor_claims_are_fenced_and_peer_is_independent():
         assert actor.state == independent.state == "active"
         assert actor.attributes["assigned_work_id"] == f"work:{winners[0]}"
         assert independent.attributes["assigned_work_id"] == "work:peer"
+        assert store.command(
+            deterministic_id("od2-actor-command", OWNER, contested, f"assign:{loser}")
+        ) is None, "rejected claim left a durable orphan Command"
         assert actor.attributes["time_us"]["admitted"] == 3600 * 1000000
         assert actor.attributes["time_us"]["eligible"] == 3600 * 1000000
         for subject in (contested, peer):
@@ -139,7 +182,9 @@ def test_pg_competing_actor_claims_are_fenced_and_peer_is_independent():
             assert {e.payload["trigger"] for e in events} == {"activate", "assign"}
             assert all(
                 store.command(e.causation_id) is not None
-                and store.command(e.causation_id).owner_id == OWNER
+                and store.command(e.causation_id).owner_id == (
+                    OWNER if subject == contested else PEER_OWNER
+                )
                 for e in events
             )
         assert store.command(
