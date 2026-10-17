@@ -114,9 +114,23 @@ def _pg_transfer_wait_inside_uncommitted_transaction(
         engine, backend = _rebuild(store, owner_id=SHIPMENT_OWNER)
         backend.run_until(logistics.PICKUP_DUE)
         with store.transaction():
+            # A non-mutating or purely in-memory transition would make a
+            # post-kill rollback assertion vacuous. Require observable
+            # uncommitted SOSE ledger changes on this very SQL connection.
+            before = (
+                store.resource_demands(), store.resource_reservations(),
+                store.store_put_intents(), store.events(),
+            )
             assert logistics.reconcile_transfer(
                 store, engine, backend, entities=shipment,
             ) is False
+            during = (
+                store.resource_demands(), store.resource_reservations(),
+                store.store_put_intents(), store.events(),
+            )
+            assert during != before, (
+                "open transfer did not mutate authoritative ledger before SIGKILL"
+            )
             assert engine.resources.has_request(
                 f"transfer-vehicle:{shipment.shipment_id}"
             ) or engine.resources.has_request(
