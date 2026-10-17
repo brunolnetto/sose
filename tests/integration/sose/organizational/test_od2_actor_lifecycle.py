@@ -158,6 +158,15 @@ def test_actor_replacement_requires_exited_same_owner_and_preserves_predecessor(
     assert store.entity(ACTOR_KIND, successor).state == "admitted"
     assert store.entity(ACTOR_KIND, successor).attributes["replaces_actor_id"] == actor
     assert store.entity(ACTOR_KIND, actor).state == "exited"
+    assert store.entity(ACTOR_KIND, actor).attributes["replaced_by_actor_id"] == successor
+    for other_key in ("alternative-successor", "third-successor"):
+        with pytest.raises(ValueError, match="predecessor already replaced"):
+            seed_actor(
+                store, owner_id=OWNER, actor_key=other_key,
+                model_spec_hash=MODEL, config_epoch=1,
+                at=T0 + timedelta(hours=2),
+                replaces_actor_id=actor,
+            )
     with pytest.raises(ValueError, match="already exists"):
         seed_actor(
             store, owner_id=OWNER, actor_key="replacement",
@@ -186,3 +195,30 @@ def test_actor_rejects_ambiguous_clock_cost_or_epoch(at, cost_us, epoch):
         )
     assert store.entity(ACTOR_KIND, actor).state == "admitted"
     assert not store.events()
+
+
+@pytest.mark.parametrize(
+    "epoch,model",
+    [(0, MODEL), (2, "silently-replaced-model"), (1, "other-model")],
+)
+def test_actor_replacement_cannot_silently_rebind_epoch_or_model(epoch, model):
+    store = MemoryPersistence()
+    prior = _seed(store)
+    _transition(store, prior, "activate", 1)
+    _transition(store, prior, "exit", 2)
+    before = store.entity(ACTOR_KIND, prior)
+    with pytest.raises(ValueError, match="separate admission"):
+        seed_actor(
+            store, owner_id=OWNER, actor_key="new-actor",
+            model_spec_hash=model, config_epoch=epoch,
+            at=T0 + timedelta(hours=2), replaces_actor_id=prior,
+        )
+    assert store.entity(ACTOR_KIND, prior) == before
+    assert store.entity(ACTOR_KIND, prior).attributes["replaced_by_actor_id"] is None
+    # A rejected proposal has not consumed the only legal successor identity.
+    successor = seed_actor(
+        store, owner_id=OWNER, actor_key="new-actor",
+        model_spec_hash=MODEL, config_epoch=1,
+        at=T0 + timedelta(hours=2), replaces_actor_id=prior,
+    )
+    assert store.entity(ACTOR_KIND, prior).attributes["replaced_by_actor_id"] == successor
