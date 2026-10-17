@@ -157,7 +157,7 @@ def _faulting_world(tmp_path: Path, *, intent_name: str, phase: str):
         )
         worker = subprocess.Popen(
             [sys.executable, "-c", _CERTIFICATE_WORKER,
-             proxied_dsn, domains["a"], DSN, physical_ns, seeds["a"][0],
+             proxied_dsn, domains["a"], proxied_dsn, physical_ns, seeds["a"][0],
              intent_name, phase, str(slot), str(marker), str(release)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
