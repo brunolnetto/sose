@@ -207,9 +207,11 @@ def test_pg_killed_successor_worker_cannot_fork_committed_lineage():
         successor_state = recovered.entity(ACTOR_KIND, expected)
         assert predecessor_state.attributes["replaced_by_actor_id"] == expected
         assert successor_state.attributes["replaces_actor_id"] == predecessor
+        with recovered.transaction() as snapshot:
+            commands_before = tuple(snapshot.commands())
         before = (
             predecessor_state, successor_state,
-            tuple(recovered.events()), tuple(recovered.commands()),
+            tuple(recovered.events()), commands_before,
         )
         with pytest.raises(ValueError, match="already exists"):
             seed_actor(
@@ -227,8 +229,10 @@ def test_pg_killed_successor_worker_cannot_fork_committed_lineage():
         assert recovered.entity(ACTOR_KIND, deterministic_id(
             "od2-actor", OWNER, "fork-after-death",
         )) is None
+        with recovered.transaction() as snapshot:
+            commands_after = tuple(snapshot.commands())
         assert before == (
             recovered.entity(ACTOR_KIND, predecessor),
             recovered.entity(ACTOR_KIND, expected),
-            tuple(recovered.events()), tuple(recovered.commands()),
+            tuple(recovered.events()), commands_after,
         )
