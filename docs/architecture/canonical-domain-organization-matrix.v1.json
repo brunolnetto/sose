@@ -1,0 +1,959 @@
+{
+  "schema_version": 1,
+  "purpose": "Evidence-labelled canonical mechanisms x business domains x organization archetypes x physical resource claims x typed causal boundaries",
+  "governance": {
+    "source_of_truth": [
+      "src/sose/examples/catalog.py",
+      "src/sose/examples/process_manifest.py",
+      "src/sose/composition/organization.py"
+    ],
+    "semantics": "Registered canonicals and domain definitions are executable facts; audited maturity/resources/contract directions reflect ProcessManifest on pinned main; pattern mappings and organization templates are NOT certified executable composition.",
+    "not_an_admission": true,
+    "unbound_owner_rule": "Template component IDs and domain IDs are not operational owner IDs or signed OrganizationDefinition admission.",
+    "scientific_status": "OD-5a NOT_ADMITTED; this inventory does not change #461 or the #477 promotion gates."
+  },
+  "canonicals": [
+    {
+      "id": "producer_consumer",
+      "short": "P/C",
+      "mechanism": "Bounded FIFO buffers, backpressure and producer/consumer flow",
+      "definition_path": "src/sose/examples/canonical/producer_consumer.py"
+    },
+    {
+      "id": "sleeping_barber",
+      "short": "SB",
+      "mechanism": "Finite service, queue admission and abandonment",
+      "definition_path": "src/sose/examples/canonical/sleeping_barber.py"
+    },
+    {
+      "id": "dining_philosophers",
+      "short": "DP",
+      "mechanism": "Concurrent acquisition of multiple scarce resources",
+      "definition_path": "src/sose/examples/canonical/dining_philosophers.py"
+    },
+    {
+      "id": "readers_writers",
+      "short": "RW",
+      "mechanism": "Concurrent reads, exclusive writers and priority",
+      "definition_path": "src/sose/examples/canonical/readers_writers.py"
+    },
+    {
+      "id": "job_shop",
+      "short": "JS",
+      "mechanism": "Precedence-constrained multi-machine scheduling",
+      "definition_path": "src/sose/examples/canonical/job_shop.py"
+    }
+  ],
+  "domains": [
+    {
+      "id": "airports",
+      "definition_path": "src/sose/examples/airports/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "sleeping_barber",
+        "dining_philosophers",
+        "job_shop"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "aviation",
+      "definition_path": "src/sose/examples/aviation/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "job_shop",
+        "dining_philosophers",
+        "sleeping_barber"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "cards_payments",
+      "definition_path": "src/sose/examples/cards_payments/definition.py",
+      "process_audit_path": "src/sose/examples/cards_payments/process_audit.py",
+      "audit": {
+        "maturity": "PC5",
+        "assessment_complete": true,
+        "resources": [
+          "authorization_processor",
+          "dispute_analyst",
+          "settlement_processor"
+        ],
+        "ingress_contracts": [],
+        "egress_contracts": []
+      },
+      "canonical_pattern_hypotheses": [
+        "producer_consumer",
+        "readers_writers",
+        "sleeping_barber"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "construction",
+      "definition_path": "src/sose/examples/construction/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "job_shop",
+        "dining_philosophers",
+        "producer_consumer"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "credit_loans",
+      "definition_path": "src/sose/examples/credit_loans/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "sleeping_barber",
+        "readers_writers",
+        "producer_consumer"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "energy_utilities",
+      "definition_path": "src/sose/examples/energy_utilities/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "producer_consumer",
+        "dining_philosophers",
+        "readers_writers"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "field_service",
+      "definition_path": "src/sose/examples/field_service/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "sleeping_barber",
+        "job_shop",
+        "dining_philosophers"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "hospitality",
+      "definition_path": "src/sose/examples/hospitality/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "sleeping_barber",
+        "producer_consumer",
+        "dining_philosophers"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "hospitals",
+      "definition_path": "src/sose/examples/hospitals/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "sleeping_barber",
+        "dining_philosophers",
+        "job_shop"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "insurance",
+      "definition_path": "src/sose/examples/insurance/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "sleeping_barber",
+        "readers_writers",
+        "producer_consumer"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "itsm",
+      "definition_path": "src/sose/examples/itsm/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "sleeping_barber",
+        "producer_consumer",
+        "readers_writers"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "logistics",
+      "definition_path": "src/sose/examples/logistics/definition.py",
+      "process_audit_path": "src/sose/examples/logistics/process_audit.py",
+      "audit": {
+        "maturity": "PC5",
+        "assessment_complete": true,
+        "resources": [
+          "delivery_courier",
+          "destination_dock",
+          "origin_dock",
+          "pickup_courier",
+          "transfer_vehicle"
+        ],
+        "ingress_contracts": [],
+        "egress_contracts": []
+      },
+      "canonical_pattern_hypotheses": [
+        "sleeping_barber",
+        "dining_philosophers",
+        "job_shop"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "manufacturing",
+      "definition_path": "src/sose/examples/manufacturing/definition.py",
+      "process_audit_path": "src/sose/examples/manufacturing/process_audit.py",
+      "audit": {
+        "maturity": "PC5",
+        "assessment_complete": true,
+        "resources": [
+          "machine",
+          "operator"
+        ],
+        "ingress_contracts": [],
+        "egress_contracts": []
+      },
+      "canonical_pattern_hypotheses": [
+        "job_shop",
+        "dining_philosophers",
+        "producer_consumer"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "mro",
+      "definition_path": "src/sose/examples/mro/definition.py",
+      "process_audit_path": "src/sose/examples/mro/process_audit.py",
+      "audit": {
+        "maturity": "PC5",
+        "assessment_complete": true,
+        "resources": [
+          "maintenance_bay",
+          "spare_parts",
+          "technician"
+        ],
+        "ingress_contracts": [],
+        "egress_contracts": []
+      },
+      "canonical_pattern_hypotheses": [
+        "job_shop",
+        "dining_philosophers",
+        "sleeping_barber"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "order_to_cash",
+      "definition_path": "src/sose/examples/order_to_cash/definition.py",
+      "process_audit_path": "src/sose/examples/order_to_cash/process_audit.py",
+      "audit": {
+        "maturity": "PC5",
+        "assessment_complete": true,
+        "resources": [
+          "collection_agent",
+          "fulfillment_team"
+        ],
+        "ingress_contracts": [],
+        "egress_contracts": []
+      },
+      "canonical_pattern_hypotheses": [
+        "producer_consumer",
+        "sleeping_barber",
+        "readers_writers"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "p2p",
+      "definition_path": "src/sose/examples/p2p/definition.py",
+      "process_audit_path": "src/sose/examples/p2p/process_audit.py",
+      "audit": {
+        "maturity": "PC5",
+        "assessment_complete": true,
+        "resources": [
+          "inspector",
+          "receiving_dock"
+        ],
+        "ingress_contracts": [],
+        "egress_contracts": []
+      },
+      "canonical_pattern_hypotheses": [
+        "producer_consumer",
+        "sleeping_barber",
+        "readers_writers"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "record_to_report",
+      "definition_path": "src/sose/examples/record_to_report/definition.py",
+      "process_audit_path": "src/sose/examples/record_to_report/process_audit.py",
+      "audit": {
+        "maturity": "PC5",
+        "assessment_complete": true,
+        "resources": [
+          "close_accountant",
+          "posting_processor",
+          "reconciliation_analyst"
+        ],
+        "ingress_contracts": [],
+        "egress_contracts": []
+      },
+      "canonical_pattern_hypotheses": [
+        "readers_writers",
+        "producer_consumer",
+        "job_shop"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "subscription_saas",
+      "definition_path": "src/sose/examples/subscription_saas/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "producer_consumer",
+        "readers_writers",
+        "sleeping_barber"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "telecom",
+      "definition_path": "src/sose/examples/telecom/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "producer_consumer",
+        "sleeping_barber",
+        "readers_writers"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "transit",
+      "definition_path": "src/sose/examples/transit/definition.py",
+      "process_audit_path": null,
+      "audit": {
+        "maturity": "PC0",
+        "assessment_complete": false,
+        "resources": null,
+        "ingress_contracts": null,
+        "egress_contracts": null
+      },
+      "canonical_pattern_hypotheses": [
+        "sleeping_barber",
+        "dining_philosophers",
+        "producer_consumer"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "warehouse_fulfillment",
+      "definition_path": "src/sose/examples/warehouse_fulfillment/definition.py",
+      "process_audit_path": "src/sose/examples/process_manifest.py",
+      "audit": {
+        "maturity": "PC6",
+        "assessment_complete": true,
+        "resources": [
+          "fulfillment_picker",
+          "packing_station",
+          "shipping_dock"
+        ],
+        "ingress_contracts": [
+          "o2c.fulfillment_requested.v1",
+          "warehouse.inventory_reserved.v1"
+        ],
+        "egress_contracts": [
+          "warehouse.dispatch_ready.v1",
+          "warehouse.inventory_consumption_requested.v1",
+          "warehouse.inventory_reservation_requested.v1"
+        ]
+      },
+      "canonical_pattern_hypotheses": [
+        "producer_consumer",
+        "job_shop",
+        "dining_philosophers"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    },
+    {
+      "id": "warehouse_management",
+      "definition_path": "src/sose/examples/warehouse_management/definition.py",
+      "process_audit_path": "src/sose/examples/process_manifest.py",
+      "audit": {
+        "maturity": "PC5",
+        "assessment_complete": true,
+        "resources": [
+          "dock",
+          "forklift",
+          "truck"
+        ],
+        "ingress_contracts": [],
+        "egress_contracts": []
+      },
+      "canonical_pattern_hypotheses": [
+        "producer_consumer",
+        "dining_philosophers",
+        "job_shop"
+      ],
+      "canonical_binding_status": "hypothesis_not_executable_registry"
+    }
+  ],
+  "organizations": [
+    {
+      "id": "trading_company",
+      "label": "Trading Company",
+      "composition_status": "bounded_executable_flows",
+      "process_components": [
+        {
+          "component_id": "order_to_cash",
+          "domain": "order_to_cash",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "warehouse_fulfillment",
+          "domain": "warehouse_fulfillment",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "warehouse_management",
+          "domain": "warehouse_management",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "logistics",
+          "domain": "logistics",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "cards_payments",
+          "domain": "cards_payments",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "record_to_report",
+          "domain": "record_to_report",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "p2p",
+          "domain": "p2p",
+          "owner_binding": "unbound_template"
+        }
+      ],
+      "flow_ids": [
+        "trading_customer",
+        "trading_replenishment"
+      ],
+      "physical_pool_bindings": "unbound_not_certified"
+    },
+    {
+      "id": "industrial_manufacturer",
+      "label": "Industrial Manufacturing Company",
+      "composition_status": "proposed_archetype",
+      "process_components": [
+        {
+          "component_id": "manufacturing",
+          "domain": "manufacturing",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "mro",
+          "domain": "mro",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "warehouse_management",
+          "domain": "warehouse_management",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "p2p",
+          "domain": "p2p",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "logistics",
+          "domain": "logistics",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "record_to_report",
+          "domain": "record_to_report",
+          "owner_binding": "unbound_template"
+        }
+      ],
+      "flow_ids": [],
+      "physical_pool_bindings": "unbound_not_certified"
+    },
+    {
+      "id": "construction_company",
+      "label": "Construction Company",
+      "composition_status": "proposed_archetype",
+      "process_components": [
+        {
+          "component_id": "construction",
+          "domain": "construction",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "field_service",
+          "domain": "field_service",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "p2p",
+          "domain": "p2p",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "warehouse_management",
+          "domain": "warehouse_management",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "logistics",
+          "domain": "logistics",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "mro",
+          "domain": "mro",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "record_to_report",
+          "domain": "record_to_report",
+          "owner_binding": "unbound_template"
+        }
+      ],
+      "flow_ids": [],
+      "physical_pool_bindings": "unbound_not_certified"
+    },
+    {
+      "id": "airport_ecosystem",
+      "label": "Airport Operations Ecosystem",
+      "composition_status": "proposed_archetype",
+      "process_components": [
+        {
+          "component_id": "airports",
+          "domain": "airports",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "aviation",
+          "domain": "aviation",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "mro",
+          "domain": "mro",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "logistics",
+          "domain": "logistics",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "transit",
+          "domain": "transit",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "hospitality",
+          "domain": "hospitality",
+          "owner_binding": "unbound_template"
+        }
+      ],
+      "flow_ids": [],
+      "physical_pool_bindings": "unbound_not_certified"
+    },
+    {
+      "id": "transport_operator",
+      "label": "Transport Operator",
+      "composition_status": "proposed_archetype",
+      "process_components": [
+        {
+          "component_id": "transit",
+          "domain": "transit",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "mro",
+          "domain": "mro",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "logistics",
+          "domain": "logistics",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "cards_payments",
+          "domain": "cards_payments",
+          "owner_binding": "unbound_template"
+        }
+      ],
+      "flow_ids": [],
+      "physical_pool_bindings": "unbound_not_certified"
+    },
+    {
+      "id": "utility_operator",
+      "label": "Utility Company",
+      "composition_status": "proposed_archetype",
+      "process_components": [
+        {
+          "component_id": "energy_utilities",
+          "domain": "energy_utilities",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "field_service",
+          "domain": "field_service",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "mro",
+          "domain": "mro",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "warehouse_management",
+          "domain": "warehouse_management",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "record_to_report",
+          "domain": "record_to_report",
+          "owner_binding": "unbound_template"
+        }
+      ],
+      "flow_ids": [],
+      "physical_pool_bindings": "unbound_not_certified"
+    },
+    {
+      "id": "digital_service_provider",
+      "label": "Digital Service Provider",
+      "composition_status": "proposed_archetype",
+      "process_components": [
+        {
+          "component_id": "telecom",
+          "domain": "telecom",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "subscription_saas",
+          "domain": "subscription_saas",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "itsm",
+          "domain": "itsm",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "cards_payments",
+          "domain": "cards_payments",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "record_to_report",
+          "domain": "record_to_report",
+          "owner_binding": "unbound_template"
+        }
+      ],
+      "flow_ids": [],
+      "physical_pool_bindings": "unbound_not_certified"
+    },
+    {
+      "id": "financial_services_group",
+      "label": "Financial Services Group",
+      "composition_status": "proposed_archetype",
+      "process_components": [
+        {
+          "component_id": "credit_loans",
+          "domain": "credit_loans",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "insurance",
+          "domain": "insurance",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "cards_payments",
+          "domain": "cards_payments",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "record_to_report",
+          "domain": "record_to_report",
+          "owner_binding": "unbound_template"
+        }
+      ],
+      "flow_ids": [],
+      "physical_pool_bindings": "unbound_not_certified"
+    },
+    {
+      "id": "hospital_network",
+      "label": "Hospital Network",
+      "composition_status": "proposed_archetype",
+      "process_components": [
+        {
+          "component_id": "hospitals",
+          "domain": "hospitals",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "warehouse_management",
+          "domain": "warehouse_management",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "p2p",
+          "domain": "p2p",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "mro",
+          "domain": "mro",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "cards_payments",
+          "domain": "cards_payments",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "record_to_report",
+          "domain": "record_to_report",
+          "owner_binding": "unbound_template"
+        }
+      ],
+      "flow_ids": [],
+      "physical_pool_bindings": "unbound_not_certified"
+    },
+    {
+      "id": "hospitality_operator",
+      "label": "Hospitality Operator",
+      "composition_status": "proposed_archetype",
+      "process_components": [
+        {
+          "component_id": "hospitality",
+          "domain": "hospitality",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "p2p",
+          "domain": "p2p",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "warehouse_management",
+          "domain": "warehouse_management",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "field_service",
+          "domain": "field_service",
+          "owner_binding": "unbound_template"
+        },
+        {
+          "component_id": "cards_payments",
+          "domain": "cards_payments",
+          "owner_binding": "unbound_template"
+        }
+      ],
+      "flow_ids": [],
+      "physical_pool_bindings": "unbound_not_certified"
+    }
+  ],
+  "composed_flows": [
+    {
+      "id": "trading_customer",
+      "organization_id": "trading_company",
+      "execution_status": "bounded_executable_path_not_generic_organization_runtime",
+      "implementation_path": "src/sose/composition/trading_company_customer.py",
+      "test_paths": [
+        "tests/integration/sose/composition/test_trading_company_customer_path.py",
+        "tests/integration/sose/composition/test_trading_company_recovery_conformance.py"
+      ],
+      "boundary_domain_aliases": {},
+      "boundary_registrations": [
+        {
+          "producer": "order_to_cash",
+          "consumer": "warehouse_fulfillment",
+          "contract_name": "o2c.fulfillment_requested",
+          "contract_version": 1
+        },
+        {
+          "producer": "order_to_cash",
+          "consumer": "warehouse_fulfillment",
+          "contract_name": "o2c.fulfillment_requested",
+          "contract_version": 2
+        },
+        {
+          "producer": "warehouse_fulfillment",
+          "consumer": "warehouse_management",
+          "contract_name": "warehouse.inventory_reservation_requested",
+          "contract_version": 1
+        },
+        {
+          "producer": "warehouse_management",
+          "consumer": "warehouse_fulfillment",
+          "contract_name": "warehouse.inventory_reserved",
+          "contract_version": 1
+        },
+        {
+          "producer": "warehouse_fulfillment",
+          "consumer": "warehouse_management",
+          "contract_name": "warehouse.inventory_consumption_requested",
+          "contract_version": 1
+        },
+        {
+          "producer": "warehouse_fulfillment",
+          "consumer": "logistics",
+          "contract_name": "warehouse.dispatch_ready",
+          "contract_version": 1
+        },
+        {
+          "producer": "logistics",
+          "consumer": "order_to_cash",
+          "contract_name": "logistics.delivery_completed",
+          "contract_version": 1
+        },
+        {
+          "producer": "order_to_cash",
+          "consumer": "cards_payments",
+          "contract_name": "o2c.payment_requested",
+          "contract_version": 1
+        },
+        {
+          "producer": "cards_payments",
+          "consumer": "record_to_report",
+          "contract_name": "accounting.entry_requested",
+          "contract_version": 1
+        }
+      ]
+    },
+    {
+      "id": "trading_replenishment",
+      "organization_id": "trading_company",
+      "execution_status": "bounded_executable_path_not_generic_organization_runtime",
+      "implementation_path": "src/sose/composition/trading_company_replenishment.py",
+      "test_paths": [
+        "tests/integration/sose/composition/test_trading_company_replenishment_path.py",
+        "tests/integration/sose/composition/test_trading_company_recovery_conformance.py"
+      ],
+      "boundary_domain_aliases": {
+        "procure_to_pay": "p2p"
+      },
+      "boundary_registrations": [
+        {
+          "producer": "warehouse_management",
+          "consumer": "p2p",
+          "contract_name": "warehouse.replenishment_requested",
+          "contract_version": 1
+        },
+        {
+          "producer": "p2p",
+          "consumer": "warehouse_management",
+          "contract_name": "p2p.inventory_receipt_ready",
+          "contract_version": 1
+        },
+        {
+          "producer": "p2p",
+          "consumer": "record_to_report",
+          "contract_name": "accounting.entry_requested",
+          "contract_version": 1
+        }
+      ]
+    }
+  ]
+}
