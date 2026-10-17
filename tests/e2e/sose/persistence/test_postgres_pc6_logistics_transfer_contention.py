@@ -344,3 +344,163 @@ def test_pg_transfer_finite_contention_retries_across_independent_sessions(
             store, engine, backend, entities=shipment,
         ) is True
         assert _snapshot(store) == canonical
+
+
+@pytest.mark.parametrize("blocker", ["transfer_vehicle", "destination_dock"])
+def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledger(
+    blocker,
+):
+    """#489 bounded PG differential on the exact finite resource boundary.
+
+    Same owner IDs, seed, exogenous arrivals, queue filler, and dispatch order
+    in TWO isolated PostgreSQL namespaces. Control holds one PG connection
+    throughout; recovered path reconnects after each causally meaningful
+    step and rebuilds the SimPy environment from authoritative reservations.
+    Unlike existing one-arm final-state checks this tests each intermediate
+    source ledger and terminal after retry; OS-process SIGKILL and certified
+    BusinessEffectApplied remain independent acceptance gates.
+    """
+    assert DSN is not None
+    capacities = {"transfer_vehicle": 2} if blocker == "destination_dock" else None
+
+    def run_world(*, reconnect: bool):
+        namespace = "pc6_transfer_diff_" + uuid4().hex[:12]
+        observations = []
+        with PostgresPersistence(DSN, namespace=namespace) as persistent:
+            holder = logistics.seed_reference(
+                persistent, owner_id=HOLDER_OWNER,
+                instance_key="differential-holder",
+                resource_capacity=1, resource_capacities=capacities,
+                hub_queue_capacity=1,
+            )
+            contender = logistics.seed_reference(
+                persistent, owner_id=SHIPMENT_OWNER,
+                instance_key="differential-contender",
+                resource_capacity=1, resource_capacities=capacities,
+                hub_queue_capacity=1,
+            )
+
+            def checkpoint(action):
+                if reconnect:
+                    with PostgresPersistence(DSN, namespace=namespace) as current:
+                        action(current)
+                        sample = _snapshot(current)
+                        receipts = current.business_effects()
+                else:
+                    action(persistent)
+                    sample = _snapshot(persistent)
+                    receipts = persistent.business_effects()
+                # Not a Trading Company workflow: this bounded Logistics
+                # path has no certified cross-domain BusinessEffectApplied.
+                assert receipts == ()
+                observations.append(sample)
+
+            def at_origin(store, *, owner, shipment):
+                engine, backend = _rebuild(store, owner_id=owner)
+                backend.run_until(logistics.PICKUP_DUE)
+                assert logistics.reconcile_pickup(
+                    store, engine, backend, entities=shipment,
+                )
+                assert logistics.reconcile_origin_hub(
+                    store, engine, backend, entities=shipment,
+                )
+                assert store.entity("shipment", shipment.shipment_id).state == "at_origin_hub"
+
+            checkpoint(lambda st: at_origin(
+                st, owner=HOLDER_OWNER, shipment=holder,
+            ))
+            checkpoint(lambda st: at_origin(
+                st, owner=SHIPMENT_OWNER, shipment=contender,
+            ))
+
+            queue = logistics._organization_queue(
+                HOLDER_OWNER, "destination_hub_queue",
+            )
+            filler_id = "destination-queue:controlled-holder-filler"
+
+            def occupy_real_holder(store):
+                engine, backend = _rebuild(store, owner_id=HOLDER_OWNER)
+                backend.run_until(logistics.PICKUP_DUE)
+                engine.stores.ensure_put(
+                    backend, store_name=queue, item_id=filler_id,
+                    value={"shipment_id": "controlled-holder-filler"},
+                    requested_at=backend.now,
+                )
+                backend.run_until(backend.now)
+                assert logistics.reconcile_transfer(
+                    store, engine, backend, entities=holder,
+                ) is False
+                assert store.entity("shipment", holder.shipment_id).state == "in_transfer"
+                assert engine.resources.reservation_for(
+                    f"transfer-vehicle:{holder.shipment_id}"
+                ) is not None
+                assert engine.resources.reservation_for(
+                    f"destination-dock:{holder.shipment_id}"
+                ) is not None
+
+            checkpoint(occupy_real_holder)
+
+            def contend_real_shipment(store):
+                engine, backend = _rebuild(store, owner_id=SHIPMENT_OWNER)
+                backend.run_until(logistics.PICKUP_DUE)
+                assert logistics.reconcile_transfer(
+                    store, engine, backend, entities=contender,
+                ) is False
+                assert engine.resources.has_request(
+                    f"{'transfer-vehicle' if blocker == 'transfer_vehicle' else 'destination-dock'}:{contender.shipment_id}"
+                )
+                assert store.entity("shipment", contender.shipment_id).state in (
+                    "at_origin_hub", "in_transfer",
+                )
+
+            checkpoint(contend_real_shipment)
+
+            def release_holder(store):
+                engine, backend = _rebuild(store, owner_id=HOLDER_OWNER)
+                backend.run_until(logistics.PICKUP_DUE)
+                selected = engine.stores.ensure_selection(
+                    backend, store_name=queue,
+                    request_id="differential-holder-dequeue",
+                    requested_at=backend.now,
+                )
+                assert selected is not None and selected.item.item_id == filler_id
+                backend.run_until(backend.now)
+                assert logistics.reconcile_transfer(
+                    store, engine, backend, entities=holder,
+                )
+                assert store.entity("shipment", holder.shipment_id).state == (
+                    "at_destination_hub"
+                )
+
+            checkpoint(release_holder)
+
+            def complete_contender(store):
+                engine, backend = _rebuild(store, owner_id=SHIPMENT_OWNER)
+                backend.run_until(logistics.PICKUP_DUE)
+                assert logistics.reconcile_transfer(
+                    store, engine, backend, entities=contender,
+                )
+                assert store.entity("shipment", contender.shipment_id).state == (
+                    "at_destination_hub"
+                )
+                reservations = store.resource_reservations()
+                for name in ("transfer_vehicle", "destination_dock"):
+                    assert not [x for x in reservations if x.resource_name == name]
+                assert len(store.events()) == len({
+                    x.event_id for x in store.events()
+                })
+
+            checkpoint(complete_contender)
+            # Retry must not append a second event/effect or double-release.
+            checkpoint(complete_contender)
+
+        return tuple(observations)
+
+    uninterrupted = run_world(reconnect=False)
+    recovered = run_world(reconnect=True)
+    assert len(uninterrupted) == len(recovered) == 7
+    for stage, (continuous, restarted) in enumerate(zip(uninterrupted, recovered)):
+        assert restarted == continuous, (
+            f"PostgreSQL differential physical/causal drift after stage {stage}: "
+            f"{blocker}"
+        )
