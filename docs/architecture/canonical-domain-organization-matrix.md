@@ -115,7 +115,7 @@ Estes contratos foram coletados dos registradores de consumidores da Trading Com
 | `order_to_cash` | `cards_payments` | `o2c.payment_requested.v1` |
 | `cards_payments` | `record_to_report` | `accounting.entry_requested.v1` |
 
-Provas: [test_trading_company_customer_path.py](../../tests/integration/sose/composition/test_trading_company_customer_path.py); [test_trading_company_recovery_conformance.py](../../tests/integration/sose/composition/test_trading_company_recovery_conformance.py).
+Provas: [test_trading_company_customer_path.py](../../tests/integration/sose/composition/test_trading_company_customer_path.py); [test_trading_company_recovery_conformance.py](../../tests/integration/sose/composition/test_trading_company_recovery_conformance.py); [test_pc6_two_real_customer_paths.py](../../tests/integration/sose/composition/test_pc6_two_real_customer_paths.py) (**executa e verifica a fronteira v2**).
 
 ### `trading_replenishment` — [código](../../src/sose/composition/trading_company_replenishment.py)
 
@@ -141,8 +141,8 @@ Provas: [test_trading_company_replenishment_path.py](../../tests/integration/sos
 ## 6. Gates de promoção
 
 1. O teste da matriz exige igualdade exata dos **cinco** registros canônicos e **22** domínios do catálogo, excluindo `tutorial_job`, e espelha a maturidade do **manifest** (não de nomes de arquivos). Maturidade PC0* não pode virar PC5 nem recursos desconhecidos virar lista vazia.
-2. Recursos, ingressos, egressos e direções auditadas devem ser exatamente os declarados em `ProcessManifest`; a inclusão de contrato tipado requer fonte e proveniência, não strings genéricas.
-3. Os registros de fronteira dos dois fluxos são comparados via AST com `BoundaryConsumerRegistry.register` real — nome, versão, origem e destino (com alias explícito), negando contratos inventados.
+2. Recursos, ingressos, egressos e direções auditadas devem ser exatamente os declarados em `ProcessManifest`; a inclusão de contrato tipado requer fonte e proveniência, não strings genéricas. A associação `procure_to_pay` (wire) → `p2p` (catálogo) é explicitamente validada contra o import do domínio real, e não pode ser remapeada por edição do inventário.
+3. Os registros de fronteira dos dois fluxos são comparados via AST com `BoundaryConsumerRegistry.register` real — nome, versão, origem e destino (com alias explícito), negando contratos inventados. Cada versão também precisa aparecer em uma **asserção dentro de teste que executa o flow**; um registro de handler sem teste de passagem (como `o2c.fulfillment_requested.v2`) não basta.
 4. Arquétipos não podem se autodeclarar executáveis: os dois fluxos têm testes reais, enquanto o executor `OrganizationInstance` aguarda #496 e a heterogeneidade O2C/MRO aguarda #497.
 5. Alterações em pertencimento canônico são **hipóteses** a discutir e falsificar caso a caso; não se deve alterar o kernel ou um `DomainDefinition` sem um contrato separado, TDD e ADR quando necessário.
 6. O estado científico OD-5a permanece `NOT_ADMITTED`; PC6 genérico, gates físicos #477, #496/#497 e a admissão prospectiva #461 têm escopos separados.
