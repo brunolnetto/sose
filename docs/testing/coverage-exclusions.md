@@ -36,7 +36,7 @@ them would require invalidating an already-tested stronger contract.
 | `backends/simpy.py:454` | Container operation is a closed internal set |
 | `backends/simpy.py:457` | SimPy container event callback lifecycle |
 | `backends/simpy.py:529` | SimPy resource-request callback lifecycle |
-| `backends/simpy.py:626` | Preemptive resource lifecycle executes inside an active SimPy process |
+| `backends/simpy.py:646` | Preemptive resource lifecycle executes inside an active SimPy process |
 | `persistence/postgres.py:170` | Metadata singleton cannot disappear after transactional bootstrap |
 | `persistence/postgres.py:382` | Record changes have a closed internal operation set |
 | `persistence/postgres.py:765` | Metadata singleton cannot disappear during revision update |
