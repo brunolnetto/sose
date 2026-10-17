@@ -374,7 +374,6 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
                 uow.get_simulation_position(owner_id=SHIPMENT_OWNER),
                 uow.commands(),
                 uow.scheduled_work(),
-                tuple(store.job_states()),
             )
 
     def run_world(*, reconnect: bool):
