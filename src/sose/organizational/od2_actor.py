@@ -1,0 +1,227 @@
+"""OD-2 bounded durable actor lifecycle on existing SOSE Entity/StateChart/UoW.
+
+This does not allocate a technician/physical ResourceReservation or establish
+actor availability for OD-5b. It accounts for *observed synthetic* actor-time
+and paid transitions with stable owner, model, epoch and causal command IDs.
+"""
+from __future__ import annotations
+
+from contextlib import nullcontext
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+from statemachine import State, StateChart
+
+from sose.core.clock import SimulationClock
+from sose.core.context import SimulationContext
+from sose.core.engine import Engine
+from sose.core.events import Command
+from sose.core.identity import deterministic_id
+from sose.core.randomness import RandomSource
+from sose.core.scheduler import Scheduler
+from sose.domain.entity import Entity
+from sose.domain.registry import DomainRegistry, EntityType
+from sose.persistence.base import Persistence
+from sose.probability import probabilistic_transitions
+
+
+ACTOR_KIND = "organizational_actor"
+ACTOR_STATES = (
+    "admitted", "eligible", "active", "unavailable", "development", "exited",
+)
+
+
+@dataclass(slots=True)
+class OrganizationalActor(Entity):
+    entity_type: str = ACTOR_KIND
+
+
+@probabilistic_transitions(
+    {},
+    excluded_events={
+        "activate", "assign", "complete", "make_unavailable",
+        "resume", "begin_development", "finish_development", "exit",
+    },
+)
+class OrganizationalActorChart(StateChart):
+    admitted = State(initial=True)
+    eligible = State()
+    active = State()
+    unavailable = State()
+    development = State()
+    exited = State(final=True)
+
+    activate = admitted.to(eligible)
+    assign = eligible.to(active)
+    complete = active.to(eligible)
+    make_unavailable = eligible.to(unavailable)
+    resume = unavailable.to(eligible)
+    begin_development = eligible.to(development)
+    finish_development = development.to(eligible)
+    exit = (
+        eligible.to(exited)
+        | unavailable.to(exited)
+        | development.to(exited)
+    )
+
+
+def _utc(at: datetime) -> datetime:
+    if not isinstance(at, datetime) or at.tzinfo is None or at.utcoffset() is None:
+        raise ValueError("actor effective time requires timezone-aware datetime")
+    return at.astimezone(timezone.utc)
+
+
+def _identity(value: str, label: str) -> None:
+    if not isinstance(value, str) or not value or not value.strip():
+        raise ValueError(f"{label} must be nonempty")
+
+
+def _guard(store: Persistence, actor_id: str):
+    factory = getattr(store, "business_resource_guard", None)
+    return (
+        factory("od2-actor:" + actor_id)
+        if callable(factory) else nullcontext()
+    )
+
+
+def _engine(store: Persistence, *, owner_id: str, at: datetime) -> Engine:
+    context = SimulationContext(
+        clock=SimulationClock(now=at, step=timedelta(seconds=1)),
+        random=RandomSource(root_seed=0),
+        scheduler=Scheduler(),
+    )
+    registry = DomainRegistry()
+    registry.register(EntityType(ACTOR_KIND, OrganizationalActorChart))
+    return Engine(
+        persistence=store, owner_id=owner_id, registry=registry,
+        context=context,
+    )
+
+
+def seed_actor(
+    store: Persistence, *, owner_id: str, actor_key: str,
+    model_spec_hash: str, config_epoch: int, at: datetime,
+    replaces_actor_id: str | None = None,
+) -> str:
+    """Enroll an independent actor; optional replacement requires exited peer."""
+    _identity(owner_id, "owner_id")
+    _identity(actor_key, "actor_key")
+    _identity(model_spec_hash, "model_spec_hash")
+    if type(config_epoch) is not int or config_epoch < 0:
+        raise ValueError("config_epoch must be a nonnegative integer")
+    now = _utc(at)
+    identity = deterministic_id("od2-actor", owner_id, actor_key)
+    with _guard(store, identity):
+        with store.transaction(owner_id=owner_id) as uow:
+            prior = uow.get_entity(ACTOR_KIND, identity)
+            if prior is not None:
+                raise ValueError("actor identity already exists")
+            if replaces_actor_id is not None:
+                _identity(replaces_actor_id, "replaces_actor_id")
+                replaced = uow.get_entity(ACTOR_KIND, replaces_actor_id)
+                if (
+                    replaced is None or replaced.state != "exited"
+                    or replaced.attributes["owner_id"] != owner_id
+                    or now < datetime.fromisoformat(replaced.attributes["last_at"])
+                ):
+                    raise ValueError("replacement requires prior exited actor in same owner")
+            uow.save_entity(OrganizationalActor(
+                id=identity, state="admitted", created_at=now, updated_at=now,
+                attributes={
+                    "owner_id": owner_id, "model_spec_hash": model_spec_hash,
+                    "config_epoch": config_epoch, "last_at": now.isoformat(),
+                    "time_us": {state: 0 for state in ACTOR_STATES},
+                    "paid_transition_us": 0,
+                    "assigned_work_id": None, "applied_causes": {},
+                    "replaces_actor_id": replaces_actor_id,
+                },
+            ))
+    return identity
+
+
+def transition_actor(
+    store: Persistence, *, owner_id: str, actor_id: str,
+    action: str, cause_id: str, at: datetime,
+    model_spec_hash: str, config_epoch: int,
+    work_id: str | None = None, cost_us: int = 0,
+) -> OrganizationalActor:
+    """Atomically commit lifecycle, actor-time, paid cost, Command and event.
+
+    Duplicate *identical* causes return the prior durable state unchanged.
+    A future/stale config epoch, opposite owner, illegal StateChart transition
+    or in-flight exit cannot mutate any of the five records.
+    """
+    for val, label in (
+        (owner_id, "owner_id"), (actor_id, "actor_id"),
+        (action, "action"), (cause_id, "cause_id"),
+        (model_spec_hash, "model_spec_hash"),
+    ):
+        _identity(val, label)
+    if type(config_epoch) is not int or config_epoch < 0:
+        raise ValueError("config_epoch must be a nonnegative integer")
+    if type(cost_us) is not int or cost_us < 0:
+        raise ValueError("paid transition cost must be nonnegative microseconds")
+    now = _utc(at)
+    identity = (action, now.isoformat(), work_id, cost_us)
+    with _guard(store, actor_id):
+        with store.transaction(owner_id=owner_id) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            if actor is None:
+                raise KeyError(f"unknown organizational actor: {actor_id}")
+            meta = actor.attributes
+            if meta["owner_id"] != owner_id:
+                raise PermissionError("actor belongs to another operational owner")
+            if meta["model_spec_hash"] != model_spec_hash:
+                raise ValueError("actor model_spec_hash changed")
+            if meta["config_epoch"] != config_epoch:
+                raise ValueError("stale or unadmitted actor config_epoch")
+            used = meta["applied_causes"].get(cause_id)
+            if used is not None:
+                if used != list(identity):
+                    raise ValueError("actor cause was replayed with different action")
+                return actor
+            prior_at = datetime.fromisoformat(meta["last_at"])
+            if now < prior_at:
+                raise ValueError("actor effective time regressed")
+            if action == "assign":
+                _identity(work_id, "work_id")
+                if meta["assigned_work_id"] is not None:
+                    raise ValueError("actor already assigned")
+            elif action == "complete":
+                if work_id is None or work_id != meta["assigned_work_id"]:
+                    raise ValueError("completion requires the matching assigned work")
+            elif work_id is not None:
+                raise ValueError("work identity is only legal for assign/complete")
+            if action == "begin_development" and cost_us == 0:
+                raise ValueError("development must have explicit paid cost")
+
+            engine = _engine(store, owner_id=owner_id, at=now)
+            command = Command(
+                command_id=deterministic_id("od2-actor-command", owner_id, actor_id, cause_id),
+                name=action, entity_type=ACTOR_KIND, entity_id=actor_id,
+                due_at=now, issued_at=now, owner_id=owner_id,
+                causation_id=cause_id,
+                correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
+            )
+            try:
+                chart = engine.context.statecharts.bind(actor, caused_by=command)
+                chart.send(action)
+                emitted = engine.context.drain_events()
+                if len(emitted) != 1:
+                    raise RuntimeError("actor transition must produce exactly one causal event")
+                elapsed_us = (now - prior_at) // timedelta(microseconds=1)
+                meta["time_us"][emitted[0].payload["from_state"]] += elapsed_us
+                meta["last_at"] = now.isoformat()
+                meta["paid_transition_us"] += cost_us
+                meta["applied_causes"][cause_id] = list(identity)
+                if action == "assign":
+                    meta["assigned_work_id"] = work_id
+                if action == "complete":
+                    meta["assigned_work_id"] = None
+                uow.save_entity(actor)
+                uow.save_command(command)
+                for event in emitted:
+                    uow.append_event(event)
+                return actor
+            finally:
+                engine.context.drain_events()
