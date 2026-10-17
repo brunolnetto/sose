@@ -454,6 +454,7 @@ def _assert_claim(
 def initialize_od5a_recurring_job(
     store: Persistence, *, job_id: str, arm: OD5aCompiledArm,
     items: tuple[OD5aWorkItem, ...],
+    shared_pool_binding: SharedPhysicalPoolBinding | None = None,
 ) -> SimulationJobState:
     """Atomically commit an immutable source and its owning job checkpoint.
 
@@ -463,8 +464,39 @@ def initialize_od5a_recurring_job(
     PostgreSQL guard when available.
     """
     registered: list[SimulationJobState] = []
+    if shared_pool_binding is not None:
+        if not isinstance(shared_pool_binding, SharedPhysicalPoolBinding):
+            raise TypeError("shared_pool_binding must be SharedPhysicalPoolBinding")
+        # The pool is a separately existing immutable physical asset. Each
+        # organization binds to its identity, never invents a local copy.
+        SharedPhysicalGrantAuthority(
+            store, shared_pool_binding, job_id,
+        ).ledger.register_pool(shared_pool_binding.pool)
 
     def bind(uow: UnitOfWork) -> None:
+        source = uow.get_entity(_KIND, job_id)
+        assert source is not None
+        if shared_pool_binding is None:
+            _assert_shared_binding(source, None)
+        else:
+            physical_slots = {
+                name for name in source.attributes["resources"]
+                if name.startswith("execution:")
+            }
+            bound_slots = {
+                name for name, _ in shared_pool_binding.execution_instances
+            }
+            if physical_slots != bound_slots:
+                raise ValueError("shared binding does not cover exact source execution slots")
+            if source.attributes.get("shared_pool_binding") is None:
+                if source.attributes["step"] != 0:
+                    raise ValueError("shared authority cannot adopt historical source actions")
+                source.attributes["shared_pool_binding"] = (
+                    shared_pool_binding.fingerprint()
+                )
+                uow.save_entity(source)
+            else:
+                _assert_shared_binding(source, shared_pool_binding)
         registered.append(_register_od5a_job_in_uow(uow, job_id=job_id))
 
     # First claim the job identity across ALL domain creators; only then
@@ -900,6 +932,7 @@ class _RecurringNativePhysicalArbiter:
 def execute_od5a_claimed_tick(
     store: Persistence, *, claim: OD5aRunnerClaim, now: datetime,
     _wall_clock: Callable[[], datetime] | None = None,
+    shared_pool_binding: SharedPhysicalPoolBinding | None = None,
 ) -> OD5aRecurringStep:
     """Use a fresh ephemeral SimPy dispatch to commit exactly one source step.
 
@@ -908,10 +941,15 @@ def execute_od5a_claimed_tick(
     and the physical event inseparable.
     """
     _require_wall_clock(now)
+    authority = (
+        SharedPhysicalGrantAuthority(store, shared_pool_binding, claim.organization_id)
+        if shared_pool_binding is not None else None
+    )
     with _job_transaction(store, claim.organization_id) as uow:
         source, _, _ = _assert_claim(
             uow, claim, _trusted_now(store, _wall_clock),
         )
+        _assert_shared_binding(source, shared_pool_binding)
         actions = source.attributes["actions"]
         due = (
             min(actions, key=lambda x: (x["at"], x["seq"]))["at"]
@@ -936,6 +974,7 @@ def execute_od5a_claimed_tick(
         source, _, _ = _assert_claim(
             uow, claim, _trusted_now(store, _wall_clock),
         )
+        _assert_shared_binding(source, shared_pool_binding)
         actions = source.attributes["actions"]
         actual = min(actions, key=lambda x: (x["at"], x["seq"])) if actions else None
         if actual != next_action:
@@ -955,8 +994,9 @@ def execute_od5a_claimed_tick(
             if item.resource_name in owned_names
         )
         preview = _PhysicalStepPreview(preflight_reservations)
+        planned_state = deepcopy(preflight_state)
         _transition(
-            preview, deepcopy(preflight_state),
+            preview, planned_state,
             claim.organization_id,
         )
         native = _RecurringNativePhysicalArbiter(
@@ -978,6 +1018,7 @@ def execute_od5a_claimed_tick(
             # time nor the worker host's clock can extend/stale the fence.
             commit_at = _trusted_now(store, _wall_clock)
             source, job, lease = _assert_claim(uow, claim, commit_at)
+            _assert_shared_binding(source, shared_pool_binding)
             actions = source.attributes["actions"]
             actual = min(actions, key=lambda x: (x["at"], x["seq"])) if actions else None
             if actual != next_action or source.attributes != preflight_state:
@@ -992,12 +1033,28 @@ def execute_od5a_claimed_tick(
                 raise StaleOD5aRunnerClaimError(
                     "OD-5a own physical ledger changed before native commit"
                 )
-            advanced = _advance_od5a_in_uow(
-                uow, job_id=claim.organization_id, native=native,
-            )
-            native.verify_committed_step()
-            committed = uow.get_entity(_KIND, claim.organization_id)
-            assert committed is not None
+            # The per-pool guard and source UoW share one PostgreSQL
+            # transaction. The guard is scoped to THIS physical pool only.
+            # A collision must roll back physical booking AND source/job.
+            with (authority.guarded_pool() if authority else nullcontext()):
+                advanced = _advance_od5a_in_uow(
+                    uow, job_id=claim.organization_id, native=native,
+                )
+                native.verify_committed_step()
+                committed = uow.get_entity(_KIND, claim.organization_id)
+                assert committed is not None
+                if committed.attributes != planned_state:
+                    raise RuntimeError(
+                        "native source truth differs from deterministic planned grant"
+                    )
+                if authority is not None:
+                    authority.apply(
+                        before=preflight_reservations,
+                        releases=tuple(preview.releases),
+                        grants=tuple(preview.grants),
+                        after_state=committed.attributes,
+                        at=due, uow=uow,
+                    )
             job = replace(
                 job, status="ready", phase="idle", active_trigger_id=None,
                 last_completed_trigger_id=claim.trigger_id,
@@ -1032,6 +1089,7 @@ def run_od5a_recurring_tick(
     now: datetime, lease_duration: timedelta,
     trigger_id: str, recover: bool = False,
     _wall_clock: Callable[[], datetime] | None = None,
+    shared_pool_binding: SharedPhysicalPoolBinding | None = None,
 ) -> OD5aRecurringStep:
     """One bounded recurring source step; ACK/certification are separate jobs.
 
@@ -1044,6 +1102,7 @@ def run_od5a_recurring_tick(
         raise ValueError("a stable external recurring trigger ID is required")
     with _job_transaction(store, job_id) as uow:
         source, job = _read_job(uow, job_id)
+        _assert_shared_binding(source, shared_pool_binding)
         _assert_completed_released_lease(uow, job)
         if trigger_id is not None and trigger_id == job.last_completed_trigger_id:
             return OD5aRecurringStep(
@@ -1069,10 +1128,12 @@ def run_od5a_recurring_tick(
             )
     return execute_od5a_claimed_tick(
         store, claim=claim, now=now, _wall_clock=_wall_clock,
+        shared_pool_binding=shared_pool_binding,
     )
 
 
 __all__ = [
+    "SharedPhysicalPoolBinding", "SharedPhysicalGrantAuthority",
     "OD5aRunnerClaim", "OD5aRecurringStep", "StaleOD5aRunnerClaimError",
     "initialize_od5a_recurring_job", "claim_od5a_recurring_tick",
     "execute_od5a_claimed_tick", "run_od5a_recurring_tick",
