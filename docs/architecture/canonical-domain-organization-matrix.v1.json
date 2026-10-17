@@ -861,6 +861,7 @@
       "execution_status": "bounded_executable_path_not_generic_organization_runtime",
       "implementation_path": "src/sose/composition/trading_company_customer.py",
       "test_paths": [
+        "tests/integration/sose/composition/test_pc6_two_real_customer_paths.py",
         "tests/integration/sose/composition/test_trading_company_customer_path.py",
         "tests/integration/sose/composition/test_trading_company_recovery_conformance.py"
       ],
@@ -920,7 +921,8 @@
           "contract_name": "accounting.entry_requested",
           "contract_version": 1
         }
-      ]
+      ],
+      "entrypoint": "run_customer_demand_path"
     },
     {
       "id": "trading_replenishment",
@@ -953,7 +955,8 @@
           "contract_name": "accounting.entry_requested",
           "contract_version": 1
         }
-      ]
+      ],
+      "entrypoint": "run_replenishment_path"
     }
   ]
 }
