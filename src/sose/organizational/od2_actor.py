@@ -200,8 +200,12 @@ def transition_actor(
                 command_id=deterministic_id("od2-actor-command", owner_id, actor_id, cause_id),
                 name=action, entity_type=ACTOR_KIND, entity_id=actor_id,
                 due_at=now, issued_at=now, owner_id=owner_id,
-                causation_id=cause_id,
+                # A supplied external observation is provenance, not a
+                # phantom persisted DomainEvent causal parent. The emitted
+                # StateChart event points instead at this persisted Command.
+                causation_id=None,
                 correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
+                payload={"external_cause_id": cause_id},
             )
             try:
                 chart = engine.context.statecharts.bind(actor, caused_by=command)
