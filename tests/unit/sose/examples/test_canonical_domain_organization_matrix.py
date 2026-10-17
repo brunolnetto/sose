@@ -25,6 +25,15 @@ from sose.examples.process_manifest import (
 ROOT = Path(__file__).resolve().parents[4]
 MATRIX = ROOT / "docs/architecture/canonical-domain-organization-matrix.v1.json"
 
+# The wire name is NOT the public process catalog identity. The aliases
+# originate from the owning domain implementation (not from the JSON itself).
+# Do not allow inventing a different catalog owner by relabelling the matrix.
+EXPECTED_WIRE_ALIASES = {
+    "trading_customer": {},
+    "trading_replenishment": {"procure_to_pay": "p2p"},
+}
+
+
 
 def _matrix() -> dict:
     return json.loads(MATRIX.read_text(encoding="utf-8"))
@@ -123,6 +132,52 @@ def _registry_edges(path: str, aliases: dict[str, str]) -> set[tuple]:
     return found
 
 
+def _assert_flow_test_coverage(flow: dict) -> None:
+    """Require a real test that calls the flow AND asserts each contract key.
+
+    A string in a comment/doc or a registered-but-untested consumer does not
+    prove that a version actually traverses the executable boundary.
+    """
+    implementation = ROOT / flow["implementation_path"]
+    source = ast.parse(implementation.read_text(encoding="utf-8"))
+    assert any(
+        isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name == flow["entrypoint"]
+        for node in ast.walk(source)
+    ), "flow entrypoint must exist in real source"
+    tested_contracts: set[str] = set()
+    for test_path in flow["test_paths"]:
+        tree = ast.parse((ROOT / test_path).read_text(encoding="utf-8"))
+        for test in ast.walk(tree):
+            if not isinstance(test, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            if not test.name.startswith("test_"):
+                continue
+            executes_flow = any(
+                isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == flow["entrypoint"]
+                for node in ast.walk(test)
+            )
+            if not executes_flow:
+                continue
+            for assertion in ast.walk(test):
+                if not isinstance(assertion, ast.Assert):
+                    continue
+                tested_contracts.update(
+                    node.value
+                    for node in ast.walk(assertion.test)
+                    if isinstance(node, ast.Constant)
+                    and isinstance(node.value, str)
+                )
+    for edge in flow["boundary_registrations"]:
+        identity = f'{edge["contract_name"]}.v{edge["contract_version"]}'
+        assert identity in tested_contracts, (
+            "claimed executable contract/version lacks a flow-calling "
+            f"test assertion: {flow['id']} / {identity}"
+        )
+
+
 def _assert_organizations(matrix: dict) -> None:
     domains = _unique_ids(matrix["domains"])
     organizations = matrix["organizations"]
@@ -169,6 +224,24 @@ def _assert_organizations(matrix: dict) -> None:
         assert flow["test_paths"]
         assert all((ROOT / path).is_file() for path in flow["test_paths"])
         assert set(flow["boundary_domain_aliases"].values()) <= domains
+        assert flow["boundary_domain_aliases"] == EXPECTED_WIRE_ALIASES[flow["id"]]
+        # Tie every exceptional wire namespace back to the concrete
+        # implementation's imported business-domain code. A JSON-only alias
+        # is not independent provenance for catalog ownership.
+        implementation_ast = ast.parse(
+            (ROOT / flow["implementation_path"]).read_text(encoding="utf-8")
+        )
+        imports = {
+            node.module
+            for node in ast.walk(implementation_ast)
+            if isinstance(node, ast.ImportFrom)
+        }
+        for wire_domain, catalog_domain in flow["boundary_domain_aliases"].items():
+            assert f"sose.examples.{catalog_domain}" in imports, (
+                "wire alias has no corresponding domain implementation import: "
+                f"{wire_domain} -> {catalog_domain}"
+            )
+        _assert_flow_test_coverage(flow)
         registrations = _registry_edges(
             flow["implementation_path"], flow["boundary_domain_aliases"],
         )
@@ -236,4 +309,30 @@ def test_proposed_organization_cannot_claim_executable_flow() -> None:
                     if o["composition_status"] == "proposed_archetype")
     template["flow_ids"] = ["trading_customer"]
     with pytest.raises(AssertionError):
+        _assert_organizations(matrix)
+
+
+def test_wire_alias_cannot_forge_a_different_business_domain_owner() -> None:
+    matrix = deepcopy(_matrix())
+    flow = next(x for x in matrix["composed_flows"]
+                if x["id"] == "trading_replenishment")
+    flow["boundary_domain_aliases"] = {"procure_to_pay": "logistics"}
+    for edge in flow["boundary_registrations"]:
+        if edge["producer"] == "p2p":
+            edge["producer"] = "logistics"
+        if edge["consumer"] == "p2p":
+            edge["consumer"] = "logistics"
+    with pytest.raises(AssertionError):
+        _assert_organizations(matrix)
+
+
+def test_registered_but_untested_v2_boundary_is_not_execution_evidence() -> None:
+    matrix = deepcopy(_matrix())
+    flow = next(x for x in matrix["composed_flows"]
+                if x["id"] == "trading_customer")
+    flow["test_paths"] = [
+        path for path in flow["test_paths"]
+        if not path.endswith("test_pc6_two_real_customer_paths.py")
+    ]
+    with pytest.raises(AssertionError, match="lacks a flow-calling test assertion"):
         _assert_organizations(matrix)
