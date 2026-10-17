@@ -100,6 +100,63 @@ def _kill_after_committed_transfer_wait(dsn, namespace, shipment):
         worker.close()
 
 
+
+def _pg_transfer_wait_inside_uncommitted_transaction(
+    dsn, namespace, shipment, ready,
+):
+    """Keep a real PostgreSQL transfer mutation open until the parent SIGKILL.
+
+    reconcile_transfer executes its normal nested domain transactions. The
+    enclosing PostgreSQL transaction deliberately has NOT reached COMMIT, so
+    worker death must roll back every partial physical/queue/causal write.
+    """
+    with PostgresPersistence(dsn, namespace=namespace) as store:
+        engine, backend = _rebuild(store, owner_id=SHIPMENT_OWNER)
+        backend.run_until(logistics.PICKUP_DUE)
+        with store.transaction():
+            assert logistics.reconcile_transfer(
+                store, engine, backend, entities=shipment,
+            ) is False
+            assert engine.resources.has_request(
+                f"transfer-vehicle:{shipment.shipment_id}"
+            ) or engine.resources.has_request(
+                f"destination-dock:{shipment.shipment_id}"
+            ), "no real transfer demand was exercised before worker death"
+            # This barrier is inside the open outer transaction. In the
+            # separate recovery connection none of these changes is visible.
+            ready.set()
+            Event().wait(timeout=60)
+            raise AssertionError("uncommitted worker survived the kill barrier")
+
+
+def _kill_inside_uncommitted_transfer(dsn, namespace, shipment):
+    """Kill a separate interpreter before outer transaction COMMIT."""
+    ctx = get_context("spawn")
+    ready = ctx.Event()
+    worker = ctx.Process(
+        target=_pg_transfer_wait_inside_uncommitted_transaction,
+        args=(dsn, namespace, shipment, ready),
+    )
+    try:
+        worker.start()
+        assert ready.wait(timeout=35), (
+            f"worker failed to reach open transfer transaction; exit={worker.exitcode}"
+        )
+        assert worker.is_alive(), "transactional worker exited before SIGKILL"
+        worker.kill()
+        worker.join(timeout=15)
+        assert not worker.is_alive(), "SIGKILL did not terminate transactional worker"
+        if os.name == "posix":
+            assert worker.exitcode == -signal.SIGKILL
+        else:
+            assert worker.exitcode not in (None, 0)
+    finally:
+        if worker.is_alive():
+            worker.kill()
+            worker.join(timeout=15)
+        worker.close()
+
+
 @pytest.mark.parametrize(
     ("blocker", "blocked_resource"),
     [
@@ -400,9 +457,12 @@ def test_pg_transfer_finite_contention_retries_across_independent_sessions(
 
 
 @pytest.mark.parametrize("blocker", ["transfer_vehicle", "destination_dock"])
-@pytest.mark.parametrize("os_worker_death", [False, True], ids=["reconnect", "sigkill"])
+@pytest.mark.parametrize(
+    "worker_fault", [None, "after_commit", "before_commit"],
+    ids=["reconnect", "sigkill-committed", "sigkill-uncommitted"],
+)
 def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledger(
-    blocker, os_worker_death,
+    blocker, worker_fault,
 ):
     """#489 bounded PG differential on the exact finite resource boundary.
 
@@ -412,8 +472,9 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
     step and rebuilds the SimPy environment from authoritative reservations.
     Unlike existing one-arm final-state checks this tests each intermediate
     source ledger and terminal after retry. The SIGKILL arm forces actual OS
-    worker death with a live PostgreSQL connection *after* a resource wait
-    is committed; a replacement worker reconstructs solely durable truth.
+    worker death with a live PostgreSQL connection after a committed resource
+    wait, or while a transfer mutation is still inside a PostgreSQL transaction.
+    The replacement must observe rollback before replaying the same demand.
     Cross-domain BusinessEffectApplied remains a separate acceptance gate.
     """
     assert DSN is not None
@@ -432,7 +493,7 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
                 uow.scheduled_work(),
             )
 
-    def run_world(*, reconnect: bool, kill_os_process: bool = False):
+    def run_world(*, reconnect: bool, fault: str | None = None):
         namespace = "pc6_transfer_diff_" + uuid4().hex[:12]
         observations = []
         with PostgresPersistence(DSN, namespace=namespace) as persistent:
@@ -528,14 +589,28 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
                     "at_origin_hub", "in_transfer",
                 )
 
-            if kill_os_process:
+            if fault == "after_commit":
                 assert reconnect
-                # Run the same deterministic contender action in a distinct
-                # interpreter. Its committed wait survives OS SIGKILL.
+                # The child committed the wait but lost its response on kill.
                 _kill_after_committed_transfer_wait(
                     DSN, namespace, contender,
                 )
                 checkpoint(lambda st: None)
+            elif fault == "before_commit":
+                assert reconnect
+                # The same domain transition runs inside a real uncommitted
+                # SQL transaction. A killed connection must roll back even a
+                # partially acquired vehicle / dock.
+                prior = observations[-1]
+                _kill_inside_uncommitted_transfer(
+                    DSN, namespace, contender,
+                )
+                with PostgresPersistence(DSN, namespace=namespace) as probe:
+                    assert (_snapshot(probe), _replay_state(probe)) == prior, (
+                        "worker SIGKILL left partial physical/causal truth "
+                        "from an uncommitted transfer"
+                    )
+                checkpoint(contend_real_shipment)
             else:
                 checkpoint(contend_real_shipment)
 
@@ -581,7 +656,7 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
         return tuple(observations)
 
     uninterrupted = run_world(reconnect=False)
-    recovered = run_world(reconnect=True, kill_os_process=os_worker_death)
+    recovered = run_world(reconnect=True, fault=worker_fault)
     assert len(uninterrupted) == len(recovered) == 7
     for stage, (continuous, restarted) in enumerate(zip(uninterrupted, recovered)):
         assert restarted == continuous, (
