@@ -117,6 +117,24 @@ class PostgresTemporalResourceLedger:
     def _key(pool: ResourcePoolContract) -> str:
         return pool.address().lock_key()
 
+    @contextmanager
+    def guard_pool(self, pool: ResourcePoolContract):
+        """Pin one immutable physical pool throughout its caller's SQL action.
+
+        A nested transaction on the SAME PostgreSQL connection is a savepoint.
+        The pool-scoped advisory lock survives until the enclosing source UoW
+        commits or rolls back. Independent pools/organizations proceed without
+        a global writer lock or globally synchronized simulation clock.
+        """
+        if not isinstance(pool, ResourcePoolContract):
+            raise TypeError("authoritative guard requires ResourcePoolContract")
+        key = self._key(pool)
+        with self._db.transaction():
+            self._lock(key)
+            if self._pool(key) != pool:
+                raise ResourceConflictError("shared physical pool contract changed")
+            yield self
+
     def register_pool(self, pool: ResourcePoolContract) -> None:
         """Idempotent immutable contract registration."""
         if not isinstance(pool, ResourcePoolContract):
