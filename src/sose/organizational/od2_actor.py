@@ -111,13 +111,19 @@ def seed_actor(
         raise ValueError("config_epoch must be a nonnegative integer")
     now = _utc(at)
     identity = deterministic_id("od2-actor", owner_id, actor_key)
-    with _guard(store, identity):
+    if replaces_actor_id is not None:
+        _identity(replaces_actor_id, "replaces_actor_id")
+        if replaces_actor_id == identity:
+            raise ValueError("actor cannot replace itself")
+    # A replacement is serialized by the PREDECESSOR resource identity, not
+    # by a new actor ID. Otherwise two concurrently proposed successors
+    # could both pass a check on the old actor and fork its lineage.
+    with _guard(store, replaces_actor_id or identity):
         with store.transaction(owner_id=owner_id) as uow:
             prior = uow.get_entity(ACTOR_KIND, identity)
             if prior is not None:
                 raise ValueError("actor identity already exists")
             if replaces_actor_id is not None:
-                _identity(replaces_actor_id, "replaces_actor_id")
                 replaced = uow.get_entity(ACTOR_KIND, replaces_actor_id)
                 if (
                     replaced is None or replaced.state != "exited"
@@ -125,6 +131,20 @@ def seed_actor(
                     or now < datetime.fromisoformat(replaced.attributes["last_at"])
                 ):
                     raise ValueError("replacement requires prior exited actor in same owner")
+                if replaced.attributes.get("replaced_by_actor_id") is not None:
+                    raise ValueError("predecessor already replaced")
+                if (
+                    replaced.attributes["config_epoch"] != config_epoch
+                    or replaced.attributes["model_spec_hash"] != model_spec_hash
+                ):
+                    # No live admitted migration/config epoch protocol exists
+                    # in this bounded slice. Refuse silent model lineage drift
+                    # rather than treating arbitrary successor input as an
+                    # authoritative configuration update.
+                    raise ValueError("replacement model/epoch requires separate admission")
+                replaced.attributes["replaced_by_actor_id"] = identity
+                replaced.touch(now)
+                uow.save_entity(replaced)
             uow.save_entity(OrganizationalActor(
                 id=identity, state="admitted", created_at=now, updated_at=now,
                 attributes={
@@ -134,6 +154,7 @@ def seed_actor(
                     "paid_transition_us": 0,
                     "assigned_work_id": None, "applied_causes": {},
                     "replaces_actor_id": replaces_actor_id,
+                    "replaced_by_actor_id": None,
                 },
             ))
     return identity
