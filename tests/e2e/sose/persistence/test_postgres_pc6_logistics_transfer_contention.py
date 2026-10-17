@@ -363,6 +363,20 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
     assert DSN is not None
     capacities = {"transfer_vehicle": 2} if blocker == "destination_dock" else None
 
+    def _replay_state(store):
+        # A physical-only snapshot can miss an owner clock loss after
+        # reconnect: rebuilding at logistics.ORIGIN masks the divergence.
+        # Read both independent positions and all durable pending work and
+        # commands from the SAME authoritative PostgreSQL transaction.
+        with store.transaction() as uow:
+            return (
+                uow.get_simulation_position(owner_id=HOLDER_OWNER),
+                uow.get_simulation_position(owner_id=SHIPMENT_OWNER),
+                uow.commands(),
+                uow.scheduled_work(),
+                tuple(store.job_states()),
+            )
+
     def run_world(*, reconnect: bool):
         namespace = "pc6_transfer_diff_" + uuid4().hex[:12]
         observations = []
@@ -384,11 +398,17 @@ def test_pg_transfer_differential_reopen_matches_continuous_physical_causal_ledg
                 if reconnect:
                     with PostgresPersistence(DSN, namespace=namespace) as current:
                         action(current)
-                        sample = _snapshot(current)
+                        sample = (
+                            _snapshot(current),
+                            _replay_state(current),
+                        )
                         receipts = current.business_effects()
                 else:
                     action(persistent)
-                    sample = _snapshot(persistent)
+                    sample = (
+                        _snapshot(persistent),
+                        _replay_state(persistent),
+                    )
                     receipts = persistent.business_effects()
                 # Not a Trading Company workflow: this bounded Logistics
                 # path has no certified cross-domain BusinessEffectApplied.
