@@ -100,18 +100,30 @@ def test_pg_shared_physical_pool_is_one_authoritative_ledger_for_independent_own
         ("org:b", "unit-1"),
         ("org:c", "unit-2"),
     )
+    submitted = {
+        owner: _request(
+            pool, f"physical-grant:{owner}",
+            0, 5, instance=instance, owner=owner,
+        )
+        for owner, instance in proposals
+    }
+
+    def assert_preemption_ancestry(ledger, victim_id):
+        event_id = f"preempt:higher-priority-cross-owner:{victim_id}"
+        matches = [e for e in ledger.events() if e[0] == event_id]
+        assert len(matches) == 1, "one durable preemption event expected"
+        event = matches[0]
+        assert (event[2], event[3], event[4], event[5]) == (
+            victim_id, "preempted", T0 + 2 * H,
+            "reserve:higher-priority-cross-owner",
+        ), "displaced booking must directly cite the priority grant"
 
     def attempt(args):
         owner, instance = args
         with PostgresPersistence(DSN, namespace=ns) as writer:
             gate.wait(timeout=15)
             try:
-                writer.temporal_resources().reserve(
-                    _request(
-                        pool, f"physical-grant:{owner}",
-                        0, 5, instance=instance, owner=owner,
-                    )
-                )
+                writer.temporal_resources().reserve(submitted[owner])
                 return owner, "granted"
             except ResourceCapacityError:
                 return owner, "wait-capacity"
@@ -137,6 +149,13 @@ def test_pg_shared_physical_pool_is_one_authoritative_ledger_for_independent_own
             "unit-1", "unit-2",
         }
         assert all(r.status == "reserved" for r in reservations)
+        assert all(
+            r == submitted[r.owner_id] for r in reservations
+        ), "persisted grant must equal the original immutable owner/instance request"
+        assert ledger.get(submitted[next(
+            owner for owner in ("org:a", "org:b")
+            if outcomes[owner] == "wait-capacity"
+        )].reservation_id) is None, "rejected booking cannot appear in ledger"
         assert ledger.audit(), "source-of-truth temporal ledger must audit"
         victim = next(r for r in reservations
                       if r.address.instance_id == "unit-1")
@@ -154,6 +173,7 @@ def test_pg_shared_physical_pool_is_one_authoritative_ledger_for_independent_own
         # organization's independent reservation or corrupt pool capacity.
         assert ledger.get("physical-grant:org:c").status == "reserved"
         assert len(ledger.events()) == 4
+        assert_preemption_ancestry(ledger, victim.reservation_id)
         assert ledger.audit()
 
     with PostgresPersistence(DSN, namespace=ns) as final:
@@ -162,6 +182,7 @@ def test_pg_shared_physical_pool_is_one_authoritative_ledger_for_independent_own
         assert ledger.get(victim.reservation_id).status == "preempted"
         assert ledger.get("physical-grant:org:c").status == "reserved"
         assert len(ledger.reservations()) == 3
+        assert_preemption_ancestry(ledger, victim.reservation_id)
         assert ledger.audit()
 
 
