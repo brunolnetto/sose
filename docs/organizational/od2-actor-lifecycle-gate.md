@@ -23,8 +23,11 @@ scientific agency evidence. Related: [OD research #457](https://github.com/bruno
 - The same `cause_id` with identical arguments is idempotent; changed replay
   fails closed. An active actor cannot silently disappear: assigned work must
   be completed before exit or unavailability. Replacement requires an
-  already-exited predecessor owned by the same organization; the predecessor's
-  own history is never rewritten.
+  already-exited predecessor owned by the same organization; a predecessor-
+  scoped PostgreSQL guard and one durable `replaced_by_actor_id` claim prevent
+  two successors from forking one lineage. Only equal model hash/config epoch
+  are admitted within this slice; configuration migration has its own gate.
+  The predecessor's lifecycle/event history is never rewritten.
 - Actor-time remains segregated by states; `UNAVAILABLE`, `eligible/IDLE`,
   `development` and `active` are distinct evidence classes. The
   `active` state is an actor's *claimed work* state, **not** a physical
