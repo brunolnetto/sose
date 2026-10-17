@@ -338,6 +338,88 @@ def _assert_organizations(matrix: dict) -> None:
         _assert_flow_test_coverage(flow)
 
 
+def _witnessed_boundaries_from_flow_result(flow: dict) -> set[tuple[str, str, str, int]]:
+    """Execute the actual composed flows and read only THEIR persisted IDs.
+
+    AST registry and test-assertion checks remain valuable provenance audits,
+    but neither may substitute for a runtime certificate bound to
+    result.persistence + result.message_ids + result.correlation_id.
+    Any unrelated or separately seeded BoundaryMessage is excluded.
+    """
+    if flow["id"] == "trading_customer":
+        from sose.composition.trading_company_customer import run_customer_demand_path
+
+        results = (
+            run_customer_demand_path(organization_id="matrix-audit-v1"),
+            run_customer_demand_path(
+                organization_id="matrix-audit-v2", instance_key="matrix-audit-v2-order",
+            ),
+        )
+    elif flow["id"] == "trading_replenishment":
+        from sose.composition.trading_company_replenishment import run_replenishment_path
+
+        results = (run_replenishment_path(owner_id="matrix-audit-p2p"),)
+    else:
+        raise AssertionError(f"no independent execution witness for {flow['id']}")
+
+    seen: set[tuple[str, str, str, int]] = set()
+    wire_aliases = EXPECTED_WIRE_ALIASES[flow["id"]]
+    for result in results:
+        assert result.message_ids, "execution witness requires emitted messages"
+        assert len(result.message_ids) == len(set(result.message_ids))
+        with result.persistence.transaction() as uow:
+            messages = tuple(
+                uow.get_boundary_message(message_id)
+                for message_id in result.message_ids
+            )
+        assert all(message is not None for message in messages)
+        assert all(
+            message.correlation_id == result.correlation_id
+            for message in messages
+        ), "boundary witness must share exact emitted flow correlation"
+        for message in messages:
+            seen.add((
+                wire_aliases.get(message.source_domain, message.source_domain),
+                wire_aliases.get(message.destination_domain, message.destination_domain),
+                message.contract_name,
+                message.contract_version,
+            ))
+    return seen
+
+
+def _assert_boundary_witness_matches_registered_edges(
+    flow: dict, observed: set[tuple[str, str, str, int]],
+) -> None:
+    declared = {
+        (
+            edge["producer"], edge["consumer"],
+            edge["contract_name"], edge["contract_version"],
+        )
+        for edge in flow["boundary_registrations"]
+    }
+    assert observed == declared, (
+        f"real composed flow boundary witness mismatch for {flow['id']}: "
+        f"unobserved={sorted(declared - observed)}, "
+        f"undeclared={sorted(observed - declared)}"
+    )
+
+
+def test_composed_flow_contract_versions_have_real_persisted_witnesses() -> None:
+    """P2: require v1/v2 actual execution, not arbitrary AST/assert literals."""
+    for flow in _matrix()["composed_flows"]:
+        observed = _witnessed_boundaries_from_flow_result(flow)
+        _assert_boundary_witness_matches_registered_edges(flow, observed)
+        fake = deepcopy(flow)
+        fake["boundary_registrations"].append({
+            "producer": "order_to_cash",
+            "consumer": "warehouse_fulfillment",
+            "contract_name": "not-emitted-by-this-flow",
+            "contract_version": 9,
+        })
+        with pytest.raises(AssertionError, match="unobserved="):
+            _assert_boundary_witness_matches_registered_edges(fake, observed)
+
+
 def test_architecture_matrix_matches_real_catalog_and_audited_manifest() -> None:
     _assert_membership(_matrix())
 
