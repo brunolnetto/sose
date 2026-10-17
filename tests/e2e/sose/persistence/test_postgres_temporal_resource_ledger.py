@@ -78,6 +78,93 @@ def test_pg_three_competing_requests_cannot_exceed_two_finite_slots():
         assert len(ledger.audit()) == 64
 
 
+def test_pg_shared_physical_pool_is_one_authoritative_ledger_for_independent_owners():
+    """#477: cross-organization physical grants do not duplicate a real unit.
+
+    This proves PostgreSQL authority at the shared temporal-pool boundary.
+    OD-5a recurring source jobs still use owner-local SimPy resources; this
+    test does NOT certify automatic cross-owner source-to-pool admission.
+    """
+    assert DSN is not None
+    ns = _namespace("od5a_shared_owner")
+    pool = ResourcePoolContract(
+        resource_type="execution_technician", pool_id="site-a",
+        scope="shared", capacity=2, instance_ids=("unit-1", "unit-2"),
+    )
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        store.temporal_resources().register_pool(pool)
+
+    gate = Barrier(3)
+    proposals = (
+        ("org:a", "unit-1"),
+        ("org:b", "unit-1"),
+        ("org:c", "unit-2"),
+    )
+
+    def attempt(args):
+        owner, instance = args
+        with PostgresPersistence(DSN, namespace=ns) as writer:
+            gate.wait(timeout=15)
+            try:
+                writer.temporal_resources().reserve(
+                    _request(
+                        pool, f"physical-grant:{owner}",
+                        0, 5, instance=instance, owner=owner,
+                    )
+                )
+                return owner, "granted"
+            except ResourceCapacityError:
+                return owner, "wait-capacity"
+
+    with ThreadPoolExecutor(max_workers=3) as workers:
+        outcomes = dict(workers.map(attempt, proposals))
+
+    assert outcomes["org:c"] == "granted", outcomes
+    assert {outcomes["org:a"], outcomes["org:b"]} == {
+        "granted", "wait-capacity",
+    }, outcomes
+
+    with PostgresPersistence(DSN, namespace=ns) as restarted:
+        ledger = restarted.temporal_resources()
+        reservations = ledger.reservations()
+        assert len(reservations) == 2
+        assert len(ledger.events()) == 2
+        assert {r.owner_id for r in reservations} == {
+            "org:c", next(o for o in ("org:a", "org:b")
+                           if outcomes[o] == "granted"),
+        }
+        assert {r.address.instance_id for r in reservations} == {
+            "unit-1", "unit-2",
+        }
+        assert all(r.status == "reserved" for r in reservations)
+        assert ledger.audit(), "source-of-truth temporal ledger must audit"
+        victim = next(r for r in reservations
+                      if r.address.instance_id == "unit-1")
+        rejected_owner = next(o for o in ("org:a", "org:b")
+                              if outcomes[o] == "wait-capacity")
+        replacement = _request(
+            pool, "higher-priority-cross-owner",
+            2, 4, instance="unit-1", owner=rejected_owner, priority=1,
+        )
+        ledger.reserve(replacement, preempt=True)
+        assert ledger.get(victim.reservation_id).status == "preempted"
+        assert ledger.get(victim.reservation_id).stopped_at == T0 + 2 * H
+        assert ledger.get("higher-priority-cross-owner").owner_id == rejected_owner
+        # Preempting the contested physical unit must not rewrite the second
+        # organization's independent reservation or corrupt pool capacity.
+        assert ledger.get("physical-grant:org:c").status == "reserved"
+        assert len(ledger.events()) == 4
+        assert ledger.audit()
+
+    with PostgresPersistence(DSN, namespace=ns) as final:
+        ledger = final.temporal_resources()
+        assert ledger.get("higher-priority-cross-owner") == replacement
+        assert ledger.get(victim.reservation_id).status == "preempted"
+        assert ledger.get("physical-grant:org:c").status == "reserved"
+        assert len(ledger.reservations()) == 3
+        assert ledger.audit()
+
+
 def test_pg_all_change_points_and_touching_intervals_are_respected():
     assert DSN
     ns = _namespace("timeline")
