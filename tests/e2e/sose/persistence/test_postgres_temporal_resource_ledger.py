@@ -571,3 +571,79 @@ def test_pg_prospective_advice_rejects_wrong_identity_or_retroactive_window():
             ledger.suggest_next_start(
                 bad, not_before=bad.start_at, latest_start=T0 + 4 * H,
             )
+
+
+def test_pg_advice_inside_outer_sql_transaction_does_not_fence_pool_writers():
+    """#477 P1: nested hint must not strand a transaction advisory lock."""
+    assert DSN
+    ns = _namespace("advice_outer")
+    pool = _pool(named=True)
+    with PostgresPersistence(DSN, namespace=ns) as seed:
+        seed.temporal_resources().register_pool(pool)
+    with PostgresPersistence(DSN, namespace=ns) as reader, \
+            PostgresPersistence(DSN, namespace=ns) as writer:
+        wait = _request(pool, "uncommitted-hint", 0, 1, instance="unit-1", owner="reader")
+        other = _request(pool, "independent-commit", 0, 1, instance="unit-1", owner="writer")
+        with reader._connection.transaction():
+            assert reader.temporal_resources().suggest_next_start(
+                wait, not_before=T0, latest_start=T0 + H,
+            ) == T0
+            # Outer transaction is intentionally still open while another
+            # PostgreSQL connection MUST finish its real reserve. No pool
+            # advisory lock may outlive the purely advisory query.
+            with ThreadPoolExecutor(max_workers=1) as workers:
+                result = workers.submit(writer.temporal_resources().reserve, other)
+                assert result.result(timeout=10) == other
+        with pytest.raises(ResourceCapacityError):
+            reader.temporal_resources().reserve(wait)
+        assert reader.temporal_resources().get("uncommitted-hint") is None
+        assert reader.temporal_resources().get("independent-commit") == other
+        assert reader.temporal_resources().audit()
+
+
+def test_pg_advice_omits_unrelated_historical_intervals_from_window(monkeypatch):
+    """#477 P2: no full-history conversion under a short advice horizon."""
+    assert DSN
+    ns = _namespace("advice_bounded")
+    pool = _pool(named=True)
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        ledger = store.temporal_resources()
+        ledger.register_pool(pool)
+        for idx in range(24):
+            ledger.reserve(TemporalReservation(
+                reservation_id=f"historical:{idx}", owner_id="archived",
+                address=pool.address(instance_id="unit-1"),
+                start_at=T0 - timedelta(hours=100 - idx * 2),
+                end_at=T0 - timedelta(hours=99 - idx * 2),
+                causation_id=f"history:{idx}",
+            ))
+        ledger.fail(TemporalOutage(
+            outage_id="historic-down", address=pool.address(instance_id="unit-1"),
+            start_at=T0 - 10 * H, end_at=T0 - 9 * H,
+        ))
+        ledger.reserve(_request(
+            pool, "current", 1, 2, instance="unit-1", owner="busy",
+        ))
+        seen = {}
+        book_reader = ledger._window_bookings
+        outage_reader = ledger._window_outages
+
+        def read_bookings(*args, **kwargs):
+            values = book_reader(*args, **kwargs)
+            seen["bookings"] = tuple(x.reservation_id for x in values)
+            return values
+
+        def read_outages(*args, **kwargs):
+            values = outage_reader(*args, **kwargs)
+            seen["outages"] = tuple(x.outage_id for x in values)
+            return values
+
+        monkeypatch.setattr(ledger, "_window_bookings", read_bookings)
+        monkeypatch.setattr(ledger, "_window_outages", read_outages)
+        waiting = _request(pool, "query", 0, 1, instance="unit-1", owner="query")
+        assert ledger.suggest_next_start(
+            waiting, not_before=T0, latest_start=T0 + H,
+        ) == T0
+        assert seen == {"bookings": ("current",), "outages": ()}
+        assert ledger.get("query") is None
+        assert ledger.audit()
