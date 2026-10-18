@@ -959,6 +959,29 @@ class SharedPhysicalWaitSlotAdvice:
     original_start: datetime
     duration: timedelta
     suggested_start: datetime | None
+    # Immutable provenance of the actual speculative native request. The
+    # aligned read must never synthesize a substitute causal parent.
+    original_request: TemporalReservation
+    wait_id: str
+    trigger_id: str
+    claim_epoch: int
+    source_digest: str
+
+
+@dataclass(frozen=True, slots=True)
+class SharedPhysicalAlignedWaitAdvice:
+    """Versioned joint-start candidate; deliberately NOT a grant or a plan commit."""
+
+    advice_version: int
+    wait_id: str
+    trigger_id: str
+    claim_epoch: int
+    source_digest: str
+    binding_fingerprint: str
+    not_before: datetime
+    latest_start: datetime
+    proposed_start: datetime | None
+    slots: tuple[SharedPhysicalWaitSlotAdvice, ...]
 
 
 def _source_wait_digest(source_state: dict) -> str:
@@ -1139,9 +1162,116 @@ def suggest_od5a_shared_wait_slots(
                 reservation_id=grant.reservation_id, instance_id=instance,
                 original_start=physical.start_at,
                 duration=physical.end_at - physical.start_at,
-                suggested_start=suggested,
+                suggested_start=suggested, original_request=physical,
+                wait_id=wait_id, trigger_id=trigger_id,
+                claim_epoch=lease.attributes["epoch"],
+                source_digest=wait.attributes["source_digest"],
             ))
         return tuple(hints)
+
+
+def _aligned_physical_start(
+    ledger, requests: tuple[TemporalReservation, ...], *,
+    not_before: datetime, latest_start: datetime,
+) -> datetime | None:
+    """Find the first *common* prospective boundary; no writes or promises.
+
+    A max of per-resource earliest hints is not necessarily feasible: another
+    instance may become occupied between those individual hints. Re-evaluate
+    every request at the same increasing boundary, using the authoritative
+    ledger's interval-end candidate search. Shared named instances cannot be
+    double-claimed within one proposed source step. The read may race writers;
+    the eventual transaction must repeat all checks and physically reserve.
+    """
+    _require_wall_clock(not_before)
+    _require_wall_clock(latest_start)
+    if latest_start < not_before:
+        raise ValueError("latest_start precedes not_before")
+    if not requests:
+        raise ResourceConflictError("aligned physical advice requires requests")
+    addressed: set[str] = set()
+    ids: set[str] = set()
+    for request in requests:
+        if not isinstance(request, TemporalReservation):
+            raise TypeError("aligned advice requires original temporal reservations")
+        # Distinct named physical instance is required for each simultaneous
+        # request. Fungible-capacity groups need a separate joint-capacity
+        # contract; pairwise availability does not prove pooled feasibility.
+        if request.address.instance_id is None:
+            raise ResourceConflictError("joint fungible availability is not certified")
+        address = request.address.lock_key()
+        if address in addressed or request.reservation_id in ids:
+            raise ResourceConflictError("aligned advice aliases one physical instance or ID")
+        addressed.add(address)
+        ids.add(request.reservation_id)
+        if not_before < request.start_at:
+            raise ValueError("aligned advice cannot predate original physical request")
+
+    candidate = not_before
+    # Each successful iteration either terminates or advances to a strictly
+    # later physical interval boundary, never polls by arbitrary time steps.
+    # Fail closed on pathologically fragmented/churning ledgers.
+    for _ in range(8192):
+        next_candidates = []
+        for request in requests:
+            suggested = ledger.suggest_next_start(
+                request, not_before=candidate, latest_start=latest_start,
+            )
+            if suggested is None:
+                return None
+            if suggested < candidate or suggested > latest_start:
+                raise ResourceConflictError("ledger returned invalid prospective boundary")
+            next_candidates.append(suggested)
+        next_start = max(next_candidates)
+        if next_start == candidate:
+            return candidate
+        candidate = next_start
+    raise ResourceConflictError("aligned prospective advice exceeded bounded boundaries")
+
+
+def suggest_od5a_aligned_wait_start(
+    store: Persistence, *, job_id: str,
+    shared_pool_binding: SharedPhysicalPoolBinding,
+    not_before: datetime, latest_start: datetime,
+) -> SharedPhysicalAlignedWaitAdvice:
+    """Construct a typed, versioned, *nonbinding* shared-wait start candidate.
+
+    Verifies the durable source/claimed trigger/wait/lease provenance through
+    the existing read-only source bridge. Finds a common start across the exact
+    original physical requests instead of taking max(individual hints).
+    It never edits a source action, commits a reservation, changes an epoch,
+    issues a scheduling Command, or promises admission under concurrent use.
+
+    A subsequent versioned scheduling protocol must retain original exogenous
+    arrival/event identity and wait costs and acquire fresh grants in its own
+    fenced source+pool transaction. This v1 advice is not that protocol.
+    """
+    slots = suggest_od5a_shared_wait_slots(
+        store, job_id=job_id, shared_pool_binding=shared_pool_binding,
+        not_before=not_before, latest_start=latest_start,
+    )
+    identities = {
+        (slot.wait_id, slot.trigger_id, slot.claim_epoch, slot.source_digest)
+        for slot in slots
+    }
+    if len(identities) != 1:
+        raise ResourceConflictError("aligned physical hints have conflicting source provenance")
+    wait_id, trigger_id, epoch, source_digest = next(iter(identities))
+    ledger = SharedPhysicalGrantAuthority(
+        store, shared_pool_binding, job_id, bootstrap_ledger=False,
+    ).ledger
+    proposed = _aligned_physical_start(
+        ledger, tuple(slot.original_request for slot in slots),
+        not_before=not_before, latest_start=latest_start,
+    )
+    return SharedPhysicalAlignedWaitAdvice(
+        advice_version=1,
+        wait_id=wait_id, trigger_id=trigger_id, claim_epoch=epoch,
+        source_digest=source_digest,
+        binding_fingerprint=shared_pool_binding.fingerprint(),
+        not_before=not_before, latest_start=latest_start,
+        proposed_start=proposed, slots=slots,
+    )
 
 
 def execute_od5a_claimed_tick(
@@ -1465,6 +1595,7 @@ def run_od5a_recurring_tick(
 __all__ = [
     "SharedPhysicalPoolBinding", "SharedPhysicalGrantAuthority",
     "SharedPhysicalWaitSlotAdvice", "suggest_od5a_shared_wait_slots",
+    "SharedPhysicalAlignedWaitAdvice", "suggest_od5a_aligned_wait_start",
     "OD5aRunnerClaim", "OD5aRecurringStep", "StaleOD5aRunnerClaimError",
     "initialize_od5a_recurring_job", "claim_od5a_recurring_tick",
     "execute_od5a_claimed_tick", "run_od5a_recurring_tick",
