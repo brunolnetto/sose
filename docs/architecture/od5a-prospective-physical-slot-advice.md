@@ -44,7 +44,12 @@ these constrain **both** physical time bounds and treat zero-length recovered
 outages as empty. No `btree_gist` extension is required. Independent
 future-heavy PostgreSQL `EXPLAIN (ANALYZE, BUFFERS)` tests demand that the
 GiST indexes actually prune distant future intervals, not merely appear in
-a query plan. The test-only synthetic rows roll back before any canonical
+a query plan. Pool selectivity is independently indexed: bookings have a
+pool-key-leading B-tree, and outages now have an explicit `pool_key` B-tree
+that PostgreSQL can use or combine with the temporal GiST. A second real
+`EXPLAIN ANALYZE` fixture probes 1,500 simultaneous foreign-pool outages
+and requires the pool-key index instead of scanning unrelated pools.
+All test-only synthetic rows roll back before any canonical
 ledger audit; exact reservation-ID uniqueness is still checked.
 It is **not** a durable reservation or a linearizable promise. A different
 owner may book that same suggested interval before the source can be legally
