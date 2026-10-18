@@ -76,6 +76,13 @@ stable snapshot; it does not acquire a pool-wide booking lock.
 The durable wait now records `wait_schema_version=2` and a canonical
 SHA-256 digest of the full preflight source attributes, in addition to the
 previous exact action, trigger, pool-binding fingerprint, epochs and grant IDs.
+A second independent durable witness, `physical_wait_id`, is placed on
+the claimed runner lease *in the same SQL transaction* that first creates the
+waiting entity. It is carried unchanged across fenced recovery epochs.
+Advice, retry, and physical source commit verify the bidirectional link;
+deleting either side causes fail-closed refusal, not an apparent first
+attempt. A successful committed action atomically marks the wait satisfied
+and removes the lease marker before the lease is released.
 The read-side preview validates that digest and the complete claimed-lease
 lifecycle before reconstructing exact service intervals and performing
 individual `suggest_next_start` calls.
