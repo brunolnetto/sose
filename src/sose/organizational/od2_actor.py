@@ -537,6 +537,14 @@ def transition_actor(
             elif action == "complete":
                 if work_id is None or work_id != meta["assigned_work_id"]:
                     raise ValueError("completion requires the matching assigned work")
+                # Do not let a forged mutable projection close the wrong
+                # immutable assignment. Historical pre-attestation work
+                # remains eligible for its legacy completion semantics.
+                if active_source is None:
+                    raise ValueError("completion requires an attested active assignment")
+                source_work = active_source.payload.get("assigned_work_id")
+                if source_work is not None and source_work != work_id:
+                    raise ValueError("attested original assignment work identity does not match")
             elif action == "cancel_assigned":
                 # A paid, explicit actor-local cancellation. It never
                 # releases a domain ScheduledWork or a PhysicalReservation:
