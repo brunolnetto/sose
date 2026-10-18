@@ -153,6 +153,9 @@ def test_actor_cancellation_rejects_forged_projection_without_real_assignment():
     with pytest.raises(ValueError, match="attested|original assignment"):
         _transition(store, actor_id, "cancel_assigned", 3,
                     work_id="work:B", cost_us=1)
+    # A forged completion must not silently close the old immutable work.
+    with pytest.raises(ValueError, match="attested original assignment"):
+        _transition(store, actor_id, "complete", 3, work_id="work:B")
     with pytest.raises(ValueError, match="matching assigned work"):
         _transition(store, actor_id, "cancel_assigned", 3,
                     work_id="work:A", cost_us=1)
