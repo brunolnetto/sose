@@ -370,6 +370,7 @@ def _verify_durable_cancellation_replay(
         or command.due_at != at
         or command.payload.get("external_cause_id") != cause_id
         or command.payload.get("cancelled_work_id") != work_id
+        or not isinstance(command.payload.get("source_assignment_event_id"), str)
         or type(command.payload.get("charged_cost_us")) is not int
         or command.payload["charged_cost_us"] != cost_us
     ):
@@ -391,6 +392,7 @@ def _verify_durable_cancellation_replay(
         or type(event.payload.get("charged_cost_us")) is not int
         or event.payload["charged_cost_us"] != cost_us
         or not isinstance(event.payload.get("source_assignment_event_id"), str)
+        or event.payload["source_assignment_event_id"] != command.payload["source_assignment_event_id"]
     ):
         raise ValueError("cancellation durable evidence: event contradicts charged work")
     source = uow.get_event(event.payload["source_assignment_event_id"])
