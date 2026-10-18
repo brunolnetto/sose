@@ -9,6 +9,7 @@ import pytest
 from sose.composition.organization import (
     BoundaryBinding,
     OrganizationDefinition,
+    OperationalConfigReference,
     PhysicalPoolRef,
     ProcessComponent,
     ScheduledJob,
@@ -181,3 +182,67 @@ def test_flow_correlation_is_not_automatically_organization_identity():
     assert spec.organization_id not in {j.job_id for j in spec.jobs}
     assert "correlation_id" not in ProcessComponent.__dataclass_fields__
     assert "correlation_id" not in OrganizationDefinition.__dataclass_fields__
+
+
+def _config(*, component="sales", kind="calendar", version=1, epoch=0,
+            source="a" * 64):
+    return OperationalConfigReference(
+        component_id=component, kind=kind, reference_id=f"certified-ref:{kind}",
+        reference_version=version, source_sha256=source, config_epoch=epoch,
+    )
+
+
+def test_operational_reference_is_versioned_immutable_and_fingerprinted():
+    spec = organization()
+    references = (_config(kind="calendar"), _config(kind="policy"))
+    admitted_structure = replace(spec, operational_configs=references)
+    assert admitted_structure.fingerprint() != spec.fingerprint()
+    assert admitted_structure.fingerprint() == replace(
+        admitted_structure, operational_configs=tuple(reversed(references)),
+    ).fingerprint()
+    assert admitted_structure.fingerprint() != replace(
+        admitted_structure,
+        operational_configs=(_config(kind="calendar", version=2), references[1]),
+    ).fingerprint()
+    assert admitted_structure.fingerprint() != replace(
+        admitted_structure,
+        operational_configs=(_config(kind="calendar", source="b" * 64), references[1]),
+    ).fingerprint()
+    assert not hasattr(references[0], "available_capacity")
+    assert not hasattr(references[0], "is_active")
+
+
+@pytest.mark.parametrize("kw", (
+    {"component": ""},
+    {"kind": "made_up_policy"},
+    {"version": True},
+    {"version": 0},
+    {"epoch": -1},
+    {"source": "A" * 64},
+    {"source": "not-a-hash"},
+    {"source": ""},
+))
+def test_bad_operational_ref_is_refused_before_runtime(kw):
+    with pytest.raises(ValueError):
+        _config(**kw)
+
+
+def test_operational_reference_cannot_alias_another_owner_or_configuration_epoch():
+    spec = organization()
+    with pytest.raises(ValueError, match="dangling"):
+        replace(spec, operational_configs=(_config(component="wrong-owner"),))
+    with pytest.raises(ValueError, match="epoch"):
+        replace(spec, operational_configs=(_config(epoch=1),))
+    with pytest.raises(ValueError, match="duplicate"):
+        replace(spec, operational_configs=(_config(version=1), _config(version=2)))
+    with pytest.raises(TypeError, match="OperationalConfigReference"):
+        replace(spec, operational_configs=(object(),))
+    # Distinct component and kind are valid structural refs; their claims
+    # still DO NOT self-attest operational runtime capabilities.
+    valid = replace(spec, operational_configs=(
+        _config(component="sales", kind="policy"),
+        _config(component="maintenance", kind="policy"),
+        _config(component="sales", kind="calendar"),
+        _config(component="sales", kind="cost_model"),
+    ))
+    assert len(valid.operational_configs) == 4
