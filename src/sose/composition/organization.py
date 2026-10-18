@@ -7,6 +7,8 @@ impose a global clock, or confer business entity ownership on a supervisor.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from typing import Literal
+import re
 from hashlib import sha256
 import json
 
@@ -103,6 +105,36 @@ class PhysicalPoolRef:
         object.__setattr__(self, "consumer_ids", consumers)
 
 
+_CONFIG_SHA256 = re.compile(r"[0-9a-f]{64}\Z")
+
+
+@dataclass(frozen=True, slots=True)
+class OperationalConfigReference:
+    """Provenance-bearing policy/calendar/cost reference, not execution authority.
+
+    Merely supplying a content hash does NOT attest that a referenced policy,
+    calendar, or cost model is installed or valid. Admission must fail closed
+    until a trusted external registry and epoch migration are implemented.
+    """
+
+    component_id: str
+    kind: Literal["policy", "calendar", "cost_model"]
+    reference_id: str
+    reference_version: int
+    source_sha256: str
+    config_epoch: int
+
+    def __post_init__(self) -> None:
+        _identity(self.component_id, "operational config component_id")
+        _identity(self.reference_id, "operational config reference_id")
+        if self.kind not in {"policy", "calendar", "cost_model"}:
+            raise ValueError("unknown operational configuration kind")
+        _positive(self.reference_version, "operational config reference_version")
+        _positive(self.config_epoch, "operational config epoch", allow_zero=True)
+        if not isinstance(self.source_sha256, str) or not _CONFIG_SHA256.fullmatch(self.source_sha256):
+            raise ValueError("operational config requires canonical source SHA-256")
+
+
 @dataclass(frozen=True, slots=True)
 class OrganizationDefinition:
     """Catalog contract; constituent domains retain their own durable truth.
@@ -118,6 +150,7 @@ class OrganizationDefinition:
     jobs: tuple[ScheduledJob, ...] = field(default_factory=tuple)
     physical_pools: tuple[PhysicalPoolRef, ...] = field(default_factory=tuple)
     config_epoch: int = 0
+    operational_configs: tuple[OperationalConfigReference, ...] = field(default_factory=tuple)
 
     def __post_init__(self) -> None:
         _identity(self.organization_id, "organization_id")
@@ -128,6 +161,7 @@ class OrganizationDefinition:
         boundaries = tuple(self.boundaries)
         jobs = tuple(self.jobs)
         pools = tuple(self.physical_pools)
+        operational_configs = tuple(self.operational_configs)
         if not components:
             raise ValueError("organization must contain at least one process component")
         component_ids = tuple(component.component_id for component in components)
@@ -152,6 +186,17 @@ class OrganizationDefinition:
         if any(name not in known for pool in pools for name in pool.consumer_ids):
             raise ValueError("physical pool has dangling consumer")
 
+        for ref in operational_configs:
+            if not isinstance(ref, OperationalConfigReference):
+                raise TypeError("operational config requires OperationalConfigReference")
+            if ref.component_id not in known:
+                raise ValueError("operational config has dangling component")
+            if ref.config_epoch != self.config_epoch:
+                raise ValueError("operational config epoch contradicts organization config_epoch")
+        _unique(tuple((ref.component_id, ref.kind) for ref in operational_configs),
+                "operational config component/kind")
+
+        object.__setattr__(self, "operational_configs", operational_configs)
         object.__setattr__(self, "components", components)
         object.__setattr__(self, "boundaries", boundaries)
         object.__setattr__(self, "jobs", jobs)
@@ -187,6 +232,10 @@ class OrganizationDefinition:
             "jobs": sorted(
                 (asdict(job) for job in self.jobs),
                 key=lambda value: value["job_id"],
+            ),
+            "operational_configs": sorted(
+                (asdict(config) for config in self.operational_configs),
+                key=lambda ref: (ref["component_id"], ref["kind"]),
             ),
             "physical_pools": sorted(
                 (
@@ -255,6 +304,14 @@ def validate_organization_admission(
     if not isinstance(definition, OrganizationDefinition):
         raise TypeError("organization admission requires OrganizationDefinition")
     _reject_unadmitted_cycles(definition.boundaries)
+    if definition.operational_configs:
+        # No trusted policy/calendar/cost registry is installed in the
+        # current process manifests. Structural hashes are NOT executable
+        # admission: otherwise an arbitrary caller can self-attest a policy
+        # and accidentally change runtime cost, availability, or authority.
+        raise ValueError(
+            "operational policy/calendar/cost references require audited runtime admission"
+        )
 
     components = {component.component_id: component for component in definition.components}
     # Consumer registration is currently qualified by domain, not by the
