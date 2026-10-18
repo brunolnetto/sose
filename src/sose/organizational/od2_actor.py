@@ -336,23 +336,28 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
         action = event.payload.get("trigger")
         if action == "assign":
             work = event.payload.get("assigned_work_id")
-            if not isinstance(work, str) or not work.strip():
-                raise ValueError("attested original assignment work identity missing")
+            # Historical actor assignments may predate immutable work IDs.
+            # They can still be closed by their existing durable completion
+            # event, but must never be cancelled under the new strict policy.
+            if work is not None and (not isinstance(work, str) or not work.strip()):
+                raise ValueError("attested original assignment work identity malformed")
             if opened is not None:
                 raise ValueError("attested assignments overlap without durable closure")
             opened = event
         elif action in {"complete", "cancel_assigned"}:
             if opened is None:
                 raise ValueError("attested work completion/cancellation lacks open assignment")
-            expected_id = opened.payload["assigned_work_id"]
+            expected_id = opened.payload.get("assigned_work_id")
             if action == "cancel_assigned" and (
-                event.payload.get("cancelled_work_id") != expected_id
+                not isinstance(expected_id, str)
+                or event.payload.get("cancelled_work_id") != expected_id
                 or event.payload.get("source_assignment_event_id") != opened.event_id
             ):
                 raise ValueError("attested work cancellation does not close original assignment")
             # Historical completed events may lack their work ID field.
             # They still close exactly one prior immutable assignment.
-            if action == "complete" and event.payload.get("completed_work_id", expected_id) != expected_id:
+            if (action == "complete" and expected_id is not None
+                and event.payload.get("completed_work_id", expected_id) != expected_id):
                 raise ValueError("attested work completion identity mismatch")
             opened = None
     return opened
@@ -365,7 +370,7 @@ def _attested_active_assignment(uow, *, actor_id: str, owner_id: str,
     )
     if source is None:
         raise ValueError("attested original assignment is absent or already completed")
-    if source.payload["assigned_work_id"] != work_id:
+    if source.payload.get("assigned_work_id") != work_id:
         raise ValueError("attested original assignment work identity does not match")
     if not isinstance(source.causation_id, str):
         raise ValueError("attested original assignment lacks causal Command")
