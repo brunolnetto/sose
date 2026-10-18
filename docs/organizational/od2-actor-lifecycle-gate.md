@@ -40,8 +40,10 @@ scientific agency evidence. Related: [OD research #457](https://github.com/bruno
 
 An enrolled actor may carry an immutable `ActorAvailabilityCalendar(version=1,
 config_epoch, intervals)`. Its absolute UTC half-open intervals are sorted,
-positive, nonoverlapping and source-digest bound to the durable actor
-configuration. `transition_actor(action="assign")` verifies the saved source
+positive, nonoverlapping and source-digest bound to an independent
+append-only actor enrollment `DomainEvent` committed in the same transaction
+as the initial actor. The entity attribute is only a mutable projection and
+cannot self-attest its hash or opt out by deleting the calendar field. `transition_actor(action="assign")` verifies the saved source
 and checks eligibility at assignment **start** before creating any Command or
 DomainEvent. The exact end boundary is not eligible; completing already
 started work outside the window remains permitted for truthful accounting.
