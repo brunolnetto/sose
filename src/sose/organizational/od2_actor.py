@@ -406,6 +406,29 @@ def _verify_durable_cancellation_replay(
         or source.occurred_at > at
     ):
         raise ValueError("cancellation durable evidence: original assignment missing")
+    # Command rows are mutable/deletable through the persistence UoW, unlike
+    # DomainEvents. Reconstruct EVERY original field from deterministic context
+    # and the immutable append-only cancel event to detect silent rewrites of
+    # issued_at, tick, correlation/causation, payload extras, or owner.
+    expected_command = Command(
+        command_id=command_id,
+        name="cancel_assigned",
+        entity_type=ACTOR_KIND,
+        entity_id=actor_id,
+        due_at=at,
+        issued_at=at,
+        owner_id=owner_id,
+        causation_id=None,
+        correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
+        payload={
+            "external_cause_id": cause_id,
+            "cancelled_work_id": work_id,
+            "charged_cost_us": cost_us,
+            "source_assignment_event_id": source.event_id,
+        },
+    )
+    if command != expected_command:
+        raise ValueError("cancellation durable evidence: Command metadata altered")
 
 
 def transition_actor(
