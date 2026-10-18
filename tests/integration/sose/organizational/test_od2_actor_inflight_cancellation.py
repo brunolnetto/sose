@@ -59,6 +59,8 @@ def test_paid_cancellation_frees_actor_assignment_before_exit_with_restart(adapt
         assert event.owner_id == OWNER
         assert store.command(event.causation_id).name == "cancel_assigned"
         assert store.command(event.causation_id).payload["external_cause_id"] == "actor:cancel_assigned:3"
+        assert store.command(event.causation_id).payload["cancelled_work_id"] == "work:critical"
+        assert store.command(event.causation_id).payload["charged_cost_us"] == 750000
         _transition(store, actor_id, "exit", 4)
         assert store.entity(ACTOR_KIND, actor_id).state == "exited"
         before = tuple(store.events())
