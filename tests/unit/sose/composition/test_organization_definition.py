@@ -215,6 +215,8 @@ def test_operational_reference_is_versioned_immutable_and_fingerprinted():
 @pytest.mark.parametrize("kw", (
     {"component": ""},
     {"kind": "made_up_policy"},
+    {"kind": []},
+    {"kind": {}},
     {"version": True},
     {"version": 0},
     {"epoch": -1},
@@ -246,3 +248,16 @@ def test_operational_reference_cannot_alias_another_owner_or_configuration_epoch
         _config(component="sales", kind="cost_model"),
     ))
     assert len(valid.operational_configs) == 4
+
+
+def test_empty_operational_references_keep_original_v1_fingerprint_bytes():
+    # Constant computed from the original #499 organization payload before
+    # OperationalConfigReference was introduced. Comparing the new function
+    # against itself is a vacuous compatibility test.
+    historic_v1_fingerprint = (
+        "ef6effecd224f8974e370ec1233e47d1318ec5b541e0d5b58bf5749f1e7b1355"
+    )
+    spec = organization()
+    assert spec.fingerprint() == historic_v1_fingerprint
+    assert replace(spec, operational_configs=()).fingerprint() == historic_v1_fingerprint
+    assert replace(spec, operational_configs=(_config(),)).fingerprint() != historic_v1_fingerprint
