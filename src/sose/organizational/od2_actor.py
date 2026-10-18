@@ -17,7 +17,7 @@ from statemachine import State, StateChart
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
 from sose.core.engine import Engine
-from sose.core.events import Command
+from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
 from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
@@ -128,23 +128,40 @@ class ActorAvailabilityCalendar:
         ).encode("utf-8")).hexdigest()
 
 
-def _require_actor_calendar_start(attributes: dict, at: datetime) -> None:
-    """Fail closed on tampered opt-in availability before emitting a Command.
+def _calendar_origin_event_id(owner_id: str, actor_id: str) -> str:
+    """Stable append-only provenance key outside mutable actor attributes."""
+    return deterministic_id("od2-actor-calendar-admitted", owner_id, actor_id)
 
-    This enforces only eligibility at ASSIGNMENT START; it does not reserve
-    capacity or imply coverage through the end of service. The latter demands
-    authoritative physical grants and explicit in-flight handling (#462/#477).
+
+def _require_actor_calendar_start(
+    uow, actor: OrganizationalActor, at: datetime, *, require_window: bool,
+) -> None:
+    """Verify enrolled source against independent persisted admission event.
+
+    The canonical immutable event is committed with actor enrollment; its
+    digest and full source are checked against the mutable actor projection.
+    A missing projection is *not* interpreted as an opt-out if a calendar was
+    originally enrolled. Same-cause replay validates before returning.
     """
+    attributes = actor.attributes
     saved = attributes.get("availability_calendar")
-    if saved is None:
+    origin = uow.get_event(_calendar_origin_event_id(attributes["owner_id"], actor.id))
+    if origin is None and saved is None:
+        # Actors enrolled before opt-in calendar support stay calendar-free.
         return
+    if origin is None or saved is None:
+        raise ValueError("actor calendar original provenance missing")
     try:
-        if not isinstance(saved, dict) or set(saved) != {
-            "version", "config_epoch", "intervals", "source_digest",
-        }:
-            raise ValueError("malformed actor calendar")
-        if not isinstance(saved["intervals"], list):
-            raise ValueError("malformed actor calendar intervals")
+        if (
+            origin.name != "od2.actor_calendar_admitted"
+            or origin.owner_id != attributes["owner_id"]
+            or origin.entity_type != ACTOR_KIND
+            or origin.entity_id != actor.id
+            or not isinstance(saved, dict)
+            or set(saved) != {"version", "config_epoch", "intervals", "source_digest"}
+            or not isinstance(saved["intervals"], list)
+        ):
+            raise ValueError("actor calendar source or durable marker malformed")
         windows = []
         for item in saved["intervals"]:
             if not isinstance(item, dict) or set(item) != {"start", "end"}:
@@ -161,11 +178,17 @@ def _require_actor_calendar_start(attributes: dict, at: datetime) -> None:
         if (
             calendar.config_epoch != attributes["config_epoch"]
             or saved["source_digest"] != calendar.digest()
+            or origin.payload.get("calendar_digest") != calendar.digest()
+            or origin.payload.get("calendar_source") != calendar.snapshot()
+            or origin.payload.get("model_spec_hash") != attributes["model_spec_hash"]
+            or origin.payload.get("config_epoch") != attributes["config_epoch"]
         ):
-            raise ValueError("actor calendar digest or epoch does not match durable source")
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ValueError("actor calendar digest/shape contradicts authoritative actor") from exc
-    if not any(window.starts_at <= at < window.ends_at for window in calendar.intervals):
+            raise ValueError("actor calendar digest, epoch or immutable source mismatched")
+    except (KeyError, AttributeError, TypeError, ValueError) as exc:
+        raise ValueError("actor calendar digest/shape contradicts authoritative enrollment") from exc
+    if require_window and not any(
+        window.starts_at <= at < window.ends_at for window in calendar.intervals
+    ):
         raise ValueError("actor calendar excludes assignment start")
 
 
@@ -267,6 +290,23 @@ def seed_actor(
                     } if availability_calendar is not None else {}),
                 },
             ))
+            if availability_calendar is not None:
+                # An independent append-only record is the enrollment source
+                # of truth. The entity's source_digest is only a projection;
+                # changing or deleting it cannot silently remove eligibility.
+                uow.append_event(DomainEvent(
+                    event_id=_calendar_origin_event_id(owner_id, identity),
+                    name="od2.actor_calendar_admitted",
+                    entity_type=ACTOR_KIND, entity_id=identity,
+                    occurred_at=now, owner_id=owner_id,
+                    correlation_id=deterministic_id("od2-actor-flow", owner_id, identity),
+                    payload={
+                        "calendar_source": availability_calendar.snapshot(),
+                        "calendar_digest": availability_calendar.digest(),
+                        "config_epoch": config_epoch,
+                        "model_spec_hash": model_spec_hash,
+                    },
+                ))
     return identity
 
 
@@ -304,8 +344,11 @@ def transition_actor(
                 raise PermissionError("actor belongs to another operational owner")
             if meta["model_spec_hash"] != model_spec_hash:
                 raise ValueError("actor model_spec_hash changed")
-            if meta["config_epoch"] != config_epoch:
+            if type(meta.get("config_epoch")) is not int or meta["config_epoch"] != config_epoch:
                 raise ValueError("stale or unadmitted actor config_epoch")
+            _require_actor_calendar_start(
+                uow, actor, now, require_window=False,
+            )
             used = meta["applied_causes"].get(cause_id)
             if used is not None:
                 if used != list(identity):
@@ -315,7 +358,7 @@ def transition_actor(
             if now < prior_at:
                 raise ValueError("actor effective time regressed")
             if action == "assign":
-                _require_actor_calendar_start(meta, now)
+                _require_actor_calendar_start(uow, actor, now, require_window=True)
                 _identity(work_id, "work_id")
                 if meta["assigned_work_id"] is not None:
                     raise ValueError("actor already assigned")
