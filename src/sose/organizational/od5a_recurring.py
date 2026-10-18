@@ -27,7 +27,7 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.identity import deterministic_id
 from sose.core.resource_identity import ResourcePoolContract
 from sose.core.resource_reservations import (
-    TemporalReservation, ResourceConflictError,
+    TemporalReservation, ResourceCapacityError, ResourceConflictError,
     authoritative_effect_reservation_id,
 )
 from sose.core.runtime import ResourceDefinition, ResourceReservation
@@ -208,6 +208,7 @@ def _assert_shared_binding(
 
 _LEASE_KIND = "od5a_runner_lease"
 _DOMAIN = "od5a"
+_SHARED_WAIT_KIND = "od5a_shared_capacity_wait"
 
 @contextmanager
 def _job_transaction(store: Persistence, job_id: str):
@@ -247,7 +248,7 @@ class OD5aRunnerClaim:
 class OD5aRecurringStep:
     organization_id: str
     trigger_id: str
-    action: Literal["advanced", "complete", "replayed"]
+    action: Literal["advanced", "complete", "replayed", "waiting"]
     epoch: int
     logical_time: datetime
     logical_tick: int
@@ -1012,6 +1013,34 @@ def execute_od5a_claimed_tick(
         releases=tuple(preview.releases), grants=tuple(preview.grants), at=due,
     )
 
+    # A rejected shared PostgreSQL booking is not a failed business event.
+    # Record exact source/physical request identity without advancing the
+    # source clock or pretending that an ephemeral SimPy permit was granted.
+    wait_id = deterministic_id(
+        "od5a-shared-capacity-wait", claim.organization_id, claim.trigger_id,
+    )
+    wait_requests = sorted((
+        {
+            "resource_name": grant.resource_name,
+            "reservation_id": grant.reservation_id,
+            "request_id": grant.request_id,
+            "instance_id": slot[1],
+        }
+        for grant in preview.grants
+        if authority is not None
+        and (slot := authority._slot(grant.resource_name)) is not None
+    ), key=lambda request: request["reservation_id"])
+    wait_attributes = (
+        {
+            "trigger_id": claim.trigger_id,
+            "binding_fingerprint": shared_pool_binding.fingerprint(),
+            "source_action": next_action,
+            "due_at": _time(due).isoformat(),
+            "requests": wait_requests,
+        }
+        if authority is not None else None
+    )
+
     def commit_source_step() -> None:
         with _job_transaction(store, claim.organization_id) as uow:
             # Re-read the trusted clock AFTER the lock. Neither invocation
@@ -1055,6 +1084,18 @@ def execute_od5a_claimed_tick(
                         after_state=committed.attributes,
                         at=due, uow=uow,
                     )
+                    # The same physical/source SQL COMMIT resolves any
+                    # previously registered wait; a worker dying after COMMIT
+                    # must never leave an apparently pending request.
+                    wait = uow.get_entity(_SHARED_WAIT_KIND, wait_id)
+                    if wait is not None:
+                        if wait.state != "waiting" or wait.attributes != wait_attributes:
+                            raise ResourceConflictError(
+                                "shared wait record contradicts native source request"
+                            )
+                        wait.state = "satisfied"
+                        wait.touch(commit_at)
+                        uow.save_entity(wait)
             job = replace(
                 job, status="ready", phase="idle", active_trigger_id=None,
                 last_completed_trigger_id=claim.trigger_id,
@@ -1078,7 +1119,43 @@ def execute_od5a_claimed_tick(
         _time(due), commit_source_step,
         key=("od5a-recurring", claim.organization_id, claim.trigger_id, claim.epoch),
     )
-    backend.run_until(_time(due))
+    try:
+        backend.run_until(_time(due))
+    except ResourceCapacityError:
+        if authority is None or not wait_requests or wait_attributes is None:
+            raise
+        # The source+physical transaction has rolled back. Only the exact
+        # still-owned trigger can durably acknowledge backpressure in a NEW
+        # fenced transaction. Another org/pool never waits on this job lock.
+        with _job_transaction(store, claim.organization_id) as uow:
+            source, job, _ = _assert_claim(
+                uow, claim, _trusted_now(store, _wall_clock),
+            )
+            _assert_shared_binding(source, shared_pool_binding)
+            current_owned = tuple(
+                item for item in uow.resource_reservations()
+                if item.resource_name in owned_names
+            )
+            if source.attributes != preflight_state or current_owned != preflight_reservations:
+                raise StaleOD5aRunnerClaimError(
+                    "OD-5a source/physical state changed before durable wait"
+                )
+            wait = uow.get_entity(_SHARED_WAIT_KIND, wait_id)
+            if wait is None:
+                wait = Entity(
+                    id=wait_id, entity_type=_SHARED_WAIT_KIND, state="waiting",
+                    attributes=deepcopy(wait_attributes),
+                )
+                wait.touch(_trusted_now(store, _wall_clock))
+                uow.save_entity(wait)
+            elif wait.state != "waiting" or wait.attributes != wait_attributes:
+                raise ResourceConflictError(
+                    "shared wait replay changed immutable native request"
+                )
+            return OD5aRecurringStep(
+                claim.organization_id, claim.trigger_id, "waiting",
+                claim.epoch, job.logical_time, job.next_tick,
+            )
     if len(dispatched) != 1:
         raise RuntimeError("native SimPy did not dispatch one authoritative OD-5a source action")
     return dispatched[0]
