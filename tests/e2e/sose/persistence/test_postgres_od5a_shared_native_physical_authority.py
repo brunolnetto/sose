@@ -671,17 +671,52 @@ def test_pg_wait_advice_does_not_bootstrap_namespace_or_mutate_ledger(monkeypatc
         assert ledger.audit()
 
 
-def test_pg_wait_advice_refuses_legacy_unbound_source_without_rewriting_wait():
-    """Pre-v2 waits remain runnable but cannot authenticate a source hint."""
+@pytest.mark.parametrize("missing", ("wait_schema_version", "source_digest"))
+def test_pg_downgraded_wait_never_authenticates_retry_or_read_advice(missing):
+    """Deleting a v2 field must not turn it into a trusted legacy waiting claim."""
     assert DSN
     ns = _namespace()
-    org, binding = "org:legacy-wait", _binding("unit-1")
+    org, binding = "org:downgrade", _binding("unit-1")
     trigger = deterministic_id("od5a-recurring-tick", org, 1)
     wait_id = deterministic_id("od5a-shared-capacity-wait", org, trigger)
     with PostgresPersistence(DSN, namespace=ns) as store:
         _seed(store, org, binding)
         store.temporal_resources().fail(TemporalOutage(
-            outage_id="legacy:down",
+            outage_id="downgrade:outage",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        ))
+        assert _tick(store, org, binding).action == "waiting"
+        before = _source(store, org)
+        with store.transaction() as uow:
+            wait = uow.get_entity("od5a_shared_capacity_wait", wait_id)
+            assert wait is not None
+            assert wait.attributes.pop(missing)
+            uow.save_entity(wait)
+        with pytest.raises(ResourceConflictError, match="wait record contradicts"):
+            suggest_od5a_shared_wait_slots(
+                store, job_id=org, shared_pool_binding=binding,
+                not_before=_ORIGIN, latest_start=_ORIGIN + timedelta(seconds=2),
+            )
+        with pytest.raises(ResourceConflictError, match="wait record contradicts"):
+            _tick(store, org, binding)
+        assert _source(store, org) == before
+        assert store.job_state(org).active_trigger_id == trigger
+        assert store.temporal_resources().reservations() == ()
+        assert store.temporal_resources().audit()
+
+
+def test_pg_wait_with_v1_schema_never_acquires_physical_capacity():
+    """Unverifiable historical wait identity is not an execution grant."""
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:pre-v2", _binding("unit-1")
+    trigger = deterministic_id("od5a-recurring-tick", org, 1)
+    wait_id = deterministic_id("od5a-shared-capacity-wait", org, trigger)
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        store.temporal_resources().fail(TemporalOutage(
+            outage_id="pre-v2:down",
             address=binding.pool.address(instance_id="unit-1"),
             start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
         ))
@@ -689,13 +724,15 @@ def test_pg_wait_advice_refuses_legacy_unbound_source_without_rewriting_wait():
         with store.transaction() as uow:
             wait = uow.get_entity("od5a_shared_capacity_wait", wait_id)
             assert wait is not None
-            assert wait.attributes.pop("source_digest")
-            assert wait.attributes.pop("wait_schema_version") == 2
+            wait.attributes.pop("source_digest")
+            wait.attributes.pop("wait_schema_version")
             uow.save_entity(wait)
-        with pytest.raises(ResourceConflictError, match="legacy|source digest"):
-            suggest_od5a_shared_wait_slots(
-                store, job_id=org, shared_pool_binding=binding,
-                not_before=_ORIGIN, latest_start=_ORIGIN + timedelta(seconds=2),
-            )
-        assert _tick(store, org, binding).action == "waiting"
+        store.temporal_resources().recover(
+            "pre-v2:down", at=_ORIGIN,
+        )
+        before = _source(store, org)
+        with pytest.raises(ResourceConflictError, match="wait record contradicts"):
+            _tick(store, org, binding)
+        assert _source(store, org) == before
+        assert store.temporal_resources().reservations() == ()
         assert store.temporal_resources().audit()
