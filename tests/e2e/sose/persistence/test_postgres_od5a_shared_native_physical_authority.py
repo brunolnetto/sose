@@ -17,7 +17,7 @@ import pytest
 from sose.core.identity import deterministic_id
 from sose.core.resource_identity import ResourcePoolContract
 from sose.core.resource_reservations import (
-    ResourceCapacityError, ResourceConflictError, authoritative_effect_reservation_id,
+    ResourceConflictError, TemporalOutage, authoritative_effect_reservation_id,
 )
 from sose.core.runtime import ResourceReservation
 from sose.organizational.od5a_mechanisms import OD5aWorkItem
@@ -184,11 +184,9 @@ def test_pg_contested_native_shared_unit_rolls_back_source_and_peer_progresses(
 
     def worker(org):
         with PostgresPersistence(DSN, namespace=ns) as store:
-            try:
-                assert _tick(store, org, occupied).action == "advanced"
-                return (org, "granted")
-            except ResourceCapacityError:
-                return (org, "capacity-wait")
+            outcome = _tick(store, org, occupied)
+            assert outcome.action in {"advanced", "waiting"}
+            return (org, "granted" if outcome.action == "advanced" else "capacity-wait")
 
     with ThreadPoolExecutor(max_workers=2) as workers:
         future_a = workers.submit(worker, racers[0])
@@ -211,6 +209,18 @@ def test_pg_contested_native_shared_unit_rolls_back_source_and_peer_progresses(
         assert check.job_state(winner).run_count == 1
         assert check.job_state(loser).run_count == 0
         assert check.job_state(loser).last_completed_trigger_id is None
+        assert check.job_state(loser).active_trigger_id == deterministic_id(
+            "od5a-recurring-tick", loser, 1,
+        )
+        wait_id = deterministic_id(
+            "od5a-shared-capacity-wait", loser,
+            check.job_state(loser).active_trigger_id,
+        )
+        wait = check.entity("od5a_shared_capacity_wait", wait_id)
+        assert wait is not None and wait.state == "waiting"
+        assert wait.attributes["binding_fingerprint"] == occupied.fingerprint()
+        assert len(wait.attributes["requests"]) == 1
+        assert wait.attributes["requests"][0]["instance_id"] == "unit-1"
         assert not any(
             r.resource_name.startswith(f"{loser}/")
             for r in check.resource_reservations()
@@ -312,3 +322,77 @@ def test_pg_authority_rejects_unowned_physical_address_and_invalid_causes():
                         }, at=0.0, uow=uow,
                     )
         assert store.temporal_resources().reservations() == ()
+
+
+def test_pg_shared_physical_outage_preserves_original_trigger_until_recovery():
+    """A typed, persisted wait is not a fake physical grant or source step.
+
+    This outage is recovered at the same authoritative source due boundary;
+    later release of a DIFFERENT owner's positive-length booking does not
+    magically rewind history to free an earlier requested interval.
+    """
+    assert DSN
+    ns = _namespace()
+    binding, independent = _binding("unit-1"), _binding("unit-2")
+    org, peer = "org:outage", "org:independent"
+    trigger = deterministic_id("od5a-recurring-tick", org, 1)
+    wait_id = deterministic_id("od5a-shared-capacity-wait", org, trigger)
+    outage = TemporalOutage(
+        outage_id="outage:unit-1", address=binding.pool.address(instance_id="unit-1"),
+        start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+    )
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        _seed(store, peer, independent)
+        store.temporal_resources().fail(outage)
+        before_source = _source(store, org)
+        before_events = tuple(e for e in store.events() if e.owner_id == org)
+        assert before_events == ()
+        first = _tick(store, org, binding)
+        assert first.action == "waiting"
+        assert first.trigger_id == trigger and first.logical_tick == 0
+        assert _source(store, org) == before_source
+        assert store.temporal_resources().reservations() == ()
+        assert tuple(e for e in store.events() if e.owner_id == org) == before_events
+        wait = store.entity("od5a_shared_capacity_wait", wait_id)
+        assert wait is not None and wait.state == "waiting"
+        assert wait.attributes["trigger_id"] == trigger
+        assert wait.attributes["source_action"] == before_source["actions"][0]
+        assert wait.attributes["requests"][0]["instance_id"] == "unit-1"
+        # Replaying while capacity is still unavailable must not duplicate
+        # durable waits, source transitions or physical allocations.
+        assert _tick(store, org, binding).action == "waiting"
+        assert store.entity("od5a_shared_capacity_wait", wait_id) == wait
+        assert _source(store, org) == before_source
+        assert store.job_state(org).active_trigger_id == trigger
+        # Unit 2 and its owning organization are unaffected.
+        assert _tick(store, peer, independent).action == "advanced"
+        assert _source(store, peer)["step"] == 1
+        assert len(store.temporal_resources().reservations()) == 1
+
+    with PostgresPersistence(DSN, namespace=ns) as restarted:
+        assert restarted.entity("od5a_shared_capacity_wait", wait_id).state == "waiting"
+        restarted.temporal_resources().recover(outage.outage_id, at=_ORIGIN)
+        advanced = _tick(restarted, org, binding)
+        assert advanced.action == "advanced"
+        assert advanced.trigger_id == trigger and advanced.logical_tick == 1
+        satisfied = restarted.entity("od5a_shared_capacity_wait", wait_id)
+        assert satisfied.state == "satisfied"
+        assert satisfied.attributes == wait.attributes
+        assert _source(restarted, org)["step"] == 1
+        assert restarted.job_state(org).last_completed_trigger_id == trigger
+        assert restarted.job_state(org).active_trigger_id is None
+        assert len(restarted.temporal_resources().reservations()) == 2
+        assert {r.address.instance_id for r in restarted.temporal_resources().reservations()} == {
+            "unit-1", "unit-2",
+        }
+        assert restarted.temporal_resources().audit()
+        # Replaying a completed trigger after a lost worker response is inert.
+        before_replay = restarted.temporal_resources().snapshot()
+        assert run_od5a_recurring_tick(
+            restarted, job_id=org, owner_id="another-worker",
+            now=NOW, lease_duration=timedelta(seconds=60),
+            trigger_id=trigger, shared_pool_binding=binding,
+        ).action == "replayed"
+        assert restarted.temporal_resources().snapshot() == before_replay
+        assert restarted.entity("od5a_shared_capacity_wait", wait_id) == satisfied
