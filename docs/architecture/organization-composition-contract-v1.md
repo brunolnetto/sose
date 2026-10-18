@@ -140,14 +140,39 @@ management lifecycle features do not retroactively gate it.
 | Identity and ownership | Distinct organization, component owner, job and pool-owner fields; duplicate `(domain, owner_id)` **pairs** rejected (#499), but a raw `owner_id` may be reused across different domains | Formal source-entity/flow and shared-pool owner binding across running components (#496) |
 | Charts, versions, contracts | Real registry metadata and audited direction/version-specific manifests + callable handlers (#510) | Audited production WF→WM ingress; multiple connected same-domain owners require exact component/owner routing, or an explicit v1 unsupported limitation |
 | Topology | Dangling dependencies and self-boundaries rejected; cyclic execution admission fails closed (#499/#510) | Explicit certified liveness policy for allowed cycles, if supported |
-| Configuration | `config_epoch` is validated and included in immutable fingerprint (#499) | Validated policy/calendar/cost schemas, epoch transition, stale-worker fencing and invalidation contract |
+| Configuration | `config_epoch` and immutable `OperationalConfigReference(component_id, kind, reference_id, reference_version, source_sha256, config_epoch)` are type-checked; invalid/dangling/duplicate/mismatched epochs rejected and fingerprints include references (PR #530). Registry admission **fails closed** on unaudited operational references | Runtime policy/calendar/cost registry attestation, epoch transition, stale-worker fencing and invalidation contract (#496) |
 | Physical resources | Named external pool references with explicit owner IDs and known consumer IDs; duplicate pool IDs rejected (#499) | Pool existence, calendar/instance/capacity and transactional ownership checked against one authoritative ledger |
 | Causal execution | Exact registry admission but **no runnable composition** (#510) | Publication → claim → fenced ACK → Command → certified effect across components with restart and local clocks (#496) |
 | Read model / governance | Architectural separation described by [composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) | Derived consistent snapshots, optional authority-changing governance StateChart and failure-path conformance (#496) |
-| Architecture ratification | [Composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) Proposed; schema + negative admission tests. A different proposed [owner-qualified runtime ADR-0008](decisions/adr-0008-owner-qualified-runtime-only.md) currently has the same number and is **not** this decision | Independent review of the full PRD/TRD, policy/epoch semantics, versioned API and explicit scope decision |
+| Architecture ratification | [Composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) Proposed; schema + negative admission tests. A different proposed [owner-qualified runtime ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md) has a distinct identifier and is **not** this decision | Independent review of the full PRD/TRD, policy/epoch semantics, versioned API and explicit scope decision |
 
 **Stop rule:** do not interpret #510's static validator, hypothetical manifest,
 or historical replay as a complete production composition, a ratified ADR or
 the five-arm OD-5a scientific seal. Close #495 only after the missing
 contract-level acceptance is either implemented and tested or explicitly
 resolved by an independently reviewed ADR scope decision.
+
+
+## Operational configuration: structural facts are not installed capabilities (#530)
+
+`OperationalConfigReference` is a frozen **claim of referenced configuration**,
+NOT the authority to run a policy, use a calendar, or charge a cost. It binds
+exact component ownership, `policy` / `calendar` / `cost_model` kind,
+positive version, lowercase source SHA-256 and the organization `config_epoch`.
+Unknown component, contradictory epoch, repeated component+kind (including
+conflicting version/digest), malformed hash and invalid version fail on
+construction. Reordering references does not change the definition fingerprint;
+changing any referenced hash/version/epoch does.
+
+Because no audited operational configuration registry with policy/calendar/cost
+semantics exists yet, **`validate_organization_admission` refuses any definition
+that has such references**. An arbitrary configuration hash supplied by a caller
+must not self-attest existence, authority, calendar availability or cost.
+Executable attestation, schema semantics and deterministic epoch migration are
+bounded work in #496; not silently retrofitted into #495.
+
+The separate owner-qualified durable runtime decision is
+[ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md);
+admission of structural composition remains the *proposed*
+[ADR-0008](decisions/adr-0008-organization-composition-admission.md).
+Do not treat unique numbering as architectural ratification.
