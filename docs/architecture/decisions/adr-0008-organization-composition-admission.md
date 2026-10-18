@@ -1,6 +1,6 @@
 # ADR-0008 — Fail-closed admission of versioned organization composition
 
-**Status:** Proposed — **bounded static admission v1** (#495; 2026-10-18). Ratification blocked on static calendar schema and independently auditable reference/provenance decisions.  
+**Status:** Proposed — **bounded static admission v1** (#495; 2026-10-18). Positive source-pinned UTC calendar schema now implemented (#535); independent architecture ratification remains #538.  
 **Scope:** validated catalog-to-runtime *metadata* binding only; no runnable composed organization, dynamic configuration admission, new pool grant, or scientific freeze change.
 
 ## Context
@@ -93,9 +93,14 @@ capabilities. This was a dangerous admission boundary for #496/#497.
 - #512: contract/ADR ownership audit and explicit distinction between
   supported production ingress and hypothetical validation fixtures.
 - #530: versioned typed policy/calendar/cost *references* with caller-declared
-  SHA-256 **syntax** (not independently reproducible content provenance),
-  epoch consistency and backwards-compatible empty v1 fingerprints.
-  References are **rejected at admission**, not treated as installed semantics.
+  SHA-256 **syntax**, epoch consistency and backwards-compatible empty v1
+  fingerprints. References remain **rejected at runtime admission**.
+- #534: physical pool declarations are rejected until real shared-pool
+  authority can independently validate owner, identity and capacity.
+- #535: positive, closed static UTC calendar schema for one shipped source;
+  Monday=0 weekdays, bounded non-overlapping windows and canonical UTF-8 JSON
+  have independently pinned SHA-256 bytes and adversarial provenance tests.
+  This verifier does NOT install an executable calendar or trust caller hashes.
 - Those PRs passed their exact-head required Python, real PostgreSQL, coverage
   >=95%, chaos and three pinned historical replays with Codex findings
   addressed before merge. The subsequent main CI through #533 is green.
@@ -103,25 +108,28 @@ capabilities. This was a dangerous admission boundary for #496/#497.
 
 **Remaining #495 gates — no premature issue closure:**
 
-1. Define and test a **static calendar payload/schema** capable of rejecting
-   invalid schedule windows, contradictory versions/epochs and unverifiable
-   source claims. Today a calendar reference is an unverified digest string;
-   refusing every reference is safe but is not positive schema validation.
-2. The actual physical pool/owner/capacity cannot be attested by a caller's
-   `PhysicalPoolRef`. The static validator now fails closed on **all** pool
-   references until a trusted physical-authority lookup exists (#477/#496).
-3. Explicitly review the supported positive static-admission subset and the
-   negative shape of unsupported policy/cost/calendar references against the
-   original PRD/TRD. In particular do not call a typed digest **proof** that
-   its referenced source bytes were independently reviewed.
+1. **Completed in #535:** static calendar payload/schema rejecting invalid
+   windows, contradictory versions/epochs, malformed source and forged
+   *declared* ID/version/digest, with verified canonical bytes of the one
+   shipped static source. This does **not** attest caller-added calendars.
+2. **Fail-closed now (#534):** a caller's `PhysicalPoolRef` does not attest
+   physical pool/owner/capacity; all executable pool references fail closed
+   until a trusted resource authority exists (#477/#496). This is an
+   intentionally unsupported positive execution capability.
+3. **Remaining #495 ratification gate (#538):** independently reconcile
+   the positive static calendar + registry/ownership contract with the
+   negative unsupported policy/cost/executable-calendar/physical references
+   against the original PRD/TRD. The provenance proof is only for bundled
+   source bytes: arbitrary digest syntax is not independently verified.
 
 **Future operational acceptance:** executable policy/calendars/costs, dynamic
 `config_epoch` migration, job creation, owner-qualified dispatch, durable
 projections and recovery belong to #496; temporal physical authority and
 joint commit to #477; O2C/MRO generality to #497. No `OrganizationInstance`
 API, physical capacity, science or actor availability is admitted by this
-ADR. Keep #495 **OPEN** until the static schema and ratification tests above
-are actually reviewed. Other issues remain open for their own runtime gates.
+ADR. Keep #495 **OPEN** until #535 is reviewed and merged and the separate
+#538 static contract ratification is independently accepted. Runtime gates
+remain open in their respective issues.
 
 Ratification of this ADR is **not** ratification of distinct ADR-0009,
 which governs the live owner-qualified runtime.
