@@ -25,6 +25,7 @@ from sose.organizational import od5a_recurring
 from sose.organizational.od5a_recurring import (
     SharedPhysicalGrantAuthority, SharedPhysicalPoolBinding,
     initialize_od5a_recurring_job, run_od5a_recurring_tick,
+    suggest_od5a_shared_wait_slots,
 )
 from sose.organizational.od5a_durable import _ORIGIN, od5a_durable_state
 from sose.persistence.postgres import PostgresPersistence
@@ -444,4 +445,127 @@ def test_pg_corrupted_wait_payload_cannot_be_replayed_as_immutable_authority(cor
         assert store.job_state(org).active_trigger_id == trigger
         assert store.temporal_resources().reservations() == ()
         assert not any(e.owner_id == org for e in store.events())
+        assert store.temporal_resources().audit()
+
+def test_pg_shared_wait_advice_is_prospective_and_preserves_all_truth():
+    """A recovered outage can suggest a NEW slot, never an old physical grant."""
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:advice", _binding("unit-1")
+    start = _ORIGIN + timedelta(milliseconds=100)
+    wait_id = deterministic_id(
+        "od5a-shared-capacity-wait", org,
+        deterministic_id("od5a-recurring-tick", org, 1),
+    )
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        outage = TemporalOutage(
+            outage_id="advice:down",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        )
+        ledger = store.temporal_resources()
+        ledger.fail(outage)
+        assert _tick(store, org, binding).action == "waiting"
+        ledger.recover(outage.outage_id, at=start)
+        snapshot = ledger.snapshot()
+        source = _source(store, org)
+        job = store.job_state(org)
+        wait = store.entity("od5a_shared_capacity_wait", wait_id)
+        assert wait is not None and wait.state == "waiting"
+
+        too_early = suggest_od5a_shared_wait_slots(
+            store, job_id=org, shared_pool_binding=binding,
+            not_before=_ORIGIN, latest_start=_ORIGIN,
+        )
+        assert len(too_early) == 1 and too_early[0].suggested_start is None
+        advised = suggest_od5a_shared_wait_slots(
+            store, job_id=org, shared_pool_binding=binding,
+            not_before=start, latest_start=start,
+        )
+        assert len(advised) == 1
+        assert advised[0].reservation_id == wait.attributes["requests"][0]["reservation_id"]
+        assert advised[0].instance_id == "unit-1"
+        assert advised[0].original_start == _ORIGIN
+        assert advised[0].duration == timedelta(seconds=0.2)
+        assert advised[0].suggested_start == start
+        assert ledger.snapshot() == snapshot
+        assert _source(store, org) == source
+        assert store.job_state(org) == job
+        assert store.entity("od5a_shared_capacity_wait", wait_id) == wait
+        assert not any(e.owner_id == org for e in store.events())
+        assert ledger.get(advised[0].reservation_id) is None
+        assert ledger.audit()
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        assert suggest_od5a_shared_wait_slots(
+            reopened, job_id=org, shared_pool_binding=binding,
+            not_before=start, latest_start=start,
+        ) == advised
+        assert reopened.temporal_resources().audit()
+
+
+def test_pg_wait_advice_is_stale_after_peer_reserves_suggested_slot():
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:advice-stale", _binding("unit-1")
+    start = _ORIGIN + timedelta(milliseconds=100)
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        ledger = store.temporal_resources()
+        outage = TemporalOutage(
+            outage_id="advice:stale", address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        )
+        ledger.fail(outage)
+        assert _tick(store, org, binding).action == "waiting"
+        ledger.recover(outage.outage_id, at=start)
+        advice = suggest_od5a_shared_wait_slots(
+            store, job_id=org, shared_pool_binding=binding,
+            not_before=start, latest_start=start + timedelta(seconds=1),
+        )
+        assert advice[0].suggested_start == start
+
+    with PostgresPersistence(DSN, namespace=ns) as contender:
+        from sose.core.resource_reservations import TemporalReservation
+        contender.temporal_resources().reserve(TemporalReservation(
+            reservation_id="another-owner", owner_id="org:contender",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=start, end_at=start + timedelta(seconds=0.2),
+            causation_id="independent:physical-event",
+        ))
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        next_advice = suggest_od5a_shared_wait_slots(
+            reopened, job_id=org, shared_pool_binding=binding,
+            not_before=start, latest_start=start + timedelta(seconds=1),
+        )
+        assert next_advice[0].suggested_start == start + timedelta(seconds=0.2)
+        assert reopened.temporal_resources().audit()
+
+
+def test_pg_wait_advice_rejects_corrupted_causal_wait_record():
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:advice-forged", _binding("unit-1")
+    trigger = deterministic_id("od5a-recurring-tick", org, 1)
+    wait_id = deterministic_id("od5a-shared-capacity-wait", org, trigger)
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        store.temporal_resources().fail(TemporalOutage(
+            outage_id="advice:forged",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        ))
+        assert _tick(store, org, binding).action == "waiting"
+        with store.transaction() as uow:
+            wait = uow.get_entity("od5a_shared_capacity_wait", wait_id)
+            wait.attributes["requests"][0]["instance_id"] = "unit-2"
+            uow.save_entity(wait)
+        source = _source(store, org)
+        with pytest.raises(ResourceConflictError, match="wait record contradicts"):
+            suggest_od5a_shared_wait_slots(
+                store, job_id=org, shared_pool_binding=binding,
+                not_before=_ORIGIN, latest_start=_ORIGIN + timedelta(seconds=2),
+            )
+        assert _source(store, org) == source
+        assert store.temporal_resources().reservations() == ()
         assert store.temporal_resources().audit()
