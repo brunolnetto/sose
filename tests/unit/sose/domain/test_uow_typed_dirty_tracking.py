@@ -165,3 +165,39 @@ def test_typed_nested_entity_update_survives_close_and_reopen(
         with reopened.transaction() as uow:
             uow.save_entity(saved)
         assert reopened.entity("typed-dirty", "owner-entity") == saved
+
+
+@pytest.mark.parametrize("type_only_change", (False, True))
+def test_nested_mapping_reorder_is_idempotent_but_type_change_is_not(type_only_change):
+    store = MemoryPersistence()
+    original = Entity(
+        id="reordered", entity_type="typed-dirty", state="ready",
+        attributes={
+            "work": {"a": 0, "b": {"one": 1.0, "two": 2}},
+            "peer": [{"x": 1, "y": 2}],
+        },
+    )
+    with store.transaction() as uow:
+        uow.save_entity(original)
+    before = deepcopy(store._state)
+    target = deepcopy(original)
+    target.attributes = {
+        "peer": [{"y": 2, "x": 1}],
+        "work": {
+            "b": {"two": 2, "one": 1.0},
+            "a": False if type_only_change else 0,
+        },
+    }
+    # The original codec intentionally preserves dictionary insertion order;
+    # its record bytes are not changed to satisfy this comparison contract.
+    assert dumps(target) != dumps(original)
+    uow = MemoryUnitOfWork(deepcopy(before), store)
+    uow.save_entity(target)
+    changes = changes_for_dirty_records(before, uow._working, uow.dirty_records)
+    if type_only_change:
+        assert len(changes) == 1
+        assert changes[0].payload == dumps(target)
+    else:
+        assert changes == ()
+    # A literal no-op must not demand a new backend revision or journal append.
+    assert ("entities", ("typed-dirty", "reordered")) in uow.dirty_records
