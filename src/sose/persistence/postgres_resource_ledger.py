@@ -113,6 +113,17 @@ class PostgresTemporalResourceLedger:
                 sql.Identifier(f"{self._store.namespace}_ro_window_gist"),
                 self._outages,
             ))
+            # Temporal GiST alone scans simultaneous outages for EVERY
+            # unrelated pool. An independent pool-key B-tree lets the planner
+            # select or bitmap-AND a single pool even when many others occupy
+            # the same time window. Bookings already have a pool-key-leading
+            # B-tree; this closes the missing outage access path.
+            self._db.execute(sql.SQL("""
+                CREATE INDEX IF NOT EXISTS {} ON {} (pool_key)
+            """).format(
+                sql.Identifier(f"{self._store.namespace}_ro_pool_idx"),
+                self._outages,
+            ))
             self._db.execute(sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {} (
                     event_id TEXT PRIMARY KEY,
