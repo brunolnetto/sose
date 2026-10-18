@@ -808,3 +808,84 @@ def test_pg_prospective_gist_window_prunes_distant_future_heavy_history():
         assert ledger.outages() == ()
         assert ledger.get("pending") is None
         assert ledger.audit()
+
+
+def test_pg_prospective_outages_use_pool_index_amid_unrelated_same_time_outages():
+    """#477: simultaneous outages of other pools must not become a scan tax.
+
+    All 1500 foreign pool/outage records are synthetic and rolled back before
+    audit; they are never authoritative resource facts or events.
+    """
+    assert DSN
+    ns = _namespace("advice_other_pools")
+    pool = _pool(named=True)
+
+    class RollbackPerformanceFixture(Exception):
+        pass
+
+    def walk(node):
+        yield node
+        for child in node.get("Plans", ()):
+            yield from walk(child)
+
+    with PostgresPersistence(DSN, namespace=ns) as db:
+        ledger = db.temporal_resources()
+        ledger.register_pool(pool)
+        request = _request(pool, "target", 0, 1, instance="unit-1")
+        try:
+            with db._connection.transaction():
+                db._connection.execute(sql.SQL("""
+                    INSERT INTO {} (pool_key, definition)
+                    SELECT 'test-foreign-pool:' || g, '{}'
+                    FROM generate_series(1, 1500) AS g
+                """).format(ledger._pools))
+                db._connection.execute(sql.SQL("""
+                    INSERT INTO {} (
+                        outage_id, pool_key, instance_id,
+                        start_at, end_at, recovered_at
+                    )
+                    SELECT 'test-foreign-outage:' || g,
+                           'test-foreign-pool:' || g, NULL,
+                           %s::timestamptz,
+                           %s::timestamptz,
+                           NULL
+                    FROM generate_series(1, 1500) AS g
+                """).format(ledger._outages), (T0, T0 + H))
+                db._connection.execute(sql.SQL("ANALYZE {}").format(ledger._outages))
+                db._connection.execute("SET LOCAL enable_seqscan=off")
+                assert ledger.suggest_next_start(
+                    request, not_before=T0, latest_start=T0,
+                ) == T0
+                plan = db._connection.execute(sql.SQL("""
+                    EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                    SELECT outage_id FROM {}
+                    WHERE pool_key = %s
+                      AND tstzrange(start_at, COALESCE(recovered_at, end_at), '[)')
+                          && tstzrange(%s, %s, '[)')
+                """).format(ledger._outages), (
+                    pool.address().lock_key(), T0, T0 + H,
+                )).fetchone()[0]
+                if isinstance(plan, str):
+                    import json
+                    plan = json.loads(plan)
+                nodes = tuple(walk(plan[0]["Plan"]))
+                pool_index = f"{ns}_ro_pool_idx"
+                selected = [
+                    node for node in nodes
+                    if node.get("Index Name") == pool_index
+                ]
+                assert selected, nodes
+                assert any("pool_key" in node.get("Index Cond", "")
+                           for node in selected), selected
+                assert plan[0]["Plan"]["Actual Rows"] == 0
+                assert all(node.get("Rows Removed by Filter", 0) == 0
+                           for node in nodes), nodes
+                raise RollbackPerformanceFixture
+        except RollbackPerformanceFixture:
+            pass
+
+        # Test fixture never commits fictitious outage events or pools.
+        assert ledger.outages() == ()
+        assert {x["pool_id"] for _, x in ledger.snapshot()["pools"]} == {pool.pool_id}
+        assert ledger.get("target") is None
+        assert ledger.audit()
