@@ -218,7 +218,13 @@ def _dict_dirty_change(
     before_item = before_value.get(raw_key)
     exists_after = raw_key in after_value
     after_item = after_value.get(raw_key)
-    if before_item == after_item and (raw_key in before_value) == exists_after:
+    # SOSE's tagged JSON is the authoritative durable representation.
+    # Python equality aliases False == 0 == 0.0, including nested dataclass
+    # payloads; comparing encoded records preserves semantic types.
+    if (
+        (raw_key in before_value) == exists_after
+        and dumps(before_item) == dumps(after_item)
+    ):
         return None
     encoded_key = dumps(raw_key)
     if not exists_after:
@@ -249,7 +255,7 @@ def _list_dirty_change(
     after_item = after_value[index] if index < len(after_value) else None
     before_exists = index < len(before_value)
     after_exists = index < len(after_value)
-    if before_item == after_item and before_exists == after_exists:
+    if before_exists == after_exists and dumps(before_item) == dumps(after_item):
         return None
     if not after_exists:
         return StateRecordChange(
@@ -274,7 +280,7 @@ def _scalar_dirty_change(
     after_value: object,
 ) -> StateRecordChange | None:
     default_value = getattr(template, collection)
-    if before_value == after_value:
+    if dumps(before_value) == dumps(after_value):
         return None
     return StateRecordChange(
         operation="upsert",
