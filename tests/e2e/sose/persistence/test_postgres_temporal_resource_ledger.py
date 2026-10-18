@@ -647,3 +647,35 @@ def test_pg_advice_omits_unrelated_historical_intervals_from_window(monkeypatch)
         assert seen == {"bookings": ("current",), "outages": ()}
         assert ledger.get("query") is None
         assert ledger.audit()
+
+
+def test_pg_instant_outage_recovery_is_zero_length_in_advice_and_real_reserve():
+    """The effective empty outage [t,t) must block neither grant nor hint."""
+    assert DSN
+    ns = _namespace("advice_instant_recovery")
+    pool = _pool(named=True)
+    with PostgresPersistence(DSN, namespace=ns) as writer:
+        ledger = writer.temporal_resources()
+        ledger.register_pool(pool)
+        outage = TemporalOutage(
+            outage_id="down-then-instant-up",
+            address=pool.address(instance_id="unit-1"),
+            start_at=T0 + H, end_at=T0 + 3 * H,
+        )
+        ledger.fail(outage)
+        recovered = ledger.recover(outage.outage_id, at=outage.start_at)
+        assert recovered.effective_end == recovered.start_at
+        pending = _request(pool, "spans-instant-recovery", 0, 2,
+                           instance="unit-1", owner="org:test")
+        snapshot_before = ledger.snapshot()
+        assert ledger.suggest_next_start(
+            pending, not_before=T0, latest_start=T0,
+        ) == T0
+        assert ledger.snapshot() == snapshot_before
+        assert ledger.reserve(pending) == pending
+        assert ledger.audit()
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        ledger = reopened.temporal_resources()
+        assert ledger.get("spans-instant-recovery") == pending
+        assert ledger.outages()[0].effective_end == T0 + H
+        assert ledger.audit()
