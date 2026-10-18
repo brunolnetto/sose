@@ -654,30 +654,21 @@ def test_pg_advice_omits_unrelated_historical_intervals_from_window(monkeypatch)
         ) == T0
         assert seen == {"bookings": ("current",), "outages": ()}
         assert ledger.get("query") is None
-        # A B-tree on effective_end alone still reads arbitrarily distant
-        # future records. Assert GiST overlap predicates for BOTH ranges.
-        with ledger._db.transaction():
-            ledger._db.execute("SET LOCAL enable_seqscan=off")
-            booking_plan = ledger._db.execute(sql.SQL("""
-                EXPLAIN (COSTS OFF)
-                SELECT reservation_id FROM {}
-                WHERE pool_key = %s
-                  AND tstzrange(start_at, COALESCE(stopped_at, end_at), '[)')
-                      && tstzrange(%s, %s, '[)')
-            """).format(ledger._reservations), (
-                pool.address().lock_key(), T0, T0 + 2 * H,
-            )).fetchall()
-            outage_plan = ledger._db.execute(sql.SQL("""
-                EXPLAIN (COSTS OFF)
-                SELECT outage_id FROM {}
-                WHERE pool_key = %s
-                  AND tstzrange(start_at, COALESCE(recovered_at, end_at), '[)')
-                      && tstzrange(%s, %s, '[)')
-            """).format(ledger._outages), (
-                pool.address().lock_key(), T0, T0 + 2 * H,
-            )).fetchall()
-        assert any(f"{ns}_rb_window_gist" in row[0] for row in booking_plan), booking_plan
-        assert any(f"{ns}_ro_window_gist" in row[0] for row in outage_plan), outage_plan
+        # With only 25 rows, PostgreSQL may legitimately choose the older
+        # pool-key B-tree even when GiST is usable. Assert both installed
+        # index EXPRESSIONS here; the future-heavy benchmark below requires
+        # actual GiST selection and low scanned rows in EXPLAIN ANALYZE.
+        for name, effective in (
+            (f"{ns}_rb_window_gist", "COALESCE(stopped_at, end_at)"),
+            (f"{ns}_ro_window_gist", "COALESCE(recovered_at, end_at)"),
+        ):
+            indexed = ledger._db.execute("""
+                SELECT indexdef FROM pg_indexes
+                WHERE schemaname = current_schema() AND indexname = %s
+            """, (name,)).fetchone()
+            assert indexed is not None and "USING gist" in indexed[0], indexed
+            assert "tstzrange(start_at" in indexed[0], indexed
+            assert effective in indexed[0], indexed
         assert ledger.audit()
 
 
