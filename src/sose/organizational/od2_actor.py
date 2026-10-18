@@ -524,7 +524,7 @@ def transition_actor(
                 if _attested_current_assignment(
                     uow, actor_id=actor_id, owner_id=owner_id,
                 ) is not None:
-                    raise ValueError("attested assignment remains active")
+                    raise ValueError("actor already assigned: attested assignment remains active")
                 if meta["assigned_work_id"] is not None:
                     raise ValueError("actor already assigned")
             elif action == "complete":
