@@ -239,14 +239,16 @@ class PostgresPersistence(MemoryPersistence):
                 (self.namespace, key),
             )
 
-    def temporal_resources(self):
+    def temporal_resources(self, *, bootstrap: bool = True):
         """Access the opt-in authoritative PostgreSQL temporal resource ledger.
 
         Mutations and resource causal receipts commit atomically within the
         ledger. They are not automatically part of a separate engine UoW.
+        Set bootstrap=False only for pre-registered read-side queries:
+        skip DDL and namespace advisory locks, fail if tables are absent.
         """
         from .postgres_resource_ledger import PostgresTemporalResourceLedger
-        return PostgresTemporalResourceLedger(self)
+        return PostgresTemporalResourceLedger(self, bootstrap=bootstrap)
 
     def close(self) -> None:
         self._connection.close()
