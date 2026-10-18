@@ -164,6 +164,29 @@ and joint authority stay #477; O2C/MRO equivalence stays #497. These may
 advance in parallel, but closing #495 cannot certify them. OD-5a remains
 independent and `NOT_ADMITTED`.
 
+
+## Pinned static UTC calendar schema — bounded #495 increment
+
+`sose.composition.calendar` provides a **positive static example**:
+`parse_static_calendar_source(bytes)` requires closed, canonical JSON v1,
+UTC, explicitly numbered weekdays 0–6, bounded HH:MM intraday windows,
+nonempty schedules, canonical ordering, no overlap, valid version/epoch,
+no duplicate/unknown fields or implicit timezone conversion. The shipped
+`sose:calendar:weekday-utc-v1` source is pinned by an **independent literal
+SHA-256** and rehashed against its actual UTF-8 bytes. The verifier checks
+the reference's declared component, version, config epoch, ID, and digest
+against that shipped source instead of accepting an arbitrary caller hash.
+
+**Strict scope:** only the included reviewed weekday schedule has a trusted
+source. An arbitrary caller-provided calendar source/digest remains unaudited.
+The independent static verifier is **not executable runtime admission**:
+`validate_organization_admission` continues to reject all operational
+references, including a correctly pinned calendar, until #496 installs and
+certifies evaluation/authority/fencing. Neither calendar shape nor source hash
+creates actor eligibility, physical occupation, policy or cost semantics.
+The broader #495 calendar catalog/ratification decision remains subject to
+independent review; do not infer accepted ADR-0008 from this example alone.
+
 ## Operational configuration: structural facts are not installed capabilities (#530)
 
 `OperationalConfigReference` is a frozen **claim of referenced configuration**,
