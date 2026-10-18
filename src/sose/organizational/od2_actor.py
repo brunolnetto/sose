@@ -317,32 +317,58 @@ def seed_actor(
     return identity
 
 
+def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> DomainEvent | None:
+    """Reconstruct the actor's one-open-work invariant from durable events.
+
+    Checking only the last assignment is unsafe: a corrupted mutable actor
+    projection can authorize a second assignment without closing the first.
+    Validate every actor-local open/close transition in append order before
+    any new assignment or cancellation. Legacy assignments without a durable
+    work ID are deliberately un-certifiable for this strict path.
+    """
+    opened = None
+    for event in uow.events():
+        if (
+            event.entity_type != ACTOR_KIND or event.entity_id != actor_id
+            or event.owner_id != owner_id
+        ):
+            continue
+        action = event.payload.get("trigger")
+        if action == "assign":
+            work = event.payload.get("assigned_work_id")
+            if not isinstance(work, str) or not work.strip():
+                raise ValueError("attested original assignment work identity missing")
+            if opened is not None:
+                raise ValueError("attested assignments overlap without durable closure")
+            opened = event
+        elif action in {"complete", "cancel_assigned"}:
+            if opened is None:
+                raise ValueError("attested work completion/cancellation lacks open assignment")
+            expected_id = opened.payload["assigned_work_id"]
+            if action == "cancel_assigned" and (
+                event.payload.get("cancelled_work_id") != expected_id
+                or event.payload.get("source_assignment_event_id") != opened.event_id
+            ):
+                raise ValueError("attested work cancellation does not close original assignment")
+            # Historical completed events may lack their work ID field.
+            # They still close exactly one prior immutable assignment.
+            if action == "complete" and event.payload.get("completed_work_id", expected_id) != expected_id:
+                raise ValueError("attested work completion identity mismatch")
+            opened = None
+    return opened
+
+
 def _attested_active_assignment(uow, *, actor_id: str, owner_id: str,
                                 work_id: str) -> DomainEvent:
-    """Require that the current actor-local work has an immutable source event.
-
-    The mutable assigned_work_id is a projection, never proof of assignment.
-    Durable event append order is the source-local transition order for this
-    owner-fenced actor. Older assignments without attested work IDs cannot
-    be safely cancelled using this new policy.
-    """
-    transitions = [
-        event for event in uow.events()
-        if event.entity_type == ACTOR_KIND
-        and event.entity_id == actor_id
-        and event.owner_id == owner_id
-        and event.payload.get("trigger") in {
-            "assign", "complete", "cancel_assigned",
-        }
-    ]
-    if not transitions or transitions[-1].payload.get("trigger") != "assign":
+    source = _attested_current_assignment(
+        uow, actor_id=actor_id, owner_id=owner_id,
+    )
+    if source is None:
         raise ValueError("attested original assignment is absent or already completed")
-    source = transitions[-1]
-    if (
-        source.payload.get("assigned_work_id") != work_id
-        or not isinstance(source.causation_id, str)
-    ):
+    if source.payload["assigned_work_id"] != work_id:
         raise ValueError("attested original assignment work identity does not match")
+    if not isinstance(source.causation_id, str):
+        raise ValueError("attested original assignment lacks causal Command")
     return source
 
 
@@ -488,6 +514,12 @@ def transition_actor(
             if action == "assign":
                 _require_actor_calendar_start(uow, actor, now, require_window=True)
                 _identity(work_id, "work_id")
+                # Reject a second assignment if append-only history still
+                # contains one unclosed, regardless of mutable actor state.
+                if _attested_current_assignment(
+                    uow, actor_id=actor_id, owner_id=owner_id,
+                ) is not None:
+                    raise ValueError("attested assignment remains active")
                 if meta["assigned_work_id"] is not None:
                     raise ValueError("actor already assigned")
             elif action == "complete":
@@ -555,6 +587,8 @@ def transition_actor(
                     extra = {}
                     if action == "assign":
                         extra = {"assigned_work_id": work_id}
+                    elif action == "complete":
+                        extra = {"completed_work_id": work_id}
                     elif action == "cancel_assigned":
                         extra = {
                             "cancelled_work_id": work_id,
