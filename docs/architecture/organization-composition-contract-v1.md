@@ -25,7 +25,8 @@ SimPy, admit scientific runs or materialize a writable organization-level state.
 - `BoundaryBinding(producer_id, consumer_id, contract_name, contract_version)`
 - `ScheduledJob(job_id, component_id, trigger_namespace)`
 - `PhysicalPoolRef(pool_id, owner_id, consumer_ids)`
-- `OrganizationDefinition(organization_id, version, components, boundaries, jobs, physical_pools, config_epoch)`
+- `OperationalConfigReference(component_id, kind, reference_id, reference_version, source_sha256, config_epoch)` — immutable structural declaration of `policy`, `calendar` or `cost_model` only; not executable authority
+- `OrganizationDefinition(organization_id, version, components, boundaries, jobs, physical_pools, config_epoch, operational_configs)` — `operational_configs=()` by default, preserving v1 fingerprint bytes when absent
 
 Definitions validate nonempty canonical identities, version and epoch ranges,
 duplicate component IDs and duplicate `(domain, owner_id)` pairs (not owner IDs globally), duplicate job/trigger, dangling boundary or pool references,
