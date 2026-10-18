@@ -386,3 +386,32 @@ def test_pg_shared_physical_outage_waits_without_retroactive_allocation():
         assert not any(e.owner_id == org for e in restarted.events())
         assert {r.owner_id for r in restarted.temporal_resources().reservations()} == {peer}
         assert restarted.temporal_resources().audit()
+
+
+def test_pg_corrupted_wait_payload_cannot_be_replayed_as_immutable_authority():
+    """A forged extra durable attribute is not a valid wait/runner history."""
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:tamper", _binding("unit-1")
+    trigger = deterministic_id("od5a-recurring-tick", org, 1)
+    wait_id = deterministic_id("od5a-shared-capacity-wait", org, trigger)
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        store.temporal_resources().fail(TemporalOutage(
+            outage_id="outage:tamper", address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        ))
+        assert _tick(store, org, binding).action == "waiting"
+        state_before = _source(store, org)
+        with store.transaction() as uow:
+            wait = uow.get_entity("od5a_shared_capacity_wait", wait_id)
+            assert wait is not None
+            wait.attributes["untrusted_extra_claim"] = "not-an-authority"
+            uow.save_entity(wait)
+        with pytest.raises(ResourceConflictError, match="wait record contradicts"):
+            _tick(store, org, binding)
+        assert _source(store, org) == state_before
+        assert store.job_state(org).active_trigger_id == trigger
+        assert store.temporal_resources().reservations() == ()
+        assert not any(e.owner_id == org for e in store.events())
+        assert store.temporal_resources().audit()
