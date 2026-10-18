@@ -97,6 +97,7 @@ class SharedPhysicalGrantAuthority:
 
     def __init__(
         self, store: Persistence, binding: SharedPhysicalPoolBinding, owner_id: str,
+        *, bootstrap_ledger: bool = True,
     ) -> None:
         from sose.persistence.postgres import PostgresPersistence
 
@@ -104,7 +105,7 @@ class SharedPhysicalGrantAuthority:
             raise TypeError("shared physical authority requires real PostgreSQL")
         self.binding = binding
         self.owner_id = owner_id
-        self.ledger = store.temporal_resources()
+        self.ledger = store.temporal_resources(bootstrap=bootstrap_ledger)
 
     def guarded_pool(self):
         return self.ledger.guard_pool(self.binding.pool)
@@ -941,24 +942,55 @@ class SharedPhysicalWaitSlotAdvice:
     suggested_start: datetime | None
 
 
+def _source_wait_digest(source_state: dict) -> str:
+    """Canonical typed snapshot binding a durable wait to its source truth."""
+    return sha256(dumps(
+        source_state, sort_keys=True, separators=(",", ":"), allow_nan=False,
+    ).encode("utf-8")).hexdigest()
+
+
 def _validate_shared_wait_record(
     wait: Entity, *, expected: dict | None, epoch: int,
+    require_source_digest: bool = False,
 ) -> None:
-    """Use exact typed payload equality; bool must not alias a numeric clock."""
+    """Fail-closed v2 source binding with explicit legacy retry compatibility.
+
+    Pre-v2 waits did not persist the full source digest. Their legacy retry
+    contract remains valid, but they cannot authorize a v2 advice response:
+    no old source hash can be reconstructed independently after the fact.
+    """
     attributes = wait.attributes
     origin = attributes.get("origin_epoch")
     observed = attributes.get("last_claim_epoch")
+    version = attributes.get("wait_schema_version")
     if (
         wait.state != "waiting"
         or expected is None
         or type(origin) is not int or type(observed) is not int
         or not 1 <= origin <= observed <= epoch
-        or dumps(attributes, sort_keys=True, separators=(",", ":"), allow_nan=False)
-        != dumps({
-            **expected,
-            "origin_epoch": origin,
-            "last_claim_epoch": observed,
-        }, sort_keys=True, separators=(",", ":"), allow_nan=False)
+    ):
+        raise ResourceConflictError(
+            "shared wait record contradicts native source request or runner epoch"
+        )
+    if version is None:
+        if require_source_digest:
+            raise ResourceConflictError(
+                "legacy shared wait lacks authenticated source digest for advice"
+            )
+        expected = {
+            key: value for key, value in expected.items()
+            if key not in {"wait_schema_version", "source_digest"}
+        }
+    elif (
+        type(version) is not int or version != 2
+        or not isinstance(attributes.get("source_digest"), str)
+        or len(attributes["source_digest"]) != 64
+    ):
+        raise ResourceConflictError("shared wait record contradicts v2 source digest")
+    if dumps(attributes, sort_keys=True, separators=(",", ":"), allow_nan=False) != dumps(
+        {
+            **expected, "origin_epoch": origin, "last_claim_epoch": observed,
+        }, sort_keys=True, separators=(",", ":"), allow_nan=False,
     ):
         raise ResourceConflictError(
             "shared wait record contradicts native source request or runner epoch"
@@ -982,11 +1014,19 @@ def suggest_od5a_shared_wait_slots(
     """
     # Initialize DDL outside the job transaction; ledger construction has
     # its own namespace-scoped bootstrap guard, unlike the advisory query.
-    authority = SharedPhysicalGrantAuthority(store, shared_pool_binding, job_id)
+    authority = SharedPhysicalGrantAuthority(
+        store, shared_pool_binding, job_id, bootstrap_ledger=False,
+    )
     ledger = authority.ledger
     with _job_transaction(store, job_id) as uow:
         source, job = _read_job(uow, job_id)
         _assert_shared_binding(source, shared_pool_binding)
+        try:
+            _assert_active_claimed_lease(uow, job)
+        except ValueError as exc:
+            raise ResourceConflictError(
+                "shared wait lacks valid claimed runner lease history"
+            ) from exc
         trigger_id = job.active_trigger_id
         lease = uow.get_entity(_LEASE_KIND, job_id)
         if (
@@ -1041,8 +1081,11 @@ def suggest_od5a_shared_wait_slots(
                 "source_action": next_action,
                 "due_at": _time(due).isoformat(),
                 "requests": requests,
+                "wait_schema_version": 2,
+                "source_digest": _source_wait_digest(source.attributes),
             },
             epoch=lease.attributes["epoch"],
+            require_source_digest=True,
         )
         if not matched:
             raise ResourceConflictError("durable shared wait has no physical requests")
@@ -1185,6 +1228,8 @@ def execute_od5a_claimed_tick(
             "source_action": next_action,
             "due_at": _time(due).isoformat(),
             "requests": wait_requests,
+            "wait_schema_version": 2,
+            "source_digest": _source_wait_digest(preflight_state),
         }
         if authority is not None else None
     )
