@@ -1048,9 +1048,13 @@ def execute_od5a_claimed_tick(
         if (
             wait.state != "waiting"
             or wait_attributes is None
-            or any(attributes.get(key) != value for key, value in wait_attributes.items())
             or type(origin) is not int or type(observed) is not int
             or not 1 <= origin <= observed <= epoch
+            or attributes != {
+                **wait_attributes,
+                "origin_epoch": origin,
+                "last_claim_epoch": observed,
+            }
         ):
             raise ResourceConflictError(
                 "shared wait record contradicts native source request or runner epoch"
