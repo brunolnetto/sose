@@ -1,6 +1,6 @@
 # Organization Composition — initial configuration contract (issue #495)
 
-Status: **immutable structural contract (#499) and fail-closed static runtime admission (#510) in `main`; [composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) Proposed** (2026-10-16).
+Status: **v1 structural contract (#499) and fail-closed static admission (#510) accepted for their explicitly limited scope by [ADR-0008](decisions/adr-0008-organization-composition-admission.md)** (2026-10-18). The operational composition runtime remains unimplemented (#496).
 Follow-up: #496 executable runtime, #497 O2C/MRO domain falsifier, #468/#489 concurrency, #477 physical adapter.
 Master plan: #494; proposed documentation: #498.
 
@@ -19,7 +19,7 @@ SimPy, admit scientific runs or materialize a writable organization-level state.
 
 ## Structural contract implemented in this slice
 
-`sose.composition.organization` exports the following **provisional** types:
+`sose.composition.organization` exports the following **accepted v1 static contract** types (not an executable runtime):
 
 - `ProcessComponent(component_id, domain, owner_id, statechart_types, process_version)`
 - `BoundaryBinding(producer_id, consumer_id, contract_name, contract_version)`
@@ -111,7 +111,7 @@ The CI and historical three-domain replay on
 [#510](https://github.com/brunolnetto/sose/pull/510) passed before merge
 [`11af3b9`](https://github.com/brunolnetto/sose/commit/11af3b96c952b0c8cf4afa5d85ec646c8b90d6e9).
 
-## ADR (proposed — full #495 ratification still outstanding)
+## ADR — accepted static v1 boundary, with runtime explicitly separate
 
 **Decision:** put these immutable composition-definition types **above the
 generic SOSE kernel** in the existing composition package. Preserve the
@@ -134,7 +134,7 @@ Those require separate, fail-closed execution and persistence contracts.
 existing #477 and prospective freeze gates; O2C/MRO #497 and actor or
 management lifecycle features do not retroactively gate it.
 
-## #495 acceptance reconciliation (not yet ratified)
+## #495 acceptance reconciliation (ratified static scope only)
 
 | Original criterion | Demonstrated in `main` | Still unproven / necessary decision |
 | --- | --- | --- |
@@ -145,13 +145,9 @@ management lifecycle features do not retroactively gate it.
 | Physical resources | Named external pool references with explicit owner IDs and known consumer IDs; duplicate pool IDs rejected (#499) | Pool existence, calendar/instance/capacity and transactional ownership checked against one authoritative ledger |
 | Causal execution | Exact registry admission but **no runnable composition** (#510) | Publication → claim → fenced ACK → Command → certified effect across components with restart and local clocks (#496) |
 | Read model / governance | Architectural separation described by [composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) | Derived consistent snapshots, optional authority-changing governance StateChart and failure-path conformance (#496) |
-| Architecture ratification | [Composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) Proposed; schema + negative admission tests. A different proposed [owner-qualified runtime ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md) has a distinct identifier and is **not** this decision | Independent review of the full PRD/TRD, policy/epoch semantics, versioned API and explicit scope decision |
+| Architecture ratification | [Composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) **Accepted as static v1**, backed by #499/#510/#512/#530 schema and negative admission tests; distinct [owner-qualified runtime ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md) is **not** accepted or amended by this decision | Executable policy/epoch/cost semantics and versioned job lifecycle must be separately certified in #496 |
 
-**Stop rule:** do not interpret #510's static validator, hypothetical manifest,
-or historical replay as a complete production composition, a ratified ADR or
-the five-arm OD-5a scientific seal. Close #495 only after the missing
-contract-level acceptance is either implemented and tested or explicitly
-resolved by an independently reviewed ADR scope decision.
+**Closure decision (#495):** ADR-0008 ratifies the **definition and static admission** boundary only. Its proof is construction and admission against real immutable registration/manifest metadata; all unsupported claims must fail closed. This is sufficient for the #495 PRD/TRD/ADR deliverable, **not** for any runnable organization. Executable reference registry, exact component/owner dispatch, `config_epoch` transition/fencing, true runtime configuration cost/calendar/policy, jobs, projections and recovery transfer explicitly to #496; shared physical capacity/rebooking to #477; O2C/MRO equivalence to #497. Keeping #495 open for those runtime features would duplicate #496, but closing it may **not** erase those features. OD-5a remains independent and `NOT_ADMITTED`.
 
 
 ## Operational configuration: structural facts are not installed capabilities (#530)
@@ -174,6 +170,6 @@ bounded work in #496; not silently retrofitted into #495.
 
 The separate owner-qualified durable runtime decision is
 [ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md);
-admission of structural composition remains the *proposed*
+admission of structural composition is the **accepted, bounded v1**
 [ADR-0008](decisions/adr-0008-organization-composition-admission.md).
-Do not treat unique numbering as architectural ratification.
+This decision does not imply ratification of ADR-0009 or execution of any operational configuration reference.
