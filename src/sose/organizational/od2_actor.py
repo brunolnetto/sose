@@ -328,11 +328,15 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
     """
     opened = None
     for event in uow.events():
-        if (
-            event.entity_type != ACTOR_KIND or event.entity_id != actor_id
-            or event.owner_id != owner_id
-        ):
+        if event.entity_type != ACTOR_KIND or event.entity_id != actor_id:
             continue
+        # The actor ID is immutable; mutable actor.owner_id is not a selector
+        # for truth. Filtering by a forged owner would erase the old open
+        # assignment and allow a second, cross-owner actor allocation.
+        if event.owner_id != owner_id:
+            raise PermissionError(
+                "attested actor owner contradicts immutable event history"
+            )
         action = event.payload.get("trigger")
         if action == "assign":
             work = event.payload.get("assigned_work_id")
@@ -501,6 +505,11 @@ def transition_actor(
             _require_actor_calendar_start(
                 uow, actor, now, require_window=False,
             )
+            # Check owner and open-work against *all* immutable actor events,
+            # before any idempotent return, not only for a new assignment.
+            active_source = _attested_current_assignment(
+                uow, actor_id=actor_id, owner_id=owner_id,
+            )
             used = meta["applied_causes"].get(cause_id)
             if used is not None:
                 if used != list(identity):
@@ -521,9 +530,7 @@ def transition_actor(
                 _identity(work_id, "work_id")
                 # Reject a second assignment if append-only history still
                 # contains one unclosed, regardless of mutable actor state.
-                if _attested_current_assignment(
-                    uow, actor_id=actor_id, owner_id=owner_id,
-                ) is not None:
+                if active_source is not None:
                     raise ValueError("actor already assigned: attested assignment remains active")
                 if meta["assigned_work_id"] is not None:
                     raise ValueError("actor already assigned")
