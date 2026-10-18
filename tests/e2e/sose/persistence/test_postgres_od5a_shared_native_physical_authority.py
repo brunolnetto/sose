@@ -736,3 +736,77 @@ def test_pg_wait_with_v1_schema_never_acquires_physical_capacity():
         assert _source(store, org) == before
         assert store.temporal_resources().reservations() == ()
         assert store.temporal_resources().audit()
+
+
+def test_pg_missing_wait_entity_cannot_launder_a_blocked_claim_into_a_grant():
+    """Durable runner marker survives independent deletion of the wait record."""
+    assert DSN
+    from psycopg import sql
+    ns = _namespace()
+    org, binding = "org:lost-wait", _binding("unit-1")
+    trigger = deterministic_id("od5a-recurring-tick", org, 1)
+    wait_id = deterministic_id("od5a-shared-capacity-wait", org, trigger)
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        ledger = store.temporal_resources()
+        ledger.fail(TemporalOutage(
+            outage_id="lost-wait:outage",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        ))
+        assert _tick(store, org, binding).action == "waiting"
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", org)
+            assert lease.attributes["physical_wait_id"] == wait_id
+
+        # Fault inject direct deletion of exactly this durable wait, with
+        # the independent claimed-lease marker intentionally left intact.
+        with store._connection.transaction():
+            deleted = store._connection.execute(sql.SQL("""
+                DELETE FROM {} WHERE collection = 'entities'
+                AND record_key LIKE %s
+            """).format(store._record_table), (f"%{wait_id}%",))
+            assert deleted.rowcount == 1
+        ledger.recover("lost-wait:outage", at=_ORIGIN)
+
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        assert reopened.entity("od5a_shared_capacity_wait", wait_id) is None
+        assert reopened.entity("od5a_runner_lease", org).attributes["physical_wait_id"] == wait_id
+        source_before = _source(reopened, org)
+        with pytest.raises(ResourceConflictError, match="pending physical wait|missing shared wait"):
+            _tick(reopened, org, binding)
+        assert _source(reopened, org) == source_before
+        assert reopened.temporal_resources().reservations() == ()
+        assert reopened.job_state(org).active_trigger_id == trigger
+        assert reopened.temporal_resources().audit()
+
+
+def test_pg_missing_wait_marker_cannot_be_ignored_by_advice_or_execution():
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:lost-marker", _binding("unit-1")
+    trigger = deterministic_id("od5a-recurring-tick", org, 1)
+    wait_id = deterministic_id("od5a-shared-capacity-wait", org, trigger)
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        ledger = store.temporal_resources()
+        ledger.fail(TemporalOutage(
+            outage_id="lost-marker:outage",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        ))
+        assert _tick(store, org, binding).action == "waiting"
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", org)
+            assert lease.attributes.pop("physical_wait_id") == wait_id
+            uow.save_entity(lease)
+        ledger.recover("lost-marker:outage", at=_ORIGIN)
+        with pytest.raises(ResourceConflictError, match="pending physical wait|missing shared wait"):
+            suggest_od5a_shared_wait_slots(
+                store, job_id=org, shared_pool_binding=binding,
+                not_before=_ORIGIN, latest_start=_ORIGIN + timedelta(seconds=1),
+            )
+        with pytest.raises(ResourceConflictError, match="pending physical wait|missing shared wait"):
+            _tick(store, org, binding)
+        assert ledger.reservations() == ()
+        assert ledger.audit()
