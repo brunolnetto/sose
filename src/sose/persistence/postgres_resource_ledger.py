@@ -220,6 +220,11 @@ class PostgresTemporalResourceLedger:
         # A pool outage forbids all allocation; a named instance outage only
         # forbids that instance. Unavailability is evaluated over the interval.
         for outage in outages:
+            # A recovery at outage.start_at is a legitimate zero-length
+            # physical outage. Half-open intervals cannot overlap an empty
+            # interval, even when the requested service spans that instant.
+            if outage.effective_end <= outage.start_at:
+                continue
             if (outage.address.instance_id is None or
                 outage.address.instance_id == requested.address.instance_id):
                 if cls._overlap(requested.start_at, requested.end_at,
@@ -285,6 +290,7 @@ class PostgresTemporalResourceLedger:
             FROM {} WHERE pool_key = %s
               AND start_at < %s
               AND COALESCE(recovered_at, end_at) > %s
+              AND COALESCE(recovered_at, end_at) > start_at
             ORDER BY outage_id
         """).format(self._outages), (key, end, start)).fetchall()
         return tuple(self._outage(row, pool=pool) for row in rows)
