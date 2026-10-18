@@ -128,9 +128,13 @@ class ActorAvailabilityCalendar:
         ).encode("utf-8")).hexdigest()
 
 
-def _calendar_origin_event_id(owner_id: str, actor_id: str) -> str:
-    """Stable append-only provenance key outside mutable actor attributes."""
-    return deterministic_id("od2-actor-calendar-admitted", owner_id, actor_id)
+def _calendar_origin_event_id(actor_id: str) -> str:
+    """Durable provenance key based only on immutable original actor identity.
+
+    The owner is bound in the immutable event payload and actor identity, not
+    used to *find* the marker: actor.attributes.owner_id is mutable projection.
+    """
+    return deterministic_id("od2-actor-calendar-admitted", actor_id)
 
 
 def _require_actor_calendar_start(
@@ -145,7 +149,7 @@ def _require_actor_calendar_start(
     """
     attributes = actor.attributes
     saved = attributes.get("availability_calendar")
-    origin = uow.get_event(_calendar_origin_event_id(attributes["owner_id"], actor.id))
+    origin = uow.get_event(_calendar_origin_event_id(actor.id))
     if origin is None and saved is None:
         # Actors enrolled before opt-in calendar support stay calendar-free.
         return
@@ -295,7 +299,7 @@ def seed_actor(
                 # of truth. The entity's source_digest is only a projection;
                 # changing or deleting it cannot silently remove eligibility.
                 uow.append_event(DomainEvent(
-                    event_id=_calendar_origin_event_id(owner_id, identity),
+                    event_id=_calendar_origin_event_id(identity),
                     name="od2.actor_calendar_admitted",
                     entity_type=ACTOR_KIND, entity_id=identity,
                     occurred_at=now, owner_id=owner_id,
