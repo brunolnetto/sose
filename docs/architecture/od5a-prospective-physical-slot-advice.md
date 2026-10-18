@@ -101,6 +101,38 @@ share capacity, and never permit execution. All eventual rescheduling must be
 versioned, preserve immutable exogenous demand and original causal identity,
 charge wait/intervention costs, and obtain fresh grants in one fenced commit.
 
+## Versioned common-start proposal (next #477 increment)
+
+`suggest_od5a_aligned_wait_start(...)` returns an immutable
+`SharedPhysicalAlignedWaitAdvice` (advice_version=1) with the exact durable
+wait ID, active trigger, claim epoch, canonical source digest, physical binding
+fingerprint, original causally attributed physical requests, bounded search
+interval, and one proposed **common** start (or None). The upstream read
+reuses all source/lease/wait cross-reference checks from #532.
+
+Taking `max()` of independently suggested starts is not correct: a unit
+available at time A can be newly occupied at a different unit's first
+available time B. `_aligned_physical_start` monotonically advances only
+to real interval-end candidates and requires **every named instance** to
+be free for its complete service duration at the **same** candidate.
+Duplicate physical instance or request IDs are rejected. A pathological
+non-converging/churning horizon is refused, never silently certified;
+fungible joint requests require a separate joint-capacity contract.
+
+This is still **read-only advice**, NOT versioned scheduling authority or an
+atomic joint grant. The proposal is not stored or accepted by the source
+runner. PostgreSQL occupancy can change between the ledger queries and
+immediately afterward. The eventual authoritative reschedule must match
+the exact wait/lease/source fingerprint and epoch in a new transaction,
+preserve true arrival/demand/causal parents, pay waiting/intervention costs
+and atomically reserve ALL physical intervals. A stale proposal cannot
+authorize a retry or bypass a new pool-locked reserve.
+
+Real PostgreSQL tests exercise candidate convergence across staggered
+instances, half-open occupancy, original provenance, read-only snapshots,
+reopen determinism, lack of horizon and an actual competing owner booking
+the proposed interval before the caller's `reserve()`.
+
 ## Not yet implemented
 
 This PR deliberately does NOT rewrite the OD-5a synthetic arrival/service
