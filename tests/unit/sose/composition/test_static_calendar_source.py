@@ -1,12 +1,14 @@
 """#495 static UTC calendar contract falsifiers (never runtime permission)."""
 from dataclasses import replace
 import json
+from datetime import date
 
 import pytest
 
 from sose.composition.calendar import (
     BUNDLED_UTC_CALENDAR_SHA256,
     BUNDLED_UTC_CALENDAR_BYTES,
+    WEEKDAYS_MONDAY_ZERO,
     parse_static_calendar_source,
     verify_static_calendar_reference,
 )
@@ -117,3 +119,18 @@ def test_positive_static_calendar_does_not_grant_runtime_admission():
             manifests=builtin_process_manifests(),
             consumers=BoundaryConsumerRegistry(),
         )
+
+
+def test_calendar_weekday_numbers_are_nameless_only_in_bytes_not_semantics():
+    """Prevent ISO/JavaScript Sunday-zero reinterpretation after source freeze."""
+    assert WEEKDAYS_MONDAY_ZERO == (
+        "monday", "tuesday", "wednesday", "thursday",
+        "friday", "saturday", "sunday",
+    )
+    assert date(2026, 10, 19).weekday() == 0  # Monday
+    assert date(2026, 10, 23).weekday() == 4  # Friday
+    assert date(2026, 10, 25).weekday() == 6  # Sunday
+    source = parse_static_calendar_source(BUNDLED_UTC_CALENDAR_BYTES)
+    assert [WEEKDAYS_MONDAY_ZERO[window.weekday] for window in source.windows] == [
+        "monday", "tuesday", "wednesday", "thursday", "friday",
+    ]
