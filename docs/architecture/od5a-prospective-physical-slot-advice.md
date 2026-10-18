@@ -59,6 +59,37 @@ falsifiers prove that race, physical outage/recovery, half-open intervals,
 fungible capacity boundaries, no retroactive start and zero ledger writes
 during advice, including independent reconnect.
 
+## Read-only bridge from a durable shared wait (#532)
+
+`suggest_od5a_shared_wait_slots(store, job_id, shared_pool_binding,
+not_before, latest_start)` reads an existing `od5a_shared_capacity_wait`
+and returns typed per-instance hints, never a physical grant, source
+`ScheduledWork` mutation or a jointly admissible reschedule.
+
+The query uses an explicit non-bootstrapping physical ledger reader:
+`PostgresPersistence.temporal_resources(bootstrap=False)`. This requires an
+already initialized namespace but does **not** create tables or indexes, and
+does not take a namespace-wide DDL advisory lock for unrelated organizations.
+The read path still uses the source's own organizational lock to obtain a
+stable snapshot; it does not acquire a pool-wide booking lock.
+
+The durable wait now records `wait_schema_version=2` and a canonical
+SHA-256 digest of the full preflight source attributes, in addition to the
+previous exact action, trigger, pool-binding fingerprint, epochs and grant IDs.
+The read-side preview validates that digest and the complete claimed-lease
+lifecycle before reconstructing exact service intervals and performing
+individual `suggest_next_start` calls.
+
+**Compatibility:** pre-v2 waits are still valid for their original fenced
+retry/rollback contract; they cannot serve as evidence for new prospective
+advice because their original full source snapshot cannot be authenticated.
+No fabricated historical digest or automatic migration is permitted.
+
+Hints may become stale immediately, may not jointly fit if multiple grants
+share capacity, and never permit execution. All eventual rescheduling must be
+versioned, preserve immutable exogenous demand and original causal identity,
+charge wait/intervention costs, and obtain fresh grants in one fenced commit.
+
 ## Not yet implemented
 
 This PR deliberately does NOT rewrite the OD-5a synthetic arrival/service
