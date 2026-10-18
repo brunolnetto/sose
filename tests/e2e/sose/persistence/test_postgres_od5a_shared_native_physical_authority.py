@@ -569,3 +569,133 @@ def test_pg_wait_advice_rejects_corrupted_causal_wait_record():
         assert _source(store, org) == source
         assert store.temporal_resources().reservations() == ()
         assert store.temporal_resources().audit()
+
+@pytest.mark.parametrize("forgery", ("service", "causal_parent"))
+def test_pg_wait_advice_rejects_mutated_source_after_durable_wait(forgery):
+    """Wait authentication must bind service duration AND causal provenance."""
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:source-forged", _binding("unit-1")
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        store.temporal_resources().fail(TemporalOutage(
+            outage_id="source:down",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        ))
+        assert _tick(store, org, binding).action == "waiting"
+        with store.transaction() as uow:
+            source = uow.get_entity("od5a_durable_pilot", org)
+            assert source is not None
+            if forgery == "service":
+                item = next(iter(source.attributes["services"]))
+                stage = next(iter(source.attributes["services"][item]))
+                source.attributes["services"][item][stage] = 0.9
+            else:
+                # Initial arrival action's item determines the root stage's
+                # deterministic causal event; alter it without changing the
+                # original action identity persisted in the wait.
+                source.attributes["services"]["forged:item"] = {
+                    "a": 0.2, "b": 0.2, "c": 0.1,
+                }
+                # This changes the source's causal contract even though
+                # previewed local resource IDs can remain the same.
+            uow.save_entity(source)
+        with pytest.raises(ResourceConflictError, match="wait record contradicts"):
+            suggest_od5a_shared_wait_slots(
+                store, job_id=org, shared_pool_binding=binding,
+                not_before=_ORIGIN, latest_start=_ORIGIN + timedelta(seconds=2),
+            )
+        assert store.temporal_resources().reservations() == ()
+        assert store.temporal_resources().audit()
+
+
+@pytest.mark.parametrize("forgery", ("empty_owner", "bool_epoch", "wrong_trigger"))
+def test_pg_wait_advice_validates_full_durable_claim_history(forgery):
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:claim-forged", _binding("unit-1")
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        store.temporal_resources().fail(TemporalOutage(
+            outage_id="claim:down",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        ))
+        assert _tick(store, org, binding).action == "waiting"
+        with store.transaction() as uow:
+            lease = uow.get_entity("od5a_runner_lease", org)
+            assert lease is not None
+            if forgery == "empty_owner":
+                lease.attributes["owner_id"] = ""
+            elif forgery == "bool_epoch":
+                lease.attributes["epoch"] = False
+                lease.attributes["staged_sql_mutation"] = True
+            else:
+                lease.attributes["trigger_id"] = "forged-trigger"
+            uow.save_entity(lease)
+        with pytest.raises((ResourceConflictError, ValueError), match="lease|claim"):
+            suggest_od5a_shared_wait_slots(
+                store, job_id=org, shared_pool_binding=binding,
+                not_before=_ORIGIN, latest_start=_ORIGIN + timedelta(seconds=2),
+            )
+        assert store.temporal_resources().reservations() == ()
+
+
+def test_pg_wait_advice_does_not_bootstrap_namespace_or_mutate_ledger(monkeypatch):
+    assert DSN
+    from sose.persistence.postgres_resource_ledger import PostgresTemporalResourceLedger
+    ns = _namespace()
+    org, binding = "org:readonly", _binding("unit-1")
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        ledger = store.temporal_resources()
+        ledger.fail(TemporalOutage(
+            outage_id="readonly:down",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        ))
+        assert _tick(store, org, binding).action == "waiting"
+        snapshot = ledger.snapshot()
+
+        def reject_bootstrap(self):
+            raise AssertionError("read-only advice must not run bootstrap DDL")
+
+        monkeypatch.setattr(PostgresTemporalResourceLedger, "_bootstrap", reject_bootstrap)
+        advice = suggest_od5a_shared_wait_slots(
+            store, job_id=org, shared_pool_binding=binding,
+            not_before=_ORIGIN, latest_start=_ORIGIN + timedelta(seconds=2),
+        )
+        assert advice[0].suggested_start == _ORIGIN + timedelta(seconds=1)
+        assert ledger.snapshot() == snapshot
+        assert ledger.audit()
+
+
+def test_pg_wait_advice_refuses_legacy_unbound_source_without_rewriting_wait():
+    """Pre-v2 waits remain runnable but cannot authenticate a source hint."""
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:legacy-wait", _binding("unit-1")
+    trigger = deterministic_id("od5a-recurring-tick", org, 1)
+    wait_id = deterministic_id("od5a-shared-capacity-wait", org, trigger)
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        store.temporal_resources().fail(TemporalOutage(
+            outage_id="legacy:down",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        ))
+        assert _tick(store, org, binding).action == "waiting"
+        with store.transaction() as uow:
+            wait = uow.get_entity("od5a_shared_capacity_wait", wait_id)
+            assert wait is not None
+            assert wait.attributes.pop("source_digest")
+            assert wait.attributes.pop("wait_schema_version") == 2
+            uow.save_entity(wait)
+        with pytest.raises(ResourceConflictError, match="legacy|source digest"):
+            suggest_od5a_shared_wait_slots(
+                store, job_id=org, shared_pool_binding=binding,
+                not_before=_ORIGIN, latest_start=_ORIGIN + timedelta(seconds=2),
+            )
+        assert _tick(store, org, binding).action == "waiting"
+        assert store.temporal_resources().audit()
