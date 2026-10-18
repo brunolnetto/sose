@@ -299,7 +299,7 @@ def test_actor_calendar_requires_positive_ordered_intervals_and_epoch(case):
             seed_actor(store, owner_id=OWNER, actor_key="epoch",
                        model_spec_hash=MODEL, config_epoch=1, at=T0,
                        availability_calendar=calendar)
-        assert store.entities(ACTOR_KIND) == ()
+        assert tuple(store.events()) == ()
 
 
 def test_actor_calendar_tampering_refuses_new_causal_commands():
