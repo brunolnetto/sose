@@ -81,6 +81,17 @@ class PostgresTemporalResourceLedger:
                 sql.Identifier(f"{self._store.namespace}_resource_booking_interval_idx"),
                 self._reservations,
             ))
+            # The prospective-read WHERE clause filters by effective end,
+            # not only immutable end_at. A normal (start_at, end_at) index
+            # cannot restrict long historical prefixes stopped/recovered
+            # early. Short names avoid PG's 63-byte index identifier truncation.
+            self._db.execute(sql.SQL("""
+                CREATE INDEX IF NOT EXISTS {} ON {}
+                    (pool_key, (COALESCE(stopped_at, end_at)), start_at)
+            """).format(
+                sql.Identifier(f"{self._store.namespace}_rb_eff_idx"),
+                self._reservations,
+            ))
             self._db.execute(sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {} (
                     outage_id TEXT PRIMARY KEY,
@@ -94,6 +105,13 @@ class PostgresTemporalResourceLedger:
                            (recovered_at >= start_at AND recovered_at <= end_at))
                 )
             """).format(self._outages, self._pools))
+            self._db.execute(sql.SQL("""
+                CREATE INDEX IF NOT EXISTS {} ON {}
+                    (pool_key, (COALESCE(recovered_at, end_at)), start_at)
+            """).format(
+                sql.Identifier(f"{self._store.namespace}_ro_eff_idx"),
+                self._outages,
+            ))
             self._db.execute(sql.SQL("""
                 CREATE TABLE IF NOT EXISTS {} (
                     event_id TEXT PRIMARY KEY,
