@@ -17,6 +17,8 @@ from .organization import OrganizationDefinition, OperationalConfigReference
 
 @dataclass(frozen=True, slots=True)
 class CalendarWindow:
+    """weekday follows Python datetime.weekday(): MONDAY=0 ... SUNDAY=6."""
+
     weekday: int
     start: str
     end: str
@@ -42,6 +44,12 @@ def _unique_pairs(pairs: list[tuple[str, object]]) -> dict:
 
 
 _CLOCK = re.compile(r"(?:[01][0-9]|2[0-3]):[0-5][0-9]\Z")
+# Normative weekday convention: Monday=0, Tuesday=1, ... Sunday=6.
+# This is the Python datetime.weekday() convention, NOT JS getDay().
+WEEKDAYS_MONDAY_ZERO = (
+    "monday", "tuesday", "wednesday", "thursday",
+    "friday", "saturday", "sunday",
+)
 _EXPECTED_KEYS = {
     "schema_version", "reference_id", "reference_version",
     "config_epoch", "timezone", "windows",
@@ -78,7 +86,7 @@ def parse_static_calendar_source(source_bytes: bytes) -> StaticCalendarSource:
             raise ValueError("invalid calendar window fields")
         day, start, end = row["weekday"], row["start"], row["end"]
         if type(day) is not int or not 0 <= day <= 6:
-            raise ValueError("calendar weekday must be 0..6")
+            raise ValueError("calendar weekday must be Monday=0 through Sunday=6")
         if (
             not isinstance(start, str) or not isinstance(end, str)
             or _CLOCK.fullmatch(start) is None or _CLOCK.fullmatch(end) is None
