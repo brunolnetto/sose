@@ -58,7 +58,17 @@ def test_pg_nested_type_only_change_is_durable_after_independent_reopen(
             assert type(value) is type(changed)
         with independent.transaction() as uow:
             uow.save_entity(target)
-        # An idempotent save must not produce an unrelated change.
+        # Reordering a nested mapping without changing a typed value must
+        # not rewrite the record or bump the shared PostgreSQL revision.
+        before_revision = independent._database_revision()
+        reordered = independent.entity(*target_key)
+        assert reordered is not None
+        reordered.attributes["nested"]["action"] = {
+            "seq": changed, "at": changed,
+        }
+        with independent.transaction() as uow:
+            uow.save_entity(reordered)
+        assert independent._database_revision() == before_revision
     with PostgresPersistence(DSN, namespace=ns) as again:
         assert again.entity(*target_key) == target
         assert again.entity(*untouched_key) == unaffected
