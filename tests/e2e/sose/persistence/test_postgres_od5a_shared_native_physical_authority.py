@@ -388,7 +388,8 @@ def test_pg_shared_physical_outage_waits_without_retroactive_allocation():
         assert restarted.temporal_resources().audit()
 
 
-def test_pg_corrupted_wait_payload_cannot_be_replayed_as_immutable_authority():
+@pytest.mark.parametrize("corruption", ("extra", "bool_seq", "bool_at"))
+def test_pg_corrupted_wait_payload_cannot_be_replayed_as_immutable_authority(corruption):
     """A forged extra durable attribute is not a valid wait/runner history."""
     assert DSN
     ns = _namespace()
@@ -406,7 +407,14 @@ def test_pg_corrupted_wait_payload_cannot_be_replayed_as_immutable_authority():
         with store.transaction() as uow:
             wait = uow.get_entity("od5a_shared_capacity_wait", wait_id)
             assert wait is not None
-            wait.attributes["untrusted_extra_claim"] = "not-an-authority"
+            if corruption == "extra":
+                wait.attributes["untrusted_extra_claim"] = "not-an-authority"
+            elif corruption == "bool_seq":
+                assert wait.attributes["source_action"]["seq"] == 0
+                wait.attributes["source_action"]["seq"] = False
+            else:
+                assert wait.attributes["source_action"]["at"] == 0.0
+                wait.attributes["source_action"]["at"] = False
             uow.save_entity(wait)
         with pytest.raises(ResourceConflictError, match="wait record contradicts"):
             _tick(store, org, binding)
