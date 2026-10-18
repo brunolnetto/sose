@@ -134,3 +134,92 @@ def test_calendar_weekday_numbers_are_nameless_only_in_bytes_not_semantics():
     assert [WEEKDAYS_MONDAY_ZERO[window.weekday] for window in source.windows] == [
         "monday", "tuesday", "wednesday", "thursday", "friday",
     ]
+
+
+
+@pytest.mark.parametrize("payload,pattern", [
+    (None, "exact immutable"),
+    ("{}", "exact immutable"),
+    (b"\xff", "invalid calendar source"),
+    (b"{", "invalid calendar source"),
+    (b"[]", "fields"),
+    (b"null", "fields"),
+    (b"1", "fields"),
+    (b'{"schema_version":1}', "fields"),
+])
+def test_static_calendar_rejects_untrusted_source_bytes(payload, pattern):
+    with pytest.raises((ValueError, TypeError), match=pattern):
+        parse_static_calendar_source(payload)
+
+
+@pytest.mark.parametrize("key,value,pattern", [
+    ("schema_version", 2, "schema_version"),
+    ("reference_id", "", "reference_id"),
+    ("reference_id", None, "reference_id"),
+    ("reference_version", False, "reference_version"),
+    ("reference_version", 2, "reference_version"),
+    ("config_epoch", True, "config_epoch"),
+    ("windows", "not-a-list", "windows"),
+    ("windows", None, "windows"),
+    ("windows", [{"weekday": 0}], "fields"),
+    ("windows", [None], "fields"),
+    ("windows", [{"weekday": True, "start": "09:00", "end": "17:00"}], "weekday"),
+    ("windows", [{"weekday": -1, "start": "09:00", "end": "17:00"}], "weekday"),
+    ("windows", [{"weekday": 0, "start": 9, "end": "17:00"}], "time"),
+    ("windows", [{"weekday": 0, "start": "09:00", "end": 17}], "time"),
+    ("windows", [{"weekday": 0, "start": "24:00", "end": "23:00"}], "time"),
+    ("windows", [{"weekday": 0, "start": "09:00", "end": "24:00"}], "time"),
+    ("windows", [{"weekday": 0, "start": "12:00", "end": "12:00"}], "positive"),
+    ("windows", [
+        {"weekday": 1, "start": "10:00", "end": "12:00"},
+        {"weekday": 0, "start": "10:00", "end": "12:00"},
+    ], "ordered"),
+])
+def test_calendar_parser_closed_schema_negative_witnesses(key, value, pattern):
+    data = json.loads(BUNDLED_UTC_CALENDAR_BYTES)
+    data[key] = value
+    source = json.dumps(data, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    with pytest.raises(ValueError, match=pattern):
+        parse_static_calendar_source(source)
+
+
+def test_calendar_parser_rejects_semantically_identical_but_noncanonical_bytes():
+    data = json.loads(BUNDLED_UTC_CALENDAR_BYTES)
+    noncanonical = json.dumps(data, sort_keys=False, indent=2).encode("utf-8")
+    assert json.loads(noncanonical) == data
+    with pytest.raises(ValueError, match="canonical"):
+        parse_static_calendar_source(noncanonical)
+
+
+def test_calendar_attestation_fails_closed_for_wrong_types_and_shipped_byte_tamper(
+    monkeypatch,
+):
+    import sose.composition.calendar as trusted
+    definition = _definition()
+    ref = definition.operational_configs[0]
+    with pytest.raises(TypeError, match="OrganizationDefinition"):
+        verify_static_calendar_reference(object(), ref)
+    with pytest.raises(TypeError, match="OperationalConfigReference"):
+        verify_static_calendar_reference(definition, object())
+    other = replace(
+        definition,
+        operational_configs=(replace(ref, reference_id="another-reference"),),
+    )
+    with pytest.raises(ValueError, match="declared"):
+        verify_static_calendar_reference(other, ref)
+    broken = replace(
+        definition, components=(replace(
+            definition.components[0], component_id="different-component",
+        ),),
+        operational_configs=(replace(ref, component_id="different-component"),),
+    )
+    with pytest.raises(ValueError, match="component|declared"):
+        verify_static_calendar_reference(broken, ref)
+
+    # No checked-in reference can self-attest bytes after source drift.
+    monkeypatch.setattr(
+        trusted, "BUNDLED_UTC_CALENDAR_BYTES",
+        BUNDLED_UTC_CALENDAR_BYTES + b" ",
+    )
+    with pytest.raises(ValueError, match="provenance"):
+        verify_static_calendar_reference(definition, ref)
