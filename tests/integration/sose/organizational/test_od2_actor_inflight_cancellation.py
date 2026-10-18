@@ -5,6 +5,7 @@ release an authoritative PhysicalReservation. It covers the actor's own
 assigned_work_id projection with causal Command/Event and durable restart.
 """
 from datetime import datetime, timedelta, timezone
+from dataclasses import replace
 
 import pytest
 
@@ -61,6 +62,11 @@ def test_paid_cancellation_frees_actor_assignment_before_exit_with_restart(adapt
         assert store.command(event.causation_id).payload["external_cause_id"] == "actor:cancel_assigned:3"
         assert store.command(event.causation_id).payload["cancelled_work_id"] == "work:critical"
         assert store.command(event.causation_id).payload["charged_cost_us"] == 750000
+        assert event.payload["cancelled_work_id"] == "work:critical"
+        assert event.payload["charged_cost_us"] == 750000
+        assignment = next(e for e in before if e.payload.get("trigger") == "assign")
+        assert assignment.payload["assigned_work_id"] == "work:critical"
+        assert event.payload["source_assignment_event_id"] == assignment.event_id
         _transition(store, actor_id, "exit", 4)
         assert store.entity(ACTOR_KIND, actor_id).state == "exited"
         before = tuple(store.events())
@@ -124,3 +130,68 @@ def test_actor_cancel_rejects_foreign_owner_and_cause_reuse_without_mutation():
         _transition(store, actor_id, "cancel_assigned", 3, work_id="work:critical",
                     cost_us=1, cause_id="actor:cancel_assigned:3")
     assert tuple(store.events()) == committed
+
+
+
+def test_actor_cancellation_rejects_forged_projection_without_real_assignment():
+    """P1: a mutable actor work label must not invent authoritative work."""
+    store = MemoryPersistence()
+    actor_id = seed_actor(
+        store, owner_id=OWNER, actor_key="tampered-work",
+        model_spec_hash=MODEL, config_epoch=1, at=T0,
+    )
+    _transition(store, actor_id, "activate", 1)
+    _transition(store, actor_id, "assign", 2, work_id="work:A")
+    immutable = [e for e in store.events() if e.payload.get("trigger") == "assign"]
+    assert len(immutable) == 1
+    assert immutable[0].payload["assigned_work_id"] == "work:A"
+    with store.transaction(owner_id=OWNER) as uow:
+        actor = uow.get_entity(ACTOR_KIND, actor_id)
+        actor.attributes["assigned_work_id"] = "work:B"
+        uow.save_entity(actor)
+    before = tuple(store.events())
+    with pytest.raises(ValueError, match="attested|original assignment"):
+        _transition(store, actor_id, "cancel_assigned", 3,
+                    work_id="work:B", cost_us=1)
+    with pytest.raises(ValueError, match="matching assigned work"):
+        _transition(store, actor_id, "cancel_assigned", 3,
+                    work_id="work:A", cost_us=1)
+    assert tuple(store.events()) == before
+    assert store.entity(ACTOR_KIND, actor_id).state == "active"
+
+
+@pytest.mark.parametrize("tamper", ("delete_command", "rewrite_command"))
+def test_sqlite_replayed_cancellation_requires_immutable_cost_and_real_command(
+    tmp_path, tamper,
+):
+    """P1: append-only cost/work evidence survives; mutable Command is checked."""
+    path = tmp_path / ("cancel-tamper-" + tamper + ".sqlite")
+    with SQLitePersistence(path) as store:
+        actor_id = seed_actor(store, owner_id=OWNER, actor_key="tamper-" + tamper,
+                              model_spec_hash=MODEL, config_epoch=1, at=T0)
+        _transition(store, actor_id, "activate", 1)
+        _transition(store, actor_id, "assign", 2, work_id="work:A")
+        _transition(store, actor_id, "cancel_assigned", 3,
+                    work_id="work:A", cost_us=750000)
+        event = next(e for e in store.events()
+                     if e.payload.get("trigger") == "cancel_assigned")
+        immutable_event_id = event.event_id
+        command_id = event.causation_id
+        assert event.payload["charged_cost_us"] == 750000
+        assert event.payload["cancelled_work_id"] == "work:A"
+        with store.transaction(owner_id=OWNER) as uow:
+            if tamper == "delete_command":
+                uow.delete_command(command_id)
+            else:
+                old = uow.get_command(command_id)
+                uow.save_command(replace(old, payload={
+                    **old.payload, "charged_cost_us": 1,
+                }))
+    with SQLitePersistence(path) as recovered:
+        before = tuple(recovered.events())
+        assert any(e.event_id == immutable_event_id
+                   and e.payload["charged_cost_us"] == 750000 for e in before)
+        with pytest.raises(ValueError, match="cancellation.*evidence"):
+            _transition(recovered, actor_id, "cancel_assigned", 3,
+                        work_id="work:A", cost_us=750000)
+        assert tuple(recovered.events()) == before
