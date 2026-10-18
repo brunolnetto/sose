@@ -236,7 +236,10 @@ def test_actor_calendar_fences_assignment_at_exact_window_boundary(adapter, tmp_
             intervals=(ActorAvailabilityInterval(
                 starts_at=T0 + timedelta(hours=2),
                 ends_at=T0 + timedelta(hours=3),
-            ),),
+            ), ActorAvailabilityInterval(
+                starts_at=T0 + timedelta(hours=5),
+                ends_at=T0 + timedelta(hours=6),
+            )),
         )
         actor_id = seed_actor(
             store, owner_id=OWNER, actor_key="with-calendar",
@@ -268,6 +271,12 @@ def test_actor_calendar_fences_assignment_at_exact_window_boundary(adapter, tmp_
             old = reopened.events()
             _transition(reopened, actor_id, "complete", 4, work_id="work:calendar")
             assert reopened.events() == old
+            with pytest.raises(ValueError, match="calendar.*assignment"):
+                _transition(reopened, actor_id, "assign", 6, work_id="reopened:bad")
+            assert reopened.events() == old
+            _transition(reopened, actor_id, "assign", 5, work_id="reopened:valid")
+            _transition(reopened, actor_id, "complete", 7, work_id="reopened:valid")
+            assert reopened.entity(ACTOR_KIND, actor_id).state == "eligible"
 
 
 @pytest.mark.parametrize("case", ("overlap", "zero", "epoch", "unordered"))
@@ -324,4 +333,89 @@ def test_actor_calendar_tampering_refuses_new_causal_commands():
     before = tuple(store.events())
     with pytest.raises(ValueError, match="calendar.*digest"):
         _transition(store, actor_id, "assign", 2, work_id="tampered")
+    assert tuple(store.events()) == before
+
+
+
+@pytest.mark.parametrize("mutation", ("remove_calendar", "recompute_digest"))
+def test_actor_calendar_enrollment_source_is_independent_of_mutable_projection(mutation):
+    """P1: dropping or rehashing the actor blob never forges enrollment."""
+    store = MemoryPersistence()
+    calendar = ActorAvailabilityCalendar(1, 1, (ActorAvailabilityInterval(
+        T0 + timedelta(hours=2), T0 + timedelta(hours=3),
+    ),))
+    actor_id = seed_actor(
+        store, owner_id=OWNER, actor_key="independent-enrollment-" + mutation,
+        model_spec_hash=MODEL, config_epoch=1, at=T0,
+        availability_calendar=calendar,
+    )
+    assert store.event(
+        __import__("sose.core.identity", fromlist=["deterministic_id"]).deterministic_id(
+            "od2-actor-calendar-admitted", OWNER, actor_id,
+        )
+    ) is not None
+    _transition(store, actor_id, "activate", 1)
+    with store.transaction(owner_id=OWNER) as uow:
+        actor = uow.get_entity(ACTOR_KIND, actor_id)
+        if mutation == "remove_calendar":
+            del actor.attributes["availability_calendar"]
+        else:
+            actor.attributes["availability_calendar"]["intervals"][0]["end"] = (
+                T0 + timedelta(days=3)
+            ).isoformat()
+            actor.attributes["availability_calendar"]["source_digest"] = (
+                ActorAvailabilityCalendar(
+                    1, 1, (ActorAvailabilityInterval(
+                        T0 + timedelta(hours=2), T0 + timedelta(days=3),
+                    ),),
+                ).digest()
+            )
+        uow.save_entity(actor)
+    before = tuple(store.events())
+    with pytest.raises(ValueError, match="actor calendar"):
+        _transition(store, actor_id, "assign", 5, work_id="ghost-work")
+    assert tuple(store.events()) == before
+
+
+@pytest.mark.parametrize("epoch", (True, 1.0))
+def test_actor_calendar_rejects_noninteger_corrupted_durable_epoch(epoch):
+    store = MemoryPersistence()
+    calendar = ActorAvailabilityCalendar(1, 1, (ActorAvailabilityInterval(
+        T0 + timedelta(hours=2), T0 + timedelta(hours=3),
+    ),))
+    actor_id = seed_actor(
+        store, owner_id=OWNER, actor_key="epoch-corrupt:" + repr(epoch),
+        model_spec_hash=MODEL, config_epoch=1, at=T0,
+        availability_calendar=calendar,
+    )
+    _transition(store, actor_id, "activate", 1)
+    with store.transaction(owner_id=OWNER) as uow:
+        actor = uow.get_entity(ACTOR_KIND, actor_id)
+        actor.attributes["config_epoch"] = epoch
+        uow.save_entity(actor)
+    before = tuple(store.events())
+    with pytest.raises(ValueError, match="config_epoch"):
+        _transition(store, actor_id, "assign", 2, work_id="should-not-exist")
+    assert tuple(store.events()) == before
+
+
+def test_actor_same_cause_replay_validates_enrolled_source_first():
+    store = MemoryPersistence()
+    calendar = ActorAvailabilityCalendar(1, 1, (ActorAvailabilityInterval(
+        T0 + timedelta(hours=2), T0 + timedelta(hours=3),
+    ),))
+    actor_id = seed_actor(
+        store, owner_id=OWNER, actor_key="replay-tamper",
+        model_spec_hash=MODEL, config_epoch=1, at=T0,
+        availability_calendar=calendar,
+    )
+    _transition(store, actor_id, "activate", 1)
+    _transition(store, actor_id, "assign", 2, work_id="original")
+    before = tuple(store.events())
+    with store.transaction(owner_id=OWNER) as uow:
+        actor = uow.get_entity(ACTOR_KIND, actor_id)
+        actor.attributes["availability_calendar"]["source_digest"] = "f" * 64
+        uow.save_entity(actor)
+    with pytest.raises(ValueError, match="actor calendar"):
+        _transition(store, actor_id, "assign", 2, work_id="original")
     assert tuple(store.events()) == before
