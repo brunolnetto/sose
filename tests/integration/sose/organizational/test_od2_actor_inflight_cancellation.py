@@ -289,3 +289,55 @@ def test_attested_history_rejects_ever_overlapping_assignments_even_if_last_is_v
     assert tuple(store.events()) == before
 
 
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_corrupted_owner_cannot_filter_out_previous_attested_assignment(
+    adapter, tmp_path,
+):
+    """P1: owner drift may not hide outstanding work in another owner ledger."""
+    path = tmp_path / "owner-drift.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="owner-drift",
+            model_spec_hash=MODEL, config_epoch=1, at=T0,
+        )
+        _transition(store, actor_id, "activate", 1)
+        _transition(store, actor_id, "assign", 2, work_id="work:A")
+        original = tuple(store.events())
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.attributes["owner_id"] = "org:forged"
+            actor.state = "eligible"
+            actor.attributes["assigned_work_id"] = None
+            uow.save_entity(actor)
+        with pytest.raises((PermissionError, ValueError), match="attested.*owner|owner.*history"):
+            _transition(
+                store, actor_id, "assign", 3,
+                owner_id="org:forged", work_id="work:B",
+            )
+        assert tuple(store.events()) == original
+        with store.transaction(owner_id="org:forged") as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.state = "active"
+            actor.attributes["assigned_work_id"] = "work:B"
+            uow.save_entity(actor)
+        with pytest.raises((PermissionError, ValueError), match="attested.*owner|owner.*history"):
+            _transition(
+                store, actor_id, "cancel_assigned", 4,
+                owner_id="org:forged", work_id="work:B", cost_us=1,
+            )
+        assert tuple(store.events()) == original
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            with pytest.raises((PermissionError, ValueError), match="attested.*owner|owner.*history"):
+                _transition(
+                    reopened, actor_id, "cancel_assigned", 4,
+                    owner_id="org:forged", work_id="work:B", cost_us=1,
+                )
+            assert tuple(reopened.events()) == original
