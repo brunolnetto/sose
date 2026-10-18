@@ -711,3 +711,109 @@ def test_pg_instant_outage_recovery_is_zero_length_in_advice_and_real_reserve():
         assert ledger.get("spans-instant-recovery") == pending
         assert ledger.outages()[0].effective_end == T0 + H
         assert ledger.audit()
+
+
+def test_pg_prospective_gist_window_prunes_distant_future_heavy_history():
+    """#477 P2: prove actual bounded GiST scans, not just named indexes.
+
+    Synthetic distant-future rows are injected ONLY within a deliberately
+    rolled-back SQL transaction to probe planner complexity. They are never
+    published as authoritative grants without causal events.
+    """
+    assert DSN
+    ns = _namespace("advice_gist_future")
+    pool = _pool(named=True)
+
+    class RollbackPerformanceFixture(Exception):
+        pass
+
+    def walk(plan):
+        yield plan
+        for child in plan.get("Plans", ()):
+            yield from walk(child)
+
+    with PostgresPersistence(DSN, namespace=ns) as db:
+        ledger = db.temporal_resources()
+        ledger.register_pool(pool)
+        wait = _request(pool, "pending", 0, 1, instance="unit-1")
+        try:
+            with db._connection.transaction():
+                # Test-only rows: capacity bookkeeping is intentionally not
+                # certified and the entire SQL transaction MUST roll back.
+                # Place 1500 bookings and 1500 outages beyond the tiny query
+                # window to falsify a B-tree that scans all future tails.
+                db._connection.execute(sql.SQL("""
+                    INSERT INTO {} (
+                        reservation_id, pool_key, instance_id, owner_id,
+                        start_at, end_at, units, priority, status,
+                        stopped_at, causation_id
+                    )
+                    SELECT 'test-future-booking:' || g, %s, 'unit-1', 'fixture',
+                           %s::timestamptz + g * interval '1 hour',
+                           %s::timestamptz + g * interval '1 hour'
+                             + interval '30 minutes',
+                           1, 100, 'reserved', NULL, 'test-only'
+                    FROM generate_series(1, 1500) AS g
+                """).format(ledger._reservations), (
+                    pool.address().lock_key(), T0 + timedelta(days=30),
+                    T0 + timedelta(days=30),
+                ))
+                db._connection.execute(sql.SQL("""
+                    INSERT INTO {} (
+                        outage_id, pool_key, instance_id,
+                        start_at, end_at, recovered_at
+                    )
+                    SELECT 'test-future-outage:' || g, %s, 'unit-1',
+                           %s::timestamptz + g * interval '1 hour',
+                           %s::timestamptz + g * interval '1 hour'
+                             + interval '30 minutes',
+                           NULL
+                    FROM generate_series(1, 1500) AS g
+                """).format(ledger._outages), (
+                    pool.address().lock_key(), T0 + timedelta(days=30),
+                    T0 + timedelta(days=30),
+                ))
+                # Planner statistics reflect the future-heavy fixture.
+                db._connection.execute(sql.SQL("ANALYZE {}").format(ledger._reservations))
+                db._connection.execute(sql.SQL("ANALYZE {}").format(ledger._outages))
+                db._connection.execute("SET LOCAL enable_seqscan=off")
+                assert ledger.suggest_next_start(
+                    wait, not_before=T0, latest_start=T0 + 2 * H,
+                ) == T0
+
+                for table, key, expression, index in (
+                    (ledger._reservations, "reservation_id",
+                     "COALESCE(stopped_at, end_at)", f"{ns}_rb_window_gist"),
+                    (ledger._outages, "outage_id",
+                     "COALESCE(recovered_at, end_at)", f"{ns}_ro_window_gist"),
+                ):
+                    plan = db._connection.execute(sql.SQL("""
+                        EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON)
+                        SELECT {} FROM {}
+                        WHERE pool_key = %s
+                          AND tstzrange(start_at, {}, '[)')
+                              && tstzrange(%s, %s, '[)')
+                    """).format(
+                        sql.Identifier(key), table, sql.SQL(expression),
+                    ), (pool.address().lock_key(), T0, T0 + 3 * H)).fetchone()[0]
+                    if isinstance(plan, str):
+                        import json
+                        plan = json.loads(plan)
+                    tree = plan[0]["Plan"]
+                    nodes = tuple(walk(tree))
+                    indexed = [node for node in nodes if node.get("Index Name") == index]
+                    assert indexed, nodes
+                    assert all("&&" in node.get("Index Cond", "") for node in indexed)
+                    # No future rows may reach the heap or a post-index filter.
+                    assert tree["Actual Rows"] == 0, tree
+                    assert all(node.get("Rows Removed by Filter", 0) == 0
+                               for node in nodes), nodes
+                raise RollbackPerformanceFixture
+        except RollbackPerformanceFixture:
+            pass
+
+        # No test-only uncaused booking or outage can survive its SQL rollback.
+        assert ledger.reservations() == ()
+        assert ledger.outages() == ()
+        assert ledger.get("pending") is None
+        assert ledger.audit()
