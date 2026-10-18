@@ -80,10 +80,14 @@ The read-side preview validates that digest and the complete claimed-lease
 lifecycle before reconstructing exact service intervals and performing
 individual `suggest_next_start` calls.
 
-**Compatibility:** pre-v2 waits are still valid for their original fenced
-retry/rollback contract; they cannot serve as evidence for new prospective
-advice because their original full source snapshot cannot be authenticated.
-No fabricated historical digest or automatic migration is permitted.
+**Compatibility and tampering boundary:** schema-less (pre-v2) waits
+and v2 waits missing `source_digest` are **not authorized** for either
+prospective advice or a physical source retry. If the runner accepted a v2
+wait after those fields were removed, a corrupted record could masquerade
+as the old schema and bypass provenance checking. Existing pre-v2 waits must
+be quarantined for independent reconciliation; there is no inferred historic
+digest, automatic migration, or silent physical execution. This explicitly
+tightens the earlier compatibility rule to fail closed.
 
 Hints may become stale immediately, may not jointly fit if multiple grants
 share capacity, and never permit execution. All eventual rescheduling must be
