@@ -1,6 +1,6 @@
 # Organizational StateChart Composition — integrated SOSE roadmap
 
-> **Status:** proposed architecture contract and execution plan (2026-10-13).
+> **Status:** static composition contract/admission v1 accepted under ADR-0008 (#495); **execution plan remains proposed** (#496/#497), 2026-10-18.
 > **Tracking:** [#494](https://github.com/brunolnetto/sose/issues/494); [#495](https://github.com/brunolnetto/sose/issues/495) contract, [#496](https://github.com/brunolnetto/sose/issues/496) runtime, [#497](https://github.com/brunolnetto/sose/issues/497) heterogeneous falsifier.
 > **Existing gates:** [#468](https://github.com/brunolnetto/sose/issues/468) and [#489](https://github.com/brunolnetto/sose/issues/489) concurrency, [#477](https://github.com/brunolnetto/sose/issues/477) native physical conformance, [#461](https://github.com/brunolnetto/sose/issues/461) OD-5a.
 >
@@ -27,7 +27,7 @@ The objective is to gain a reusable operational semantics on top of the existing
 | Organizational Projection | **No new writable business owner** | A consistent, explicitly timestamped view of local states, queues, resources, causal boundary state and performance |
 | Optional Governance StateChart | Explicit governance domain owner | Only real organizational decisions with authenticated/observable operational consequences |
 
-`OrganizationDefinition` is an **implemented immutable structural API** (#499), and `validate_organization_admission` provides **fail-closed static binding to real registry metadata** (#510). `OrganizationInstance` remains a **provisional runtime design**, not an implemented API. Neither structural construction nor static admission instantiates organizational jobs, proves physical resources exist, or ratifies the proposed [composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) (distinct from the separately proposed [owner-qualified runtime ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md); the decisions have distinct identifiers).
+`OrganizationDefinition` is an **implemented immutable structural API** (#499), and `validate_organization_admission` provides **fail-closed static binding to real registry metadata** (#510). The bounded static v1 decision is **accepted under [composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md)** (#495). `OrganizationInstance` remains a **provisional runtime design**, not an implemented API. Neither structural construction nor static admission instantiates organizational jobs, proves physical resources exist, or accepts unaudited policy/calendar/cost references. Distinct [owner-qualified runtime ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md) is not ratified here.
 
 The **target** organization definition requires component identity/type/version, owned process boundaries, exact contract versions, explicit dependency edges, resource scope/owner, policy and calendar references, configuration epoch, and per-job schedule identities. The implemented structural schema captures identities, boundaries, jobs, pool references and epoch, plus **immutable, source-hashed, versioned policy/calendar/cost reference declarations** (PR #530). These references are validated structurally and fingerprinted without altering legacy empty-configuration fingerprints, but **cannot be admitted for execution** until a trusted runtime registry attests the actual referenced policy, calendar and cost semantics and migration/fencing for `config_epoch` (#496). It must not substitute one `GenericEnterprise` for distinct business domain models.
 
@@ -113,7 +113,7 @@ A component's legal transition is guarded by its own StateChart **and** evidence
 
 Every PR carries isolated red/green tests, exact-head required CI, versioned documentation, review and a bounded stop rule. Extract generic APIs only when repeated duplication is demonstrated by real domains; do not change immutable Manufacturing, O2C or MRO v1 historical source/replay claims.
 
-## ADR — decision record (proposed, to be ratified in #495)
+## ADR — bounded static contract accepted, runtime still prospective
 
 **Decision:** keep Organization Composition **above** the SOSE generic kernel, built from existing StateCharts, PC6 contracts, authoritative persistence, scheduling and finite physical resources. Treat its organizational state as a derived projection, not a second writable business state. Optional governance is a separate owned domain machine. No global lock/clock and no mandatory distributed atomic COMMIT.
 
@@ -125,7 +125,7 @@ Every PR carries isolated red/green tests, exact-head required CI, versioned doc
 
 **Consequence:** composed-state read model must specify snapshot consistency and event versioning. The generic engine remains stable while incremental domain composition demonstrates which interfaces are truly shared.
 
-**Provisional status:** #495 must review/ratify the full PRD/TRD and [composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md); the separate [owner-qualified runtime ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md) has a distinct identifier and is not being ratified here. The composition **definition and static admission API exist**, but no executable organizational instance, complete policy/calendar/epoch binding, certified heterogeneous runtime or scientific seal is claimed by this document. See [the criterion-by-criterion #495 reconciliation](organization-composition-contract-v1.md#495-acceptance-reconciliation-not-yet-ratified).
+**Accepted limited scope:** #495 supplies the tested PRD/TRD and [composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md), restricted to immutable definitions and fail-closed metadata admission. The separate [owner-qualified runtime ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md) is not ratified here. No executable organizational instance, policy/calendar/cost execution, dynamic epoch migration, certified heterogeneous runtime or scientific seal is claimed. These are explicitly open in #496, #477, #497 and #461 respectively. See [the #495 criterion-by-criterion boundary](organization-composition-contract-v1.md#495-acceptance-reconciliation-ratified-static-scope-only).
 
 ## Explicit scientific boundary
 
