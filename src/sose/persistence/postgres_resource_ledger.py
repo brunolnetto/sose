@@ -260,6 +260,75 @@ class PostgresTemporalResourceLedger:
             VALUES (%s,%s,%s,%s,%s,%s)
         """).format(self._events), (event_id, key, subject, action, at, cause))
 
+    def suggest_next_start(
+        self, request: TemporalReservation, *, not_before: datetime,
+        latest_start: datetime,
+    ) -> datetime | None:
+        """Read-only, prospective interval feasibility *advice*, NOT a grant.
+
+        Evaluate one exact immutable physical instance or fungible pool,
+        preserving request duration, units and owner. Capacity can improve
+        only when an existing booking or outage ends; enumerate those finite
+        durable end boundaries rather than sampling a worker-local clock or
+        rewinding the rejected request into the past.
+
+        The result is intentionally NOT a reservation or a promise. Every
+        consumer must separately admit a rescheduled source action, then
+        call reserve in its own fenced authoritative UoW. Another owner may
+        legitimately book the suggested interval immediately after this
+        read; that transaction MUST still fail closed on physical overlap.
+        """
+        if not isinstance(request, TemporalReservation) or request.status != "reserved":
+            raise ValueError("prospective advice requires a new active TemporalReservation")
+        _aware(not_before, "not_before")
+        _aware(latest_start, "latest_start")
+        if not_before < request.start_at:
+            raise ValueError("prospective advice cannot start before original demand")
+        if latest_start < not_before:
+            raise ValueError("latest_start precedes not_before")
+        key = (request.address.lock_key() if request.address.instance_id is None
+               else replace(request.address, instance_id=None).lock_key())
+        with self._db.transaction():
+            # Exact pool-scope read consistency; not a global org lock.
+            self._lock(key)
+            pool = self._pool(key)
+            if pool.address() != replace(request.address, instance_id=None):
+                raise ResourceConflictError("suggested physical pool identity mismatch")
+            if pool.instance_ids:
+                if request.address.instance_id is None:
+                    raise ValueError("instanced resource requires exact physical instance")
+                pool.address(instance_id=request.address.instance_id)
+            elif request.address.instance_id is not None:
+                raise ValueError("fungible pool cannot request a physical instance")
+            if self._get_booking(request.reservation_id) is not None:
+                raise ResourceConflictError(
+                    "already-booked reservation identity cannot be rescheduled by advice"
+                )
+            bookings = self._bookings(key)
+            outages = self._outages_for(key)
+            duration = request.end_at - request.start_at
+            candidates = {not_before}
+            for booking in bookings:
+                if (not pool.instance_ids
+                        or booking.address.instance_id == request.address.instance_id):
+                    if not_before < booking.effective_end <= latest_start:
+                        candidates.add(booking.effective_end)
+            for outage in outages:
+                if (outage.address.instance_id is None
+                        or outage.address.instance_id == request.address.instance_id):
+                    if not_before < outage.effective_end <= latest_start:
+                        candidates.add(outage.effective_end)
+            for start in sorted(candidates):
+                try:
+                    proposal = replace(
+                        request, start_at=start, end_at=start + duration,
+                    )
+                except (OverflowError, ValueError):
+                    continue
+                if self._fits(pool, proposal, bookings, outages):
+                    return start
+            return None
+
     def reserve(self, request: TemporalReservation, *, preempt: bool = False) -> TemporalReservation:
         if not isinstance(request, TemporalReservation) or request.status != "reserved":
             raise ValueError("reserve requires a new active TemporalReservation")
