@@ -186,8 +186,10 @@ The independent static verifier is **not executable runtime admission**:
 references, including a correctly pinned calendar, until #496 installs and
 certifies evaluation/authority/fencing. Neither calendar shape nor source hash
 creates actor eligibility, physical occupation, policy or cost semantics.
-The broader #495 calendar catalog/ratification decision remains subject to
-independent review; do not infer accepted ADR-0008 from this example alone.
+ADR-0008 accepts only the bounded static source/provenance and fail-closed
+metadata contract after independent review and #535 integration. It does
+not attest arbitrary user calendars or executable policy/cost semantics;
+#496 requires a separate runtime-authority/epoch-migration certification.
 
 ## Operational configuration: structural facts are not installed capabilities (#530)
 
