@@ -12,6 +12,7 @@ from sose.composition.boundary import BoundaryConsumerRegistry
 from sose.composition.organization import (
     BoundaryBinding,
     OrganizationDefinition,
+    OperationalConfigReference,
     ProcessComponent,
     validate_organization_admission,
 )
@@ -447,3 +448,21 @@ def test_organization_allows_disconnected_same_domain_components_without_boundar
     )
     independent = replace(spec, components=(*spec.components, another))
     assert _admit(independent) == independent.fingerprint()
+
+
+@pytest.mark.parametrize("kind", ("calendar", "policy", "cost_model"))
+def test_static_registry_admission_rejects_self_attested_operational_config(kind):
+    """A caller-provided hash does not install/attest a live policy or calendar."""
+    spec = _real_definition()
+    config = OperationalConfigReference(
+        component_id="fulfillment", kind=kind,
+        reference_id="declared:ref", reference_version=1,
+        source_sha256="a" * 64, config_epoch=0,
+    )
+    declared_only = replace(spec, operational_configs=(config,))
+    # Fingerprint is a structural identifier, NOT proof of installed runtime
+    # semantics or conformance of costs, physical availability or governance.
+    assert declared_only.fingerprint() != spec.fingerprint()
+    with pytest.raises(ValueError, match="require audited runtime admission"):
+        _admit(declared_only)
+    assert _admit(spec) == spec.fingerprint()
