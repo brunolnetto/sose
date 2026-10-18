@@ -60,6 +60,28 @@ Physical work and in-flight exit/cancel/transfer are independent #462
 acceptance and remain OPEN. Do not infer real workplace schedules or OD-5b
 causal effects from synthetic windows.
 
+## Explicit paid actor-local cancellation (#462 bounded slice)
+
+An actor with a nonempty `assigned_work_id` can request
+`transition_actor(action="cancel_assigned", work_id=..., cost_us=...)`
+**only from `active`**, with the exact assigned work ID and a positive paid
+transition cost. One owner/epoch-fenced UoW changes the StateChart from
+`active` to `eligible`, accrues active time, clears the local assignment,
+records `cancelled_work_ids`, and atomically persists one Command plus
+its causally linked DomainEvent. The durable Command carries the cancelled
+work ID, external cause, and charged transition cost. A later explicit
+`exit` is legal; `exit` while still active remains illegal. An identical
+cause retry is idempotent across SQLite restart; inconsistent replay and
+foreign-owner attempts fail without extra writes.
+
+**Authority boundary:** this is an actor-local cancellation of its
+`assigned_work_id` projection. It does *not* cancel independently owned
+`ScheduledWork`/business domain effects, issue an ACK across a boundary,
+transfer to a different actor, preempt work, or release a live physical
+`TemporalReservation`. Those require a separately certified source-work
+and physical-grant cancellation protocol (#462/#477). This synthetic
+operation is not evidence of capacity-safe exit under real reservations.
+
 ## Outstanding #462 acceptance
 
 1. Real worker/process death and simultaneous PostgreSQL actors attempting the
