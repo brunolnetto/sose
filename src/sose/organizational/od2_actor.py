@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from contextlib import nullcontext
 from dataclasses import dataclass
+from hashlib import sha256
+from json import dumps
 from datetime import datetime, timedelta, timezone
 
 from statemachine import State, StateChart
@@ -71,6 +73,102 @@ def _utc(at: datetime) -> datetime:
     return at.astimezone(timezone.utc)
 
 
+
+@dataclass(frozen=True, slots=True)
+class ActorAvailabilityInterval:
+    """An explicit, half-open UTC eligibility interval, not physical ownership."""
+
+    starts_at: datetime
+    ends_at: datetime
+
+    def __post_init__(self) -> None:
+        start, end = _utc(self.starts_at), _utc(self.ends_at)
+        if start >= end:
+            raise ValueError("actor calendar interval requires positive duration")
+        object.__setattr__(self, "starts_at", start)
+        object.__setattr__(self, "ends_at", end)
+
+
+@dataclass(frozen=True, slots=True)
+class ActorAvailabilityCalendar:
+    """Immutable bounded schedule pinned to the actor's original config epoch."""
+
+    version: int
+    config_epoch: int
+    intervals: tuple[ActorAvailabilityInterval, ...]
+
+    def __post_init__(self) -> None:
+        if type(self.version) is not int or self.version != 1:
+            raise ValueError("actor calendar requires supported positive version 1")
+        if type(self.config_epoch) is not int or self.config_epoch < 0:
+            raise ValueError("actor calendar config epoch must be nonnegative")
+        if not isinstance(self.intervals, tuple) or not self.intervals:
+            raise ValueError("actor calendar requires immutable nonempty intervals")
+        if any(not isinstance(item, ActorAvailabilityInterval) for item in self.intervals):
+            raise TypeError("actor calendar intervals must be typed immutable instances")
+        ordered = tuple(sorted(self.intervals, key=lambda x: (x.starts_at, x.ends_at)))
+        if self.intervals != ordered:
+            raise ValueError("actor calendar intervals must be canonically ordered")
+        if any(a.ends_at > b.starts_at for a, b in zip(ordered, ordered[1:])):
+            raise ValueError("actor calendar intervals overlap")
+
+    def snapshot(self) -> dict:
+        return {
+            "version": self.version,
+            "config_epoch": self.config_epoch,
+            "intervals": [
+                {"start": item.starts_at.isoformat(), "end": item.ends_at.isoformat()}
+                for item in self.intervals
+            ],
+        }
+
+    def digest(self) -> str:
+        return sha256(dumps(
+            self.snapshot(), sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+
+
+def _require_actor_calendar_start(attributes: dict, at: datetime) -> None:
+    """Fail closed on tampered opt-in availability before emitting a Command.
+
+    This enforces only eligibility at ASSIGNMENT START; it does not reserve
+    capacity or imply coverage through the end of service. The latter demands
+    authoritative physical grants and explicit in-flight handling (#462/#477).
+    """
+    saved = attributes.get("availability_calendar")
+    if saved is None:
+        return
+    try:
+        if not isinstance(saved, dict) or set(saved) != {
+            "version", "config_epoch", "intervals", "source_digest",
+        }:
+            raise ValueError("malformed actor calendar")
+        if not isinstance(saved["intervals"], list):
+            raise ValueError("malformed actor calendar intervals")
+        windows = []
+        for item in saved["intervals"]:
+            if not isinstance(item, dict) or set(item) != {"start", "end"}:
+                raise ValueError("malformed actor calendar interval")
+            windows.append(ActorAvailabilityInterval(
+                datetime.fromisoformat(item["start"]),
+                datetime.fromisoformat(item["end"]),
+            ))
+        calendar = ActorAvailabilityCalendar(
+            version=saved["version"],
+            config_epoch=saved["config_epoch"],
+            intervals=tuple(windows),
+        )
+        if (
+            calendar.config_epoch != attributes["config_epoch"]
+            or saved["source_digest"] != calendar.digest()
+        ):
+            raise ValueError("actor calendar digest or epoch does not match durable source")
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError("actor calendar digest/shape contradicts authoritative actor") from exc
+    if not any(window.starts_at <= at < window.ends_at for window in calendar.intervals):
+        raise ValueError("actor calendar excludes assignment start")
+
+
 def _identity(value: str, label: str) -> None:
     if not isinstance(value, str) or not value or not value.strip():
         raise ValueError(f"{label} must be nonempty")
@@ -102,6 +200,7 @@ def seed_actor(
     store: Persistence, *, owner_id: str, actor_key: str,
     model_spec_hash: str, config_epoch: int, at: datetime,
     replaces_actor_id: str | None = None,
+    availability_calendar: ActorAvailabilityCalendar | None = None,
 ) -> str:
     """Enroll an independent actor; optional replacement requires exited peer."""
     _identity(owner_id, "owner_id")
@@ -110,6 +209,11 @@ def seed_actor(
     if type(config_epoch) is not int or config_epoch < 0:
         raise ValueError("config_epoch must be a nonnegative integer")
     now = _utc(at)
+    if availability_calendar is not None:
+        if not isinstance(availability_calendar, ActorAvailabilityCalendar):
+            raise TypeError("availability_calendar must be ActorAvailabilityCalendar")
+        if availability_calendar.config_epoch != config_epoch:
+            raise ValueError("actor calendar epoch contradicts admitted actor epoch")
     identity = deterministic_id("od2-actor", owner_id, actor_key)
     if replaces_actor_id is not None:
         _identity(replaces_actor_id, "replaces_actor_id")
@@ -155,6 +259,12 @@ def seed_actor(
                     "assigned_work_id": None, "applied_causes": {},
                     "replaces_actor_id": replaces_actor_id,
                     "replaced_by_actor_id": None,
+                    **({
+                        "availability_calendar": {
+                            **availability_calendar.snapshot(),
+                            "source_digest": availability_calendar.digest(),
+                        },
+                    } if availability_calendar is not None else {}),
                 },
             ))
     return identity
@@ -205,6 +315,7 @@ def transition_actor(
             if now < prior_at:
                 raise ValueError("actor effective time regressed")
             if action == "assign":
+                _require_actor_calendar_start(meta, now)
                 _identity(work_id, "work_id")
                 if meta["assigned_work_id"] is not None:
                     raise ValueError("actor already assigned")
