@@ -350,7 +350,7 @@ def test_actor_calendar_enrollment_source_is_independent_of_mutable_projection(m
         availability_calendar=calendar,
     )
     from sose.core.identity import deterministic_id
-    enrolled_id = deterministic_id("od2-actor-calendar-admitted", OWNER, actor_id)
+    enrolled_id = deterministic_id("od2-actor-calendar-admitted", actor_id)
     assert any(event.event_id == enrolled_id for event in store.events())
     _transition(store, actor_id, "activate", 1)
     with store.transaction(owner_id=OWNER) as uow:
@@ -417,3 +417,35 @@ def test_actor_same_cause_replay_validates_enrolled_source_first():
     with pytest.raises(ValueError, match="actor calendar"):
         _transition(store, actor_id, "assign", 2, work_id="original")
     assert tuple(store.events()) == before
+
+
+def test_actor_owner_and_calendar_deletion_cannot_hide_enrollment_marker():
+    """P1 regression: lookup must use immutable actor ID, not mutable owner."""
+    store = MemoryPersistence()
+    cal = ActorAvailabilityCalendar(
+        1, 1, (ActorAvailabilityInterval(
+            T0 + timedelta(hours=2), T0 + timedelta(hours=3),
+        ),),
+    )
+    actor_id = seed_actor(
+        store, owner_id=OWNER, actor_key="forged-owner",
+        model_spec_hash=MODEL, config_epoch=1, at=T0,
+        availability_calendar=cal,
+    )
+    _transition(store, actor_id, "activate", 1)
+    forged_owner = "org:forged"
+    with store.transaction(owner_id=OWNER) as uow:
+        actor = uow.get_entity(ACTOR_KIND, actor_id)
+        actor.attributes["owner_id"] = forged_owner
+        del actor.attributes["availability_calendar"]
+        uow.save_entity(actor)
+    original_events = tuple(store.events())
+    with pytest.raises(ValueError, match="actor calendar"):
+        transition_actor(
+            store, owner_id=forged_owner, actor_id=actor_id,
+            action="assign", cause_id="forged:assign",
+            at=T0 + timedelta(hours=5), work_id="ghost",
+            model_spec_hash=MODEL, config_epoch=1,
+        )
+    assert tuple(store.events()) == original_events
+    assert store.entity(ACTOR_KIND, actor_id).attributes["assigned_work_id"] is None
