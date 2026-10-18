@@ -43,6 +43,7 @@ class OrganizationalActor(Entity):
     excluded_events={
         "activate", "assign", "complete", "make_unavailable",
         "resume", "begin_development", "finish_development", "exit",
+        "cancel_assigned",
     },
 )
 class OrganizationalActorChart(StateChart):
@@ -56,6 +57,7 @@ class OrganizationalActorChart(StateChart):
     activate = admitted.to(eligible)
     assign = eligible.to(active)
     complete = active.to(eligible)
+    cancel_assigned = active.to(eligible)
     make_unavailable = eligible.to(unavailable)
     resume = unavailable.to(eligible)
     begin_development = eligible.to(development)
@@ -284,6 +286,7 @@ def seed_actor(
                     "time_us": {state: 0 for state in ACTOR_STATES},
                     "paid_transition_us": 0,
                     "assigned_work_id": None, "applied_causes": {},
+                    "cancelled_work_ids": [],
                     "replaces_actor_id": replaces_actor_id,
                     "replaced_by_actor_id": None,
                     **({
@@ -369,6 +372,14 @@ def transition_actor(
             elif action == "complete":
                 if work_id is None or work_id != meta["assigned_work_id"]:
                     raise ValueError("completion requires the matching assigned work")
+            elif action == "cancel_assigned":
+                # A paid, explicit actor-local cancellation. It never
+                # releases a domain ScheduledWork or a PhysicalReservation:
+                # those need a separately certified authority (#477).
+                if work_id is None or work_id != meta["assigned_work_id"]:
+                    raise ValueError("cancellation requires the matching assigned work")
+                if cost_us <= 0:
+                    raise ValueError("cancellation requires explicit paid cost")
             elif work_id is not None:
                 raise ValueError("work identity is only legal for assign/complete")
             if action == "begin_development" and cost_us == 0:
@@ -399,8 +410,10 @@ def transition_actor(
                 meta["applied_causes"][cause_id] = list(identity)
                 if action == "assign":
                     meta["assigned_work_id"] = work_id
-                if action == "complete":
+                if action in {"complete", "cancel_assigned"}:
                     meta["assigned_work_id"] = None
+                if action == "cancel_assigned":
+                    meta.setdefault("cancelled_work_ids", []).append(work_id)
                 uow.save_entity(actor)
                 uow.save_command(command)
                 for event in emitted:
