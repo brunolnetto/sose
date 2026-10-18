@@ -7,7 +7,7 @@ and paid transitions with stable owner, model, epoch and causal command IDs.
 from __future__ import annotations
 
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from json import dumps
 from datetime import datetime, timedelta, timezone
@@ -317,6 +317,95 @@ def seed_actor(
     return identity
 
 
+def _attested_active_assignment(uow, *, actor_id: str, owner_id: str,
+                                work_id: str) -> DomainEvent:
+    """Require that the current actor-local work has an immutable source event.
+
+    The mutable assigned_work_id is a projection, never proof of assignment.
+    Durable event append order is the source-local transition order for this
+    owner-fenced actor. Older assignments without attested work IDs cannot
+    be safely cancelled using this new policy.
+    """
+    transitions = [
+        event for event in uow.events()
+        if event.entity_type == ACTOR_KIND
+        and event.entity_id == actor_id
+        and event.owner_id == owner_id
+        and event.payload.get("trigger") in {
+            "assign", "complete", "cancel_assigned",
+        }
+    ]
+    if not transitions or transitions[-1].payload.get("trigger") != "assign":
+        raise ValueError("attested original assignment is absent or already completed")
+    source = transitions[-1]
+    if (
+        source.payload.get("assigned_work_id") != work_id
+        or not isinstance(source.causation_id, str)
+    ):
+        raise ValueError("attested original assignment work identity does not match")
+    return source
+
+
+def _verify_durable_cancellation_replay(
+    uow, *, owner_id: str, actor_id: str, cause_id: str,
+    at: datetime, work_id: str, cost_us: int,
+) -> None:
+    """Never accept replay solely from the mutable applied_causes projection.
+
+    The append-only cancel event carries work, cost and the original immutable
+    assignment event. Its linked mutable Command must still exist unaltered;
+    if it is missing/rewritten, returning success would certify missing
+    economic evidence. Reject without mutating anything.
+    """
+    command_id = deterministic_id(
+        "od2-actor-command", owner_id, actor_id, cause_id,
+    )
+    command = uow.get_command(command_id)
+    if (
+        command is None
+        or command.owner_id != owner_id
+        or command.entity_type != ACTOR_KIND
+        or command.entity_id != actor_id
+        or command.name != "cancel_assigned"
+        or command.due_at != at
+        or command.payload.get("external_cause_id") != cause_id
+        or command.payload.get("cancelled_work_id") != work_id
+        or type(command.payload.get("charged_cost_us")) is not int
+        or command.payload["charged_cost_us"] != cost_us
+    ):
+        raise ValueError("cancellation durable evidence: Command is missing or altered")
+    matches = [
+        event for event in uow.events()
+        if event.entity_type == ACTOR_KIND
+        and event.entity_id == actor_id
+        and event.owner_id == owner_id
+        and event.causation_id == command_id
+        and event.payload.get("trigger") == "cancel_assigned"
+    ]
+    if len(matches) != 1:
+        raise ValueError("cancellation durable evidence: append-only event missing")
+    event = matches[0]
+    if (
+        event.occurred_at != at
+        or event.payload.get("cancelled_work_id") != work_id
+        or type(event.payload.get("charged_cost_us")) is not int
+        or event.payload["charged_cost_us"] != cost_us
+        or not isinstance(event.payload.get("source_assignment_event_id"), str)
+    ):
+        raise ValueError("cancellation durable evidence: event contradicts charged work")
+    source = uow.get_event(event.payload["source_assignment_event_id"])
+    if (
+        source is None
+        or source.entity_type != ACTOR_KIND
+        or source.entity_id != actor_id
+        or source.owner_id != owner_id
+        or source.payload.get("trigger") != "assign"
+        or source.payload.get("assigned_work_id") != work_id
+        or source.occurred_at > at
+    ):
+        raise ValueError("cancellation durable evidence: original assignment missing")
+
+
 def transition_actor(
     store: Persistence, *, owner_id: str, actor_id: str,
     action: str, cause_id: str, at: datetime,
@@ -360,10 +449,17 @@ def transition_actor(
             if used is not None:
                 if used != list(identity):
                     raise ValueError("actor cause was replayed with different action")
+                if action == "cancel_assigned":
+                    _verify_durable_cancellation_replay(
+                        uow, owner_id=owner_id, actor_id=actor_id,
+                        cause_id=cause_id, at=now, work_id=work_id,
+                        cost_us=cost_us,
+                    )
                 return actor
             prior_at = datetime.fromisoformat(meta["last_at"])
             if now < prior_at:
                 raise ValueError("actor effective time regressed")
+            assignment_source = None
             if action == "assign":
                 _require_actor_calendar_start(uow, actor, now, require_window=True)
                 _identity(work_id, "work_id")
@@ -380,6 +476,10 @@ def transition_actor(
                     raise ValueError("cancellation requires the matching assigned work")
                 if cost_us <= 0:
                     raise ValueError("cancellation requires explicit paid cost")
+                assignment_source = _attested_active_assignment(
+                    uow, actor_id=actor_id, owner_id=owner_id,
+                    work_id=work_id,
+                )
             elif work_id is not None:
                 raise ValueError("work identity is only legal for assign/complete")
             if action == "begin_development" and cost_us == 0:
@@ -400,6 +500,7 @@ def transition_actor(
                     **({
                         "cancelled_work_id": work_id,
                         "charged_cost_us": cost_us,
+                        "source_assignment_event_id": assignment_source.event_id,
                     } if action == "cancel_assigned" else {}),
                 },
             )
@@ -423,7 +524,19 @@ def transition_actor(
                 uow.save_entity(actor)
                 uow.save_command(command)
                 for event in emitted:
-                    uow.append_event(event)
+                    # The DomainEvent is append-only causal/economic truth.
+                    # Commands and entity projections may be rewritten through
+                    # UoW APIs; neither alone is cancellation attestation.
+                    extra = {}
+                    if action == "assign":
+                        extra = {"assigned_work_id": work_id}
+                    elif action == "cancel_assigned":
+                        extra = {
+                            "cancelled_work_id": work_id,
+                            "charged_cost_us": cost_us,
+                            "source_assignment_event_id": assignment_source.event_id,
+                        }
+                    uow.append_event(replace(event, payload={**event.payload, **extra}))
                 return actor
             finally:
                 engine.context.drain_events()
