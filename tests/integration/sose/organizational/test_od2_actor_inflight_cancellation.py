@@ -160,7 +160,11 @@ def test_actor_cancellation_rejects_forged_projection_without_real_assignment():
     assert store.entity(ACTOR_KIND, actor_id).state == "active"
 
 
-@pytest.mark.parametrize("tamper", ("delete_command", "rewrite_command"))
+@pytest.mark.parametrize("tamper", (
+    "delete_command", "rewrite_command", "rewrite_issued_at",
+    "rewrite_correlation", "rewrite_causation", "rewrite_tick",
+    "rewrite_payload_extra",
+))
 def test_sqlite_replayed_cancellation_requires_immutable_cost_and_real_command(
     tmp_path, tamper,
 ):
@@ -184,9 +188,23 @@ def test_sqlite_replayed_cancellation_requires_immutable_cost_and_real_command(
                 uow.delete_command(command_id)
             else:
                 old = uow.get_command(command_id)
-                uow.save_command(replace(old, payload={
-                    **old.payload, "charged_cost_us": 1,
-                }))
+                if tamper == "rewrite_command":
+                    rewritten = replace(old, payload={
+                        **old.payload, "charged_cost_us": 1,
+                    })
+                elif tamper == "rewrite_issued_at":
+                    rewritten = replace(old, issued_at=old.issued_at + timedelta(seconds=1))
+                elif tamper == "rewrite_correlation":
+                    rewritten = replace(old, correlation_id="forged-correlation")
+                elif tamper == "rewrite_causation":
+                    rewritten = replace(old, causation_id="forged-event")
+                elif tamper == "rewrite_tick":
+                    rewritten = replace(old, tick=17)
+                else:
+                    rewritten = replace(old, payload={
+                        **old.payload, "forged_extra": True,
+                    })
+                uow.save_command(rewritten)
     with SQLitePersistence(path) as recovered:
         before = tuple(recovered.events())
         assert any(e.event_id == immutable_event_id
