@@ -27,11 +27,17 @@ is now a **bounded advisory query** over authoritative persisted
 - refuses an already-booked reservation identity, never emits resource events,
   never mutates source/job/trigger and never promises a grant.
 
-The read uses a scoped PostgreSQL transaction advisory lock on precisely
-the referenced physical pool. It is **not** a durable reservation and gives
-no linearizable promise *after* it returns. A different owner may book that
-same suggested interval before the source can be legally rescheduled;
-the eventual real `reserve` must atomically deny the conflict. Real PostgreSQL
+The advisory read deliberately **does not acquire a PostgreSQL advisory
+lock**. Calling it from inside an outer UoW therefore cannot retain a resource
+pool lock and block an unrelated writer. Read consistency is deliberately
+weaker than booking authority: another owner can change capacity even while
+the suggestion is being computed. SQL filters bookings and outages to
+`[not_before, latest_start + requested_duration)` and never scans unrelated
+historical intervals; exact reservation-ID uniqueness is still checked.
+It is **not** a durable reservation or a linearizable promise. A different
+owner may book that same suggested interval before the source can be legally
+rescheduled; the eventual real `reserve` must atomically deny the conflict.
+Real PostgreSQL
 falsifiers prove that race, physical outage/recovery, half-open intervals,
 fungible capacity boundaries, no retroactive start and zero ledger writes
 during advice, including independent reconnect.
