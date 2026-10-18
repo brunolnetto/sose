@@ -179,8 +179,11 @@ Because no audited operational configuration registry with policy/calendar/cost
 semantics exists yet, **`validate_organization_admission` refuses any definition
 that has such references**. An arbitrary configuration hash supplied by a caller
 must not self-attest existence, authority, calendar availability or cost.
-Executable attestation, schema semantics and deterministic epoch migration are
-bounded work in #496; not silently retrofitted into #495.
+A validated **static calendar payload/schema** (including authoritative
+source-byte/digest provenance and invalid-window rejection) is still #495
+acceptance. **Runtime** calendar/policy/cost evaluation, executable registry
+attestation, dynamic config-epoch migration and stale-worker fencing are #496;
+not silently treated as complete by the static definition.
 
 The separate owner-qualified durable runtime decision is
 [ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md);
