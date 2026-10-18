@@ -415,7 +415,29 @@ def test_pg_corrupted_wait_payload_cannot_be_replayed_as_immutable_authority(cor
             else:
                 assert wait.attributes["source_action"]["at"] == 0.0
                 wait.attributes["source_action"]["at"] = False
+            if corruption != "extra":
+                # MemoryUnitOfWork's dirty-equality legitimately considers
+                # False == 0/0.0; force an actual PostgreSQL mutation first.
+                # A SECOND committed transaction removes the staging marker
+                # while preserving the typed bool payload in SQL.
+                wait.attributes["staged_sql_mutation"] = "written"
             uow.save_entity(wait)
+        if corruption != "extra":
+            with store.transaction() as uow:
+                wait = uow.get_entity("od5a_shared_capacity_wait", wait_id)
+                assert wait is not None
+                field = "seq" if corruption == "bool_seq" else "at"
+                assert wait.attributes["source_action"][field] is False
+                assert wait.attributes.pop("staged_sql_mutation") == "written"
+                uow.save_entity(wait)
+        with PostgresPersistence(DSN, namespace=ns) as independent:
+            durable = independent.entity("od5a_shared_capacity_wait", wait_id)
+            assert durable is not None
+            if corruption != "extra":
+                assert durable.attributes["source_action"][field] is False
+                assert "staged_sql_mutation" not in durable.attributes
+            else:
+                assert durable.attributes["untrusted_extra_claim"] == "not-an-authority"
         with pytest.raises(ResourceConflictError, match="wait record contradicts"):
             _tick(store, org, binding)
         assert _source(store, org) == state_before
