@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, fields
+import json
 from typing import Iterable
 
 from .codec import dumps, loads
@@ -208,6 +209,40 @@ def changes_for_dirty_records(
     return tuple(changes)
 
 
+def _semantic_record_token(value: object) -> str:
+    """Compare typed SOSE values without treating map insertion order as data.
+
+    The codec's tagged JSON distinguishes 0/0.0/False, and preserves the
+    original storage bytes (including mapping insertion order). Reordering an
+    otherwise identical dict is *not* a durable semantic mutation, however.
+    Normalize tagged mapping/set order ONLY for the dirty comparison, never
+    for the serialized payload or historical frozen evidence.
+    """
+    encoded = json.loads(dumps(value))
+
+    def normalized(item):
+        if isinstance(item, list):
+            return [normalized(part) for part in item]
+        if not isinstance(item, dict):
+            return item
+        result = {key: normalized(part) for key, part in item.items()}
+        kind = result.get("__sose_type__")
+        if kind == "dict":
+            result["items"].sort(key=lambda pair: json.dumps(
+                pair[0], sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ))
+        elif kind in {"set", "frozenset"}:
+            result["items"].sort(key=lambda member: json.dumps(
+                member, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            ))
+        return result
+
+    return json.dumps(
+        normalized(encoded), sort_keys=True, separators=(",", ":"),
+        ensure_ascii=False, allow_nan=False,
+    )
+
+
 def _dict_dirty_change(
     *,
     collection: str,
@@ -223,7 +258,7 @@ def _dict_dirty_change(
     # payloads; comparing encoded records preserves semantic types.
     if (
         (raw_key in before_value) == exists_after
-        and dumps(before_item) == dumps(after_item)
+        and _semantic_record_token(before_item) == _semantic_record_token(after_item)
     ):
         return None
     encoded_key = dumps(raw_key)
@@ -255,7 +290,9 @@ def _list_dirty_change(
     after_item = after_value[index] if index < len(after_value) else None
     before_exists = index < len(before_value)
     after_exists = index < len(after_value)
-    if before_exists == after_exists and dumps(before_item) == dumps(after_item):
+    if before_exists == after_exists and (
+        _semantic_record_token(before_item) == _semantic_record_token(after_item)
+    ):
         return None
     if not after_exists:
         return StateRecordChange(
@@ -280,7 +317,7 @@ def _scalar_dirty_change(
     after_value: object,
 ) -> StateRecordChange | None:
     default_value = getattr(template, collection)
-    if dumps(before_value) == dumps(after_value):
+    if _semantic_record_token(before_value) == _semantic_record_token(after_value):
         return None
     return StateRecordChange(
         operation="upsert",
