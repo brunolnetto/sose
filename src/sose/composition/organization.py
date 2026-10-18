@@ -317,6 +317,17 @@ def validate_organization_admission(
             "operational policy/calendar/cost references require audited runtime admission"
         )
 
+    if definition.physical_pools:
+        # A PhysicalPoolRef supplies only caller-controlled names, not proof
+        # that a real pool exists with the declared owner, units, instances
+        # or capacity. Do not admit the organizational graph as executable
+        # until a trusted, owner-qualified resource registry is installed.
+        # Concrete physical grants stay authoritative in #477; runner binding
+        # and configuration change fencing belong to #496.
+        raise ValueError(
+            "physical pool references require authoritative resource admission"
+        )
+
     components = {component.component_id: component for component in definition.components}
     # Consumer registration is currently qualified by domain, not by the
     # independently owned component/instance. A domain appearing twice in
