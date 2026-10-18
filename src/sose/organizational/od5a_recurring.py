@@ -1189,11 +1189,28 @@ def _aligned_physical_start(
         raise ValueError("latest_start precedes not_before")
     if not requests:
         raise ResourceConflictError("aligned physical advice requires requests")
+    if not isinstance(requests[0], TemporalReservation):
+        raise TypeError("aligned advice requires original temporal reservations")
+    # All requests must arise from ONE source action on ONE shared pool.
+    # Otherwise a caller can compose individually valid hints from different
+    # organizations, unrelated assets or distinct exogenous due boundaries
+    # and misrepresent them as a jointly applicable, causally valid proposal.
+    expected_owner = requests[0].owner_id
+    expected_pool = replace(requests[0].address, instance_id=None)
+    expected_start = requests[0].start_at
     addressed: set[str] = set()
     ids: set[str] = set()
     for request in requests:
         if not isinstance(request, TemporalReservation):
             raise TypeError("aligned advice requires original temporal reservations")
+        if request.owner_id != expected_owner:
+            raise ResourceConflictError("aligned advice mixes unrelated source owners")
+        if replace(request.address, instance_id=None) != expected_pool:
+            raise ResourceConflictError("aligned advice mixes unrelated physical pools")
+        if request.start_at != expected_start:
+            raise ResourceConflictError("aligned advice mixes different original action starts")
+        if not isinstance(request.causation_id, str) or not request.causation_id:
+            raise ResourceConflictError("aligned advice requires each original causal parent")
         # Distinct named physical instance is required for each simultaneous
         # request. Fungible-capacity groups need a separate joint-capacity
         # contract; pairwise availability does not prove pooled feasibility.
