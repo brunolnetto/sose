@@ -168,8 +168,8 @@ class PostgresTemporalResourceLedger:
         data["instance_ids"] = tuple(data["instance_ids"])
         return ResourcePoolContract(**data)
 
-    def _booking(self, row) -> TemporalReservation:
-        pool = self._pool(row[1])
+    def _booking(self, row, *, pool: ResourcePoolContract | None = None) -> TemporalReservation:
+        pool = pool or self._pool(row[1])
         return TemporalReservation(
             reservation_id=row[0], address=pool.address(instance_id=row[2]),
             owner_id=row[3], start_at=row[4], end_at=row[5],
@@ -193,8 +193,8 @@ class PostgresTemporalResourceLedger:
         """).format(self._reservations), (key,)).fetchall()
         return tuple(self._booking(row) for row in rows)
 
-    def _outage(self, row) -> TemporalOutage:
-        pool = self._pool(row[1])
+    def _outage(self, row, *, pool: ResourcePoolContract | None = None) -> TemporalOutage:
+        pool = pool or self._pool(row[1])
         return TemporalOutage(
             outage_id=row[0], address=pool.address(instance_id=row[2]),
             start_at=row[3], end_at=row[4], recovered_at=row[5],
@@ -260,6 +260,35 @@ class PostgresTemporalResourceLedger:
             VALUES (%s,%s,%s,%s,%s,%s)
         """).format(self._events), (event_id, key, subject, action, at, cause))
 
+    def _window_bookings(
+        self, key: str, pool: ResourcePoolContract, *, start: datetime,
+        end: datetime,
+    ) -> tuple[TemporalReservation, ...]:
+        """Read only booking intervals overlapping the finite advice horizon."""
+        rows = self._db.execute(sql.SQL("""
+            SELECT reservation_id, pool_key, instance_id, owner_id, start_at,
+                   end_at, units, priority, status, stopped_at, causation_id
+            FROM {} WHERE pool_key = %s
+              AND start_at < %s
+              AND COALESCE(stopped_at, end_at) > %s
+            ORDER BY reservation_id
+        """).format(self._reservations), (key, end, start)).fetchall()
+        return tuple(self._booking(row, pool=pool) for row in rows)
+
+    def _window_outages(
+        self, key: str, pool: ResourcePoolContract, *, start: datetime,
+        end: datetime,
+    ) -> tuple[TemporalOutage, ...]:
+        """Ignore historical outages that cannot constrain any candidate."""
+        rows = self._db.execute(sql.SQL("""
+            SELECT outage_id, pool_key, instance_id, start_at, end_at, recovered_at
+            FROM {} WHERE pool_key = %s
+              AND start_at < %s
+              AND COALESCE(recovered_at, end_at) > %s
+            ORDER BY outage_id
+        """).format(self._outages), (key, end, start)).fetchall()
+        return tuple(self._outage(row, pool=pool) for row in rows)
+
     def suggest_next_start(
         self, request: TemporalReservation, *, not_before: datetime,
         latest_start: datetime,
@@ -288,9 +317,15 @@ class PostgresTemporalResourceLedger:
             raise ValueError("latest_start precedes not_before")
         key = (request.address.lock_key() if request.address.instance_id is None
                else replace(request.address, instance_id=None).lock_key())
+        # Advisory hint only: intentionally DO NOT take a pool advisory lock.
+        # In an outer SQL transaction that lock could escape the method and
+        # block unrelated writers. The later authoritative reserve owns the
+        # real lock and revalidates all capacity under concurrent writes.
+        try:
+            horizon_end = latest_start + (request.end_at - request.start_at)
+        except OverflowError as exc:
+            raise ValueError("prospective horizon overflows datetime") from exc
         with self._db.transaction():
-            # Exact pool-scope read consistency; not a global org lock.
-            self._lock(key)
             pool = self._pool(key)
             if pool.address() != replace(request.address, instance_id=None):
                 raise ResourceConflictError("suggested physical pool identity mismatch")
@@ -304,8 +339,12 @@ class PostgresTemporalResourceLedger:
                 raise ResourceConflictError(
                     "already-booked reservation identity cannot be rescheduled by advice"
                 )
-            bookings = self._bookings(key)
-            outages = self._outages_for(key)
+            bookings = self._window_bookings(
+                key, pool, start=not_before, end=horizon_end,
+            )
+            outages = self._window_outages(
+                key, pool, start=not_before, end=horizon_end,
+            )
             duration = request.end_at - request.start_at
             candidates = {not_before}
             for booking in bookings:
