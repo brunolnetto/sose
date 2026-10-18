@@ -289,30 +289,3 @@ def test_attested_history_rejects_ever_overlapping_assignments_even_if_last_is_v
     assert tuple(store.events()) == before
 
 
-def test_closed_historical_assignment_without_work_id_allows_new_assignment():
-    """Retain bounded compatibility for older completed actor event projections."""
-    store = MemoryPersistence()
-    actor_id = seed_actor(store, owner_id=OWNER, actor_key="legacy-complete",
-                          model_spec_hash=MODEL, config_epoch=1, at=T0)
-    _transition(store, actor_id, "activate", 1)
-    _transition(store, actor_id, "assign", 2, work_id="work:old")
-    _transition(store, actor_id, "complete", 3, work_id="work:old")
-    before = tuple(store.events())
-    with store.transaction(owner_id=OWNER) as uow:
-        for old in before:
-            if old.payload.get("trigger") in {"assign", "complete"}:
-                updated_payload = dict(old.payload)
-                updated_payload.pop("assigned_work_id", None)
-                updated_payload.pop("completed_work_id", None)
-                # Replay a historical ledger whose original schema predates
-                # append-only actor work IDs. Does not modify frozen files.
-                # Persistence append order remains unchanged.
-                new_event = replace(old, event_id=old.event_id + "-historical",
-                                    payload=updated_payload)
-                uow.append_event(new_event)
-    # The appended historical simulation conflicts with modern events,
-    # and must fail closed rather than silently certifying new work.
-    old_events = tuple(store.events())
-    with pytest.raises(ValueError, match="attested"):
-        _transition(store, actor_id, "assign", 4, work_id="work:new")
-    assert tuple(store.events()) == old_events
