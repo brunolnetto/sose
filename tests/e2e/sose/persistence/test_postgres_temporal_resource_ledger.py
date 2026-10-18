@@ -654,32 +654,30 @@ def test_pg_advice_omits_unrelated_historical_intervals_from_window(monkeypatch)
         ) == T0
         assert seen == {"bookings": ("current",), "outages": ()}
         assert ledger.get("query") is None
-        # Materializing only relevant objects is insufficient if PostgreSQL
-        # still scans the full historical table. Verify both effective-end
-        # indexes are usable for the exact bounded SQL predicates. Disable
-        # sequential scans ONLY in this transaction to make index selection
-        # falsifiable even for small CI fixtures.
+        # A B-tree on effective_end alone still reads arbitrarily distant
+        # future records. Assert GiST overlap predicates for BOTH ranges.
         with ledger._db.transaction():
             ledger._db.execute("SET LOCAL enable_seqscan=off")
             booking_plan = ledger._db.execute(sql.SQL("""
                 EXPLAIN (COSTS OFF)
                 SELECT reservation_id FROM {}
-                WHERE pool_key = %s AND start_at < %s
-                  AND COALESCE(stopped_at, end_at) > %s
+                WHERE pool_key = %s
+                  AND tstzrange(start_at, COALESCE(stopped_at, end_at), '[)')
+                      && tstzrange(%s, %s, '[)')
             """).format(ledger._reservations), (
-                pool.address().lock_key(), T0 + 2 * H, T0,
+                pool.address().lock_key(), T0, T0 + 2 * H,
             )).fetchall()
             outage_plan = ledger._db.execute(sql.SQL("""
                 EXPLAIN (COSTS OFF)
                 SELECT outage_id FROM {}
-                WHERE pool_key = %s AND start_at < %s
-                  AND COALESCE(recovered_at, end_at) > %s
-                  AND COALESCE(recovered_at, end_at) > start_at
+                WHERE pool_key = %s
+                  AND tstzrange(start_at, COALESCE(recovered_at, end_at), '[)')
+                      && tstzrange(%s, %s, '[)')
             """).format(ledger._outages), (
-                pool.address().lock_key(), T0 + 2 * H, T0,
+                pool.address().lock_key(), T0, T0 + 2 * H,
             )).fetchall()
-        assert any(f"{ns}_rb_eff_idx" in row[0] for row in booking_plan), booking_plan
-        assert any(f"{ns}_ro_eff_idx" in row[0] for row in outage_plan), outage_plan
+        assert any(f"{ns}_rb_window_gist" in row[0] for row in booking_plan), booking_plan
+        assert any(f"{ns}_ro_window_gist" in row[0] for row in outage_plan), outage_plan
         assert ledger.audit()
 
 
