@@ -1,6 +1,6 @@
 # Organizational StateChart Composition — integrated SOSE roadmap
 
-> **Status:** composition static schema + admission v1 implemented but ADR-0008 ratification **pending** (#495); runtime plan remains proposed (#496/#497), 2026-10-18.
+> **Status:** **structural definition** (#499) implemented; **partial fail-closed static admission** (#510/#530 plus rejection of unaudited pools) implemented. Positive calendar schema and source provenance **not implemented**; ADR-0008/#495 remain Proposed. Executable runtime #496/#497 also remains unbuilt (2026-10-18).
 > **Tracking:** [#494](https://github.com/brunolnetto/sose/issues/494); [#495](https://github.com/brunolnetto/sose/issues/495) contract, [#496](https://github.com/brunolnetto/sose/issues/496) runtime, [#497](https://github.com/brunolnetto/sose/issues/497) heterogeneous falsifier.
 > **Existing gates:** [#468](https://github.com/brunolnetto/sose/issues/468) and [#489](https://github.com/brunolnetto/sose/issues/489) concurrency, [#477](https://github.com/brunolnetto/sose/issues/477) native physical conformance, [#461](https://github.com/brunolnetto/sose/issues/461) OD-5a.
 >
