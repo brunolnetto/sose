@@ -349,11 +349,9 @@ def test_actor_calendar_enrollment_source_is_independent_of_mutable_projection(m
         model_spec_hash=MODEL, config_epoch=1, at=T0,
         availability_calendar=calendar,
     )
-    assert store.event(
-        __import__("sose.core.identity", fromlist=["deterministic_id"]).deterministic_id(
-            "od2-actor-calendar-admitted", OWNER, actor_id,
-        )
-    ) is not None
+    from sose.core.identity import deterministic_id
+    enrolled_id = deterministic_id("od2-actor-calendar-admitted", OWNER, actor_id)
+    assert any(event.event_id == enrolled_id for event in store.events())
     _transition(store, actor_id, "activate", 1)
     with store.transaction(owner_id=OWNER) as uow:
         actor = uow.get_entity(ACTOR_KIND, actor_id)
