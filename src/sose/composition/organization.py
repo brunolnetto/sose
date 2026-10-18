@@ -127,7 +127,7 @@ class OperationalConfigReference:
     def __post_init__(self) -> None:
         _identity(self.component_id, "operational config component_id")
         _identity(self.reference_id, "operational config reference_id")
-        if self.kind not in {"policy", "calendar", "cost_model"}:
+        if not isinstance(self.kind, str) or self.kind not in {"policy", "calendar", "cost_model"}:
             raise ValueError("unknown operational configuration kind")
         _positive(self.reference_version, "operational config reference_version")
         _positive(self.config_epoch, "operational config epoch", allow_zero=True)
@@ -233,10 +233,6 @@ class OrganizationDefinition:
                 (asdict(job) for job in self.jobs),
                 key=lambda value: value["job_id"],
             ),
-            "operational_configs": sorted(
-                (asdict(config) for config in self.operational_configs),
-                key=lambda ref: (ref["component_id"], ref["kind"]),
-            ),
             "physical_pools": sorted(
                 (
                     {
@@ -248,6 +244,14 @@ class OrganizationDefinition:
                 key=lambda value: value["pool_id"],
             ),
         }
+        # Backward compatible: older v1 fingerprints did not have this
+        # field. An empty set carries no additional semantic configuration;
+        # including [] would silently invalidate durable admission hashes.
+        if self.operational_configs:
+            payload["operational_configs"] = sorted(
+                (asdict(config) for config in self.operational_configs),
+                key=lambda ref: (ref["component_id"], ref["kind"]),
+            )
         canonical = json.dumps(
             payload, sort_keys=True, separators=(",", ":"),
             ensure_ascii=False, allow_nan=False,
