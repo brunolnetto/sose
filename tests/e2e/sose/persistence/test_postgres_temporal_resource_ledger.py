@@ -878,6 +878,21 @@ def test_pg_prospective_outages_use_pool_index_amid_unrelated_same_time_outages(
                 assert any("pool_key" in node.get("Index Cond", "")
                            for node in selected), selected
                 assert plan[0]["Plan"]["Actual Rows"] == 0
+                # A BitmapAnd may read ALL 1500 matching timestamps through
+                # the temporal GiST, then bitmap-AND those tuples with ZERO
+                # pool-key hits and emit nothing at the root. Zero final
+                # rows is thus insufficient evidence of bounded physical IO.
+                # All leaf index scans (including Bitmap Index Scan) must
+                # emit at most the actual target pool's own records (zero).
+                scanned_indexes = [
+                    node for node in nodes
+                    if node.get("Node Type") in {
+                        "Index Scan", "Index Only Scan", "Bitmap Index Scan",
+                    }
+                ]
+                assert scanned_indexes, nodes
+                assert all(node.get("Actual Rows", 0) == 0
+                           for node in scanned_indexes), scanned_indexes
                 assert all(node.get("Rows Removed by Filter", 0) == 0
                            for node in nodes), nodes
                 raise RollbackPerformanceFixture
