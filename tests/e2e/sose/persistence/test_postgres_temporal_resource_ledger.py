@@ -496,11 +496,22 @@ def test_pg_prospective_start_handles_fungible_capacity_change_points_and_recove
             not_before=T0, latest_start=T0 + 6 * H,
         ) is None
         ledger.release("one", at=T0 + H)
-        # A legitimate effective release at 1h frees 1 unit prospectively;
-        # the original [0,1h) remains historically occupied.
+        # The release at 1h frees a unit prospectively. The request for
+        # only ONE unit can now fit at time zero: the pool has two units,
+        # only one of which was ever occupied during [0,1h).
         assert ledger.suggest_next_start(
             waiting, not_before=T0, latest_start=T0 + 3 * H,
-        ) == T0 + H
+        ) == T0
+        # A TWO-unit request cannot retroactively erase that one occupied
+        # unit during [0,1h); after 1h the other owner's reservation still
+        # occupies one unit, so capacity-2 never fits before 4h.
+        two_units = _request(pool, "requires-both", 0, 1, units=2)
+        assert ledger.suggest_next_start(
+            two_units, not_before=T0, latest_start=T0 + 3 * H,
+        ) is None
+        assert ledger.suggest_next_start(
+            two_units, not_before=T0, latest_start=T0 + 4 * H,
+        ) == T0 + 4 * H
         assert ledger.audit()
 
 
