@@ -169,7 +169,7 @@ independent and `NOT_ADMITTED`.
 
 `sose.composition.calendar` provides a **positive static example**:
 `parse_static_calendar_source(bytes)` requires closed, canonical JSON v1,
-UTC, explicitly numbered weekdays 0–6, bounded HH:MM intraday windows,
+UTC, explicitly numbered weekdays **Monday=0 through Sunday=6** (Python\n`datetime.weekday()` semantics, **not** JavaScript Sunday-zero), bounded HH:MM intraday windows,
 nonempty schedules, canonical ordering, no overlap, valid version/epoch,
 no duplicate/unknown fields or implicit timezone conversion. The shipped
 `sose:calendar:weekday-utc-v1` source is pinned by an **independent literal
