@@ -7,6 +7,7 @@ upsert while an identical save must remain a no-op.
 from __future__ import annotations
 
 from copy import deepcopy
+from contextlib import nullcontext
 
 import pytest
 
@@ -137,7 +138,7 @@ def test_typed_nested_entity_update_survives_close_and_reopen(
         original = 1
     assert original == changed
 
-    with adapter(path) as store:
+    with (nullcontext(adapter(path)) if adapter is JSONLJournalPersistence else adapter(path)) as store:
         with store.transaction() as uow:
             uow.save_entity(Entity(
                 id="owner-entity", entity_type="typed-dirty",
@@ -153,7 +154,7 @@ def test_typed_nested_entity_update_survives_close_and_reopen(
             target.attributes["nested"]["sequence"] = changed
             uow.save_entity(target)
 
-    with adapter(path) as reopened:
+    with (nullcontext(adapter(path)) if adapter is JSONLJournalPersistence else adapter(path)) as reopened:
         saved = reopened.entity("typed-dirty", "owner-entity")
         assert saved is not None
         assert saved.attributes["nested"]["sequence"] == changed
