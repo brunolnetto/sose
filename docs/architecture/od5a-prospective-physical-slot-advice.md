@@ -38,8 +38,14 @@ conformance and remains within the broader #477 hardening scope.
 Read consistency is deliberately
 weaker than booking authority: another owner can change capacity even while
 the suggestion is being computed. SQL filters bookings and outages to
-`[not_before, latest_start + requested_duration)` and never scans unrelated
-historical intervals; exact reservation-ID uniqueness is still checked.
+`[not_before, latest_start + requested_duration)` using native GiST
+`tstzrange(start_at, effective_end, '[)') && requested_horizon` predicates;
+these constrain **both** physical time bounds and treat zero-length recovered
+outages as empty. No `btree_gist` extension is required. Independent
+future-heavy PostgreSQL `EXPLAIN (ANALYZE, BUFFERS)` tests demand that the
+GiST indexes actually prune distant future intervals, not merely appear in
+a query plan. The test-only synthetic rows roll back before any canonical
+ledger audit; exact reservation-ID uniqueness is still checked.
 It is **not** a durable reservation or a linearizable promise. A different
 owner may book that same suggested interval before the source can be legally
 rescheduled; the eventual real `reserve` must atomically deny the conflict.
