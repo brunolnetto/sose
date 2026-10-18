@@ -27,9 +27,15 @@ is now a **bounded advisory query** over authoritative persisted
 - refuses an already-booked reservation identity, never emits resource events,
   never mutates source/job/trigger and never promises a grant.
 
-The advisory read deliberately **does not acquire a PostgreSQL advisory
-lock**. Calling it from inside an outer UoW therefore cannot retain a resource
-pool lock and block an unrelated writer. Read consistency is deliberately
+The advisory **method** deliberately does not acquire a PostgreSQL
+advisory lock. An already-constructed `PostgresTemporalResourceLedger` can
+be queried inside an outer UoW without retaining a new pool lock.
+**Construction is distinct:** `PostgresPersistence.temporal_resources()`
+still bootstraps tables with a namespace-scoped DDL advisory lock; construct
+both ledger handles *before* beginning an intentionally long-lived SQL UoW.
+Removing/bootstrap-caching that preexisting DDL guard requires its own
+conformance and remains within the broader #477 hardening scope.
+Read consistency is deliberately
 weaker than booking authority: another owner can change capacity even while
 the suggestion is being computed. SQL filters bookings and outages to
 `[not_before, latest_start + requested_duration)` and never scans unrelated
