@@ -33,7 +33,7 @@ class PostgresTemporalResourceLedger:
     not assume the resource ledger and unrelated Engine UoWs commit atomically.
     """
 
-    def __init__(self, persistence) -> None:
+    def __init__(self, persistence, *, bootstrap: bool = True) -> None:
         self._store = persistence
         self._db = persistence._connection
         ns = persistence.namespace
@@ -41,7 +41,11 @@ class PostgresTemporalResourceLedger:
         self._reservations = sql.Identifier(f"{ns}_resource_booking")
         self._outages = sql.Identifier(f"{ns}_resource_outage")
         self._events = sql.Identifier(f"{ns}_resource_event")
-        self._bootstrap()
+        # Read-side availability advice must not execute DDL or take a
+        # namespace-wide transaction advisory lock. Existing tables are
+        # established by explicit authoritative registration/write setup.
+        if bootstrap:
+            self._bootstrap()
 
     def _bootstrap(self) -> None:
         with self._db.transaction():
