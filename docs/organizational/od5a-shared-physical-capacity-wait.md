@@ -19,6 +19,8 @@ reservation, emit a DomainEvent, or advance the SimulationJobState clock.
   `od5a_shared_capacity_wait` Entity keyed by (organization, original trigger).
   It captures exact immutable scheduled action, logical due, pool binding
   fingerprint, native reservation ID, request ID and physical instance.
+  The record retains `origin_epoch` and monotonic `last_claim_epoch`; each
+  write checks the trusted DB timestamp against the original claimed lease.
 - The job stays `running/advance`, with its original claimed lease and trigger;
   `OD5aRecurringStep(action="waiting")` leaves `logical_time`,
   `next_tick`, events and resource grants unchanged. Repeated same-owner
@@ -36,10 +38,11 @@ reservation, emit a DomainEvent, or advance the SimulationJobState clock.
 The live PostgreSQL integration test first creates a real
 `TemporalOutage` covering unit-1 at the source due. Two attempted ticks
 persist one wait and zero source events/bookings. A peer on unit-2 advances.
-PostgreSQL is then reopened, the outage's **effective end is legitimately
-changed to the original due**, and the exact same trigger advances once with
-a unit-1 booking and satisfied wait. Full ledger audit and post-COMMIT replay
-are required. The competing-worker test also verifies one winner and one
+PostgreSQL is then reopened and the outage is recovered **after** the
+original due time. The original service interval remains historically
+unavailable, so the same trigger MUST remain waiting: **no retroactive booking,
+source event or completed trigger** is allowed. Full physical ledger audit
+is required. The competing-worker test also verifies one winner and one
 durably waiting loser under two actual PG connections/SimPy callbacks.
 
 ## Explicit stop rule
