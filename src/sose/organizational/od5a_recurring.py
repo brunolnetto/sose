@@ -1050,11 +1050,14 @@ def execute_od5a_claimed_tick(
             or wait_attributes is None
             or type(origin) is not int or type(observed) is not int
             or not 1 <= origin <= observed <= epoch
-            or attributes != {
+            # Python equality aliases False == 0 and 0 == 0.0. Persisted
+            # causal actions require exact typed JSON, not loose equality.
+            or dumps(attributes, sort_keys=True, separators=(",", ":"), allow_nan=False)
+            != dumps({
                 **wait_attributes,
                 "origin_epoch": origin,
                 "last_claim_epoch": observed,
-            }
+            }, sort_keys=True, separators=(",", ":"), allow_nan=False)
         ):
             raise ResourceConflictError(
                 "shared wait record contradicts native source request or runner epoch"
