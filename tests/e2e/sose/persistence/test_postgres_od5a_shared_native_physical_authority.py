@@ -810,3 +810,149 @@ def test_pg_missing_wait_marker_cannot_be_ignored_by_advice_or_execution():
             _tick(store, org, binding)
         assert ledger.reservations() == ()
         assert ledger.audit()
+
+
+def test_pg_versioned_aligned_advice_preserves_source_wait_and_ledger():
+    """A common start proposal retains the exact authenticated original requests."""
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:aligned", _binding("unit-1")
+    earliest = _ORIGIN + timedelta(milliseconds=100)
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        ledger = store.temporal_resources()
+        outage = TemporalOutage(
+            outage_id="aligned:outage",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        )
+        ledger.fail(outage)
+        assert _tick(store, org, binding).action == "waiting"
+        ledger.recover(outage.outage_id, at=earliest)
+        wait_id = deterministic_id(
+            "od5a-shared-capacity-wait", org,
+            deterministic_id("od5a-recurring-tick", org, 1),
+        )
+        before = (
+            ledger.snapshot(), _source(store, org), store.job_state(org),
+            store.entity("od5a_shared_capacity_wait", wait_id),
+            tuple(store.events()),
+        )
+        proposal = od5a_recurring.suggest_od5a_aligned_wait_start(
+            store, job_id=org, shared_pool_binding=binding,
+            not_before=earliest, latest_start=earliest + timedelta(seconds=1),
+        )
+        assert proposal.advice_version == 1
+        assert proposal.wait_id == wait_id
+        assert proposal.trigger_id == deterministic_id("od5a-recurring-tick", org, 1)
+        assert proposal.claim_epoch == 1
+        assert proposal.source_digest == before[3].attributes["source_digest"]
+        assert proposal.binding_fingerprint == binding.fingerprint()
+        assert proposal.proposed_start == earliest
+        assert len(proposal.slots) == 1
+        assert proposal.slots[0].original_request.start_at == _ORIGIN
+        assert proposal.slots[0].original_request.causation_id
+        assert proposal.slots[0].duration == timedelta(seconds=0.2)
+        after = (
+            ledger.snapshot(), _source(store, org), store.job_state(org),
+            store.entity("od5a_shared_capacity_wait", wait_id),
+            tuple(store.events()),
+        )
+        assert after == before
+        assert ledger.audit()
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        assert od5a_recurring.suggest_od5a_aligned_wait_start(
+            reopened, job_id=org, shared_pool_binding=binding,
+            not_before=earliest, latest_start=earliest + timedelta(seconds=1),
+        ) == proposal
+
+
+def test_pg_aligned_start_intersects_exact_intervals_not_individual_earliest_starts():
+    """A common start must be feasible for every instance at that same instant."""
+    from sose.core.resource_reservations import TemporalReservation
+    assert DSN
+    ns = _namespace()
+    start = _ORIGIN
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        ledger = store.temporal_resources()
+        pool = _pool()
+        ledger.register_pool(pool)
+        for rid, instance, a, b in (
+            ("busy:2", "unit-2", 0.0, 0.2),
+            ("busy:1", "unit-1", 0.25, 0.45),
+        ):
+            ledger.reserve(TemporalReservation(
+                reservation_id=rid, owner_id="independent:" + instance,
+                address=pool.address(instance_id=instance),
+                start_at=start + timedelta(seconds=a),
+                end_at=start + timedelta(seconds=b),
+                causation_id="independent:causal",
+            ))
+        requests = tuple(TemporalReservation(
+            reservation_id="candidate:" + inst, owner_id="org:candidate",
+            address=pool.address(instance_id=inst),
+            start_at=start, end_at=start + timedelta(seconds=0.2),
+            causation_id="source:arrival",
+        ) for inst in ("unit-1", "unit-2"))
+        before = ledger.snapshot()
+        assert [
+            ledger.suggest_next_start(
+                req, not_before=start, latest_start=start + timedelta(seconds=1),
+            ) for req in requests
+        ] == [start, start + timedelta(seconds=0.2)]
+        assert od5a_recurring._aligned_physical_start(
+            ledger, requests, not_before=start,
+            latest_start=start + timedelta(seconds=1),
+        ) == start + timedelta(seconds=0.45)
+        assert od5a_recurring._aligned_physical_start(
+            ledger, requests, not_before=start,
+            latest_start=start + timedelta(seconds=0.4),
+        ) is None
+        assert ledger.snapshot() == before
+        assert ledger.audit()
+
+
+def test_pg_aligned_advice_is_stale_not_a_physical_grant():
+    from sose.core.resource_reservations import TemporalReservation, ResourceCapacityError
+    assert DSN
+    ns = _namespace()
+    org, binding = "org:aligned-stale", _binding("unit-1")
+    when = _ORIGIN + timedelta(milliseconds=100)
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        ledger = store.temporal_resources()
+        outage = TemporalOutage(
+            outage_id="aligned:recover", address=binding.pool.address(instance_id="unit-1"),
+            start_at=_ORIGIN, end_at=_ORIGIN + timedelta(seconds=1),
+        )
+        ledger.fail(outage)
+        assert _tick(store, org, binding).action == "waiting"
+        ledger.recover(outage.outage_id, at=when)
+        proposal = od5a_recurring.suggest_od5a_aligned_wait_start(
+            store, job_id=org, shared_pool_binding=binding,
+            not_before=when, latest_start=when + timedelta(seconds=1),
+        )
+        assert proposal.proposed_start == when
+        assert ledger.get(proposal.slots[0].original_request.reservation_id) is None
+    with PostgresPersistence(DSN, namespace=ns) as competitor:
+        competitor.temporal_resources().reserve(TemporalReservation(
+            reservation_id="peer:aligned-stale", owner_id="independent:peer",
+            address=binding.pool.address(instance_id="unit-1"),
+            start_at=when, end_at=when + timedelta(seconds=0.2),
+            causation_id="peer:event",
+        ))
+    with PostgresPersistence(DSN, namespace=ns) as reopened:
+        with pytest.raises(ResourceCapacityError):
+            reopened.temporal_resources().reserve(
+                __import__("dataclasses").replace(
+                    proposal.slots[0].original_request,
+                    start_at=proposal.proposed_start,
+                    end_at=proposal.proposed_start + proposal.slots[0].duration,
+                )
+            )
+        next_advice = od5a_recurring.suggest_od5a_aligned_wait_start(
+            reopened, job_id=org, shared_pool_binding=binding,
+            not_before=when, latest_start=when + timedelta(seconds=1),
+        )
+        assert next_advice.proposed_start == when + timedelta(seconds=0.2)
+        assert reopened.temporal_resources().audit()
