@@ -17,12 +17,14 @@ from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
+from psycopg.conninfo import conninfo_to_dict, make_conninfo
+
 import pytest
 
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.persistence.postgres import PostgresPersistence
 from tests.e2e.sose.persistence.test_postgres_infrastructure_chaos import (
-    _free_port, _start_proxy,
+    REPO_ROOT, _free_port, _start_proxy,
 )
 from tests.e2e.sose.persistence import test_postgres_pc6_full_real_domain_recovery as full
 from tests.e2e.sose.persistence.test_postgres_pc6_full_real_domain_recovery import (
@@ -41,7 +43,6 @@ pytestmark = pytest.mark.skipif(not DSN, reason="PostgreSQL required")
 # around the original UoW boundary is interrupted.
 _CERTIFICATE_WORKER = """
 import sys, time
-from contextlib import contextmanager
 from datetime import timedelta
 from pathlib import Path
 from sose.composition.effects import BusinessEffectService
@@ -52,7 +53,7 @@ from sose.examples.order_to_cash import simulation as o2c
 from sose.persistence.postgres import PostgresPersistence
 from psycopg import sql
 
-dsn, domain_ns, physical_dsn, physical_ns, correlation, name, phase, slot, marker, release = sys.argv[1:]
+dsn, domain_ns, physical_dsn, physical_ns, correlation, name, phase, slot, marker, release, arm = sys.argv[1:]
 slot = int(slot)
 old_complete = BusinessEffectService.complete
 old_apply = PostgresPersistence._apply_changes
@@ -90,6 +91,12 @@ def after_real_postgresql_dml(self, before, after, dirty_records):
         certificate_target[0] = None
         Path(marker).write_text("after_dml_before_commit")
         wait_for_cut()
+    elif phase == "after_commit" and effect_id and self.namespace == domain_ns:
+        # Native SQL INSERT/DELETE have finished; the outer COMMIT has NOT
+        # been sent. Arm the protocol relay to forward that real COMMIT and
+        # drop its *server response* before the client sees success.
+        certificate_target[0] = None
+        Path(arm).write_text("armed_after_certificate_dml")
     return changed
 
 PostgresPersistence._apply_changes = after_real_postgresql_dml
@@ -101,17 +108,9 @@ def faulted_complete(self, *, effect_id, completed_at):
     # Exact certificate identity, not some unrelated SQL write in the
     # same namespace, triggers the pre-COMMIT SQL DML cut above.
     certificate_target[0] = effect_id
-    original_transaction = self._transaction
-    @contextmanager
-    def cut_transaction():
-        with original_transaction() as uow:
-            yield uow
-        if phase == "after_commit":
-            # COMMIT completed; the caller has not yet observed the result.
-            # The next SQL operation must fail over the severed real TCP link.
-            Path(marker).write_text("committed_before_response")
-            wait_for_cut()
-    self._transaction = cut_transaction
+    # No post-COMMIT application pause: it was too late to create an
+    # uncertain SQL outcome. The proxy instead withholds PostgreSQL's genuine
+    # CommandComplete + ReadyForQuery when COMMIT is actually in flight.
     return old_complete(self, effect_id=effect_id, completed_at=completed_at)
 
 BusinessEffectService.complete = faulted_complete
@@ -135,6 +134,46 @@ with PostgresPersistence(dsn, namespace=domain_ns) as domain:
         ).run_due(now=o2c.ORIGIN + slot * timedelta(hours=1))
 raise AssertionError("certification transaction cut did not interrupt the worker")
 """
+
+
+def _start_commit_reply_drop_proxy(dsn: str, *, port: int, tmp_path: Path):
+    """Only the target, armed PostgreSQL COMMIT response may be discarded."""
+    ready = tmp_path / "commit-proxy-ready"
+    arm = tmp_path / "commit-arm"
+    claimed = tmp_path / "commit-claimed"
+    dropped = tmp_path / "commit-response-dropped"
+    for marker in (ready, arm, claimed, dropped):
+        marker.unlink(missing_ok=True)
+    details = conninfo_to_dict(dsn)
+    host = str(details.get("host") or "").split(",", 1)[0].strip()
+    upstream_port = int(str(details.get("port") or "5432").split(",", 1)[0])
+    script = REPO_ROOT / "tests" / "support" / "postgres_commit_reply_drop_proxy.py"
+    command = [
+        sys.executable, str(script), "--listen-port", str(port),
+        "--upstream-port", str(upstream_port),
+        "--ready", str(ready), "--arm", str(arm),
+        "--claimed", str(claimed), "--dropped", str(dropped),
+    ]
+    if not host or host.startswith("/"):
+        command += ["--upstream-unix-socket-dir", host or "/var/run/postgresql"]
+    else:
+        command += ["--upstream-host", host]
+    process = subprocess.Popen(
+        command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+    )
+    wait_for_marker_exists(
+        ready, process, timeout=30,
+        premature_exit_label="COMMIT protocol relay exited before ready",
+        timeout_label="COMMIT protocol relay did not become ready",
+        termination_timeout=10,
+    )
+    # The commit-observation proxy must parse plaintext PostgreSQL frames.
+    # SSL off only for this local test relay, never the production adapter.
+    proxied = make_conninfo(
+        dsn, host="127.0.0.1", port=str(port),
+        connect_timeout="3", sslmode="disable",
+    )
+    return process, proxied, arm, claimed, dropped
 
 
 def _read_authoritative_outcome(dsn: str, namespace: str, effect_id: str):
@@ -201,29 +240,54 @@ def _faulting_world(tmp_path: Path, *, intent_name: str, phase: str):
     marker.unlink(missing_ok=True)
     release.unlink(missing_ok=True)
     proxy = worker = None
+    arm = tmp_path / "commit-arm"
     try:
-        proxy, proxied_dsn = _start_proxy(
-            DSN, port=_free_port(), marker=tmp_path / "proxy-ready",
-        )
+        if phase == "after_commit":
+            proxy, proxied_dsn, arm, claimed, dropped = (
+                _start_commit_reply_drop_proxy(
+                    DSN, port=_free_port(), tmp_path=tmp_path,
+                )
+            )
+        else:
+            proxy, proxied_dsn = _start_proxy(
+                DSN, port=_free_port(), marker=tmp_path / "proxy-ready",
+            )
         worker = subprocess.Popen(
             [sys.executable, "-c", _CERTIFICATE_WORKER,
              proxied_dsn, domains["a"], proxied_dsn, physical_ns, seeds["a"][0],
-             intent_name, phase, str(slot), str(marker), str(release)],
+             intent_name, phase, str(slot), str(marker), str(release), str(arm)],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
-        wait_for_marker_exists(
-            marker, worker, timeout=50,
-            premature_exit_label="certificate worker died before SQL cut",
-            timeout_label="certificate worker never entered SQL cut",
-            termination_timeout=10,
-        )
-        assert worker.poll() is None
-        proxy.kill()  # terminate real TCP relay while worker connection is live
-        wait_for_process_exit(
-            proxy, timeout=10, label="killed certificate transport",
-            termination_timeout=10,
-        )
-        release.write_text("fault-injected", encoding="utf-8")
+        if phase == "before_commit":
+            wait_for_marker_exists(
+                marker, worker, timeout=50,
+                premature_exit_label="certificate worker died before SQL cut",
+                timeout_label="certificate worker never entered SQL cut",
+                termination_timeout=10,
+            )
+            assert worker.poll() is None
+            proxy.kill()  # real TCP cut while SQL INSERT/DELETE are uncommitted
+            wait_for_process_exit(
+                proxy, timeout=10, label="killed certificate transport",
+                termination_timeout=10,
+            )
+            release.write_text("fault-injected", encoding="utf-8")
+        else:
+            # Do NOT terminate the proxy before the backend sends successful
+            # COMMIT. The relay must witness the server's CommandComplete +
+            # ReadyForQuery and discard both replies on the target TCP link.
+            wait_for_marker_exists(
+                dropped, proxy, timeout=50,
+                premature_exit_label="COMMIT proxy exited before intercepting response",
+                timeout_label="server COMMIT response was never intercepted",
+                termination_timeout=10,
+            )
+            assert dropped.read_text(encoding="utf-8") == (
+                "commit_complete_response_dropped"
+            ), "server did not certify COMMIT success before the client reply was lost"
+            assert claimed.exists() and not arm.exists(), (
+                "proxy never intercepted the armed target COMMIT"
+            )
         try:
             stdout, stderr = worker.communicate(timeout=20)
         except subprocess.TimeoutExpired:
