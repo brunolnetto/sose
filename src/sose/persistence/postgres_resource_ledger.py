@@ -686,6 +686,11 @@ class PostgresTemporalResourceLedger:
                 elif sum(b.units for b in live) > pool.capacity:
                     raise ResourceConflictError("historical capacity overcommit")
                 for o in outages:
+                    # Recovery at the exact outage start makes [t,t)
+                    # empty. Both admission and historical audit must agree
+                    # that no positive-length booking can overlap it.
+                    if o.effective_end <= o.start_at:
+                        continue
                     if not self._overlap(start, end, o.start_at, o.effective_end):
                         continue
                     for b in live:
