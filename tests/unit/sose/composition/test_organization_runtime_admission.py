@@ -13,6 +13,7 @@ from sose.composition.organization import (
     BoundaryBinding,
     OrganizationDefinition,
     OperationalConfigReference,
+    PhysicalPoolRef,
     ProcessComponent,
     validate_organization_admission,
 )
@@ -466,3 +467,17 @@ def test_static_registry_admission_rejects_self_attested_operational_config(kind
     with pytest.raises(ValueError, match="require audited runtime admission"):
         _admit(declared_only)
     assert _admit(spec) == spec.fingerprint()
+
+
+def test_static_admission_rejects_unverified_physical_pool_even_when_components_are_valid():
+    """A caller-supplied pool owner/id is a reference, not a grant or registry witness."""
+    spec = _real_definition()
+    assert _admit(spec) == spec.fingerprint()
+    declared = replace(spec, physical_pools=(PhysicalPoolRef(
+        pool_id="unregistered:execution-pool",
+        owner_id="invented:resource-owner",
+        consumer_ids=("fulfillment",),
+    ),))
+    assert declared.fingerprint() != spec.fingerprint()
+    with pytest.raises(ValueError, match="physical pool.*authoritative"):
+        _admit(declared)
