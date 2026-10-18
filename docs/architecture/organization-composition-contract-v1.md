@@ -156,8 +156,9 @@ Unverified physical pools and all executable operational references remain
 blocked. This does **not** imply arbitrary external policies or cost models
 are positively verified: their structural *references* are typed but remain
 non-executable and unsupported without separately attested bytes/authority.
-If #535's exact-head checks or independent review do not pass, keep the
-proposed static status and issue #495 OPEN.
+Promotion gates for the parent and this ratification PR are enforced in
+GitHub before integration. The merged document records the accepted static
+scope; it is not an executable admission of third-party configurations.
 
 **Separate operational work:** exact owner-qualified dispatch, dynamic
 `config_epoch` fencing/migration, actual policy/calendar/cost execution,
