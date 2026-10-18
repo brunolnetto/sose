@@ -1041,6 +1041,21 @@ def execute_od5a_claimed_tick(
         if authority is not None else None
     )
 
+    def validate_wait(wait: Entity, *, epoch: int) -> None:
+        attributes = wait.attributes
+        origin = attributes.get("origin_epoch")
+        observed = attributes.get("last_claim_epoch")
+        if (
+            wait.state != "waiting"
+            or wait_attributes is None
+            or any(attributes.get(key) != value for key, value in wait_attributes.items())
+            or type(origin) is not int or type(observed) is not int
+            or not 1 <= origin <= observed <= epoch
+        ):
+            raise ResourceConflictError(
+                "shared wait record contradicts native source request or runner epoch"
+            )
+
     def commit_source_step() -> None:
         with _job_transaction(store, claim.organization_id) as uow:
             # Re-read the trusted clock AFTER the lock. Neither invocation
@@ -1089,11 +1104,11 @@ def execute_od5a_claimed_tick(
                     # must never leave an apparently pending request.
                     wait = uow.get_entity(_SHARED_WAIT_KIND, wait_id)
                     if wait is not None:
-                        if wait.state != "waiting" or wait.attributes != wait_attributes:
-                            raise ResourceConflictError(
-                                "shared wait record contradicts native source request"
-                            )
+                        validate_wait(wait, epoch=claim.epoch)
                         wait.state = "satisfied"
+                        wait.attributes = {
+                            **wait.attributes, "last_claim_epoch": claim.epoch,
+                        }
                         wait.touch(commit_at)
                         uow.save_entity(wait)
             job = replace(
@@ -1141,17 +1156,29 @@ def execute_od5a_claimed_tick(
                     "OD-5a source/physical state changed before durable wait"
                 )
             wait = uow.get_entity(_SHARED_WAIT_KIND, wait_id)
+            if wait is not None:
+                validate_wait(wait, epoch=claim.epoch)
+            # Fencing must use the timestamp of THIS durable write, not the
+            # previous snapshot's clock; a claim can expire between the two.
+            stamp = _trusted_now(store, _wall_clock)
+            _assert_claim(uow, claim, stamp)
             if wait is None:
                 wait = Entity(
                     id=wait_id, entity_type=_SHARED_WAIT_KIND, state="waiting",
-                    attributes=deepcopy(wait_attributes),
+                    attributes={
+                        **deepcopy(wait_attributes),
+                        "origin_epoch": claim.epoch,
+                        "last_claim_epoch": claim.epoch,
+                    },
                 )
-                wait.touch(_trusted_now(store, _wall_clock))
+                wait.touch(stamp)
                 uow.save_entity(wait)
-            elif wait.state != "waiting" or wait.attributes != wait_attributes:
-                raise ResourceConflictError(
-                    "shared wait replay changed immutable native request"
-                )
+            elif wait.attributes["last_claim_epoch"] != claim.epoch:
+                wait.attributes = {
+                    **wait.attributes, "last_claim_epoch": claim.epoch,
+                }
+                wait.touch(stamp)
+                uow.save_entity(wait)
             return OD5aRecurringStep(
                 claim.organization_id, claim.trigger_id, "waiting",
                 claim.epoch, job.logical_time, job.next_tick,
