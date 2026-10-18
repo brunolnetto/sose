@@ -582,23 +582,30 @@ def test_pg_advice_inside_outer_sql_transaction_does_not_fence_pool_writers():
         seed.temporal_resources().register_pool(pool)
     with PostgresPersistence(DSN, namespace=ns) as reader, \
             PostgresPersistence(DSN, namespace=ns) as writer:
+        # Ledger construction performs first-time DDL bootstrap under a
+        # namespace-wide advisory lock. Construct BOTH instances *before*
+        # the deliberately open SQL transaction; otherwise the test would
+        # deadlock the bootstrap rather than falsify the query's lock scope.
+        reader_ledger = reader.temporal_resources()
+        writer_ledger = writer.temporal_resources()
+        writer._connection.execute("SET lock_timeout TO '3000ms'")
         wait = _request(pool, "uncommitted-hint", 0, 1, instance="unit-1", owner="reader")
         other = _request(pool, "independent-commit", 0, 1, instance="unit-1", owner="writer")
         with reader._connection.transaction():
-            assert reader.temporal_resources().suggest_next_start(
+            assert reader_ledger.suggest_next_start(
                 wait, not_before=T0, latest_start=T0 + H,
             ) == T0
             # Outer transaction is intentionally still open while another
             # PostgreSQL connection MUST finish its real reserve. No pool
             # advisory lock may outlive the purely advisory query.
             with ThreadPoolExecutor(max_workers=1) as workers:
-                result = workers.submit(writer.temporal_resources().reserve, other)
+                result = workers.submit(writer_ledger.reserve, other)
                 assert result.result(timeout=10) == other
         with pytest.raises(ResourceCapacityError):
-            reader.temporal_resources().reserve(wait)
-        assert reader.temporal_resources().get("uncommitted-hint") is None
-        assert reader.temporal_resources().get("independent-commit") == other
-        assert reader.temporal_resources().audit()
+            reader_ledger.reserve(wait)
+        assert reader_ledger.get("uncommitted-hint") is None
+        assert reader_ledger.get("independent-commit") == other
+        assert reader_ledger.audit()
 
 
 def test_pg_advice_omits_unrelated_historical_intervals_from_window(monkeypatch):
