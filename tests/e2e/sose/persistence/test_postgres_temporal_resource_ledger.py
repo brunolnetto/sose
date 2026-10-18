@@ -836,7 +836,7 @@ def test_pg_prospective_outages_use_pool_index_amid_unrelated_same_time_outages(
             with db._connection.transaction():
                 db._connection.execute(sql.SQL("""
                     INSERT INTO {} (pool_key, definition)
-                    SELECT 'test-foreign-pool:' || g, '{}'
+                    SELECT 'test-foreign-pool:' || g, '{{}}'
                     FROM generate_series(1, 1500) AS g
                 """).format(ledger._pools))
                 db._connection.execute(sql.SQL("""
