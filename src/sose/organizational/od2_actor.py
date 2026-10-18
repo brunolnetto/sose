@@ -395,7 +395,13 @@ def transition_actor(
                 # StateChart event points instead at this persisted Command.
                 causation_id=None,
                 correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
-                payload={"external_cause_id": cause_id},
+                payload={
+                    "external_cause_id": cause_id,
+                    **({
+                        "cancelled_work_id": work_id,
+                        "charged_cost_us": cost_us,
+                    } if action == "cancel_assigned" else {}),
+                },
             )
             try:
                 chart = engine.context.statecharts.bind(actor, caused_by=command)
