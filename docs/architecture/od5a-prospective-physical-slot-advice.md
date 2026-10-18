@@ -133,6 +133,22 @@ instances, half-open occupancy, original provenance, read-only snapshots,
 reopen determinism, lack of horizon and an actual competing owner booking
 the proposed interval before the caller's `reserve()`.
 
+## Aligned envelope integrity hardening (#477 increment)
+
+`_aligned_physical_start` now rejects a prospective request group before
+consulting the ledger if requests mix **source owner**, **physical pool**,
+**original source-action start**, or lack a causal parent. This extends
+the existing duplicate reservation and named-instance checks. Distinct
+causal event IDs are permitted because one source can emit multiple
+physically distinct work requests with independently valid parents.
+Pure falsifiers use an intentionally permissive advisory oracle to prove
+invalid groups fail **before any physical SQL advice reads**.
+
+These invariants do not turn joint suggestions into physical grants,
+eliminate advisory staleness, or certify source scheduling and full
+SimPy/PG recovery. Exact owner+pool+causal and complete source epoch
+still require the final fenced authoritative scheduling Command (#477).
+
 ## Not yet implemented
 
 This PR deliberately does NOT rewrite the OD-5a synthetic arrival/service

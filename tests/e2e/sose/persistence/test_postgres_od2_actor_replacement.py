@@ -17,7 +17,10 @@ from uuid import uuid4
 import pytest
 
 from sose.core.identity import deterministic_id
-from sose.organizational.od2_actor import ACTOR_KIND, seed_actor, transition_actor
+from sose.organizational.od2_actor import (
+    ACTOR_KIND, ActorAvailabilityCalendar, ActorAvailabilityInterval,
+    seed_actor, transition_actor,
+)
 from sose.persistence.postgres import PostgresPersistence
 from tests.e2e.sose.persistence.test_postgres_od2_actor_concurrency import (
     OWNER, PEER_OWNER, MODEL, T0, _enroll, _assign,
@@ -279,3 +282,58 @@ def test_pg_killed_successor_worker_cannot_fork_committed_lineage():
             recovered.entity(ACTOR_KIND, expected),
             tuple(recovered.events()), commands_after,
         )
+
+
+
+def test_pg_actor_calendar_recovery_rejects_boundary_and_preserves_enrollment_source():
+    """Real PG restart: the event-anchored eligibility survives a new connection."""
+    assert DSN
+    ns = _namespace()
+    calendar = ActorAvailabilityCalendar(1, 1, (
+        ActorAvailabilityInterval(
+            T0 + timedelta(hours=2), T0 + timedelta(hours=3),
+        ),
+        ActorAvailabilityInterval(
+            T0 + timedelta(hours=5), T0 + timedelta(hours=6),
+        ),
+    ))
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="calendar-restart",
+            model_spec_hash=MODEL, config_epoch=1, at=T0,
+            availability_calendar=calendar,
+        )
+        transition_actor(
+            store, owner_id=OWNER, actor_id=actor_id, action="activate",
+            cause_id="calendar:activate", at=T0 + timedelta(hours=1),
+            model_spec_hash=MODEL, config_epoch=1,
+        )
+        enrolled = store.entity(ACTOR_KIND, actor_id)
+        assert enrolled.attributes["availability_calendar"]["source_digest"] == calendar.digest()
+    with PostgresPersistence(DSN, namespace=ns) as recovered:
+        events_before = tuple(recovered.events())
+        with pytest.raises(ValueError, match="calendar.*assignment"):
+            transition_actor(
+                recovered, owner_id=OWNER, actor_id=actor_id, action="assign",
+                cause_id="calendar:outside", at=T0 + timedelta(hours=3),
+                model_spec_hash=MODEL, config_epoch=1, work_id="no-grant",
+            )
+        assert tuple(recovered.events()) == events_before
+        assigned = transition_actor(
+            recovered, owner_id=OWNER, actor_id=actor_id, action="assign",
+            cause_id="calendar:inside", at=T0 + timedelta(hours=5),
+            model_spec_hash=MODEL, config_epoch=1, work_id="fresh-grant",
+        )
+        assert assigned.state == "active"
+        assert assigned.attributes["assigned_work_id"] == "fresh-grant"
+    with PostgresPersistence(DSN, namespace=ns) as final:
+        events_before = tuple(final.events())
+        transition_actor(
+            final, owner_id=OWNER, actor_id=actor_id, action="assign",
+            cause_id="calendar:inside", at=T0 + timedelta(hours=5),
+            model_spec_hash=MODEL, config_epoch=1, work_id="fresh-grant",
+        )
+        assert tuple(final.events()) == events_before
+        assert final.entity(ACTOR_KIND, actor_id).attributes[
+            "availability_calendar"
+        ]["source_digest"] == calendar.digest()

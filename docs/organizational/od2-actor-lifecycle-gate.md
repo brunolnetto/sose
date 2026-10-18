@@ -36,6 +36,30 @@ scientific agency evidence. Related: [OD research #457](https://github.com/bruno
   idempotent replay, rollback of illegal transitions, actor independence and
   replacement identity.
 
+## Opt-in fixed-epoch availability window (#462 increment)
+
+An enrolled actor may carry an immutable `ActorAvailabilityCalendar(version=1,
+config_epoch, intervals)`. Its absolute UTC half-open intervals are sorted,
+positive, nonoverlapping and source-digest bound to an independent
+append-only actor enrollment `DomainEvent` committed in the same transaction
+as the initial actor. The entity attribute is only a mutable projection and
+cannot self-attest its hash or opt out by deleting the calendar field. `transition_actor(action="assign")` verifies the saved source
+and checks eligibility at assignment **start** before creating any Command or
+DomainEvent. The exact end boundary is not eligible; completing already
+started work outside the window remains permitted for truthful accounting.
+Malformed/falsified actor calendar snapshots fail closed, including after
+SQLite restart. Existing actors without a calendar preserve historical
+behavior rather than silently adopting a guessed working week.
+
+This is an opt-in eligibility predicate, **not** a materialized actor
+availability ledger, paid break accounting, physical capacity grant, guarantee
+that service finishes before a closure, or prospectively admitted calendar
+migration. The new test exercises boundary, corruption, epoch mismatch,
+replay and restart on Memory/SQLite. PostgreSQL full CI must still pass.
+Physical work and in-flight exit/cancel/transfer are independent #462
+acceptance and remain OPEN. Do not infer real workplace schedules or OD-5b
+causal effects from synthetic windows.
+
 ## Outstanding #462 acceptance
 
 1. Real worker/process death and simultaneous PostgreSQL actors attempting the
