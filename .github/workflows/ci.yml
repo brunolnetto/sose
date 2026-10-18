@@ -586,6 +586,7 @@ jobs:
           python -m pytest -q \
             tests/e2e/sose/persistence/test_postgres_persistence.py \
             tests/e2e/sose/persistence/test_postgres_persistence_restart.py \
+            tests/e2e/sose/persistence/test_postgres_typed_dirty_records.py \
             tests/e2e/sose/persistence/test_postgres_authoritative_conformance.py \
             tests/e2e/sose/persistence/test_postgres_pc6_multiflow_equivalence.py \
             tests/e2e/sose/persistence/test_postgres_pc6_two_real_paths.py \
