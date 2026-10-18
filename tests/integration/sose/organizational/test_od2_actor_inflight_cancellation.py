@@ -213,3 +213,106 @@ def test_sqlite_replayed_cancellation_requires_immutable_cost_and_real_command(
             _transition(recovered, actor_id, "cancel_assigned", 3,
                         work_id="work:A", cost_us=750000)
         assert tuple(recovered.events()) == before
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_corrupted_projection_cannot_create_overlapping_durable_work(adapter, tmp_path):
+    """P1: mutable eligible/idle projection cannot hide an open work:A source."""
+    path = tmp_path / "overlap.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="overlap",
+            model_spec_hash=MODEL, config_epoch=1, at=T0,
+        )
+        _transition(store, actor_id, "activate", 1)
+        _transition(store, actor_id, "assign", 2, work_id="work:A")
+        first = next(event for event in store.events()
+                     if event.payload.get("trigger") == "assign")
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.state = "eligible"
+            actor.attributes["assigned_work_id"] = None
+            uow.save_entity(actor)
+        before = tuple(store.events())
+        with pytest.raises(ValueError, match="attested assignment remains active"):
+            _transition(store, actor_id, "assign", 3, work_id="work:B")
+        assert tuple(store.events()) == before
+        # Even a second tampering attempt making work:B the active projection
+        # cannot turn it into a real source assignment.
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.state = "active"
+            actor.attributes["assigned_work_id"] = "work:B"
+            uow.save_entity(actor)
+        with pytest.raises(ValueError, match="attested original assignment"):
+            _transition(store, actor_id, "cancel_assigned", 4,
+                        work_id="work:B", cost_us=1)
+        assert tuple(store.events()) == before
+        assert first.payload["assigned_work_id"] == "work:A"
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as recovered:
+            old = tuple(recovered.events())
+            with pytest.raises(ValueError, match="attested original assignment"):
+                _transition(recovered, actor_id, "cancel_assigned", 4,
+                            work_id="work:B", cost_us=1)
+            assert tuple(recovered.events()) == old
+
+
+def test_attested_history_rejects_ever_overlapping_assignments_even_if_last_is_valid():
+    """P1 forged history: final assignment work:B does not hide unclosed work:A."""
+    store = MemoryPersistence()
+    actor_id = seed_actor(store, owner_id=OWNER, actor_key="forged-overlap",
+                          model_spec_hash=MODEL, config_epoch=1, at=T0)
+    _transition(store, actor_id, "activate", 1)
+    _transition(store, actor_id, "assign", 2, work_id="work:A")
+    first = next(event for event in store.events()
+                 if event.payload.get("trigger") == "assign")
+    with store.transaction(owner_id=OWNER) as uow:
+        actor = uow.get_entity(ACTOR_KIND, actor_id)
+        actor.state = "active"
+        actor.attributes["assigned_work_id"] = "work:B"
+        uow.save_entity(actor)
+        uow.append_event(replace(
+            first, event_id="forged-second-assignment",
+            occurred_at=T0 + timedelta(hours=3),
+            payload={**first.payload, "assigned_work_id": "work:B"},
+        ))
+    before = tuple(store.events())
+    with pytest.raises(ValueError, match="attested assignments overlap"):
+        _transition(store, actor_id, "cancel_assigned", 4,
+                    work_id="work:B", cost_us=1)
+    assert tuple(store.events()) == before
+
+
+def test_closed_historical_assignment_without_work_id_allows_new_assignment():
+    """Retain bounded compatibility for older completed actor event projections."""
+    store = MemoryPersistence()
+    actor_id = seed_actor(store, owner_id=OWNER, actor_key="legacy-complete",
+                          model_spec_hash=MODEL, config_epoch=1, at=T0)
+    _transition(store, actor_id, "activate", 1)
+    _transition(store, actor_id, "assign", 2, work_id="work:old")
+    _transition(store, actor_id, "complete", 3, work_id="work:old")
+    before = tuple(store.events())
+    with store.transaction(owner_id=OWNER) as uow:
+        for old in before:
+            if old.payload.get("trigger") in {"assign", "complete"}:
+                updated_payload = dict(old.payload)
+                updated_payload.pop("assigned_work_id", None)
+                updated_payload.pop("completed_work_id", None)
+                # Replay a historical ledger whose original schema predates
+                # append-only actor work IDs. Does not modify frozen files.
+                # Persistence append order remains unchanged.
+                new_event = replace(old, event_id=old.event_id + "-historical",
+                                    payload=updated_payload)
+                uow.append_event(new_event)
+    # The appended historical simulation conflicts with modern events,
+    # and must fail closed rather than silently certifying new work.
+    old_events = tuple(store.events())
+    with pytest.raises(ValueError, match="attested"):
+        _transition(store, actor_id, "assign", 4, work_id="work:new")
+    assert tuple(store.events()) == old_events
