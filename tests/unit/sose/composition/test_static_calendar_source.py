@@ -103,8 +103,17 @@ def test_approved_static_calendar_does_not_accept_caller_digest_or_reference_cla
         with pytest.raises(ValueError, match="epoch"):
             replace(original, operational_configs=(ref,))
         return
-    with pytest.raises(ValueError, match="calendar|component|provenance|reference"):
-        verify_static_calendar_reference(original, ref)
+    if ref.component_id not in {component.component_id for component in original.components}:
+        with pytest.raises(ValueError, match="dangling component"):
+            replace(original, operational_configs=(ref,))
+        return
+    # A syntactically valid forged reference MUST be declared in the supplied
+    # organization before its ID, version and digest can be meaningfully
+    # tested against trusted bytes. Passing the old reference only exercises
+    # the membership guard and leaves the actual attestation untested.
+    declared = replace(original, operational_configs=(ref,))
+    with pytest.raises(ValueError, match="calendar|provenance|reference"):
+        verify_static_calendar_reference(declared, declared.operational_configs[0])
 
 
 def test_positive_static_calendar_does_not_grant_runtime_admission():
@@ -205,6 +214,8 @@ def test_calendar_attestation_fails_closed_for_wrong_types_and_shipped_byte_tamp
         definition,
         operational_configs=(replace(ref, reference_id="another-reference"),),
     )
+    with pytest.raises(ValueError, match="provenance"):
+        verify_static_calendar_reference(other, other.operational_configs[0])
     with pytest.raises(ValueError, match="declared"):
         verify_static_calendar_reference(other, ref)
     broken = replace(
