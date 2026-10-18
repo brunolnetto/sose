@@ -1,6 +1,6 @@
 # Organization Composition — initial configuration contract (issue #495)
 
-Status: **implemented v1 structural contract (#499) with fail-closed static admission (#510); [ADR-0008](decisions/adr-0008-organization-composition-admission.md) still Proposed**, pending a validated static calendar schema and independently reviewed boundary/provenance acceptance (#495). Operational composition remains unimplemented (#496).
+Status: **v1 structural contract (#499), fail-closed registry metadata admission (#510/#534), and positive, source-pinned static UTC calendar (#535)** implemented. [ADR-0008](decisions/adr-0008-organization-composition-admission.md) remains **Proposed pending independent bounded static ratification (#538)**; runtime composition remains unimplemented (#496).
 Follow-up: #496 executable runtime, #497 O2C/MRO domain falsifier, #468/#489 concurrency, #477 physical adapter.
 Master plan: #494; proposed documentation: #498.
 
@@ -145,17 +145,17 @@ management lifecycle features do not retroactively gate it.
 | Physical resources | Named external pool references with explicit owner IDs and known consumer IDs; duplicate pool IDs rejected (#499) | Pool existence, calendar/instance/capacity and transactional ownership checked against one authoritative ledger |
 | Causal execution | Exact registry admission but **no runnable composition** (#510) | Publication → claim → fenced ACK → Command → certified effect across components with restart and local clocks (#496) |
 | Read model / governance | Architectural separation described by [composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) | Derived consistent snapshots, optional authority-changing governance StateChart and failure-path conformance (#496) |
-| Architecture ratification | [Composition-admission ADR-0008](decisions/adr-0008-organization-composition-admission.md) still **Proposed**, backed by #499/#510/#512/#530 partial static tests; distinct [owner-qualified runtime ADR-0009](decisions/adr-0009-owner-qualified-runtime-only.md) is not being ratified here | Calendar static schema and independently auditable version/digest semantics remain #495; dynamic policy/epoch/cost and job lifecycle are #496 |
+| Architecture ratification | [ADR-0008](decisions/adr-0008-organization-composition-admission.md) still **Proposed** pending independent static acceptance (#538), with #499/#510/#512/#530/#534 metadata tests and #535's positive pinned UTC calendar schema and byte provenance | Review bounded #495 ratification; dynamic policy/epoch/cost execution and job lifecycle are #496; live ADR-0009 remains separate |
 
-**Current decision (#495): NOT ready for closure.** ADR-0008 stays proposed.
-The production admission subset is intentionally conservative: unknown
-manifest contracts, unaudited operational references and now unverified
-physical pools are rejected, not silently installed. Negative admission is
-necessary but does **not** establish a validated positive calendar schema:
-a declared 64-character source digest currently lacks source bytes or a
-trusted registry capable of verifying its provenance. Implement and falsify
-a bounded **static** calendar model and its version/digest checks before
-ratifying #495. Do not move this unresolved static-schema criterion to #496.
+**Current decision (#495): static schema implemented, ratification pending.**
+ADR-0008 stays Proposed until independent review (#538). The pure #535
+calendar verifier positively checks a shipped, explicitly Monday-zero UTC
+schedule against canonical bytes and an independently fixed SHA-256;
+negative tests reject forged declared references and contradictory windows.
+This **does not install a calendar in the running organization** or make
+arbitrary caller-provided source hashes attested. Registry admission still
+rejects unknown manifests, all operational references and unaudited physical
+pools. Treating a declared digest as executable authority remains prohibited.
 
 **Separate operational work:** exact owner-qualified dispatch, dynamic
 `config_epoch` fencing/migration, actual policy/calendar/cost execution,
@@ -202,9 +202,9 @@ Because no audited operational configuration registry with policy/calendar/cost
 semantics exists yet, **`validate_organization_admission` refuses any definition
 that has such references**. An arbitrary configuration hash supplied by a caller
 must not self-attest existence, authority, calendar availability or cost.
-A validated **static calendar payload/schema** (including authoritative
-source-byte/digest provenance and invalid-window rejection) is still #495
-acceptance. **Runtime** calendar/policy/cost evaluation, executable registry
+A **bounded positive static calendar payload/schema** with independently
+pinned source bytes and invalid-window rejection is now implemented in #535;
+independent architecture ratification remains #538. **Runtime** calendar/policy/cost evaluation, executable registry
 attestation, dynamic config-epoch migration and stale-worker fencing are #496;
 not silently treated as complete by the static definition.
 
