@@ -81,15 +81,16 @@ class PostgresTemporalResourceLedger:
                 sql.Identifier(f"{self._store.namespace}_resource_booking_interval_idx"),
                 self._reservations,
             ))
-            # The prospective-read WHERE clause filters by effective end,
-            # not only immutable end_at. A normal (start_at, end_at) index
-            # cannot restrict long historical prefixes stopped/recovered
-            # early. Short names avoid PG's 63-byte index identifier truncation.
+            # GiST's native timestamptz-range overlap operator constrains
+            # BOTH endpoints of a bounded query, including long past and
+            # arbitrarily distant future intervals. No btree_gist extension.
+            # [start, effective_end) encodes released/preempted bookings and
+            # an instantaneous stop as an empty range. Namespace-safe names.
             self._db.execute(sql.SQL("""
-                CREATE INDEX IF NOT EXISTS {} ON {}
-                    (pool_key, (COALESCE(stopped_at, end_at)), start_at)
+                CREATE INDEX IF NOT EXISTS {} ON {} USING gist
+                    (tstzrange(start_at, COALESCE(stopped_at, end_at), '[)'))
             """).format(
-                sql.Identifier(f"{self._store.namespace}_rb_eff_idx"),
+                sql.Identifier(f"{self._store.namespace}_rb_window_gist"),
                 self._reservations,
             ))
             self._db.execute(sql.SQL("""
@@ -106,10 +107,10 @@ class PostgresTemporalResourceLedger:
                 )
             """).format(self._outages, self._pools))
             self._db.execute(sql.SQL("""
-                CREATE INDEX IF NOT EXISTS {} ON {}
-                    (pool_key, (COALESCE(recovered_at, end_at)), start_at)
+                CREATE INDEX IF NOT EXISTS {} ON {} USING gist
+                    (tstzrange(start_at, COALESCE(recovered_at, end_at), '[)'))
             """).format(
-                sql.Identifier(f"{self._store.namespace}_ro_eff_idx"),
+                sql.Identifier(f"{self._store.namespace}_ro_window_gist"),
                 self._outages,
             ))
             self._db.execute(sql.SQL("""
@@ -292,10 +293,10 @@ class PostgresTemporalResourceLedger:
             SELECT reservation_id, pool_key, instance_id, owner_id, start_at,
                    end_at, units, priority, status, stopped_at, causation_id
             FROM {} WHERE pool_key = %s
-              AND start_at < %s
-              AND COALESCE(stopped_at, end_at) > %s
+              AND tstzrange(start_at, COALESCE(stopped_at, end_at), '[)')
+                  && tstzrange(%s, %s, '[)')
             ORDER BY reservation_id
-        """).format(self._reservations), (key, end, start)).fetchall()
+        """).format(self._reservations), (key, start, end)).fetchall()
         return tuple(self._booking(row, pool=pool) for row in rows)
 
     def _window_outages(
@@ -306,11 +307,10 @@ class PostgresTemporalResourceLedger:
         rows = self._db.execute(sql.SQL("""
             SELECT outage_id, pool_key, instance_id, start_at, end_at, recovered_at
             FROM {} WHERE pool_key = %s
-              AND start_at < %s
-              AND COALESCE(recovered_at, end_at) > %s
-              AND COALESCE(recovered_at, end_at) > start_at
+              AND tstzrange(start_at, COALESCE(recovered_at, end_at), '[)')
+                  && tstzrange(%s, %s, '[)')
             ORDER BY outage_id
-        """).format(self._outages), (key, end, start)).fetchall()
+        """).format(self._outages), (key, start, end)).fetchall()
         return tuple(self._outage(row, pool=pool) for row in rows)
 
     def suggest_next_start(
