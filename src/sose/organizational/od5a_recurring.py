@@ -951,46 +951,32 @@ def _source_wait_digest(source_state: dict) -> str:
 
 def _validate_shared_wait_record(
     wait: Entity, *, expected: dict | None, epoch: int,
-    require_source_digest: bool = False,
 ) -> None:
-    """Fail-closed v2 source binding with explicit legacy retry compatibility.
+    """Require complete v2 source provenance on reads AND committed retries.
 
-    Pre-v2 waits did not persist the full source digest. Their legacy retry
-    contract remains valid, but they cannot authorize a v2 advice response:
-    no old source hash can be reconstructed independently after the fact.
+    A missing schema tag or digest cannot be interpreted as legacy: a
+    corrupted v2 wait could otherwise be downgraded by deleting both fields.
+    Pre-v2 historical waits must be quarantined, not re-admitted to physical
+    execution by an unauthenticated fallback.
     """
     attributes = wait.attributes
     origin = attributes.get("origin_epoch")
     observed = attributes.get("last_claim_epoch")
+    digest = attributes.get("source_digest")
     version = attributes.get("wait_schema_version")
     if (
         wait.state != "waiting"
         or expected is None
         or type(origin) is not int or type(observed) is not int
         or not 1 <= origin <= observed <= epoch
-    ):
-        raise ResourceConflictError(
-            "shared wait record contradicts native source request or runner epoch"
-        )
-    if version is None:
-        if require_source_digest:
-            raise ResourceConflictError(
-                "legacy shared wait lacks authenticated source digest for advice"
-            )
-        expected = {
-            key: value for key, value in expected.items()
-            if key not in {"wait_schema_version", "source_digest"}
-        }
-    elif (
-        type(version) is not int or version != 2
-        or not isinstance(attributes.get("source_digest"), str)
-        or len(attributes["source_digest"]) != 64
-    ):
-        raise ResourceConflictError("shared wait record contradicts v2 source digest")
-    if dumps(attributes, sort_keys=True, separators=(",", ":"), allow_nan=False) != dumps(
-        {
-            **expected, "origin_epoch": origin, "last_claim_epoch": observed,
-        }, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        or type(version) is not int or version != 2
+        or not isinstance(digest, str) or len(digest) != 64
+        or dumps(attributes, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        != dumps({
+            **expected,
+            "origin_epoch": origin,
+            "last_claim_epoch": observed,
+        }, sort_keys=True, separators=(",", ":"), allow_nan=False)
     ):
         raise ResourceConflictError(
             "shared wait record contradicts native source request or runner epoch"
@@ -1085,7 +1071,6 @@ def suggest_od5a_shared_wait_slots(
                 "source_digest": _source_wait_digest(source.attributes),
             },
             epoch=lease.attributes["epoch"],
-            require_source_digest=True,
         )
         if not matched:
             raise ResourceConflictError("durable shared wait has no physical requests")
