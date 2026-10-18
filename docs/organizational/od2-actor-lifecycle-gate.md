@@ -68,8 +68,13 @@ An actor with a nonempty `assigned_work_id` can request
 transition cost. One owner/epoch-fenced UoW changes the StateChart from
 `active` to `eligible`, accrues active time, clears the local assignment,
 records `cancelled_work_ids`, and atomically persists one Command plus
-its causally linked DomainEvent. The durable Command carries the cancelled
-work ID, external cause, and charged transition cost. A later explicit
+its causally linked append-only DomainEvent. The original `assign` event
+carries the assigned work identity. The `cancel_assigned` event records the
+cancelled work, cost and original assignment event ID, independently of
+the mutable actor projection/Command. An identical-cause retry verifies
+those immutable facts and also requires the original Command (including
+matching charged cost/source) to remain intact; missing or rewritten
+Commands cannot be accepted as successful paid cancellation. A later explicit
 `exit` is legal; `exit` while still active remains illegal. An identical
 cause retry is idempotent across SQLite restart; inconsistent replay and
 foreign-owner attempts fail without extra writes.
