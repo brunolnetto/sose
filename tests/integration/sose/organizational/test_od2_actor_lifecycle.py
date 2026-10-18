@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from sose.organizational.od2_actor import (
-    ACTOR_KIND, ACTOR_STATES, seed_actor, transition_actor,
+    ACTOR_KIND, ACTOR_STATES, ActorAvailabilityCalendar, ActorAvailabilityInterval, seed_actor, transition_actor,
 )
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
@@ -222,3 +222,106 @@ def test_actor_replacement_cannot_silently_rebind_epoch_or_model(epoch, model):
         at=T0 + timedelta(hours=2), replaces_actor_id=prior,
     )
     assert store.entity(ACTOR_KIND, prior).attributes["replaced_by_actor_id"] == successor
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_actor_calendar_fences_assignment_at_exact_window_boundary(adapter, tmp_path):
+    """Source-declared schedule controls claim start; it never grants physical capacity."""
+    path = tmp_path / "od2-calendar.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        calendar = ActorAvailabilityCalendar(
+            version=1, config_epoch=1,
+            intervals=(ActorAvailabilityInterval(
+                starts_at=T0 + timedelta(hours=2),
+                ends_at=T0 + timedelta(hours=3),
+            ),),
+        )
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="with-calendar",
+            model_spec_hash=MODEL, config_epoch=1, at=T0,
+            availability_calendar=calendar,
+        )
+        _transition(store, actor_id, "activate", 1)
+        source = store.entity(ACTOR_KIND, actor_id)
+        assert source.attributes["availability_calendar"]["config_epoch"] == 1
+        assert source.attributes["availability_calendar"]["source_digest"] == calendar.digest()
+        events_before = tuple(store.events())
+        for hour in (1.5, 3):
+            with pytest.raises(ValueError, match="calendar.*assignment"):
+                _transition(store, actor_id, "assign", hour, work_id="work:calendar")
+            assert tuple(store.events()) == events_before
+            assert store.entity(ACTOR_KIND, actor_id) == source
+        _transition(store, actor_id, "assign", 2, work_id="work:calendar")
+        # Completion can be outside the start eligibility interval. This is
+        # NOT proof of continued service or a live ResourceReservation.
+        _transition(store, actor_id, "complete", 4, work_id="work:calendar")
+        assert store.entity(ACTOR_KIND, actor_id).state == "eligible"
+        assert len(store.events()) == len(events_before) + 2
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            assert reopened.entity(ACTOR_KIND, actor_id).attributes["availability_calendar"]["source_digest"] == calendar.digest()
+            old = reopened.events()
+            _transition(reopened, actor_id, "complete", 4, work_id="work:calendar")
+            assert reopened.events() == old
+
+
+@pytest.mark.parametrize("case", ("overlap", "zero", "epoch", "unordered"))
+def test_actor_calendar_requires_positive_ordered_intervals_and_epoch(case):
+    first = ActorAvailabilityInterval(
+        T0 + timedelta(hours=2), T0 + timedelta(hours=3),
+    )
+    second = ActorAvailabilityInterval(
+        T0 + timedelta(hours=4), T0 + timedelta(hours=5),
+    )
+    if case == "zero":
+        with pytest.raises(ValueError, match="positive"):
+            ActorAvailabilityInterval(T0, T0)
+    elif case == "overlap":
+        with pytest.raises(ValueError, match="overlap"):
+            ActorAvailabilityCalendar(1, 1, (
+                first, ActorAvailabilityInterval(
+                    T0 + timedelta(hours=2, minutes=30),
+                    T0 + timedelta(hours=4),
+                ),
+            ))
+    elif case == "unordered":
+        with pytest.raises(ValueError, match="ordered"):
+            ActorAvailabilityCalendar(1, 1, (second, first))
+    else:
+        store = MemoryPersistence()
+        calendar = ActorAvailabilityCalendar(1, 2, (first,))
+        with pytest.raises(ValueError, match="epoch"):
+            seed_actor(store, owner_id=OWNER, actor_key="epoch",
+                       model_spec_hash=MODEL, config_epoch=1, at=T0,
+                       availability_calendar=calendar)
+        assert store.entities(ACTOR_KIND) == ()
+
+
+def test_actor_calendar_tampering_refuses_new_causal_commands():
+    store = MemoryPersistence()
+    calendar = ActorAvailabilityCalendar(
+        version=1, config_epoch=1, intervals=(ActorAvailabilityInterval(
+            T0 + timedelta(hours=1), T0 + timedelta(hours=4),
+        ),),
+    )
+    actor_id = seed_actor(
+        store, owner_id=OWNER, actor_key="tampering",
+        model_spec_hash=MODEL, config_epoch=1, at=T0,
+        availability_calendar=calendar,
+    )
+    _transition(store, actor_id, "activate", 1)
+    with store.transaction(owner_id=OWNER) as uow:
+        actor = uow.get_entity(ACTOR_KIND, actor_id)
+        actor.attributes["availability_calendar"]["intervals"][0]["end"] = (
+            T0 + timedelta(days=2)
+        ).isoformat()
+        uow.save_entity(actor)
+    before = tuple(store.events())
+    with pytest.raises(ValueError, match="calendar.*digest"):
+        _transition(store, actor_id, "assign", 2, work_id="tampered")
+    assert tuple(store.events()) == before
