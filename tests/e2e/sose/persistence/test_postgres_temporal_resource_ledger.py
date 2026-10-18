@@ -4,6 +4,7 @@ These tests do not mistake an advisory mutex for a durable allocation. Every
 proof reconstructs resource records from PostgreSQL after closing the writer.
 """
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
 from threading import Barrier, Event, Thread
@@ -426,3 +427,136 @@ def test_pg_distinct_organization_pools_commit_while_other_transaction_open():
         ledger = reopened.temporal_resources()
         assert {x.reservation_id for x in ledger.reservations()} == {"org-a", "org-b"}
         assert ledger.audit()
+
+
+def test_pg_prospective_slot_advice_preserves_past_outage_and_all_ledger_truth():
+    """#477: ending an outage later cannot retroactively allocate its past."""
+    assert DSN
+    ns = _namespace("advice_outage")
+    pool = _pool(named=True)
+    with PostgresPersistence(DSN, namespace=ns) as writer:
+        ledger = writer.temporal_resources()
+        ledger.register_pool(pool)
+        ledger.reserve(_request(pool, "occupied", 0, 2, instance="unit-1", owner="org:a"))
+        ledger.fail(TemporalOutage(
+            outage_id="broken-unit", address=pool.address(instance_id="unit-1"),
+            start_at=T0 + 2 * H, end_at=T0 + 4 * H,
+        ))
+        wait = _request(pool, "pending", 0, 1, instance="unit-1", owner="org:b")
+        other = _request(pool, "independent", 0, 1, instance="unit-2", owner="org:c")
+        before = ledger.snapshot()
+        assert ledger.suggest_next_start(
+            wait, not_before=T0, latest_start=T0 + 3 * H,
+        ) is None
+        assert ledger.suggest_next_start(
+            wait, not_before=T0, latest_start=T0 + 5 * H,
+        ) == T0 + 4 * H
+        assert ledger.suggest_next_start(
+            other, not_before=T0, latest_start=T0,
+        ) == T0
+        assert ledger.suggest_next_start(
+            wait, not_before=T0 + 5 * H, latest_start=T0 + 5 * H,
+        ) == T0 + 5 * H
+        assert ledger.snapshot() == before, "advice must not book, emit or change physical truth"
+        assert ledger.get("pending") is None
+        # Source-authorized *future* reservation is a separate write.
+        assert ledger.reserve(replace(
+            wait, start_at=T0 + 4 * H, end_at=T0 + 5 * H,
+        )).start_at == T0 + 4 * H
+        assert ledger.audit()
+    with PostgresPersistence(DSN, namespace=ns) as recovered:
+        ledger = recovered.temporal_resources()
+        assert {r.reservation_id for r in ledger.reservations()} == {
+            "occupied", "pending",
+        }
+        assert ledger.get("pending").start_at == T0 + 4 * H
+        assert ledger.outages()[0].effective_end == T0 + 4 * H
+        assert ledger.audit()
+
+
+def test_pg_prospective_start_handles_fungible_capacity_change_points_and_recovery():
+    """Only durable end boundaries can create additional capacity."""
+    assert DSN
+    ns = _namespace("advice_capacity")
+    pool = _pool()
+    with PostgresPersistence(DSN, namespace=ns) as db:
+        ledger = db.temporal_resources()
+        ledger.register_pool(pool)
+        ledger.reserve(_request(pool, "one", 0, 2, owner="org:a"))
+        ledger.reserve(_request(pool, "two", 1, 4, owner="org:b"))
+        waiting = _request(pool, "three", 0, 2, owner="org:c")
+        assert ledger.suggest_next_start(
+            waiting, not_before=T0, latest_start=T0 + H,
+        ) is None
+        assert ledger.suggest_next_start(
+            waiting, not_before=T0, latest_start=T0 + 3 * H,
+        ) == T0 + 2 * H
+        assert ledger.suggest_next_start(
+            _request(pool, "oversized", 0, 1, units=3),
+            not_before=T0, latest_start=T0 + 6 * H,
+        ) is None
+        ledger.release("one", at=T0 + H)
+        # A legitimate effective release at 1h frees 1 unit prospectively;
+        # the original [0,1h) remains historically occupied.
+        assert ledger.suggest_next_start(
+            waiting, not_before=T0, latest_start=T0 + 3 * H,
+        ) == T0 + H
+        assert ledger.audit()
+
+
+def test_pg_prospective_hint_is_stale_after_other_owner_books_real_capacity():
+    """A suggestion is never a permit; source/physical UoW must retry admission."""
+    assert DSN
+    ns = _namespace("advice_stale")
+    pool = _pool(named=True)
+    with PostgresPersistence(DSN, namespace=ns) as first:
+        ledger = first.temporal_resources()
+        ledger.register_pool(pool)
+        ledger.reserve(_request(pool, "incumbent", 0, 2, instance="unit-1", owner="a"))
+        waiting = _request(pool, "pending", 0, 1, instance="unit-1", owner="b")
+        suggestion = ledger.suggest_next_start(
+            waiting, not_before=T0, latest_start=T0 + 3 * H,
+        )
+        assert suggestion == T0 + 2 * H
+    with PostgresPersistence(DSN, namespace=ns) as contender:
+        contender.temporal_resources().reserve(
+            _request(pool, "other-winner", 2, 3, instance="unit-1", owner="c")
+        )
+    with PostgresPersistence(DSN, namespace=ns) as attempted:
+        ledger = attempted.temporal_resources()
+        with pytest.raises(ResourceCapacityError, match="finite resource unavailable"):
+            ledger.reserve(replace(
+                waiting, start_at=suggestion, end_at=suggestion + H,
+            ))
+        assert ledger.get("pending") is None
+        assert ledger.suggest_next_start(
+            waiting, not_before=T0 + 2 * H, latest_start=T0 + 4 * H,
+        ) == T0 + 3 * H
+        assert ledger.audit()
+
+
+def test_pg_prospective_advice_rejects_wrong_identity_or_retroactive_window():
+    assert DSN
+    ns = _namespace("advice_invalid")
+    pool = _pool(named=True)
+    bad = _request(pool, "forbidden", 2, 3, instance="unit-1")
+    with PostgresPersistence(DSN, namespace=ns) as db:
+        ledger = db.temporal_resources()
+        ledger.register_pool(pool)
+        with pytest.raises(ValueError, match="before original demand"):
+            ledger.suggest_next_start(
+                bad, not_before=T0 + H, latest_start=T0 + 6 * H,
+            )
+        with pytest.raises(ValueError, match="precedes"):
+            ledger.suggest_next_start(
+                bad, not_before=T0 + 4 * H, latest_start=T0 + 3 * H,
+            )
+        with pytest.raises(ValueError, match="timezone-aware"):
+            ledger.suggest_next_start(
+                bad, not_before=T0.replace(tzinfo=None), latest_start=T0 + 6 * H,
+            )
+        ledger.reserve(bad)
+        with pytest.raises(ResourceConflictError, match="already-booked"):
+            ledger.suggest_next_start(
+                bad, not_before=bad.start_at, latest_start=T0 + 4 * H,
+            )
