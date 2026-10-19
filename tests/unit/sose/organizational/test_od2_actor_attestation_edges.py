@@ -75,8 +75,18 @@ def issued_command_for(event):
 
 
 class Ledger:
-    def __init__(self, events=(), command=None, source=None):
-        self._events = tuple(events)
+    def __init__(self, events=(), command=None, source=None, *, seed_lifecycle=True):
+        history = tuple(events)
+        if seed_lifecycle and not any(
+            item.entity_type == ACTOR_KIND and item.entity_id == ACTOR
+            and item.payload.get("trigger") == "activate"
+            for item in history
+        ):
+            history = (event(
+                "activate", event_id="admitted-to-eligible",
+                at=NOW - timedelta(days=7),
+            ), *history)
+        self._events = history
         self._command = command
         self._source = source
 
@@ -117,11 +127,11 @@ def test_empty_and_non_actor_events_do_not_create_active_work():
 
 @pytest.mark.parametrize("kind,pattern", [
     ("wrong_owner", "owner"),
-    ("overlap", "overlap"),
+    ("overlap", "overlap|lifecycle"),
     ("blank_work", "malformed"),
     ("numeric_work", "malformed"),
-    ("stray_complete", "lacks open assignment"),
-    ("stray_cancel", "lacks open assignment"),
+    ("stray_complete", "lacks open assignment|lifecycle"),
+    ("stray_cancel", "lacks open assignment|lifecycle"),
     ("missing_complete_id", "completion identity mismatch"),
     ("wrong_complete_id", "completion identity mismatch"),
     ("legacy_with_new_complete", "historical completion"),
@@ -532,3 +542,64 @@ def test_forged_transition_shape_never_opens_or_closes_attested_work(action, fie
         ledger = Ledger([source, closed], command, source)
     with pytest.raises(ValueError, match="work transition shape|attested work"):
         _attested_current_assignment(ledger, actor_id=ACTOR, owner_id=OWNER)
+
+
+
+@pytest.mark.parametrize("violation", ("before_activate", "after_exit", "bad_resume", "bad_activation"))
+def test_actor_work_identity_requires_valid_full_lifecycle_history(violation):
+    """P1: an exact work Command after exit or before activate never reopens an actor."""
+    opened = event("assign", event_id="work:after", assigned_work_id=WORK)
+    if violation == "before_activate":
+        events = [opened]
+    elif violation == "after_exit":
+        activated = event(
+            "activate", event_id="activated",
+            at=NOW - timedelta(hours=3),
+        )
+        exited = event(
+            "exit", event_id="exited", at=NOW - timedelta(hours=1),
+            from_state="eligible", to_state="exited",
+        )
+        events = [activated, exited, opened]
+    elif violation == "bad_resume":
+        resumed = event(
+            "resume", event_id="illegal-resume",
+            from_state="unavailable", to_state="eligible",
+        )
+        events = [resumed, opened]
+    else:
+        activated = event(
+            "activate", event_id="forged-activation",
+            from_state="eligible", to_state="eligible",
+        )
+        events = [activated, opened]
+    with pytest.raises(ValueError, match="lifecycle|StateChart"):
+        _attested_current_assignment(
+            Ledger(events, seed_lifecycle=False),
+            actor_id=ACTOR, owner_id=OWNER,
+        )
+
+
+def test_actor_work_replay_reads_global_event_snapshot_once():
+    """P2: growing history must not repeatedly materialize global events."""
+    class CountedLedger(Ledger):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.count = 0
+
+        def events(self):
+            self.count += 1
+            return super().events()
+
+    sequence = []
+    for step in range(20):
+        source = event("assign", event_id=f"start-{step}",
+                       assigned_work_id=f"work:{step}")
+        closed = event("complete", event_id=f"done-{step}",
+                       completed_work_id=f"work:{step}")
+        sequence.extend([source, closed])
+    ledger = CountedLedger(sequence)
+    assert _attested_current_assignment(
+        ledger, actor_id=ACTOR, owner_id=OWNER,
+    ) is None
+    assert ledger.count == 1
