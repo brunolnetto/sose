@@ -550,8 +550,6 @@ def _verify_durable_cancellation_replay(
     ):
         raise ValueError("cancellation durable evidence: event contradicts charged work")
     source = uow.get_event(event.payload["source_assignment_event_id"])
-    if source is not None:
-        _require_canonical_work_transition(source, "assign")
     if (
         source is None
         or source.entity_type != ACTOR_KIND
@@ -562,6 +560,7 @@ def _verify_durable_cancellation_replay(
         or source.occurred_at > at
     ):
         raise ValueError("cancellation durable evidence: original assignment missing")
+    _require_canonical_work_transition(source, "assign")
     # Command rows are mutable/deletable through the persistence UoW, unlike
     # DomainEvents. Reconstruct EVERY original field from deterministic context
     # and the immutable append-only cancel event to detect silent rewrites of
