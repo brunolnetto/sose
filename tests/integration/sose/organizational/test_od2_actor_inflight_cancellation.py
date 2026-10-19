@@ -11,8 +11,6 @@ import pytest
 
 from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
-from sose.core.events import Command
-from sose.core.identity import deterministic_id
 from sose.organizational.od2_actor import ACTOR_KIND, seed_actor, transition_actor
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
@@ -330,7 +328,7 @@ def test_attested_history_rejects_ever_overlapping_assignments_even_if_last_is_v
             payload={**first.payload, "assigned_work_id": "work:B"},
         ))
     before = tuple(store.events())
-    with pytest.raises(ValueError, match="attested assignments overlap"):
+    with pytest.raises(ValueError, match="attested actor lifecycle transition contradicts immutable StateChart"):
         _transition(store, actor_id, "cancel_assigned", 4,
                     work_id="work:B", cost_us=1)
     assert tuple(store.events()) == before
@@ -543,6 +541,8 @@ def test_forged_cancel_without_paid_causal_authority_cannot_release_work(
         closed_payload = {
             **original.payload,
             "trigger": "cancel_assigned",
+            "from_state": "active",
+            "to_state": "eligible",
             "cancelled_work_id": "work:A",
             "source_assignment_event_id": original.event_id,
         }
@@ -624,6 +624,8 @@ def test_reused_unrelated_command_cannot_attest_work_across_restart(
                 occurred_at=event_at,
                 payload={**original.payload,
                          "trigger": "assign",
+                         "from_state": "eligible",
+                         "to_state": "active",
                          "assigned_work_id": "work:forged"},
             )
         else:
@@ -636,6 +638,8 @@ def test_reused_unrelated_command_cannot_attest_work_across_restart(
                 occurred_at=event_at,
                 payload={**original.payload,
                          "trigger": "complete",
+                         "from_state": "active",
+                         "to_state": "eligible",
                          "completed_work_id": "work:A"},
             )
         with store.transaction(owner_id=OWNER) as uow:
@@ -647,7 +651,7 @@ def test_reused_unrelated_command_cannot_attest_work_across_restart(
             )
             uow.save_entity(actor)
         before = tuple(store.events())
-        with pytest.raises(ValueError, match="attested work transition causal Command"):
+        with pytest.raises(ValueError, match="attested (actor lifecycle|work transition) causal Command"):
             if forgery == "assignment":
                 _transition(store, actor_id, "cancel_assigned", 4,
                             work_id="work:forged", cost_us=1)
@@ -660,7 +664,7 @@ def test_reused_unrelated_command_cannot_attest_work_across_restart(
     if adapter == "sqlite":
         with SQLitePersistence(path) as recovered:
             before = tuple(recovered.events())
-            with pytest.raises(ValueError, match="attested work transition causal Command"):
+            with pytest.raises(ValueError, match="attested (actor lifecycle|work transition) causal Command"):
                 if forgery == "assignment":
                     _transition(recovered, actor_id, "cancel_assigned", 4,
                                 work_id="work:forged", cost_us=1)

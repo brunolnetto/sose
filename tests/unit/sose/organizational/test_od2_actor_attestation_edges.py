@@ -509,7 +509,12 @@ def test_source_assignment_rejects_corrupted_or_reused_exact_command(corruption)
     ledger = Ledger(events, command)
     if corruption == "command_missing":
         # Disable the unit fixture's normal source Command construction.
-        ledger.get_command = lambda _key: None
+        # Preserve the valid activation Command: falsify ONLY the target
+        # assignment Command, not the earlier lifecycle prerequisite.
+        real_get_command = ledger.get_command
+        ledger.get_command = lambda key: (
+            None if key == source.causation_id else real_get_command(key)
+        )
     with pytest.raises(ValueError, match="attested work"):
         _attested_current_assignment(
             ledger, owner_id=OWNER, actor_id=ACTOR,
