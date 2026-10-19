@@ -135,11 +135,12 @@ def test_full_work_history_rejects_corruption(kind, pattern):
     if kind == "wrong_owner":
         events = [replace(opened, owner_id="org:forged")]
     elif kind == "overlap":
-        events = [opened, replace(
-            opened, event_id="second", payload={
-                **opened.payload, "assigned_work_id": "work:B",
-            },
-        )]
+        # Two separately issued Commands, each causally valid, cannot
+        # authorize overlapping actor-local assignments.
+        events = [
+            opened,
+            event("assign", event_id="second", assigned_work_id="work:B"),
+        ]
     elif kind == "blank_work":
         events = [replace(opened, payload={"trigger": "assign", "assigned_work_id": ""})]
     elif kind == "numeric_work":
