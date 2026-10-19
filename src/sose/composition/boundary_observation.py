@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from sose.core.identity import deterministic_id
+
 from .model import BoundaryConsumption, BoundaryDelivery, DeliveryStatus
 from .organization import OrganizationDefinition, validate_organization_admission
 
@@ -90,6 +92,13 @@ def inspect_selected_boundary_protocol(
     by_message = {}
     for message in messages:
         if message.message_id in selected:
+            identity = deterministic_id(
+                "boundary-message", message.source_domain, message.source_identity,
+                message.contract_name, message.contract_version,
+                message.destination_domain, message.occurrence_key,
+            )
+            if message.message_id != identity:
+                raise ValueError("selected boundary publication has forged deterministic identity")
             if message.message_id in by_message:
                 raise ValueError("duplicate selected durable boundary message")
             by_message[message.message_id] = message
@@ -100,9 +109,15 @@ def inspect_selected_boundary_protocol(
 
     by_delivery = {}
     selected_delivery_ids = set()
+    selected_consumption_ids = set()
     for message in by_message.values():
         expected = BoundaryDelivery.pending(message)
         selected_delivery_ids.add(expected.delivery_id)
+        selected_consumption_ids.add(deterministic_id(
+            "boundary-consumption", expected.delivery_id, expected.message_id,
+            expected.destination_domain, expected.contract_name,
+            expected.contract_version,
+        ))
     for delivery in deliveries:
         if delivery.message_id in selected or delivery.delivery_id in selected_delivery_ids:
             # A second delivery with the same message_id but a forged ID
@@ -118,7 +133,11 @@ def inspect_selected_boundary_protocol(
 
     by_receipt = {}
     for receipt in consumptions:
-        if receipt.message_id in selected or receipt.delivery_id in selected_delivery_ids:
+        if (
+            receipt.message_id in selected
+            or receipt.delivery_id in selected_delivery_ids
+            or receipt.consumption_id in selected_consumption_ids
+        ):
             if receipt.delivery_id not in selected_delivery_ids:
                 raise ValueError("selected ACK identity references foreign delivery")
             delivery = by_delivery.get(receipt.delivery_id)
@@ -152,6 +171,13 @@ def inspect_selected_boundary_protocol(
         ):
             raise ValueError("selected delivery contradicts immutable publication")
         receipt = by_receipt.get(delivery.delivery_id)
+        if delivery.status is DeliveryStatus.PENDING and (
+            type(delivery.attempts) is not int
+            or type(delivery.claim_epoch) is not int
+            or delivery.attempts != 0
+            or delivery.claim_epoch != 0
+        ):
+            raise ValueError("pending selected delivery carries impossible claim history")
         if delivery.status in (DeliveryStatus.CLAIMED, DeliveryStatus.CONSUMED):
             if (
                 type(delivery.attempts) is not int
@@ -162,8 +188,9 @@ def inspect_selected_boundary_protocol(
                 or not delivery.claim_owner_id.strip()
                 or delivery.claimed_at is None
                 or delivery.lease_expires_at is None
-                or not (message.produced_at <= delivery.claimed_at
-                        < delivery.lease_expires_at)
+                # Production has independent logical source time and lease
+                # wall time. They must not be compared across clock domains.
+                or not (delivery.claimed_at < delivery.lease_expires_at)
             ):
                 raise ValueError("selected delivery lacks original claim provenance")
         if delivery.status is DeliveryStatus.CONSUMED:
