@@ -290,7 +290,7 @@ def seed_actor(
                 _require_actor_calendar_start(
                     uow, replaced, now, require_window=False,
                 )
-                open_work, attested_state = _attested_actor_replay(
+                open_work, attested_state, cancelled = _attested_actor_replay(
                     uow, actor_id=replaces_actor_id, owner_id=owner_id,
                 )
                 if (
@@ -298,6 +298,7 @@ def seed_actor(
                     or replaced.state != attested_state
                     or open_work is not None
                     or replaced.attributes.get("assigned_work_id") is not None
+                    or replaced.attributes.get("cancelled_work_ids") != cancelled
                 ):
                     raise ValueError("replacement predecessor contradicts immutable lifecycle")
                 if replaced.attributes.get("replaced_by_actor_id") is not None:
@@ -462,8 +463,8 @@ def _require_canonical_work_transition(event: DomainEvent, action: str) -> None:
 
 def _attested_actor_replay(
     uow, *, actor_id: str, owner_id: str,
-) -> tuple[DomainEvent | None, str]:
-    """Reconstruct the actor's immutable one-open-work AND lifecycle invariants.
+ ) -> tuple[DomainEvent | None, str, list[str]]:
+    """Reconstruct immutable open-work, lifecycle and paid cancellation identities.
 
     Checking only the last assignment is unsafe: a corrupted mutable actor
     projection can authorize a second assignment without closing the first.
@@ -497,6 +498,7 @@ def _attested_actor_replay(
             causal_index.setdefault(event.causation_id, []).append(event)
     descendants = {cause: len(events) for cause, events in causal_index.items()}
     opened = None
+    cancelled_work_ids: list[str] = []
     lifecycle = "admitted"
     # Every modern actor starts at its persisted, immutable admission instant.
     # Earlier work and lifecycle edges cannot be replayed into a legitimate
@@ -613,6 +615,7 @@ def _attested_actor_replay(
                     causal_index=causal_index, event_index=event_index,
                 )
                 _require_canonical_work_transition(event, action)
+                cancelled_work_ids.append(expected_id)
             # Pre-attestation assign+complete pairs may omit work IDs.
             # Once an assignment attests work, its closing completion MUST
             # attest the same explicit work ID (no default that silently
@@ -631,7 +634,7 @@ def _attested_actor_replay(
                 )
                 _require_canonical_work_transition(event, action)
             opened = None
-    return opened, lifecycle
+    return opened, lifecycle, cancelled_work_ids
 
 
 def _attested_current_assignment(
@@ -800,11 +803,13 @@ def transition_actor(
             )
             # Check owner and open-work against *all* immutable actor events,
             # before any idempotent return, not only for a new assignment.
-            active_source, replayed_lifecycle = _attested_actor_replay(
+            active_source, replayed_lifecycle, paid_cancellations = _attested_actor_replay(
                 uow, actor_id=actor_id, owner_id=owner_id,
             )
             if actor.state != replayed_lifecycle:
                 raise ValueError("actor projection contradicts immutable lifecycle history")
+            if meta.get("cancelled_work_ids") != paid_cancellations:
+                raise ValueError("actor cancellation projection contradicts immutable paid history")
             if active_source is None:
                 if meta["assigned_work_id"] is not None:
                     raise ValueError("actor projection contains work absent from immutable history")
