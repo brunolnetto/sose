@@ -11,6 +11,8 @@ import pytest
 
 from sose.core.events import Command
 from sose.core.identity import deterministic_id
+from sose.core.events import Command
+from sose.core.identity import deterministic_id
 from sose.organizational.od2_actor import ACTOR_KIND, seed_actor, transition_actor
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
@@ -686,3 +688,87 @@ def test_modern_assignment_and_completion_are_both_bound_to_original_command_wor
     assert store.command(transitions[1].causation_id).payload["completed_work_id"] == "work:A"
     _transition(store, actor_id, "assign", 4, work_id="work:B")
     assert store.entity(ACTOR_KIND, actor_id).attributes["assigned_work_id"] == "work:B"
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("action", ("complete", "cancel_assigned"))
+@pytest.mark.parametrize("shape", ("wrong_source", "wrong_target", "wrong_name"))
+def test_forged_closure_event_shape_never_frees_attested_work_after_restart(
+    adapter, action, shape, tmp_path,
+):
+    """P1: exact causal work/cost and Command cannot substitute for StateChart edges."""
+    path = tmp_path / ("invalid-state-" + action + "-" + shape + ".sqlite")
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = seed_actor(
+            store, owner_id=OWNER,
+            actor_key="forged-closure-" + action + "-" + shape,
+            model_spec_hash=MODEL, config_epoch=1, at=T0,
+        )
+        _transition(store, actor_id, "activate", 1)
+        _transition(store, actor_id, "assign", 2, work_id="work:A")
+        original = next(
+            e for e in store.events() if e.payload.get("trigger") == "assign"
+        )
+        at = T0 + timedelta(hours=3)
+        cause = "forged-close:" + action + ":" + shape
+        command_id = deterministic_id(
+            "od2-actor-command", OWNER, actor_id, cause,
+        )
+        command_payload = {"external_cause_id": cause}
+        if action == "complete":
+            command_payload["completed_work_id"] = "work:A"
+        else:
+            command_payload.update({
+                "cancelled_work_id": "work:A",
+                "charged_cost_us": 10,
+                "source_assignment_event_id": original.event_id,
+            })
+        command = Command(
+            command_id=command_id, name=action,
+            entity_type=ACTOR_KIND, entity_id=actor_id,
+            due_at=at, issued_at=at, owner_id=OWNER,
+            correlation_id=deterministic_id("od2-actor-flow", OWNER, actor_id),
+            payload=command_payload,
+        )
+        payload = {
+            "trigger": action,
+            "from_state": "active",
+            "to_state": "eligible",
+            **{
+                k: v for k, v in command_payload.items()
+                if k != "external_cause_id"
+            },
+        }
+        if shape == "wrong_source":
+            payload["from_state"] = "eligible"
+        elif shape == "wrong_target":
+            payload["to_state"] = "active"
+        event = replace(
+            original, event_id="forged-closing-transition",
+            name="entity.state_transition" if shape != "wrong_name"
+            else "od2.forbidden_transition",
+            occurred_at=at, causation_id=command_id,
+            payload=payload,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            uow.save_command(command)
+            uow.append_event(event)
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.state = "eligible"
+            actor.attributes["assigned_work_id"] = None
+            uow.save_entity(actor)
+        before = tuple(store.events())
+        with pytest.raises(ValueError, match="transition shape"):
+            _transition(store, actor_id, "assign", 4, work_id="work:B")
+        assert tuple(store.events()) == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as recovered:
+            before = tuple(recovered.events())
+            with pytest.raises(ValueError, match="transition shape"):
+                _transition(recovered, actor_id, "assign", 4, work_id="work:B")
+            assert tuple(recovered.events()) == before
