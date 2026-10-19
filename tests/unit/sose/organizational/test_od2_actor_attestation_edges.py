@@ -284,3 +284,67 @@ def test_paid_cancellation_replay_rejects_each_corrupted_boundary(kind, pattern)
         source = replace(source, occurred_at=NOW + timedelta(seconds=1))
     with pytest.raises(ValueError, match=pattern):
         verify(Ledger(events, command, source))
+
+
+
+def test_authoritative_paid_cancel_closes_one_attested_work():
+    command, source, done = valid_replay()
+    next_work = event("assign", event_id="next", assigned_work_id="work:B")
+    ledger = Ledger([source, done, next_work], command, source)
+    assert _attested_current_assignment(
+        ledger, actor_id=ACTOR, owner_id=OWNER,
+    ).event_id == "next"
+
+
+@pytest.mark.parametrize("bad_cost", (None, 0, -1, True, 1.5, "700"))
+def test_unpaid_or_malformed_cancel_never_closes_work(bad_cost):
+    """An attacker must not use a no-cost close to open another assignment."""
+    command, source, done = valid_replay()
+    modified = dict(done.payload)
+    if bad_cost is None:
+        modified.pop("charged_cost_us")
+    else:
+        modified["charged_cost_us"] = bad_cost
+    done = replace(done, payload=modified)
+    next_work = event("assign", event_id="work:B", assigned_work_id="work:B")
+    ledger = Ledger([source, done, next_work], command, source)
+    with pytest.raises(ValueError, match="positive paid cost"):
+        _attested_current_assignment(
+            ledger, actor_id=ACTOR, owner_id=OWNER,
+        )
+
+
+@pytest.mark.parametrize("tamper", (
+    "missing_causation", "empty_causation", "missing_command",
+    "missing_external_cause", "wrong_external_cause", "altered_command",
+    "wrong_source_evidence", "wrong_event_time",
+))
+def test_cancel_does_not_close_work_without_complete_causal_evidence(tamper):
+    command, source, done = valid_replay()
+    if tamper == "missing_causation":
+        done = replace(done, causation_id=None)
+    elif tamper == "empty_causation":
+        done = replace(done, causation_id="")
+    elif tamper == "missing_command":
+        command = None
+    elif tamper == "missing_external_cause":
+        command = replace(command, payload={
+            k: v for k, v in command.payload.items() if k != "external_cause_id"
+        })
+    elif tamper == "wrong_external_cause":
+        command = replace(command, payload={
+            **command.payload, "external_cause_id": "forged-cause",
+        })
+    elif tamper == "altered_command":
+        command = replace(command, correlation_id="forged")
+    elif tamper == "wrong_source_evidence":
+        done = replace(done, payload={
+            **done.payload, "source_assignment_event_id": "nonexistent",
+        })
+    else:
+        done = replace(done, occurred_at=NOW + timedelta(seconds=1))
+    with pytest.raises(ValueError, match="cancellation|causal"):
+        _attested_current_assignment(
+            Ledger([source, done], command, source),
+            actor_id=ACTOR, owner_id=OWNER,
+        )
