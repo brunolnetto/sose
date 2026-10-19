@@ -37,3 +37,15 @@ No imaginary calendars/policies/pools or scientific OD-5a execution is admitted.
 A bounded test may supply an explicitly hypothetical audited ingress
 manifest for a currently unsupported domain edge. That is test-only and does
 not modify builtin process maturity or upgrade unverified production contracts.
+
+### Temporal exclusion gate (W4a hardening)
+
+The W4a executor additionally requires a real persisted
+`entity.state_transition` for the exact consumer-owned terminal entity and
+state **at or after durable ACK consumption**, and refuses any
+`completed_at` earlier than the observed terminal event. Therefore a
+previously finished, unrelated entity or a mutable forged terminal projection
+cannot silently become newly certified work. This temporal fence is
+**necessary but not sufficient**: W4b still must verify exact causal
+`staged Command → real domain transition` lineage, not just chronological
+order. This module does not claim that stronger proof.

@@ -244,6 +244,31 @@ class AdmittedOrganizationExecutor:
             if delivery.consumer_effect_id != effect_id:
                 raise ValueError("certification effect identity contradicts ACK")
             pending = uow.get_command(effect_id)
+            certificate = uow.get_business_effect(effect_id)
             if pending is not None:
                 self._check_command(pending, msg, self._components[consumer_id])
+                # A terminal projection alone is not sufficient: it may have
+                # been reached BEFORE this message was ever ACKed. Anchor a
+                # real terminal StateChart event in the consumer owner's own
+                # durable history at/after the ACK before asking the existing
+                # certified-terminal oracle to finalize the effect.
+                from sose.composition.effects import _CERTIFIED_TERMINALS
+                terminal = _CERTIFIED_TERMINALS.get(pending.name)
+                if terminal is None:
+                    raise ValueError("staged Command has no certified terminal")
+                kind, state = terminal[:2]
+                if not any(
+                    event.owner_id == self._components[consumer_id].owner_id
+                    and event.name == "entity.state_transition"
+                    and event.entity_type == kind
+                    and event.entity_id == pending.entity_id
+                    and event.payload.get("to_state") == state
+                    and delivery.consumed_at is not None
+                    and event.occurred_at >= delivery.consumed_at
+                    and completed_at >= event.occurred_at
+                    for event in uow.events()
+                ):
+                    raise ValueError("certified terminal transition not attested after ACK")
+            elif certificate is None:
+                raise ValueError("certification requires a staged Command or existing certificate")
         return self._business.complete(effect_id=effect_id, completed_at=completed_at)

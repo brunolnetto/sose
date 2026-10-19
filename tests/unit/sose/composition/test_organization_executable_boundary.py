@@ -72,7 +72,10 @@ def suite(store, *, wrong_handler=None):
                        persistence=store, backend_factory=backend)
     lg = SimulationJob(job_id=LG, definition=catalog.get("logistics"),
                        persistence=store, backend_factory=backend)
-    original = lg.initialize({"pickup_delay": timedelta(hours=1)})
+    original = lg.initialize({
+        "start_at": datetime(2027, 2, 1, 18, tzinfo=timezone.utc),
+        "pickup_delay": timedelta(hours=1),
+    })
     source = wf.initialize()
     shipment_id = original.bootstrap_state.shipment_id
     registry = BoundaryConsumerRegistry()
@@ -196,7 +199,8 @@ def test_real_owner_local_jobs_to_typed_event_staged_command_ack_and_terminal_ce
         certificate = executor.certify(
             producer_id="fulfillment", consumer_id="logistics",
             message_id=message.message_id,
-            effect_id=ack.consumer_effect_id, completed_at=event.occurred_at,
+            effect_id=ack.consumer_effect_id,
+            completed_at=store.job_state(LG).logical_time,
         )
         assert certificate.effect_id == ack.consumer_effect_id
         assert certificate.boundary_message_id == message.message_id
@@ -211,7 +215,8 @@ def test_real_owner_local_jobs_to_typed_event_staged_command_ack_and_terminal_ce
         assert executor.certify(
             producer_id="fulfillment", consumer_id="logistics",
             message_id=message.message_id,
-            effect_id=ack.consumer_effect_id, completed_at=event.occurred_at,
+            effect_id=ack.consumer_effect_id,
+            completed_at=store.job_state(LG).logical_time,
         ) == certificate
         assert BoundaryService(store).delivery(delivery.delivery_id).status is DeliveryStatus.CONSUMED
     finally:
@@ -303,3 +308,39 @@ def test_executor_rejects_mismatched_real_job_ownership_or_trigger_namespace():
         )
     assert store.job_state(WF).next_tick == 0
     assert store.job_state(LG).next_tick == 0
+
+
+def test_finished_before_acked_work_does_not_qualify_as_effect_certificate():
+    """A terminal projection with no later attested event must never certify work."""
+    store = MemoryPersistence()
+    executor, wf, lg, _, shipment, _ = suite(store)
+    # The logistics domain independently completes its own reference shipment
+    # BEFORE the warehouse's future-dated dispatch event was published.
+    from sose.examples.logistics.simulation import ORIGIN as LOGISTICS_ORIGIN
+    # Construct a separate (already terminal) authority with a deliberately
+    # earlier owner-local clock, not a mutable projection shortcut.
+    assert LOGISTICS_ORIGIN < store.job_state(LG).logical_time
+    # This makes Logistics' time earlier than Warehouse's effective event.
+    # Directly using an older real domain job's historical terminal events
+    # would previously pass BusinessEffectService's terminal-state-only gate.
+    event = advance_fulfillment(executor, wf, store)
+    msg, _ = publish_shipment(executor, event, shipment.bootstrap_state.shipment_id)
+    ack = executor.consume(
+        producer_id="fulfillment", consumer_id="logistics",
+        message_id=msg.message_id, now=event.occurred_at,
+        lease_duration=timedelta(minutes=10),
+    )
+    # A forged terminal entity projection is not sufficient evidence of
+    # a post-ACK StateChart transition, even if the command/ACK is valid.
+    with store.transaction(owner_id=LG) as uow:
+        entity = uow.get_entity("shipment", shipment.bootstrap_state.shipment_id)
+        entity.state = "delivered"
+        uow.save_entity(entity)
+    with pytest.raises(ValueError, match="terminal transition not attested after ACK"):
+        executor.certify(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=msg.message_id, effect_id=ack.consumer_effect_id,
+            completed_at=event.occurred_at + timedelta(hours=10),
+        )
+    assert store.business_effect(ack.consumer_effect_id) is None
+    assert store.command(ack.consumer_effect_id) is not None
