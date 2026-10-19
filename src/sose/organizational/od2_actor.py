@@ -463,7 +463,7 @@ def _require_canonical_work_transition(event: DomainEvent, action: str) -> None:
 
 def _attested_actor_replay(
     uow, *, actor_id: str, owner_id: str,
- ) -> tuple[DomainEvent | None, str, list[str]]:
+) -> tuple[DomainEvent | None, str, list[str]]:
     """Reconstruct immutable open-work, lifecycle and paid cancellation identities.
 
     Checking only the last assignment is unsafe: a corrupted mutable actor
