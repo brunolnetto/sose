@@ -51,11 +51,18 @@ def issued_command_for(event):
     actually attest the event. A cancelled work command is supplied separately.
     """
     action = event.payload.get("trigger")
-    if action not in {"assign", "complete"}:
+    if action not in {
+        "activate", "assign", "complete", "cancel_assigned", "exit",
+        "make_unavailable", "resume", "begin_development",
+        "finish_development",
+    }:
         return None
     payload = {"external_cause_id": event.event_id}
-    key = "assigned_work_id" if action == "assign" else "completed_work_id"
-    if key in event.payload:
+    key = (
+        "assigned_work_id" if action == "assign"
+        else "completed_work_id" if action == "complete" else None
+    )
+    if key is not None and key in event.payload:
         payload[key] = event.payload[key]
     return Command(
         command_id=deterministic_id(
@@ -98,8 +105,11 @@ class Ledger:
             return self._command
         matches = [
             issued_command_for(item) for item in self._events
-            if item.payload.get("trigger") in {"assign", "complete"}
-            and item.causation_id == command_id
+            if item.payload.get("trigger") in {
+                "activate", "assign", "complete", "exit",
+                "make_unavailable", "resume", "begin_development",
+                "finish_development",
+            } and item.causation_id == command_id
         ]
         if len(matches) == 1:
             return matches[0]
@@ -603,3 +613,65 @@ def test_actor_work_replay_reads_global_event_snapshot_once():
         ledger, actor_id=ACTOR, owner_id=OWNER,
     ) is None
     assert ledger.count == 1
+
+
+
+@pytest.mark.parametrize("corruption", (
+    "missing_activation_command", "wrong_action", "wrong_owner",
+    "wrong_due_at", "wrong_correlation", "injected_payload",
+    "duplicate_activation_descendant",
+))
+def test_activation_needs_exact_causal_command_before_work(corruption):
+    activation = event(
+        "activate", event_id="real-activation",
+        at=NOW - timedelta(hours=2),
+    )
+    source = event(
+        "assign", event_id="original-work", at=NOW,
+        assigned_work_id=WORK,
+    )
+    original = issued_command_for(activation)
+    assert original is not None
+    if corruption == "missing_activation_command":
+        cmd = None
+    elif corruption == "wrong_action":
+        cmd = replace(original, name="resume")
+    elif corruption == "wrong_owner":
+        cmd = replace(original, owner_id="org:forged")
+    elif corruption == "wrong_due_at":
+        cmd = replace(original, due_at=NOW)
+    elif corruption == "wrong_correlation":
+        cmd = replace(original, correlation_id="forged")
+    elif corruption == "injected_payload":
+        cmd = replace(original, payload={**original.payload, "extra": True})
+    else:
+        cmd = original
+    history = [activation, source]
+    if corruption == "duplicate_activation_descendant":
+        history.append(replace(
+            activation, event_id="duplicate-activation",
+        ))
+    ledger = Ledger(history, seed_lifecycle=False)
+    saved_get_command = ledger.get_command
+    def get_command(command_id):
+        if command_id == activation.causation_id:
+            return cmd
+        return saved_get_command(command_id)
+    ledger.get_command = get_command
+    with pytest.raises(ValueError, match="attested actor lifecycle causal Command"):
+        _attested_current_assignment(
+            ledger, actor_id=ACTOR, owner_id=OWNER,
+        )
+
+
+def test_extra_non_work_event_cannot_share_cancellation_command():
+    command, source, closed = valid_replay()
+    ghost = replace(
+        closed, event_id="ghost-descendant", name="arbitrary.event",
+        payload={"forged": True},
+    )
+    ledger = Ledger([source, closed, ghost], command, source)
+    with pytest.raises(ValueError, match="unique append-only event"):
+        _attested_current_assignment(
+            ledger, actor_id=ACTOR, owner_id=OWNER,
+        )
