@@ -472,3 +472,59 @@ def test_upgrade_can_close_pre_attestation_inflight_work_without_poisoning_ledge
             assert reopened.entity(ACTOR_KIND, actor_id).attributes[
                 "assigned_work_id"
             ] == "work:new"
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("cost_marker", ("missing", 0, True, "750000", 750000))
+def test_forged_cancel_without_paid_causal_authority_cannot_release_work(
+    adapter, cost_marker, tmp_path,
+):
+    """Append-only malformed closure + mutable idle projection cannot free work:A.
+
+    Even a positive forged cost is insufficient without the correctly
+    causally linked, independently verified cancellation Command.
+    """
+    path = tmp_path / "forged-unpaid-close.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="cost-" + str(cost_marker),
+            model_spec_hash=MODEL, config_epoch=1, at=T0,
+        )
+        _transition(store, actor_id, "activate", 1)
+        _transition(store, actor_id, "assign", 2, work_id="work:A")
+        original = next(e for e in store.events()
+                        if e.payload.get("trigger") == "assign")
+        closed_payload = {
+            **original.payload,
+            "trigger": "cancel_assigned",
+            "cancelled_work_id": "work:A",
+            "source_assignment_event_id": original.event_id,
+        }
+        closed_payload.pop("assigned_work_id", None)
+        if cost_marker != "missing":
+            closed_payload["charged_cost_us"] = cost_marker
+        with store.transaction(owner_id=OWNER) as uow:
+            uow.append_event(replace(
+                original, event_id="forged-paid-close",
+                occurred_at=T0 + timedelta(hours=3),
+                payload=closed_payload,
+            ))
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.state = "eligible"
+            actor.attributes["assigned_work_id"] = None
+            uow.save_entity(actor)
+        immutable = tuple(store.events())
+        with pytest.raises(ValueError, match="paid cost|causal|cancellation"):
+            _transition(store, actor_id, "assign", 4, work_id="work:B")
+        assert tuple(store.events()) == immutable
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            before = tuple(reopened.events())
+            with pytest.raises(ValueError, match="paid cost|causal|cancellation"):
+                _transition(reopened, actor_id, "assign", 4, work_id="work:B")
+            assert tuple(reopened.events()) == before
