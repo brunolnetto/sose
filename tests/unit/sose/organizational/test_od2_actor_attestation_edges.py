@@ -418,3 +418,65 @@ def test_actor_work_history_rejects_backdated_causal_transition(last_action):
         _attested_current_assignment(
             Ledger(events), owner_id=OWNER, actor_id=ACTOR,
         )
+
+
+
+@pytest.mark.parametrize("corruption", (
+    "command_missing", "command_action", "command_owner", "command_entity",
+    "command_due_at", "command_issued_at", "command_correlation",
+    "command_causation", "command_extra_payload", "command_work",
+    "command_external_cause", "event_wrong_correlation", "event_wrong_causation",
+    "duplicate_command_descendant",
+))
+def test_source_assignment_rejects_corrupted_or_reused_exact_command(corruption):
+    source = event(
+        "assign", event_id="real-source",
+        assigned_work_id=WORK,
+    )
+    command = issued_command_for(source)
+    assert command is not None
+    events = [source]
+    if corruption == "command_missing":
+        command = None
+    elif corruption == "command_action":
+        command = replace(command, name="activate")
+    elif corruption == "command_owner":
+        command = replace(command, owner_id="org:other")
+    elif corruption == "command_entity":
+        command = replace(command, entity_id="actor:other")
+    elif corruption == "command_due_at":
+        command = replace(command, due_at=NOW + timedelta(seconds=1))
+    elif corruption == "command_issued_at":
+        command = replace(command, issued_at=NOW + timedelta(seconds=1))
+    elif corruption == "command_correlation":
+        command = replace(command, correlation_id="forged")
+    elif corruption == "command_causation":
+        command = replace(command, causation_id="forged")
+    elif corruption == "command_extra_payload":
+        command = replace(command, payload={
+            **command.payload, "authority_override": True,
+        })
+    elif corruption == "command_work":
+        command = replace(command, payload={
+            **command.payload, "assigned_work_id": "work:forged",
+        })
+    elif corruption == "command_external_cause":
+        command = replace(command, payload={
+            **command.payload, "external_cause_id": "wrong-cause",
+        })
+    elif corruption == "event_wrong_correlation":
+        source = replace(source, correlation_id="forged")
+        events = [source]
+    elif corruption == "event_wrong_causation":
+        source = replace(source, causation_id="forged")
+        events = [source]
+    else:
+        events = [source, replace(source, event_id="duplicate-event")]
+    ledger = Ledger(events, command)
+    if corruption == "command_missing":
+        # Disable the unit fixture's normal source Command construction.
+        ledger.get_command = lambda _key: None
+    with pytest.raises(ValueError, match="attested work"):
+        _attested_current_assignment(
+            ledger, owner_id=OWNER, actor_id=ACTOR,
+        )
