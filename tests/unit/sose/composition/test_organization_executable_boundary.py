@@ -344,3 +344,271 @@ def test_finished_before_acked_work_does_not_qualify_as_effect_certificate():
         )
     assert store.business_effect(ack.consumer_effect_id) is None
     assert store.command(ack.consumer_effect_id) is not None
+
+
+
+# W4a coverage hardening: verify each negative gate against real durable fixtures.
+# These tests are not a substitute for the W4b Command -> domain event proof.
+
+def _published_ingress(store):
+    executor, wf, lg, _, shipment, _ = suite(store)
+    event = advance_fulfillment(executor, wf, store)
+    message, delivery = publish_shipment(
+        executor, event, shipment.bootstrap_state.shipment_id,
+    )
+    return executor, wf, lg, event, message, delivery
+
+
+def _ack_ingress(store):
+    executor, wf, lg, event, message, delivery = _published_ingress(store)
+    acknowledgement = executor.consume(
+        producer_id="fulfillment", consumer_id="logistics",
+        message_id=message.message_id, now=event.occurred_at,
+        lease_duration=timedelta(minutes=10),
+    )
+    return executor, event, message, delivery, acknowledgement
+
+
+@pytest.mark.parametrize("invalid", ("missing_job", "extra_job", "imposter_job"))
+def test_executor_rejects_incomplete_or_fake_real_job_mapping(invalid):
+    store = MemoryPersistence()
+    executor, wf, lg, *_ = suite(store)
+    jobs = {WF: wf, LG: lg}
+    if invalid == "missing_job":
+        jobs.pop(LG)
+    elif invalid == "extra_job":
+        jobs["owner:unregistered"] = lg
+    else:
+        jobs[LG] = object()
+    with pytest.raises(
+        (ValueError, TypeError),
+        match="exact declared job mapping|real SimulationJob",
+    ):
+        AdmittedOrganizationExecutor(
+            definition=topology(), persistence=store,
+            jobs=jobs, catalog=builtin_catalog(),
+            manifests=hypothetical_ingress(), consumers=executor.consumers,
+        )
+
+
+def test_reject_unadmitted_boundary_without_creating_delivery():
+    store = MemoryPersistence()
+    executor, wf, _, _, shipment, _ = suite(store)
+    event = advance_fulfillment(executor, wf, store)
+    with pytest.raises(ValueError, match="boundary not uniquely admitted"):
+        executor.publish(
+            producer_id="fulfillment", consumer_id="logistics",
+            source_event_id=event.event_id,
+            contract_name="unregistered-contract", contract_version=1,
+            occurrence_key="invalid:contract",
+            produced_at=event.occurred_at,
+            payload={"shipment_id": shipment.bootstrap_state.shipment_id},
+        )
+    assert not store.boundary_deliveries()
+
+
+@pytest.mark.parametrize(
+    "violation,match",
+    (
+        ("untyped", "typed durable DomainEvent"),
+        ("missing_event", "source DomainEvent missing"),
+        ("wrong_source_domain", "source/destination domain mismatch"),
+        ("wrong_destination_domain", "source/destination domain mismatch"),
+        ("wrong_identity", "source owner/StateChart/causality mismatch"),
+        ("wrong_correlation", "source owner/StateChart/causality mismatch"),
+        ("backdated", "source owner/StateChart/causality mismatch"),
+    ),
+)
+def test_owned_source_gate_rejects_forged_cross_domain_claims(violation, match):
+    store = MemoryPersistence()
+    executor, _, _, event, message, _ = _published_ingress(store)
+    if violation == "untyped":
+        adversary = replace(message, causation_kind=None, causation_id=None)
+    elif violation == "missing_event":
+        adversary = replace(message, causation_id="event:does-not-exist")
+    elif violation == "wrong_source_domain":
+        adversary = replace(message, source_domain="unrelated:producer")
+    elif violation == "wrong_destination_domain":
+        adversary = replace(message, destination_domain="unrelated:consumer")
+    elif violation == "wrong_identity":
+        adversary = replace(message, source_identity="other:order")
+    elif violation == "wrong_correlation":
+        adversary = replace(message, correlation_id="unrelated:correlation")
+    else:
+        adversary = replace(
+            message, produced_at=event.occurred_at - timedelta(seconds=1),
+        )
+    before = tuple(store.events())
+    with store.transaction() as uow:
+        with pytest.raises(ValueError, match=match):
+            executor._check_message(uow, adversary, "fulfillment", "logistics")
+    assert tuple(store.events()) == before
+
+
+def test_consume_requires_durable_message_and_matching_delivery():
+    store = MemoryPersistence()
+    executor, _, _, event, message, delivery = _published_ingress(store)
+    with pytest.raises(ValueError, match="boundary message missing"):
+        executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id="boundary:absent", now=event.occurred_at,
+            lease_duration=timedelta(minutes=10),
+        )
+    orphan = replace(message, message_id="boundary:orphan-delivery")
+    with store.transaction() as uow:
+        uow.save_boundary_message(orphan)
+    with pytest.raises(ValueError, match="lacks durable delivery"):
+        executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=orphan.message_id, now=event.occurred_at,
+            lease_duration=timedelta(minutes=10),
+        )
+    assert BoundaryService(store).delivery(delivery.delivery_id) == delivery
+
+
+def test_claim_lease_blocks_duplicate_worker_and_does_not_ack_work():
+    store = MemoryPersistence()
+    executor, _, _, event, message, delivery = _published_ingress(store)
+    claim = BoundaryService(store).claim_next(
+        owner_id=LG, message_id=message.message_id,
+        now=event.occurred_at, lease_duration=timedelta(hours=1),
+    )
+    assert claim is not None
+    with pytest.raises(RuntimeError, match="not claimable"):
+        executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id,
+            now=event.occurred_at + timedelta(minutes=1),
+            lease_duration=timedelta(minutes=5),
+        )
+    assert BoundaryService(store).consumption(delivery.delivery_id) is None
+
+
+def test_consumed_delivery_missing_ack_is_not_reprocessed_or_released():
+    store = MemoryPersistence()
+    executor, _, _, event, message, delivery = _published_ingress(store)
+    with store.transaction() as uow:
+        uow.save_boundary_delivery(replace(
+            delivery, status=DeliveryStatus.CONSUMED,
+            consumed_at=event.occurred_at,
+            consumer_effect_id="command:missing-ack",
+        ))
+    with pytest.raises(ValueError, match="consumed boundary lacks durable ACK"):
+        executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, now=event.occurred_at,
+            lease_duration=timedelta(minutes=10),
+        )
+    assert BoundaryService(store).consumption(delivery.delivery_id) is None
+
+
+def test_consumed_ack_without_command_or_certificate_is_not_new_authority():
+    store = MemoryPersistence()
+    executor, event, message, delivery, acknowledgement = _ack_ingress(store)
+    with store.transaction() as uow:
+        uow.delete_command(acknowledgement.consumer_effect_id)
+    with pytest.raises(ValueError, match="lacks Command or certificate"):
+        executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, now=event.occurred_at,
+            lease_duration=timedelta(minutes=10),
+        )
+    with pytest.raises(ValueError, match="staged Command or existing certificate"):
+        executor.certify(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id,
+            effect_id=acknowledgement.consumer_effect_id,
+            completed_at=event.occurred_at,
+        )
+    assert BoundaryService(store).consumption(delivery.delivery_id) == acknowledgement
+
+
+def test_consumed_ack_with_pending_command_is_an_idempotent_replay():
+    store = MemoryPersistence()
+    executor, event, message, _, acknowledgement = _ack_ingress(store)
+    assert executor.consume(
+        producer_id="fulfillment", consumer_id="logistics",
+        message_id=message.message_id, now=event.occurred_at,
+        lease_duration=timedelta(minutes=10),
+    ) == acknowledgement
+    assert store.command(acknowledgement.consumer_effect_id) is not None
+
+
+def test_existing_certificate_must_match_actual_ack_correlation():
+    from sose.composition.effects import BusinessEffectApplied
+    store = MemoryPersistence()
+    executor, event, message, _, acknowledgement = _ack_ingress(store)
+    fake = BusinessEffectApplied.from_applied(
+        effect_id=acknowledgement.consumer_effect_id,
+        boundary_message_id=message.message_id,
+        correlation_id="foreign:correlation",
+        entity_type="shipment", entity_id="shipment:unrelated",
+        terminal_state="delivered", entity_version=1,
+        completed_at=event.occurred_at,
+    )
+    with store.transaction() as uow:
+        uow.save_business_effect(fake)
+    with pytest.raises(ValueError, match="certificate contradicts ACK"):
+        executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, now=event.occurred_at,
+            lease_duration=timedelta(minutes=10),
+        )
+    assert store.business_effect(acknowledgement.consumer_effect_id) == fake
+
+
+@pytest.mark.parametrize("attempt", ("unknown_message", "pending_delivery", "wrong_effect"))
+def test_certify_never_uses_missing_or_unconsumed_or_foreign_ack(attempt):
+    store = MemoryPersistence()
+    executor, _, _, event, message, _ = _published_ingress(store)
+    effect_id = "effect:not-authorized"
+    if attempt == "unknown_message":
+        message_id = "message:nonexistent"
+        match = "durable boundary message"
+    else:
+        message_id = message.message_id
+        match = "requires consumed durable delivery"
+        if attempt == "wrong_effect":
+            ack = executor.consume(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=message.message_id, now=event.occurred_at,
+                lease_duration=timedelta(minutes=10),
+            )
+            assert ack.consumer_effect_id != effect_id
+            match = "effect identity contradicts ACK"
+    with pytest.raises(ValueError, match=match):
+        executor.certify(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message_id, effect_id=effect_id,
+            completed_at=event.occurred_at,
+        )
+
+
+def test_certify_rejects_staged_command_without_terminal_contract():
+    store = MemoryPersistence()
+    def unsupported(message, uow):
+        ident = "command:unsupported-terminal"
+        uow.save_command(Command(
+            command_id=ident, name="composition.not_certifiable",
+            entity_type="shipment", entity_id=message.payload()["shipment_id"],
+            due_at=message.produced_at, issued_at=message.produced_at,
+            owner_id=LG, causation_id=message.message_id,
+            correlation_id=message.correlation_id,
+        ))
+        return ident
+    executor, wf, _, _, shipment, _ = suite(store, wrong_handler=unsupported)
+    event = advance_fulfillment(executor, wf, store)
+    message, _ = publish_shipment(executor, event, shipment.bootstrap_state.shipment_id)
+    ack = executor.consume(
+        producer_id="fulfillment", consumer_id="logistics",
+        message_id=message.message_id, now=event.occurred_at,
+        lease_duration=timedelta(minutes=10),
+    )
+    with pytest.raises(ValueError, match="no certified terminal"):
+        executor.certify(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, effect_id=ack.consumer_effect_id,
+            completed_at=event.occurred_at + timedelta(hours=3),
+        )
+    assert store.command(ack.consumer_effect_id) is not None
+    assert store.business_effect(ack.consumer_effect_id) is None
