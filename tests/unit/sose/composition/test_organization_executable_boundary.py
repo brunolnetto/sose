@@ -685,7 +685,8 @@ def test_replayed_certificate_cannot_bypass_post_ack_event_attestation(adapter, 
             boundary_message_id=message.message_id,
             correlation_id=message.correlation_id,
             entity_type=command.entity_type, entity_id=command.entity_id,
-            terminal_state="delivered", entity_version=1,
+            terminal_state="delivered",
+            entity_version=store.entity(command.entity_type, command.entity_id).version,
             completed_at=event.occurred_at + timedelta(hours=10),
         )
         with store.transaction() as uow:
