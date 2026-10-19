@@ -614,7 +614,14 @@ def transition_actor(
                     if action == "assign":
                         extra = {"assigned_work_id": work_id}
                     elif action == "complete":
-                        extra = {"completed_work_id": work_id}
+                        # A pre-attestation in-flight assignment has no
+                        # immutable work ID; do not encode a modern close
+                        # record contradicting its legacy source. Modern
+                        # assignments always require exact close IDs.
+                        if active_source is not None and (
+                            active_source.payload.get("assigned_work_id") is not None
+                        ):
+                            extra = {"completed_work_id": work_id}
                     elif action == "cancel_assigned":
                         extra = {
                             "cancelled_work_id": work_id,
