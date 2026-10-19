@@ -234,3 +234,52 @@ def test_unpaired_extra_protocol_descendant_cannot_be_silently_ignored(corruptio
             ))
     with pytest.raises(ValueError, match="delivery identity contradicts|ACK identity references"):
         observe(spec, store, manifests, consumers, source.message_id)
+
+
+@pytest.mark.parametrize("corruption", (
+    "no_original_claim", "missing_claim_owner", "counter_drift",
+    "claim_before_publication", "ack_before_claim", "ack_after_expiry",
+))
+def test_matching_ack_cannot_hide_impossible_original_claim(corruption):
+    """A forged ACK+delivery pair cannot stand in for a real claim history."""
+    from sose.composition.model import BoundaryConsumption
+    spec, manifests, consumers = configuration()
+    store = MemoryPersistence()
+    message_record = message()
+    BoundaryService(store).publish(message_record)
+    delivery_id = BoundaryDelivery.pending(message_record).delivery_id
+    with store.transaction() as uow:
+        pending = uow.get_boundary_delivery(delivery_id)
+        claimed = replace(
+            pending, status=DeliveryStatus.CLAIMED,
+            attempts=1, claim_epoch=1, claim_owner_id="worker:wm",
+            claimed_at=NOW, lease_expires_at=NOW + timedelta(minutes=5),
+        )
+        invalid = replace(
+            claimed, status=DeliveryStatus.CONSUMED,
+            consumed_at=NOW + timedelta(minutes=1),
+            consumer_effect_id="opaque:effect",
+        )
+        if corruption == "no_original_claim":
+            invalid = replace(invalid, attempts=0, claim_epoch=0,
+                              claim_owner_id=None, claimed_at=None,
+                              lease_expires_at=None)
+        elif corruption == "missing_claim_owner":
+            invalid = replace(invalid, claim_owner_id=None)
+        elif corruption == "counter_drift":
+            invalid = replace(invalid, claim_epoch=2)
+        elif corruption == "claim_before_publication":
+            invalid = replace(invalid, claimed_at=NOW - timedelta(seconds=1))
+        elif corruption == "ack_before_claim":
+            invalid = replace(invalid, consumed_at=NOW - timedelta(seconds=1))
+        else:
+            invalid = replace(invalid, consumed_at=NOW + timedelta(minutes=6))
+        uow.save_boundary_delivery(invalid)
+        uow.save_boundary_consumption(BoundaryConsumption.create(
+            delivery=invalid, consumer_effect_id="opaque:effect",
+            consumed_at=invalid.consumed_at,
+        ))
+    before = tuple(store.events())
+    with pytest.raises(ValueError, match="original claim provenance|claim time fence"):
+        observe(spec, store, manifests, consumers, message_record.message_id)
+    assert tuple(store.events()) == before

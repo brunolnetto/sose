@@ -152,7 +152,27 @@ def inspect_selected_boundary_protocol(
         ):
             raise ValueError("selected delivery contradicts immutable publication")
         receipt = by_receipt.get(delivery.delivery_id)
+        if delivery.status in (DeliveryStatus.CLAIMED, DeliveryStatus.CONSUMED):
+            if (
+                type(delivery.attempts) is not int
+                or type(delivery.claim_epoch) is not int
+                or delivery.attempts < 1
+                or delivery.claim_epoch != delivery.attempts
+                or not isinstance(delivery.claim_owner_id, str)
+                or not delivery.claim_owner_id.strip()
+                or delivery.claimed_at is None
+                or delivery.lease_expires_at is None
+                or not (message.produced_at <= delivery.claimed_at
+                        < delivery.lease_expires_at)
+            ):
+                raise ValueError("selected delivery lacks original claim provenance")
         if delivery.status is DeliveryStatus.CONSUMED:
+            if (
+                delivery.consumed_at is None
+                or not (delivery.claimed_at <= delivery.consumed_at
+                        < delivery.lease_expires_at)
+            ):
+                raise ValueError("consumed selected delivery violates claim time fence")
             if receipt is None:
                 raise ValueError("consumed selected delivery lacks durable ACK")
             expected_receipt = BoundaryConsumption.create(
