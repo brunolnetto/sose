@@ -171,7 +171,8 @@ def test_pg_competing_actor_claims_are_fenced_and_peer_is_independent():
         assert actor.attributes["time_us"]["admitted"] == 3600 * 1000000
         assert actor.attributes["time_us"]["eligible"] == 3600 * 1000000
         for subject in (contested, peer):
-            events = [e for e in store.events() if e.entity_id == subject]
+            events = [e for e in store.events()
+                      if e.entity_id == subject and e.name == "entity.state_transition"]
             assert len(events) == len({e.event_id for e in events}) == 2
             assert {e.payload["trigger"] for e in events} == {"activate", "assign"}
             assert all(
@@ -247,4 +248,5 @@ def test_pg_killed_actor_worker_replays_committed_cause_without_double_event():
         )
         assert completed.state == "eligible"
         assert completed.attributes["assigned_work_id"] is None
-        assert len([e for e in recovered.events() if e.entity_id == actor_id]) == 3
+        assert len([e for e in recovered.events()
+                    if e.entity_id == actor_id and e.name == "entity.state_transition"]) == 3

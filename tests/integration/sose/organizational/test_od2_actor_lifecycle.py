@@ -71,7 +71,8 @@ def test_actor_statechart_accounts_distinct_idleness_and_development_without_lea
         assert sum(subject.attributes["time_us"].values()) == 7 * 3600 * 1000000
         assert subject.attributes["paid_transition_us"] == 4500000
         assert store.entity(ACTOR_KIND, peer_id).state == "admitted"
-        events = [e for e in store.events() if e.entity_id == actor_id]
+        events = [e for e in store.events()
+                  if e.entity_id == actor_id and e.name == "entity.state_transition"]
         assert len(events) == 6
         assert len({e.event_id for e in events}) == 6
         assert all(e.owner_id == OWNER for e in events)
@@ -88,7 +89,8 @@ def test_actor_statechart_accounts_distinct_idleness_and_development_without_lea
     if adapter == "sqlite":
         with SQLitePersistence(path) as recovered:
             assert recovered.entity(ACTOR_KIND, actor_id) == subject
-            assert len([e for e in recovered.events() if e.entity_id == actor_id]) == 6
+            assert len([e for e in recovered.events()
+                        if e.entity_id == actor_id and e.name == "entity.state_transition"]) == 6
             before = recovered.events()
             _transition(recovered, actor_id, "exit", 7)
             assert recovered.events() == before
@@ -449,3 +451,85 @@ def test_actor_owner_and_calendar_deletion_cannot_hide_enrollment_marker():
         )
     assert tuple(store.events()) == original_events
     assert store.entity(ACTOR_KIND, actor_id).attributes["assigned_work_id"] is None
+
+
+# P1 falsifiers: immutable initial admission and lifecycle replay are authority.
+@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+@pytest.mark.parametrize("corruption", ["owner", "model", "epoch"])
+def test_calendar_free_actor_admission_has_immutable_owner_and_config(
+    adapter, corruption, tmp_path,
+):
+    path = tmp_path / "actor-p1-admission.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = _seed(store)
+        origin = [
+            event for event in store.events()
+            if event.entity_id == actor_id and event.name == "od2.actor_admitted"
+        ]
+        assert len(origin) == 1
+        assert origin[0].owner_id == OWNER
+        assert origin[0].payload["model_spec_hash"] == MODEL
+        original_events = tuple(store.events())
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            if corruption == "owner":
+                actor.attributes["owner_id"] = "org:forged"
+            elif corruption == "model":
+                actor.attributes["model_spec_hash"] = "model:forged"
+            else:
+                actor.attributes["config_epoch"] = 2
+            uow.save_entity(actor)
+        with pytest.raises(ValueError, match="immutable admission"):
+            transition_actor(
+                store, owner_id=("org:forged" if corruption == "owner" else OWNER),
+                actor_id=actor_id, action="activate", cause_id="cause:activate",
+                at=T0 + timedelta(hours=1),
+                model_spec_hash=("model:forged" if corruption == "model" else MODEL),
+                config_epoch=(2 if corruption == "epoch" else 1),
+            )
+        assert tuple(store.events()) == original_events
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            assert tuple(reopened.events()) == original_events
+
+
+@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+def test_forged_projection_cannot_exit_or_replace_attested_open_work(
+    adapter, tmp_path,
+):
+    path = tmp_path / "actor-p1-work.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = _seed(store)
+        _transition(store, actor_id, "activate", 1)
+        _transition(store, actor_id, "assign", 2, work_id="work:original")
+        original_events = tuple(store.events())
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.state = "eligible"
+            actor.attributes["assigned_work_id"] = None
+            uow.save_entity(actor)
+        with pytest.raises(ValueError, match="projection contradicts immutable lifecycle"):
+            _transition(store, actor_id, "exit", 3)
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.state = "exited"
+            uow.save_entity(actor)
+        with pytest.raises(ValueError, match="predecessor contradicts immutable lifecycle"):
+            seed_actor(
+                store, owner_id=OWNER, actor_key="forged-replacement",
+                model_spec_hash=MODEL, config_epoch=1,
+                at=T0 + timedelta(hours=4),
+                replaces_actor_id=actor_id,
+            )
+        assert tuple(store.events()) == original_events
+        assert store.entity(
+            ACTOR_KIND, deterministic_id("od2-actor", OWNER, "forged-replacement"),
+        ) is None
+    finally:
+        if adapter == "sqlite":
+            store.close()

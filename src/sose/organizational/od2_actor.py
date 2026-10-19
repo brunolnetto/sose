@@ -152,10 +152,33 @@ def _require_actor_calendar_start(
     attributes = actor.attributes
     saved = attributes.get("availability_calendar")
     origin = uow.get_event(_calendar_origin_event_id(actor.id))
-    if origin is None and saved is None:
-        # Actors enrolled before opt-in calendar support stay calendar-free.
+    if origin is None:
+        raise ValueError("actor immutable admission evidence missing")
+    if (
+        origin.entity_type != ACTOR_KIND
+        or origin.entity_id != actor.id
+        or origin.owner_id != attributes.get("owner_id")
+        or origin.occurred_at != actor.created_at
+        or origin.causation_id is not None
+        or origin.correlation_id != deterministic_id(
+            "od2-actor-flow", origin.owner_id, actor.id,
+        )
+        or origin.payload.get("model_spec_hash") != attributes.get("model_spec_hash")
+        or type(origin.payload.get("config_epoch")) is not int
+        or origin.payload["config_epoch"] != attributes.get("config_epoch")
+        or origin.payload.get("admitted_at") != actor.created_at.isoformat()
+        or origin.payload.get("replaces_actor_id") != attributes.get("replaces_actor_id")
+    ):
+        raise ValueError("actor immutable admission provenance contradicts projection")
+    if saved is None:
+        if (
+            origin.name != "od2.actor_admitted"
+            or "calendar_source" in origin.payload
+            or "calendar_digest" in origin.payload
+        ):
+            raise ValueError("actor calendar original provenance missing")
         return
-    if origin is None or saved is None:
+    if origin.name != "od2.actor_calendar_admitted":
         raise ValueError("actor calendar original provenance missing")
     try:
         if (
@@ -264,6 +287,19 @@ def seed_actor(
                     or now < datetime.fromisoformat(replaced.attributes["last_at"])
                 ):
                     raise ValueError("replacement requires prior exited actor in same owner")
+                _require_actor_calendar_start(
+                    uow, replaced, now, require_window=False,
+                )
+                open_work, attested_state = _attested_actor_replay(
+                    uow, actor_id=replaces_actor_id, owner_id=owner_id,
+                )
+                if (
+                    attested_state != "exited"
+                    or replaced.state != attested_state
+                    or open_work is not None
+                    or replaced.attributes.get("assigned_work_id") is not None
+                ):
+                    raise ValueError("replacement predecessor contradicts immutable lifecycle")
                 if replaced.attributes.get("replaced_by_actor_id") is not None:
                     raise ValueError("predecessor already replaced")
                 if (
@@ -297,23 +333,26 @@ def seed_actor(
                     } if availability_calendar is not None else {}),
                 },
             ))
-            if availability_calendar is not None:
-                # An independent append-only record is the enrollment source
-                # of truth. The entity's source_digest is only a projection;
-                # changing or deleting it cannot silently remove eligibility.
-                uow.append_event(DomainEvent(
-                    event_id=_calendar_origin_event_id(identity),
-                    name="od2.actor_calendar_admitted",
-                    entity_type=ACTOR_KIND, entity_id=identity,
-                    occurred_at=now, owner_id=owner_id,
-                    correlation_id=deterministic_id("od2-actor-flow", owner_id, identity),
-                    payload={
+            # Immutable enrollment is mandatory even without a calendar.
+            # Mutable actor attributes can never invent owner or config lineage.
+            uow.append_event(DomainEvent(
+                event_id=_calendar_origin_event_id(identity),
+                name=("od2.actor_calendar_admitted" if availability_calendar is not None
+                      else "od2.actor_admitted"),
+                entity_type=ACTOR_KIND, entity_id=identity,
+                occurred_at=now, owner_id=owner_id,
+                correlation_id=deterministic_id("od2-actor-flow", owner_id, identity),
+                payload={
+                    "admitted_at": now.isoformat(),
+                    "replaces_actor_id": replaces_actor_id,
+                    "config_epoch": config_epoch,
+                    "model_spec_hash": model_spec_hash,
+                    **({
                         "calendar_source": availability_calendar.snapshot(),
                         "calendar_digest": availability_calendar.digest(),
-                        "config_epoch": config_epoch,
-                        "model_spec_hash": model_spec_hash,
-                    },
-                ))
+                    } if availability_calendar is not None else {}),
+                },
+            ))
     return identity
 
 
@@ -421,8 +460,10 @@ def _require_canonical_work_transition(event: DomainEvent, action: str) -> None:
         raise ValueError("attested work transition shape contradicts StateChart")
 
 
-def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> DomainEvent | None:
-    """Reconstruct the actor's one-open-work invariant from durable events.
+def _attested_actor_replay(
+    uow, *, actor_id: str, owner_id: str,
+) -> tuple[DomainEvent | None, str]:
+    """Reconstruct the actor's immutable one-open-work AND lifecycle invariants.
 
     Checking only the last assignment is unsafe: a corrupted mutable actor
     projection can authorize a second assignment without closing the first.
@@ -574,7 +615,16 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                 )
                 _require_canonical_work_transition(event, action)
             opened = None
-    return opened
+    return opened, lifecycle
+
+
+def _attested_current_assignment(
+    uow, *, actor_id: str, owner_id: str,
+) -> DomainEvent | None:
+    """Expose open-work proof to existing strict causal verifiers."""
+    return _attested_actor_replay(
+        uow, actor_id=actor_id, owner_id=owner_id,
+    )[0]
 
 
 def _attested_active_assignment(uow, *, actor_id: str, owner_id: str,
@@ -734,9 +784,23 @@ def transition_actor(
             )
             # Check owner and open-work against *all* immutable actor events,
             # before any idempotent return, not only for a new assignment.
-            active_source = _attested_current_assignment(
+            active_source, replayed_lifecycle = _attested_actor_replay(
                 uow, actor_id=actor_id, owner_id=owner_id,
             )
+            if actor.state != replayed_lifecycle:
+                raise ValueError("actor projection contradicts immutable lifecycle history")
+            if active_source is None:
+                if meta["assigned_work_id"] is not None:
+                    raise ValueError("actor projection contains work absent from immutable history")
+            else:
+                attested_work = active_source.payload.get("assigned_work_id")
+                if (
+                    actor.state != "active"
+                    or meta.get("assigned_work_id") is None
+                    or (attested_work is not None
+                        and meta["assigned_work_id"] != attested_work)
+                ):
+                    raise ValueError("actor projection contradicts immutable active work")
             used = meta["applied_causes"].get(cause_id)
             if used is not None:
                 if used != list(identity):

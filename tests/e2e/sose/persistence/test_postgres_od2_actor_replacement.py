@@ -208,7 +208,8 @@ def test_pg_competing_successors_linearize_predecessor_claim_without_global_lock
             "assigned_work_id"
         ] == "work:unrelated"
         # No rejected successor command/event and no duplication of paid exit.
-        events = [e for e in reopened.events() if e.entity_id == predecessor]
+        events = [e for e in reopened.events()
+                  if e.entity_id == predecessor and e.name == "entity.state_transition"]
         assert len(events) == len({e.event_id for e in events}) == 2
         assert {e.payload["trigger"] for e in events} == {"activate", "exit"}
         assert not any(e.entity_id == loser_id for e in reopened.events())
