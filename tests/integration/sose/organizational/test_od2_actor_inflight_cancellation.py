@@ -844,3 +844,77 @@ def test_exact_work_command_cannot_resurrect_actor_outside_attested_lifecycle(
                 _transition(recovered, actor_id, "cancel_assigned", 4,
                             work_id="work:ghost", cost_us=1)
             assert tuple(recovered.events()) == before
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("forgery", ("deleted", "extra", "reordered", "wrong_id"))
+def test_paid_cancellation_projection_must_equal_all_immutable_cancellations(
+    adapter, forgery, tmp_path,
+):
+    """No exit, replacement or same-cause replay can launder mutable history."""
+    path = tmp_path / ("cancel-provenance-" + forgery + ".sqlite")
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="cancel-provenance-" + forgery,
+            model_spec_hash=MODEL, config_epoch=1, at=T0,
+        )
+        _transition(store, actor_id, "activate", 1)
+        _transition(store, actor_id, "assign", 2, work_id="work:A")
+        _transition(store, actor_id, "cancel_assigned", 3,
+                    work_id="work:A", cost_us=400000)
+        _transition(store, actor_id, "assign", 4, work_id="work:B")
+        _transition(store, actor_id, "cancel_assigned", 5,
+                    work_id="work:B", cost_us=500000)
+        evidence = tuple(store.events())
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            if forgery == "deleted":
+                actor.attributes["cancelled_work_ids"] = []
+            elif forgery == "extra":
+                actor.attributes["cancelled_work_ids"] = ["work:A", "work:B", "work:C"]
+            elif forgery == "reordered":
+                actor.attributes["cancelled_work_ids"] = ["work:B", "work:A"]
+            else:
+                actor.attributes["cancelled_work_ids"] = ["work:A", "work:forged"]
+            uow.save_entity(actor)
+        with pytest.raises(ValueError, match="cancellation projection contradicts immutable paid history"):
+            _transition(store, actor_id, "exit", 6)
+        assert tuple(store.events()) == evidence
+        assert store.entity(ACTOR_KIND, actor_id).state == "eligible"
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as recovered:
+            before = tuple(recovered.events())
+            with pytest.raises(ValueError, match="cancellation projection contradicts immutable paid history"):
+                _transition(recovered, actor_id, "exit", 6)
+            assert tuple(recovered.events()) == before
+
+
+def test_replacement_cannot_launder_cancelled_work_projection():
+    store = MemoryPersistence()
+    predecessor = seed_actor(
+        store, owner_id=OWNER, actor_key="replaced-cancellations",
+        model_spec_hash=MODEL, config_epoch=1, at=T0,
+    )
+    _transition(store, predecessor, "activate", 1)
+    _transition(store, predecessor, "assign", 2, work_id="work:A")
+    _transition(store, predecessor, "cancel_assigned", 3,
+                work_id="work:A", cost_us=100000)
+    _transition(store, predecessor, "exit", 4)
+    with store.transaction(owner_id=OWNER) as uow:
+        actor = uow.get_entity(ACTOR_KIND, predecessor)
+        actor.attributes["cancelled_work_ids"] = []
+        uow.save_entity(actor)
+    before = tuple(store.events())
+    with pytest.raises(ValueError, match="predecessor contradicts immutable lifecycle"):
+        seed_actor(
+            store, owner_id=OWNER, actor_key="successor-fake-history",
+            model_spec_hash=MODEL, config_epoch=1,
+            at=T0 + timedelta(hours=5), replaces_actor_id=predecessor,
+        )
+    assert tuple(store.events()) == before
+    assert store.entity(ACTOR_KIND, predecessor).attributes["replaced_by_actor_id"] is None
