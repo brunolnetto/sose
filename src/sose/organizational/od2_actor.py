@@ -379,6 +379,7 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
     work ID are deliberately un-certifiable for this strict path.
     """
     opened = None
+    last_work_at = None
     for event in uow.events():
         if event.entity_type != ACTOR_KIND or event.entity_id != actor_id:
             continue
@@ -390,6 +391,13 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                 "attested actor owner contradicts immutable event history"
             )
         action = event.payload.get("trigger")
+        if action in {"assign", "complete", "cancel_assigned"}:
+            # Temporal position belongs to this actor, not a synthetic
+            # organization-global clock. Append order cannot hide a
+            # backdated close/assign with an otherwise valid Command.
+            if last_work_at is not None and event.occurred_at < last_work_at:
+                raise ValueError("attested actor work causal time regressed")
+            last_work_at = event.occurred_at
         if action == "assign":
             work = event.payload.get("assigned_work_id")
             # Historical actor assignments may predate immutable work IDs.
