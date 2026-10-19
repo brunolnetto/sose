@@ -709,3 +709,66 @@ def test_replayed_certificate_cannot_bypass_post_ack_event_attestation(adapter, 
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("violation", ("foreign_claim_owner", "backdated_durable_ack"))
+def test_preexisting_consumed_receipt_must_have_real_owner_and_causal_time(
+    adapter, violation, tmp_path,
+):
+    """Even a valid staged Command cannot launder a foreign or pre-source ACK.
+
+    Direct BoundaryService is intentionally used to reproduce historical
+    data/external workers that bypassed the bounded executor's ingress.
+    """
+    path = tmp_path / ("corrupt-" + violation + ".sqlite")
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        executor, _, _, event, message, delivery = _published_ingress(store)
+        original_time = event.occurred_at
+        claim_time = (
+            original_time - timedelta(minutes=2)
+            if violation == "backdated_durable_ack" else original_time
+        )
+        claimant = "worker:foreign-org" if violation == "foreign_claim_owner" else LG
+        service = BoundaryService(store)
+        lease = service.claim_next(
+            owner_id=claimant, message_id=message.message_id,
+            now=claim_time, lease_duration=timedelta(minutes=10),
+        )
+        assert lease is not None
+        receipt = service.consume(
+            lease=lease, registry=executor.consumers, now=claim_time,
+        )
+        assert receipt.consumer_effect_id
+        assert store.command(receipt.consumer_effect_id) is not None
+        before = tuple(store.events())
+        expected = (
+            "claim owner contradicts admitted consumer"
+            if violation == "foreign_claim_owner"
+            else "ACK predates message production or claim"
+        )
+        with pytest.raises(ValueError, match=expected):
+            executor.consume(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=message.message_id, now=original_time,
+                lease_duration=timedelta(minutes=10),
+            )
+        with pytest.raises(ValueError, match=expected):
+            executor.certify(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=message.message_id,
+                effect_id=receipt.consumer_effect_id,
+                completed_at=original_time + timedelta(hours=10),
+            )
+        assert store.business_effect(receipt.consumer_effect_id) is None
+        assert tuple(store.events()) == before
+        assert service.delivery(delivery.delivery_id).status is DeliveryStatus.CONSUMED
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as recovered:
+            assert recovered.business_effect(receipt.consumer_effect_id) is None
+            assert BoundaryService(recovered).consumption(delivery.delivery_id) == receipt
