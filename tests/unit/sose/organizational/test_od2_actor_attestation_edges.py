@@ -1,0 +1,286 @@
+"""Exact causal attestation edge falsifiers for bounded OD-2 cancellation.
+
+All tests drive production verifiers with explicitly constructed immutable
+DomainEvents and Commands, not a mock of their actual implementation.
+"""
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from sose.core.events import Command, DomainEvent
+from sose.core.identity import deterministic_id
+from sose.organizational.od2_actor import (
+    ACTOR_KIND,
+    _attested_active_assignment,
+    _attested_current_assignment,
+    _verify_durable_cancellation_replay,
+)
+
+NOW = datetime(2026, 10, 18, 13, tzinfo=timezone.utc)
+OWNER = "org:attested"
+ACTOR = "actor:immutable"
+WORK = "work:A"
+CAUSE = "cause:cancel"
+
+
+def event(trigger, *, event_id=None, owner_id=OWNER, actor_id=ACTOR,
+          at=NOW, **payload):
+    return DomainEvent(
+        event_id=event_id or "event:" + trigger,
+        name="od2." + trigger, entity_type=ACTOR_KIND, entity_id=actor_id,
+        occurred_at=at, owner_id=owner_id, causation_id="command:source",
+        payload={"trigger": trigger, **payload},
+    )
+
+
+class Ledger:
+    def __init__(self, events=(), command=None, source=None):
+        self._events = tuple(events)
+        self._command = command
+        self._source = source
+
+    def events(self):
+        return self._events
+
+    def get_command(self, command_id):
+        return self._command
+
+    def get_event(self, event_id):
+        if self._source is not None and self._source.event_id == event_id:
+            return self._source
+        return None
+
+
+def test_empty_and_non_actor_events_do_not_create_active_work():
+    irrelevant = event(
+        "assign", actor_id="actor:peer", assigned_work_id="work:peer",
+    )
+    ledger = Ledger([irrelevant, event("activate", event_id="other")])
+    assert _attested_current_assignment(
+        ledger, actor_id=ACTOR, owner_id=OWNER,
+    ) is None
+    with pytest.raises(ValueError, match="original assignment"):
+        _attested_active_assignment(
+            ledger, actor_id=ACTOR, owner_id=OWNER, work_id=WORK,
+        )
+
+
+@pytest.mark.parametrize("kind,pattern", [
+    ("wrong_owner", "owner"),
+    ("overlap", "overlap"),
+    ("blank_work", "malformed"),
+    ("numeric_work", "malformed"),
+    ("stray_complete", "lacks open assignment"),
+    ("stray_cancel", "lacks open assignment"),
+    ("missing_complete_id", "completion identity mismatch"),
+    ("wrong_complete_id", "completion identity mismatch"),
+    ("legacy_with_new_complete", "historical completion"),
+    ("cancel_wrong_work", "cancellation does not close"),
+    ("cancel_wrong_source", "cancellation does not close"),
+    ("cancel_without_work_identity", "cancellation does not close"),
+])
+def test_full_work_history_rejects_corruption(kind, pattern):
+    opened = event(
+        "assign", event_id="original", at=NOW - timedelta(hours=1),
+        assigned_work_id=WORK,
+    )
+    complete = event("complete", event_id="closed", completed_work_id=WORK)
+    cancelled = event(
+        "cancel_assigned", event_id="cancelled",
+        cancelled_work_id=WORK, source_assignment_event_id="original",
+    )
+    if kind == "wrong_owner":
+        events = [replace(opened, owner_id="org:forged")]
+    elif kind == "overlap":
+        events = [opened, replace(
+            opened, event_id="second", payload={
+                **opened.payload, "assigned_work_id": "work:B",
+            },
+        )]
+    elif kind == "blank_work":
+        events = [replace(opened, payload={"trigger": "assign", "assigned_work_id": ""})]
+    elif kind == "numeric_work":
+        events = [replace(opened, payload={"trigger": "assign", "assigned_work_id": 3})]
+    elif kind == "stray_complete":
+        events = [complete]
+    elif kind == "stray_cancel":
+        events = [cancelled]
+    elif kind == "missing_complete_id":
+        events = [opened, replace(complete, payload={"trigger": "complete"})]
+    elif kind == "wrong_complete_id":
+        events = [opened, replace(
+            complete, payload={"trigger": "complete", "completed_work_id": "work:B"},
+        )]
+    elif kind == "legacy_with_new_complete":
+        events = [replace(opened, payload={"trigger": "assign"}), complete]
+    elif kind == "cancel_wrong_work":
+        events = [opened, replace(cancelled, payload={
+            **cancelled.payload, "cancelled_work_id": "work:B",
+        })]
+    elif kind == "cancel_wrong_source":
+        events = [opened, replace(cancelled, payload={
+            **cancelled.payload, "source_assignment_event_id": "fake",
+        })]
+    else:
+        events = [replace(opened, payload={"trigger": "assign"}), cancelled]
+    with pytest.raises((PermissionError, ValueError), match=pattern):
+        _attested_current_assignment(
+            Ledger(events), actor_id=ACTOR, owner_id=OWNER,
+        )
+
+
+def test_valid_modern_and_legacy_work_sequences_have_only_one_open_assignment():
+    modern = event(
+        "assign", event_id="modern-assign", assigned_work_id=WORK,
+    )
+    modern_closed = event(
+        "complete", event_id="modern-complete", completed_work_id=WORK,
+    )
+    legacy = event("assign", event_id="legacy-assign")
+    legacy_closed = event("complete", event_id="legacy-complete")
+    fresh = event(
+        "assign", event_id="fresh", assigned_work_id="work:B",
+    )
+    ledger = Ledger([modern, modern_closed, legacy, legacy_closed, fresh])
+    assert _attested_current_assignment(
+        ledger, actor_id=ACTOR, owner_id=OWNER,
+    ).event_id == "fresh"
+    with pytest.raises(ValueError, match="work identity"):
+        _attested_active_assignment(
+            ledger, actor_id=ACTOR, owner_id=OWNER, work_id=WORK,
+        )
+    assert _attested_active_assignment(
+        ledger, actor_id=ACTOR, owner_id=OWNER, work_id="work:B",
+    ).event_id == "fresh"
+
+
+def test_active_assignment_requires_source_causation_even_with_matching_work():
+    without_parent = event(
+        "assign", assigned_work_id=WORK,
+    )
+    with pytest.raises(ValueError, match="causal Command"):
+        _attested_active_assignment(
+            Ledger([replace(without_parent, causation_id=None)]),
+            actor_id=ACTOR, owner_id=OWNER, work_id=WORK,
+        )
+
+
+def valid_replay():
+    source = event(
+        "assign", event_id="original", at=NOW - timedelta(hours=1),
+        assigned_work_id=WORK,
+    )
+    cmd_id = deterministic_id(
+        "od2-actor-command", OWNER, ACTOR, CAUSE,
+    )
+    command = Command(
+        command_id=cmd_id,
+        name="cancel_assigned", entity_type=ACTOR_KIND,
+        entity_id=ACTOR, due_at=NOW, issued_at=NOW, owner_id=OWNER,
+        causation_id=None,
+        correlation_id=deterministic_id("od2-actor-flow", OWNER, ACTOR),
+        payload={
+            "external_cause_id": CAUSE,
+            "cancelled_work_id": WORK,
+            "charged_cost_us": 700,
+            "source_assignment_event_id": source.event_id,
+        },
+    )
+    done = event(
+        "cancel_assigned", event_id="done",
+        cancelled_work_id=WORK,
+        charged_cost_us=700,
+        source_assignment_event_id=source.event_id,
+    )
+    done = replace(done, causation_id=cmd_id)
+    return command, source, done
+
+
+def verify(ledger):
+    return _verify_durable_cancellation_replay(
+        ledger, owner_id=OWNER, actor_id=ACTOR, cause_id=CAUSE,
+        at=NOW, work_id=WORK, cost_us=700,
+    )
+
+
+def test_verified_complete_economic_replay_passes():
+    command, source, done = valid_replay()
+    assert verify(Ledger([source, done], command, source)) is None
+
+
+@pytest.mark.parametrize("kind,pattern", [
+    ("command_missing", "Command is missing"),
+    ("command_owner", "Command is missing"),
+    ("command_work", "Command is missing"),
+    ("command_cost", "Command is missing"),
+    ("command_timestamp", "Command metadata"),
+    ("command_payload_extra", "Command metadata"),
+    ("event_missing", "event missing"),
+    ("event_duplicate", "event missing"),
+    ("event_wrong_cost", "event contradicts"),
+    ("event_wrong_work", "event contradicts"),
+    ("event_wrong_source", "event contradicts"),
+    ("event_wrong_timestamp", "event contradicts"),
+    ("source_missing", "original assignment missing"),
+    ("source_wrong_owner", "original assignment missing"),
+    ("source_wrong_actor", "original assignment missing"),
+    ("source_wrong_work", "original assignment missing"),
+    ("source_wrong_trigger", "original assignment missing"),
+    ("source_in_future", "original assignment missing"),
+])
+def test_paid_cancellation_replay_rejects_each_corrupted_boundary(kind, pattern):
+    command, source, done = valid_replay()
+    events = [source, done]
+    if kind == "command_missing":
+        command = None
+    elif kind == "command_owner":
+        command = replace(command, owner_id="org:forged")
+    elif kind == "command_work":
+        command = replace(command, payload={
+            **command.payload, "cancelled_work_id": "work:B",
+        })
+    elif kind == "command_cost":
+        command = replace(command, payload={
+            **command.payload, "charged_cost_us": 1,
+        })
+    elif kind == "command_timestamp":
+        command = replace(command, issued_at=NOW + timedelta(seconds=1))
+    elif kind == "command_payload_extra":
+        command = replace(command, payload={
+            **command.payload, "extra": True,
+        })
+    elif kind == "event_missing":
+        events = [source]
+    elif kind == "event_duplicate":
+        events = [source, done, replace(done, event_id="duplicate")]
+    elif kind == "event_wrong_cost":
+        events = [source, replace(done, payload={
+            **done.payload, "charged_cost_us": 1,
+        })]
+    elif kind == "event_wrong_work":
+        events = [source, replace(done, payload={
+            **done.payload, "cancelled_work_id": "work:B",
+        })]
+    elif kind == "event_wrong_source":
+        events = [source, replace(done, payload={
+            **done.payload, "source_assignment_event_id": "wrong",
+        })]
+    elif kind == "event_wrong_timestamp":
+        events = [source, replace(done, occurred_at=NOW + timedelta(seconds=1))]
+    elif kind == "source_missing":
+        source = None
+    elif kind == "source_wrong_owner":
+        source = replace(source, owner_id="org:forged")
+    elif kind == "source_wrong_actor":
+        source = replace(source, entity_id="actor:forged")
+    elif kind == "source_wrong_work":
+        source = replace(source, payload={
+            **source.payload, "assigned_work_id": "work:B",
+        })
+    elif kind == "source_wrong_trigger":
+        source = replace(source, payload={"trigger": "activate"})
+    elif kind == "source_in_future":
+        source = replace(source, occurred_at=NOW + timedelta(seconds=1))
+    with pytest.raises(ValueError, match=pattern):
+        verify(Ledger(events, command, source))
