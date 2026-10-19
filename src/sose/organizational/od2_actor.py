@@ -345,7 +345,7 @@ def _verify_actor_work_command(
             not isinstance(event_work, str) or not event_work.strip()
             or command_work != event_work
         ):
-            raise ValueError("attested work identity differs from original Command")
+            raise ValueError("attested work transition causal Command identity differs from original work evidence")
         payload[key] = event_work
     expected = Command(
         command_id=deterministic_id("od2-actor-command", owner_id, actor_id, cause),
