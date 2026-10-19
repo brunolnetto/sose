@@ -358,11 +358,17 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                 or event.payload.get("source_assignment_event_id") != opened.event_id
             ):
                 raise ValueError("attested work cancellation does not close original assignment")
-            # Historical completed events may lack their work ID field.
-            # They still close exactly one prior immutable assignment.
-            if (action == "complete" and expected_id is not None
-                and event.payload.get("completed_work_id", expected_id) != expected_id):
-                raise ValueError("attested work completion identity mismatch")
+            # Pre-attestation assign+complete pairs may omit work IDs.
+            # Once an assignment attests work, its closing completion MUST
+            # attest the same explicit work ID (no default that silently
+            # treats an absent completion field as matching).
+            if action == "complete":
+                completed_id = event.payload.get("completed_work_id")
+                if expected_id is None:
+                    if completed_id is not None:
+                        raise ValueError("attested historical completion carries unknown work")
+                elif completed_id != expected_id:
+                    raise ValueError("attested work completion identity mismatch")
             opened = None
     return opened
 
