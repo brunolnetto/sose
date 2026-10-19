@@ -9,6 +9,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from sose.core.identity import deterministic_id
+
 from sose.organizational.od2_actor import (
     ACTOR_KIND, ACTOR_STATES, ActorAvailabilityCalendar, ActorAvailabilityInterval, seed_actor, transition_actor,
 )
@@ -189,6 +191,7 @@ def test_actor_replacement_requires_exited_same_owner_and_preserves_predecessor(
 def test_actor_rejects_ambiguous_clock_cost_or_epoch(at, cost_us, epoch):
     store = MemoryPersistence()
     actor = _seed(store)
+    before = tuple(store.events())
     with pytest.raises(ValueError):
         transition_actor(
             store, owner_id=OWNER, actor_id=actor,
@@ -196,7 +199,7 @@ def test_actor_rejects_ambiguous_clock_cost_or_epoch(at, cost_us, epoch):
             model_spec_hash=MODEL, config_epoch=epoch, cost_us=cost_us,
         )
     assert store.entity(ACTOR_KIND, actor).state == "admitted"
-    assert not store.events()
+    assert tuple(store.events()) == before
 
 
 @pytest.mark.parametrize(
@@ -442,7 +445,7 @@ def test_actor_owner_and_calendar_deletion_cannot_hide_enrollment_marker():
         del actor.attributes["availability_calendar"]
         uow.save_entity(actor)
     original_events = tuple(store.events())
-    with pytest.raises(ValueError, match="actor calendar"):
+    with pytest.raises(ValueError, match="actor immutable admission provenance contradicts projection"):
         transition_actor(
             store, owner_id=forged_owner, actor_id=actor_id,
             action="assign", cause_id="forged:assign",
