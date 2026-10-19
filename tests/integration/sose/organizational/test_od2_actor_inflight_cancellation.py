@@ -426,8 +426,8 @@ def test_attested_assignment_does_not_accept_unattested_or_wrong_completion(
     assert tuple(store.events()) == before
 
 
-def test_closed_pre_attestation_assign_and_complete_pair_is_accepted():
-    """Legacy missing work fields are allowed only when BOTH events predate IDs."""
+def test_modern_admission_rejects_pretended_pre_attestation_work_pair():
+    """A modern immutable admission cannot be downgraded with forged legacy work."""
     store = MemoryPersistence()
     actor_id = seed_actor(
         store, owner_id=OWNER, actor_key="legacy-pair",
@@ -453,20 +453,22 @@ def test_closed_pre_attestation_assign_and_complete_pair_is_accepted():
             uow, old_complete, actor_id, action="complete",
             at=T0 + timedelta(hours=5), payload=old_complete_data,
         )
-    assigned = _transition(store, actor_id, "assign", 6, work_id="work:new")
-    assert assigned.state == "active"
-    assert assigned.attributes["assigned_work_id"] == "work:new"
-    assert [e.payload["assigned_work_id"] for e in store.events()
-            if e.payload.get("trigger") == "assign"
-            and "assigned_work_id" in e.payload] == ["work:A", "work:new"]
+    # The actor was admitted by the modern immutable admission path. An
+    # appended event pretending to be pre-attestation legacy work is not
+    # authorized simply by omitting the durable work identity.
+    before = tuple(store.events())
+    with pytest.raises(ValueError, match="immutable actor admission requires explicit assigned work identity"):
+        _transition(store, actor_id, "assign", 6, work_id="work:new")
+    assert tuple(store.events()) == before
+    assert store.entity(ACTOR_KIND, actor_id).attributes["assigned_work_id"] is None
 
 
 
 @pytest.mark.parametrize("adapter", ("memory", "sqlite"))
-def test_upgrade_can_close_pre_attestation_inflight_work_without_poisoning_ledger(
+def test_modern_admission_rejects_missing_identity_on_forged_legacy_inflight_work(
     adapter, tmp_path,
 ):
-    """Real legacy open work has no immutable work ID: preserve its old closing shape."""
+    """Missing work identities cannot retroactively bypass a modern admission."""
     path = tmp_path / "pre-attestation-inflight.sqlite"
     store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
     try:
@@ -493,19 +495,14 @@ def test_upgrade_can_close_pre_attestation_inflight_work_without_poisoning_ledge
                          "trigger": "assign", "from_state": "eligible",
                          "to_state": "active"},
             )
-        closed = _transition(
-            store, actor_id, "complete", 3, work_id="work:legacy"
-        )
-        assert closed.state == "eligible"
-        completion = next(e for e in store.events()
-                          if e.payload.get("trigger") == "complete")
-        assert "completed_work_id" not in completion.payload
-        assigned = _transition(
-            store, actor_id, "assign", 4, work_id="work:new"
-        )
-        assert assigned.attributes["assigned_work_id"] == "work:new"
-        assert sum(e.payload.get("trigger") == "assign"
-                   for e in store.events()) == 2
+        # Modern admission is independently attested. A forged legacy
+        # assignment lacking its work identity may not be closed for free,
+        # even when the mutable projection claims there is active work.
+        before = tuple(store.events())
+        with pytest.raises(ValueError, match="immutable actor admission requires explicit assigned work identity"):
+            _transition(store, actor_id, "complete", 3, work_id="work:legacy")
+        assert tuple(store.events()) == before
+        assert store.entity(ACTOR_KIND, actor_id).attributes["assigned_work_id"] == "work:legacy"
     finally:
         if adapter == "sqlite":
             store.close()
@@ -513,7 +510,9 @@ def test_upgrade_can_close_pre_attestation_inflight_work_without_poisoning_ledge
         with SQLitePersistence(path) as reopened:
             assert reopened.entity(ACTOR_KIND, actor_id).attributes[
                 "assigned_work_id"
-            ] == "work:new"
+            ] == "work:legacy"
+            with pytest.raises(ValueError, match="immutable actor admission requires explicit assigned work identity"):
+                _transition(reopened, actor_id, "complete", 3, work_id="work:legacy")
 
 
 
