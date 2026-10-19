@@ -344,3 +344,76 @@ def test_corrupted_owner_cannot_filter_out_previous_attested_assignment(
                     owner_id="org:forged", work_id="work:B", cost_us=1,
                 )
             assert tuple(reopened.events()) == original
+
+
+
+@pytest.mark.parametrize("completed_work_id", (None, "work:B"))
+def test_attested_assignment_does_not_accept_unattested_or_wrong_completion(
+    completed_work_id,
+):
+    """P1: old-shaped completion cannot close modern append-only work:A."""
+    store = MemoryPersistence()
+    actor_id = seed_actor(
+        store, owner_id=OWNER, actor_key="forged-completion-" + str(completed_work_id),
+        model_spec_hash=MODEL, config_epoch=1, at=T0,
+    )
+    _transition(store, actor_id, "activate", 1)
+    _transition(store, actor_id, "assign", 2, work_id="work:A")
+    assignment = next(e for e in store.events() if e.payload.get("trigger") == "assign")
+    malformed = {
+        **assignment.payload,
+        "trigger": "complete",
+        "from_state": "active",
+        "to_state": "eligible",
+    }
+    malformed.pop("assigned_work_id")
+    if completed_work_id is not None:
+        malformed["completed_work_id"] = completed_work_id
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.append_event(replace(
+            assignment, event_id="forged-completion-" + str(completed_work_id),
+            occurred_at=T0 + timedelta(hours=3), payload=malformed,
+        ))
+        actor = uow.get_entity(ACTOR_KIND, actor_id)
+        actor.state = "eligible"
+        actor.attributes["assigned_work_id"] = None
+        uow.save_entity(actor)
+    before = tuple(store.events())
+    with pytest.raises(ValueError, match="attested work completion identity mismatch"):
+        _transition(store, actor_id, "assign", 4, work_id="work:B")
+    assert tuple(store.events()) == before
+
+
+def test_closed_pre_attestation_assign_and_complete_pair_is_accepted():
+    """Legacy missing work fields are allowed only when BOTH events predate IDs."""
+    store = MemoryPersistence()
+    actor_id = seed_actor(
+        store, owner_id=OWNER, actor_key="legacy-pair",
+        model_spec_hash=MODEL, config_epoch=1, at=T0,
+    )
+    _transition(store, actor_id, "activate", 1)
+    _transition(store, actor_id, "assign", 2, work_id="work:A")
+    _transition(store, actor_id, "complete", 3, work_id="work:A")
+    original = [e for e in store.events()
+                if e.payload.get("trigger") in {"assign", "complete"}]
+    assert len(original) == 2
+    old_assign, old_complete = original
+    old_assign_data = dict(old_assign.payload)
+    old_assign_data.pop("assigned_work_id")
+    old_complete_data = dict(old_complete.payload)
+    old_complete_data.pop("completed_work_id")
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.append_event(replace(
+            old_assign, event_id="legacy-assign-pair",
+            occurred_at=T0 + timedelta(hours=4), payload=old_assign_data,
+        ))
+        uow.append_event(replace(
+            old_complete, event_id="legacy-complete-pair",
+            occurred_at=T0 + timedelta(hours=5), payload=old_complete_data,
+        ))
+    assigned = _transition(store, actor_id, "assign", 6, work_id="work:new")
+    assert assigned.state == "active"
+    assert assigned.attributes["assigned_work_id"] == "work:new"
+    assert [e.payload["assigned_work_id"] for e in store.events()
+            if e.payload.get("trigger") == "assign"
+            and "assigned_work_id" in e.payload] == ["work:A", "work:new"]
