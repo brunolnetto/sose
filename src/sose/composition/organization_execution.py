@@ -176,9 +176,10 @@ class AdmittedOrganizationExecutor:
             if existing_delivery is None:
                 raise ValueError("executable boundary lacks durable delivery")
             if existing_delivery.status is DeliveryStatus.CONSUMED:
-                existing = uow.get_boundary_consumption(existing_delivery.delivery_id)
-                if existing is None:
-                    raise ValueError("consumed boundary lacks durable ACK")
+                existing = self._verify_consumed_ownership(
+                    uow, message=message, delivery=existing_delivery,
+                    expected_owner=consumer_job.job_id,
+                )
                 command = uow.get_command(existing.consumer_effect_id)
                 certificate = uow.get_business_effect(existing.consumer_effect_id)
                 if command is None and certificate is None:
@@ -233,6 +234,40 @@ class AdmittedOrganizationExecutor:
             or not command.name.startswith("composition.")
         ):
             raise ValueError("staged Command owner or causal boundary contradicts component")
+
+    @staticmethod
+    def _verify_consumed_ownership(uow, *, message, delivery, expected_owner):
+        """Validate *durable* claim and receipt, including pre-upgrade records.
+
+        A claimed worker identity is distinct from a component owner. Only
+        the admitted consumer job may have ACKed this exact publication.
+        Replays cannot rewrite an old backdated or foreign claim as authority.
+        """
+        if delivery.status is not DeliveryStatus.CONSUMED:
+            raise ValueError("boundary is not durably consumed")
+        if delivery.claim_owner_id != expected_owner:
+            raise ValueError("boundary ACK claim owner contradicts admitted consumer")
+        if (
+            delivery.claimed_at is None or delivery.consumed_at is None
+            or delivery.claimed_at < message.produced_at
+            or delivery.consumed_at < message.produced_at
+            or delivery.consumed_at < delivery.claimed_at
+        ):
+            raise ValueError("durable boundary ACK predates message production or claim")
+        receipt = uow.get_boundary_consumption(delivery.delivery_id)
+        if receipt is None:
+            raise ValueError("consumed boundary lacks durable ACK")
+        if (
+            receipt.message_id != message.message_id
+            or receipt.delivery_id != delivery.delivery_id
+            or receipt.destination_domain != message.destination_domain
+            or receipt.contract_name != message.contract_name
+            or receipt.contract_version != message.contract_version
+            or receipt.consumer_effect_id != delivery.consumer_effect_id
+            or receipt.consumed_at != delivery.consumed_at
+        ):
+            raise ValueError("durable boundary ACK contradicts consumed delivery")
+        return receipt
 
     def _attest_terminal(self, uow, *, message, delivery, consumer,
                          pending, certificate, completed_at):
@@ -308,6 +343,10 @@ class AdmittedOrganizationExecutor:
                 raise ValueError("certification requires consumed durable delivery")
             if delivery.consumer_effect_id != effect_id:
                 raise ValueError("certification effect identity contradicts ACK")
+            self._verify_consumed_ownership(
+                uow, message=msg, delivery=delivery,
+                expected_owner=self._jobs_by_component(consumer_id).job_id,
+            )
             pending = uow.get_command(effect_id)
             certificate = uow.get_business_effect(effect_id)
             self._attest_terminal(
