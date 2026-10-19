@@ -103,3 +103,22 @@ operation is not evidence of capacity-safe exit under real reservations.
 
 Never make #462 a retroactive OD-5a #461 prerequisite. Frozen v1 source and
 OD-5a scientific `NOT_ADMITTED` are unchanged.
+
+
+### OD-2 admission migration stop rule (pre-release)
+Every actor admitted by this contract carries one immutable `od2.actor_admitted`
+or `od2.actor_calendar_admitted` DomainEvent, written atomically with the
+original actor entity. Replaying newer entities without this original event
+**fails closed**. New admission and every assigned work event must carry
+explicit owner/model/epoch and work identity.
+
+Rows created by unmerged experimental branches before this marker existed
+are **not** automatically upgraded: mutable actor attributes alone cannot
+prove original owner, model hash, epoch, or that an in-flight assignment was
+unpaid. Fabricating an admission marker from that projection would legalize
+the forged provenance rejected in #539. Any supported migration must start
+from independently authenticated external source evidence and define a
+prospectively reviewed, transactionally fenced conversion, or those
+pre-release rows must be discarded/re-enrolled in a new non-confirmatory
+store. The accepted historical v1 experimental freezes are read from pinned
+code and are never edited. No silent compatibility fallback is authorized.

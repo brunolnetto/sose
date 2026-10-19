@@ -478,6 +478,14 @@ def _attested_actor_replay(
         event for event in snapshot
         if event.entity_type == ACTOR_KIND and event.entity_id == actor_id
     )
+    # An immutable admitted actor cannot replay an unidentifiable work item
+    # under the old pre-attestation convention. Legacy fixture-ledger replay
+    # remains readable but is never upgraded to new enrollment authority.
+    admitted_here = any(
+        event.event_id == _calendar_origin_event_id(actor_id)
+        and event.name in {"od2.actor_admitted", "od2.actor_calendar_admitted"}
+        for event in actor_events
+    )
     causal_index: dict[str, list[DomainEvent]] = {}
     event_index: dict[str, DomainEvent] = {}
     for event in actor_events:
@@ -550,6 +558,10 @@ def _attested_actor_replay(
             last_work_at = event.occurred_at
         if action == "assign":
             work = event.payload.get("assigned_work_id")
+            if admitted_here and (not isinstance(work, str) or not work.strip()):
+                raise ValueError(
+                    "immutable actor admission requires explicit assigned work identity"
+                )
             # Historical actor assignments may predate immutable work IDs.
             # They can still be closed by their existing durable completion
             # event, but must never be cancelled under the new strict policy.

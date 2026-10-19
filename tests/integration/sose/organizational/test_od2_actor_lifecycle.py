@@ -533,3 +533,41 @@ def test_forged_projection_cannot_exit_or_replace_attested_open_work(
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+def test_new_admission_rejects_fieldless_forged_assignment_across_replay():
+    """#539 P1: pre-attestation work without an ID is forbidden after new admission."""
+    from sose.core.events import Command, DomainEvent
+    from sose.core.identity import deterministic_id
+
+    store = MemoryPersistence()
+    actor_id = _seed(store)
+    _transition(store, actor_id, "activate", 1)
+    at = T0 + timedelta(hours=2)
+    external_cause = "fieldless-adversary"
+    command_id = deterministic_id("od2-actor-command", OWNER, actor_id, external_cause)
+    correlation = deterministic_id("od2-actor-flow", OWNER, actor_id)
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_command(Command(
+            command_id=command_id, name="assign",
+            entity_type=ACTOR_KIND, entity_id=actor_id,
+            owner_id=OWNER, due_at=at, issued_at=at,
+            correlation_id=correlation, payload={"external_cause_id": external_cause},
+        ))
+        uow.append_event(DomainEvent(
+            event_id=deterministic_id("actor-fieldless-forged", actor_id),
+            name="entity.state_transition", entity_type=ACTOR_KIND,
+            entity_id=actor_id, owner_id=OWNER, occurred_at=at,
+            causation_id=command_id, correlation_id=correlation,
+            payload={"trigger": "assign", "from_state": "eligible", "to_state": "active"},
+        ))
+        projection = uow.get_entity(ACTOR_KIND, actor_id)
+        projection.state = "active"
+        projection.attributes["assigned_work_id"] = "work:invented"
+        projection.attributes["last_at"] = at.isoformat()
+        uow.save_entity(projection)
+    original = tuple(store.events())
+    with pytest.raises(ValueError, match="immutable actor admission requires explicit assigned work identity"):
+        _transition(store, actor_id, "complete", 3, work_id="work:invented")
+    assert tuple(store.events()) == original
+    assert store.entity(ACTOR_KIND, actor_id).attributes["assigned_work_id"] == "work:invented"
