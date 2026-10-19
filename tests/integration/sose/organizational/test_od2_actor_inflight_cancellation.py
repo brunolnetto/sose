@@ -183,7 +183,7 @@ def test_actor_cancellation_rejects_forged_projection_without_real_assignment():
         _transition(store, actor_id, "cancel_assigned", 3,
                     work_id="work:B", cost_us=1)
     # A forged completion must not silently close the old immutable work.
-    with pytest.raises(ValueError, match="attested original assignment"):
+    with pytest.raises(ValueError, match="actor projection contradicts immutable active work"):
         _transition(store, actor_id, "complete", 3, work_id="work:B")
     with pytest.raises(ValueError, match="matching assigned work"):
         _transition(store, actor_id, "cancel_assigned", 3,
@@ -278,7 +278,7 @@ def test_corrupted_projection_cannot_create_overlapping_durable_work(adapter, tm
             actor.state = "active"
             actor.attributes["assigned_work_id"] = "work:B"
             uow.save_entity(actor)
-        with pytest.raises(ValueError, match="attested original assignment"):
+        with pytest.raises(ValueError, match="actor projection contradicts immutable active work"):
             _transition(store, actor_id, "cancel_assigned", 4,
                         work_id="work:B", cost_us=1)
         assert tuple(store.events()) == before
@@ -289,7 +289,7 @@ def test_corrupted_projection_cannot_create_overlapping_durable_work(adapter, tm
     if adapter == "sqlite":
         with SQLitePersistence(path) as recovered:
             old = tuple(recovered.events())
-            with pytest.raises(ValueError, match="attested original assignment"):
+            with pytest.raises(ValueError, match="actor projection contradicts immutable active work"):
                 _transition(recovered, actor_id, "cancel_assigned", 4,
                             work_id="work:B", cost_us=1)
             assert tuple(recovered.events()) == old
