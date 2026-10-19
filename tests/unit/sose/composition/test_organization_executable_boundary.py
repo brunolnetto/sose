@@ -613,3 +613,98 @@ def test_certify_rejects_staged_command_without_terminal_contract():
         )
     assert store.command(ack.consumer_effect_id) is not None
     assert store.business_effect(ack.consumer_effect_id) is None
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_ingress_rejects_backdated_claim_and_ack_before_source_publication(
+    adapter, tmp_path,
+):
+    path = tmp_path / "backdated-ack.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        executor, _, _, event, message, delivery = _published_ingress(store)
+        before = tuple(store.events())
+        with pytest.raises(ValueError, match="cannot predate message production"):
+            executor.consume(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=message.message_id,
+                now=event.occurred_at - timedelta(minutes=1),
+                lease_duration=timedelta(minutes=5),
+            )
+        assert BoundaryService(store).delivery(delivery.delivery_id) == delivery
+        assert BoundaryService(store).consumption(delivery.delivery_id) is None
+        assert tuple(store.events()) == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+def test_named_domain_clone_may_not_replace_catalog_admitted_executable():
+    store = MemoryPersistence()
+    executor, wf, lg, *_ = suite(store)
+    fake_definition = replace(
+        lg.definition, build_runtime=lambda *_args: (_ for _ in ()).throw(
+            AssertionError("unadmitted runtime must never execute")
+        ),
+    )
+    fake_job = SimulationJob(
+        job_id=LG, definition=fake_definition,
+        persistence=store, backend_factory=backend,
+    )
+    with pytest.raises(ValueError, match="owner/domain/store"):
+        AdmittedOrganizationExecutor(
+            definition=topology(), persistence=store,
+            jobs={WF: wf, LG: fake_job},
+            catalog=builtin_catalog(), manifests=hypothetical_ingress(),
+            consumers=executor.consumers,
+        )
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_replayed_certificate_cannot_bypass_post_ack_event_attestation(adapter, tmp_path):
+    """A prior certificate without a real descendant never gains authority on replay."""
+    from sose.composition.effects import BusinessEffectApplied
+
+    path = tmp_path / "forged-certificate.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        executor, _, _, event, message, delivery = _published_ingress(store)
+        ack = executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, now=event.occurred_at,
+            lease_duration=timedelta(minutes=10),
+        )
+        command = store.command(ack.consumer_effect_id)
+        assert command is not None
+        with store.transaction(owner_id=LG) as uow:
+            entity = uow.get_entity(command.entity_type, command.entity_id)
+            entity.state = "delivered"
+            uow.save_entity(entity)
+        forged = BusinessEffectApplied.from_applied(
+            effect_id=ack.consumer_effect_id,
+            boundary_message_id=message.message_id,
+            correlation_id=message.correlation_id,
+            entity_type=command.entity_type, entity_id=command.entity_id,
+            terminal_state="delivered", entity_version=1,
+            completed_at=event.occurred_at + timedelta(hours=10),
+        )
+        with store.transaction() as uow:
+            uow.save_business_effect(forged)
+            uow.delete_command(ack.consumer_effect_id)
+        with pytest.raises(ValueError, match="terminal transition not attested after ACK"):
+            executor.certify(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=message.message_id, effect_id=ack.consumer_effect_id,
+                completed_at=forged.completed_at,
+            )
+        with pytest.raises(ValueError, match="terminal transition not attested after ACK"):
+            executor.consume(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=message.message_id, now=event.occurred_at,
+                lease_duration=timedelta(minutes=10),
+            )
+        assert store.business_effect(ack.consumer_effect_id) == forged
+        assert BoundaryService(store).delivery(delivery.delivery_id).status is DeliveryStatus.CONSUMED
+    finally:
+        if adapter == "sqlite":
+            store.close()

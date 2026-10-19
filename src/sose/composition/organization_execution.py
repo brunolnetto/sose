@@ -32,6 +32,7 @@ class AdmittedOrganizationExecutor:
             definition, catalog=catalog, manifests=manifests, consumers=consumers,
         )
         self.definition = definition
+        self._catalog = catalog
         self.persistence = persistence
         self.consumers = consumers
         self._components = {c.component_id: c for c in definition.components}
@@ -48,6 +49,7 @@ class AdmittedOrganizationExecutor:
                 job.job_id != job_id
                 or component.owner_id != job_id
                 or job.definition.name != component.domain
+                or job.definition is not self._catalog.get(component.domain)
                 or job.persistence is not persistence
             ):
                 raise ValueError("component runner owner/domain/store contradicts admitted topology")
@@ -166,6 +168,8 @@ class AdmittedOrganizationExecutor:
             if message is None:
                 raise ValueError("executable boundary message missing")
             self._check_message(uow, message, producer_id, consumer_id)
+            if now < message.produced_at:
+                raise ValueError("executable boundary ACK cannot predate message production")
             existing_delivery = uow.get_boundary_delivery(
                 BoundaryDelivery.pending(message).delivery_id
             )
@@ -181,12 +185,12 @@ class AdmittedOrganizationExecutor:
                     raise ValueError("consumed boundary lacks Command or certificate")
                 if command is not None:
                     self._check_command(command, message, consumer)
-                if certificate is not None and (
-                    certificate.effect_id != existing.consumer_effect_id
-                    or certificate.boundary_message_id != message.message_id
-                    or certificate.correlation_id != message.correlation_id
-                ):
-                    raise ValueError("replayed boundary certificate contradicts ACK")
+                if certificate is not None:
+                    self._attest_terminal(
+                        uow, message=message, delivery=existing_delivery,
+                        consumer=consumer, pending=command,
+                        certificate=certificate, completed_at=certificate.completed_at,
+                    )
                 return existing
 
         # This is a per-message claim. A worker is not given permission to
@@ -230,9 +234,70 @@ class AdmittedOrganizationExecutor:
         ):
             raise ValueError("staged Command owner or causal boundary contradicts component")
 
+    def _attest_terminal(self, uow, *, message, delivery, consumer,
+                         pending, certificate, completed_at):
+        """Fail closed for NEW and REPLAYED effects from durable domain truth.
+
+        This is a temporal StateChart attestation, NOT the stronger W4b proof
+        that the composition Command actually caused the terminal transition.
+        """
+        from sose.composition.effects import _CERTIFIED_TERMINALS
+        if pending is not None:
+            self._check_command(pending, message, consumer)
+            expected = _CERTIFIED_TERMINALS.get(pending.name)
+            if expected is None:
+                raise ValueError("staged Command has no certified terminal")
+            kind, state = expected[:2]
+            entity_id = pending.entity_id
+        elif certificate is not None:
+            # The original Command was deleted by certification. Recover the
+            # immutable terminal contract using source, destination, payload
+            # identity and the certificate, never from a mutable projection.
+            candidates = [
+                terminal for terminal in _CERTIFIED_TERMINALS.values()
+                if (
+                    terminal[0] == certificate.entity_type
+                    and terminal[1] == certificate.terminal_state
+                    and terminal[2] == message.contract_key
+                    and terminal[3] == message.source_domain
+                    and terminal[4] == message.destination_domain
+                    and str(message.payload().get(terminal[5], "")) == certificate.entity_id
+                )
+            ]
+            if len(candidates) != 1:
+                raise ValueError("replayed certificate has no admitted terminal contract")
+            kind, state = certificate.entity_type, certificate.terminal_state
+            entity_id = certificate.entity_id
+        else:
+            raise ValueError("certification requires a staged Command or existing certificate")
+
+        if certificate is not None:
+            entity = uow.get_entity(kind, entity_id)
+            if (
+                certificate.effect_id != delivery.consumer_effect_id
+                or certificate.boundary_message_id != message.message_id
+                or certificate.correlation_id != message.correlation_id
+                or entity is None
+                or entity.state != state
+                or entity.version < certificate.entity_version
+            ):
+                raise ValueError("replayed boundary certificate contradicts ACK or terminal truth")
+        if not any(
+            event.owner_id == consumer.owner_id
+            and event.name == "entity.state_transition"
+            and event.entity_type == kind
+            and event.entity_id == entity_id
+            and event.payload.get("to_state") == state
+            and delivery.consumed_at is not None
+            and event.occurred_at >= delivery.consumed_at
+            and completed_at >= event.occurred_at
+            for event in uow.events()
+        ):
+            raise ValueError("certified terminal transition not attested after ACK")
+
     def certify(self, *, producer_id: str, consumer_id: str,
                 message_id: str, effect_id: str, completed_at: datetime):
-        """Use the existing domain-terminal oracle, NEVER certify ACK alone."""
+        """Certify only after durable ACK and owner-qualified terminal evidence."""
         with self.persistence.transaction() as uow:
             msg = uow.get_boundary_message(message_id)
             if msg is None:
@@ -245,30 +310,10 @@ class AdmittedOrganizationExecutor:
                 raise ValueError("certification effect identity contradicts ACK")
             pending = uow.get_command(effect_id)
             certificate = uow.get_business_effect(effect_id)
-            if pending is not None:
-                self._check_command(pending, msg, self._components[consumer_id])
-                # A terminal projection alone is not sufficient: it may have
-                # been reached BEFORE this message was ever ACKed. Anchor a
-                # real terminal StateChart event in the consumer owner's own
-                # durable history at/after the ACK before asking the existing
-                # certified-terminal oracle to finalize the effect.
-                from sose.composition.effects import _CERTIFIED_TERMINALS
-                terminal = _CERTIFIED_TERMINALS.get(pending.name)
-                if terminal is None:
-                    raise ValueError("staged Command has no certified terminal")
-                kind, state = terminal[:2]
-                if not any(
-                    event.owner_id == self._components[consumer_id].owner_id
-                    and event.name == "entity.state_transition"
-                    and event.entity_type == kind
-                    and event.entity_id == pending.entity_id
-                    and event.payload.get("to_state") == state
-                    and delivery.consumed_at is not None
-                    and event.occurred_at >= delivery.consumed_at
-                    and completed_at >= event.occurred_at
-                    for event in uow.events()
-                ):
-                    raise ValueError("certified terminal transition not attested after ACK")
-            elif certificate is None:
-                raise ValueError("certification requires a staged Command or existing certificate")
+            self._attest_terminal(
+                uow, message=msg, delivery=delivery,
+                consumer=self._components[consumer_id], pending=pending,
+                certificate=certificate,
+                completed_at=(certificate.completed_at if certificate else completed_at),
+            )
         return self._business.complete(effect_id=effect_id, completed_at=completed_at)
