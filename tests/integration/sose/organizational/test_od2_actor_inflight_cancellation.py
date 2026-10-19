@@ -417,3 +417,58 @@ def test_closed_pre_attestation_assign_and_complete_pair_is_accepted():
     assert [e.payload["assigned_work_id"] for e in store.events()
             if e.payload.get("trigger") == "assign"
             and "assigned_work_id" in e.payload] == ["work:A", "work:new"]
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_upgrade_can_close_pre_attestation_inflight_work_without_poisoning_ledger(
+    adapter, tmp_path,
+):
+    """Real legacy open work has no immutable work ID: preserve its old closing shape."""
+    path = tmp_path / "pre-attestation-inflight.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="legacy-active",
+            model_spec_hash=MODEL, config_epoch=1, at=T0,
+        )
+        _transition(store, actor_id, "activate", 1)
+        activated = next(
+            e for e in store.events() if e.payload.get("trigger") == "activate"
+        )
+        # Simulate the persisted pre-upgrade actor and its append-only assign:
+        # no assigned_work_id was emitted by the older StateChart adapter.
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.state = "active"
+            actor.attributes["assigned_work_id"] = "work:legacy"
+            actor.attributes["last_at"] = (T0 + timedelta(hours=2)).isoformat()
+            uow.save_entity(actor)
+            uow.append_event(replace(
+                activated, event_id="pre-attestation-legacy-assign",
+                occurred_at=T0 + timedelta(hours=2),
+                payload={**activated.payload,
+                         "trigger": "assign", "from_state": "eligible",
+                         "to_state": "active"},
+            ))
+        closed = _transition(
+            store, actor_id, "complete", 3, work_id="work:legacy"
+        )
+        assert closed.state == "eligible"
+        completion = next(e for e in store.events()
+                          if e.payload.get("trigger") == "complete")
+        assert "completed_work_id" not in completion.payload
+        assigned = _transition(
+            store, actor_id, "assign", 4, work_id="work:new"
+        )
+        assert assigned.attributes["assigned_work_id"] == "work:new"
+        assert sum(e.payload.get("trigger") == "assign"
+                   for e in store.events()) == 2
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            assert reopened.entity(ACTOR_KIND, actor_id).attributes[
+                "assigned_work_id"
+            ] == "work:new"
