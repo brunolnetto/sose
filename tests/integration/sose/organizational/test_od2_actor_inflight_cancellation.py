@@ -557,3 +557,93 @@ def test_forged_cancel_without_paid_causal_authority_cannot_release_work(
             with pytest.raises(ValueError, match="paid cost|causal|cancellation"):
                 _transition(reopened, actor_id, "assign", 4, work_id="work:B")
             assert tuple(reopened.events()) == before
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("forgery", ("assignment", "completion"))
+def test_reused_unrelated_command_cannot_attest_work_across_restart(
+    adapter, forgery, tmp_path,
+):
+    """P1: copy an event's causation from activate/assign to forge work."""
+    path = tmp_path / ("forged-command-" + forgery + ".sqlite")
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="forged-" + forgery,
+            model_spec_hash=MODEL, config_epoch=1, at=T0,
+        )
+        _transition(store, actor_id, "activate", 1)
+        if forgery == "assignment":
+            original = next(e for e in store.events()
+                            if e.payload.get("trigger") == "activate")
+            event_at = T0 + timedelta(hours=2)
+            fake = replace(
+                original, event_id="forged-assignment",
+                occurred_at=event_at,
+                payload={**original.payload,
+                         "trigger": "assign",
+                         "assigned_work_id": "work:forged"},
+            )
+        else:
+            _transition(store, actor_id, "assign", 2, work_id="work:A")
+            original = next(e for e in store.events()
+                            if e.payload.get("trigger") == "assign")
+            event_at = T0 + timedelta(hours=3)
+            fake = replace(
+                original, event_id="forged-completion",
+                occurred_at=event_at,
+                payload={**original.payload,
+                         "trigger": "complete",
+                         "completed_work_id": "work:A"},
+            )
+        with store.transaction(owner_id=OWNER) as uow:
+            uow.append_event(fake)
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.state = "active" if forgery == "assignment" else "eligible"
+            actor.attributes["assigned_work_id"] = (
+                "work:forged" if forgery == "assignment" else None
+            )
+            uow.save_entity(actor)
+        before = tuple(store.events())
+        with pytest.raises(ValueError, match="attested work transition causal Command"):
+            if forgery == "assignment":
+                _transition(store, actor_id, "cancel_assigned", 4,
+                            work_id="work:forged", cost_us=1)
+            else:
+                _transition(store, actor_id, "assign", 4, work_id="work:B")
+        assert tuple(store.events()) == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as recovered:
+            before = tuple(recovered.events())
+            with pytest.raises(ValueError, match="attested work transition causal Command"):
+                if forgery == "assignment":
+                    _transition(recovered, actor_id, "cancel_assigned", 4,
+                                work_id="work:forged", cost_us=1)
+                else:
+                    _transition(recovered, actor_id, "assign", 4, work_id="work:B")
+            assert tuple(recovered.events()) == before
+
+
+def test_modern_assignment_and_completion_are_both_bound_to_original_command_work():
+    store = MemoryPersistence()
+    actor_id = seed_actor(
+        store, owner_id=OWNER, actor_key="modern-work-command",
+        model_spec_hash=MODEL, config_epoch=1, at=T0,
+    )
+    _transition(store, actor_id, "activate", 1)
+    _transition(store, actor_id, "assign", 2, work_id="work:A")
+    _transition(store, actor_id, "complete", 3, work_id="work:A")
+    transitions = [
+        e for e in store.events()
+        if e.payload.get("trigger") in {"assign", "complete"}
+    ]
+    assert [e.payload.get("assigned_work_id") for e in transitions] == ["work:A", None]
+    assert [e.payload.get("completed_work_id") for e in transitions] == [None, "work:A"]
+    assert store.command(transitions[0].causation_id).payload["assigned_work_id"] == "work:A"
+    assert store.command(transitions[1].causation_id).payload["completed_work_id"] == "work:A"
+    _transition(store, actor_id, "assign", 4, work_id="work:B")
+    assert store.entity(ACTOR_KIND, actor_id).attributes["assigned_work_id"] == "work:B"
