@@ -21,6 +21,14 @@ from .entities import DeliveryAttempt, Shipment
 from .statecharts import DeliveryAttemptChart, ShipmentChart
 
 
+# The admitted chart catalog and the executable runtime use exactly the same
+# registrations. Admission must not execute a domain's build_runtime callable.
+REGISTERED_ENTITY_TYPES = (
+    EntityType("shipment", ShipmentChart),
+    EntityType("delivery_attempt", DeliveryAttemptChart),
+)
+
+
 ORIGIN = datetime(2026, 3, 1, 8, tzinfo=timezone.utc)
 PICKUP_DUE = ORIGIN + timedelta(hours=1)
 RETRY_DELAY = timedelta(hours=2)
@@ -72,8 +80,8 @@ def build_runtime(
         scheduler=Scheduler(),
     )
     registry = DomainRegistry()
-    registry.register(EntityType("shipment", ShipmentChart))
-    registry.register(EntityType("delivery_attempt", DeliveryAttemptChart))
+    for entry in REGISTERED_ENTITY_TYPES:
+        registry.register(entry)
     return context, Engine(
         context=context,
         registry=registry,
