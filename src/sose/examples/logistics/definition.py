@@ -3,6 +3,7 @@ from sose.domain.config import DomainDefinition
 from sose.persistence.base import Persistence
 from .config import LogisticsConfig
 from .simulation import (
+    REGISTERED_ENTITY_TYPES,
     build_runtime,
     reconcile_delivery_dispatch,
     reconcile_delivery_success,
@@ -140,6 +141,7 @@ definition = DomainDefinition(
     description="Logistics and transport reference domain.",
     config_model=LogisticsConfig,
     build_runtime=_build,
+    registered_entity_types=REGISTERED_ENTITY_TYPES,
     seed=_seed,
     reconcile_tick=_reconcile_tick,
     runtime_mutable_fields=frozenset(["tick_step","random_seed","auto_progress_shipment"]),
