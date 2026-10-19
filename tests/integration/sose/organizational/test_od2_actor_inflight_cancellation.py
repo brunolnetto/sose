@@ -309,9 +309,22 @@ def test_attested_history_rejects_ever_overlapping_assignments_even_if_last_is_v
         actor.state = "active"
         actor.attributes["assigned_work_id"] = "work:B"
         uow.save_entity(actor)
+        cause = "overlapping-work-B"
+        at = T0 + timedelta(hours=3)
+        command_id = deterministic_id(
+            "od2-actor-command", OWNER, actor_id, cause,
+        )
+        uow.save_command(Command(
+            command_id=command_id, name="assign",
+            entity_type=ACTOR_KIND, entity_id=actor_id,
+            due_at=at, issued_at=at, owner_id=OWNER,
+            correlation_id=deterministic_id("od2-actor-flow", OWNER, actor_id),
+            payload={"external_cause_id": cause, "assigned_work_id": "work:B"},
+        ))
         uow.append_event(replace(
             first, event_id="forged-second-assignment",
-            occurred_at=T0 + timedelta(hours=3),
+            occurred_at=at, causation_id=command_id,
+            correlation_id=deterministic_id("od2-actor-flow", OWNER, actor_id),
             payload={**first.payload, "assigned_work_id": "work:B"},
         ))
     before = tuple(store.events())
@@ -399,10 +412,10 @@ def test_attested_assignment_does_not_accept_unattested_or_wrong_completion(
     if completed_work_id is not None:
         malformed["completed_work_id"] = completed_work_id
     with store.transaction(owner_id=OWNER) as uow:
-        uow.append_event(replace(
-            assignment, event_id="forged-completion-" + str(completed_work_id),
-            occurred_at=T0 + timedelta(hours=3), payload=malformed,
-        ))
+        _append_real_legacy_work_event(
+            uow, assignment, actor_id, action="complete",
+            at=T0 + timedelta(hours=3), payload=malformed,
+        )
         actor = uow.get_entity(ACTOR_KIND, actor_id)
         actor.state = "eligible"
         actor.attributes["assigned_work_id"] = None
@@ -535,9 +548,35 @@ def test_forged_cancel_without_paid_causal_authority_cannot_release_work(
         if cost_marker != "missing":
             closed_payload["charged_cost_us"] = cost_marker
         with store.transaction(owner_id=OWNER) as uow:
+            # The forged closure uses a DISTINCT deterministic causal
+            # identity, so it cannot fail merely because it recycled the
+            # source assignment's Command. For malformed costs we install
+            # the corresponding malformed Command, isolating the paid-cost
+            # invariant. For positive cost we deliberately omit the Command.
+            cause = "forged-cancel:" + str(cost_marker)
+            at = T0 + timedelta(hours=3)
+            command_id = deterministic_id(
+                "od2-actor-command", OWNER, actor_id, cause,
+            )
+            if cost_marker != 750000:
+                command_payload = {
+                    "external_cause_id": cause,
+                    "cancelled_work_id": "work:A",
+                    "source_assignment_event_id": original.event_id,
+                }
+                if cost_marker != "missing":
+                    command_payload["charged_cost_us"] = cost_marker
+                uow.save_command(Command(
+                    command_id=command_id, name="cancel_assigned",
+                    entity_type=ACTOR_KIND, entity_id=actor_id,
+                    due_at=at, issued_at=at, owner_id=OWNER,
+                    correlation_id=deterministic_id("od2-actor-flow", OWNER, actor_id),
+                    payload=command_payload,
+                ))
             uow.append_event(replace(
                 original, event_id="forged-paid-close",
-                occurred_at=T0 + timedelta(hours=3),
+                occurred_at=at, causation_id=command_id,
+                correlation_id=deterministic_id("od2-actor-flow", OWNER, actor_id),
                 payload=closed_payload,
             ))
             actor = uow.get_entity(ACTOR_KIND, actor_id)
