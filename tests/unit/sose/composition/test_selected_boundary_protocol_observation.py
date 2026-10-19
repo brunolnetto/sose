@@ -104,15 +104,16 @@ def test_pending_claimed_consumed_protocol_and_restart_are_read_only(adapter, tm
         acknowledgement = service.consume(lease=lease, registry=consumers, now=NOW)
         before = tuple(store.events())
         consumed = observe(spec, store, manifests, consumers, first.message_id, second.message_id)
-        assert consumed.records[0].status is DeliveryStatus.CONSUMED
-        assert consumed.records[0].consumption_id == acknowledgement.consumption_id
-        assert consumed.records[0].consumer_effect_id == "opaque:effect:id"
-        assert consumed.records[1].status is DeliveryStatus.PENDING
+        by_id = {record.message_id: record for record in consumed.records}
+        assert by_id[first.message_id].status is DeliveryStatus.CONSUMED
+        assert by_id[first.message_id].consumption_id == acknowledgement.consumption_id
+        assert by_id[first.message_id].consumer_effect_id == "opaque:effect:id"
+        assert by_id[second.message_id].status is DeliveryStatus.PENDING
         assert consumed == observe(spec, store, manifests, consumers, first.message_id, second.message_id)
         assert tuple(store.events()) == before
         assert consumed.definition_fingerprint == spec.fingerprint()
-        assert consumed.records[0].declared_producer_component_id == "fulfillment"
-        assert consumed.records[0].declared_consumer_component_id == "warehouse"
+        assert by_id[first.message_id].declared_producer_component_id == "fulfillment"
+        assert by_id[first.message_id].declared_consumer_component_id == "warehouse"
         # No inference from this opaque effect ID to a BusinessEffectApplied.
     finally:
         if adapter == "sqlite":
