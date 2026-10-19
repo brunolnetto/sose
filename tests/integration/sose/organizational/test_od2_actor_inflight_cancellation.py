@@ -9,7 +9,7 @@ from dataclasses import replace
 
 import pytest
 
-from sose.core.events import Command
+from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
 from sose.core.events import Command
 from sose.core.identity import deterministic_id
@@ -771,4 +771,73 @@ def test_forged_closure_event_shape_never_frees_attested_work_after_restart(
             before = tuple(recovered.events())
             with pytest.raises(ValueError, match="transition shape"):
                 _transition(recovered, actor_id, "assign", 4, work_id="work:B")
+            assert tuple(recovered.events()) == before
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("forgery", ("before_activation", "after_exit"))
+def test_exact_work_command_cannot_resurrect_actor_outside_attested_lifecycle(
+    adapter, forgery, tmp_path,
+):
+    """P1: replay all StateChart transitions, not only work triggers, after restart."""
+    path = tmp_path / ("lifecycle-" + forgery + ".sqlite")
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = seed_actor(
+            store, owner_id=OWNER,
+            actor_key="lifecycle-ghost-" + forgery,
+            model_spec_hash=MODEL, config_epoch=1, at=T0,
+        )
+        if forgery == "after_exit":
+            _transition(store, actor_id, "activate", 1)
+            _transition(store, actor_id, "exit", 2)
+        at = T0 + timedelta(hours=3)
+        cause = "forged-resurrect-work"
+        command_id = deterministic_id(
+            "od2-actor-command", OWNER, actor_id, cause,
+        )
+        correlation = deterministic_id(
+            "od2-actor-flow", OWNER, actor_id,
+        )
+        forged_command = Command(
+            command_id=command_id, name="assign",
+            entity_type=ACTOR_KIND, entity_id=actor_id,
+            due_at=at, issued_at=at, owner_id=OWNER,
+            correlation_id=correlation,
+            payload={"external_cause_id": cause, "assigned_work_id": "work:ghost"},
+        )
+        forged_event = DomainEvent(
+            event_id="forged-lifecycle-assignment",
+            name="entity.state_transition",
+            entity_type=ACTOR_KIND, entity_id=actor_id,
+            occurred_at=at, owner_id=OWNER,
+            causation_id=command_id, correlation_id=correlation,
+            payload={
+                "trigger": "assign", "from_state": "eligible",
+                "to_state": "active", "assigned_work_id": "work:ghost",
+            },
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            uow.save_command(forged_command)
+            uow.append_event(forged_event)
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.state = "active"
+            actor.attributes["assigned_work_id"] = "work:ghost"
+            actor.attributes["last_at"] = at.isoformat()
+            uow.save_entity(actor)
+        before = tuple(store.events())
+        with pytest.raises(ValueError, match="attested actor lifecycle"):
+            _transition(store, actor_id, "cancel_assigned", 4,
+                        work_id="work:ghost", cost_us=1)
+        assert tuple(store.events()) == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as recovered:
+            before = tuple(recovered.events())
+            with pytest.raises(ValueError, match="attested actor lifecycle"):
+                _transition(recovered, actor_id, "cancel_assigned", 4,
+                            work_id="work:ghost", cost_us=1)
             assert tuple(recovered.events()) == before
