@@ -27,13 +27,20 @@ CAUSE = "cause:cancel"
 def event(trigger, *, event_id=None, owner_id=OWNER, actor_id=ACTOR,
           at=NOW, **payload):
     ident = event_id or "event:" + trigger
+    from_state, to_state = {
+        "assign": ("eligible", "active"),
+        "complete": ("active", "eligible"),
+        "cancel_assigned": ("active", "eligible"),
+        "activate": ("admitted", "eligible"),
+    }.get(trigger, ("eligible", "eligible"))
     return DomainEvent(
         event_id=ident,
-        name="od2." + trigger, entity_type=ACTOR_KIND, entity_id=actor_id,
+        name="entity.state_transition", entity_type=ACTOR_KIND, entity_id=actor_id,
         occurred_at=at, owner_id=owner_id,
         causation_id=deterministic_id("od2-actor-command", owner_id, actor_id, ident),
         correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
-        payload={"trigger": trigger, **payload},
+        payload={"trigger": trigger, "from_state": from_state,
+                 "to_state": to_state, **payload},
     )
 
 
@@ -142,21 +149,25 @@ def test_full_work_history_rejects_corruption(kind, pattern):
             event("assign", event_id="second", assigned_work_id="work:B"),
         ]
     elif kind == "blank_work":
-        events = [replace(opened, payload={"trigger": "assign", "assigned_work_id": ""})]
+        events = [replace(opened, payload={**opened.payload, "assigned_work_id": ""})]
     elif kind == "numeric_work":
-        events = [replace(opened, payload={"trigger": "assign", "assigned_work_id": 3})]
+        events = [replace(opened, payload={**opened.payload, "assigned_work_id": 3})]
     elif kind == "stray_complete":
         events = [complete]
     elif kind == "stray_cancel":
         events = [cancelled]
     elif kind == "missing_complete_id":
-        events = [opened, replace(complete, payload={"trigger": "complete"})]
+        events = [opened, replace(complete, payload={
+            k: v for k, v in complete.payload.items() if k != "completed_work_id"
+        })]
     elif kind == "wrong_complete_id":
         events = [opened, replace(
-            complete, payload={"trigger": "complete", "completed_work_id": "work:B"},
+            complete, payload={**complete.payload, "completed_work_id": "work:B"},
         )]
     elif kind == "legacy_with_new_complete":
-        events = [replace(opened, payload={"trigger": "assign"}), complete]
+        events = [replace(opened, payload={
+            k: v for k, v in opened.payload.items() if k != "assigned_work_id"
+        }), complete]
     elif kind == "cancel_wrong_work":
         events = [opened, replace(cancelled, payload={
             **cancelled.payload, "cancelled_work_id": "work:B",
@@ -166,7 +177,9 @@ def test_full_work_history_rejects_corruption(kind, pattern):
             **cancelled.payload, "source_assignment_event_id": "fake",
         })]
     else:
-        events = [replace(opened, payload={"trigger": "assign"}), cancelled]
+        events = [replace(opened, payload={
+            k: v for k, v in opened.payload.items() if k != "assigned_work_id"
+        }), cancelled]
     with pytest.raises((PermissionError, ValueError), match=pattern):
         _attested_current_assignment(
             Ledger(events), actor_id=ACTOR, owner_id=OWNER,
@@ -481,3 +494,41 @@ def test_source_assignment_rejects_corrupted_or_reused_exact_command(corruption)
         _attested_current_assignment(
             ledger, owner_id=OWNER, actor_id=ACTOR,
         )
+
+
+
+@pytest.mark.parametrize("action,field,value", [
+    ("assign", "name", "od2.assign"),
+    ("assign", "from_state", "active"),
+    ("assign", "to_state", "eligible"),
+    ("complete", "name", "od2.complete"),
+    ("complete", "from_state", "eligible"),
+    ("complete", "to_state", "active"),
+    ("cancel_assigned", "name", "od2.cancel_assigned"),
+    ("cancel_assigned", "from_state", "eligible"),
+    ("cancel_assigned", "to_state", "active"),
+])
+def test_forged_transition_shape_never_opens_or_closes_attested_work(action, field, value):
+    """P1: matching trigger/work/cause cannot authorize an invalid StateChart edge."""
+    command, source, closed = valid_replay()
+    completed = event("complete", event_id="complete", completed_work_id=WORK)
+    if action == "assign":
+        if field == "name":
+            source = replace(source, name=value)
+        else:
+            source = replace(source, payload={**source.payload, field: value})
+        ledger = Ledger([source], issued_command_for(source), source)
+    elif action == "complete":
+        if field == "name":
+            completed = replace(completed, name=value)
+        else:
+            completed = replace(completed, payload={**completed.payload, field: value})
+        ledger = Ledger([source, completed], None, source)
+    else:
+        if field == "name":
+            closed = replace(closed, name=value)
+        else:
+            closed = replace(closed, payload={**closed.payload, field: value})
+        ledger = Ledger([source, closed], command, source)
+    with pytest.raises(ValueError, match="work transition shape|attested work"):
+        _attested_current_assignment(ledger, actor_id=ACTOR, owner_id=OWNER)
