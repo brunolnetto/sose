@@ -240,7 +240,7 @@ def test_unpaired_extra_protocol_descendant_cannot_be_silently_ignored(corruptio
 
 @pytest.mark.parametrize("corruption", (
     "no_original_claim", "missing_claim_owner", "counter_drift",
-    "claim_before_publication", "ack_before_claim", "ack_after_expiry",
+    "ack_before_claim", "ack_after_expiry",
 ))
 def test_matching_ack_cannot_hide_impossible_original_claim(corruption):
     """A forged ACK+delivery pair cannot stand in for a real claim history."""
@@ -270,8 +270,6 @@ def test_matching_ack_cannot_hide_impossible_original_claim(corruption):
             invalid = replace(invalid, claim_owner_id=None)
         elif corruption == "counter_drift":
             invalid = replace(invalid, claim_epoch=2)
-        elif corruption == "claim_before_publication":
-            invalid = replace(invalid, claimed_at=NOW - timedelta(seconds=1))
         elif corruption == "ack_before_claim":
             invalid = replace(invalid, consumed_at=NOW - timedelta(seconds=1))
         else:
@@ -285,3 +283,85 @@ def test_matching_ack_cannot_hide_impossible_original_claim(corruption):
     with pytest.raises(ValueError, match="original claim provenance|claim time fence"):
         observe(spec, store, manifests, consumers, message_record.message_id)
     assert tuple(store.events()) == before
+
+
+
+def test_immutable_ack_identity_selection_detects_foreign_delivery_alias():
+    """A forged delivery/message ID cannot hide behind the selected ACK ID."""
+    from sose.composition.model import BoundaryConsumption
+
+    store = MemoryPersistence()
+    spec, manifests, consumers = configuration()
+    source = message()
+    service = BoundaryService(store)
+    delivery = service.publish(source)
+    receipt = BoundaryConsumption.create(
+        delivery=delivery, consumer_effect_id="opaque:effect", consumed_at=NOW,
+    )
+    # The identity is still the authentic deterministic ACK identifier, but
+    # two other fields are forged. A filter by message/delivery alone misses it.
+    corrupted = replace(
+        receipt, message_id="foreign:message", delivery_id="foreign:delivery",
+    )
+    with store.transaction() as uow:
+        uow.save_boundary_consumption(corrupted)
+    with pytest.raises(ValueError, match="ACK identity references foreign delivery"):
+        observe(spec, store, manifests, consumers, source.message_id)
+    assert service.delivery(delivery.delivery_id) == delivery
+
+
+def test_selected_message_id_must_match_immutable_publication_fields():
+    store = MemoryPersistence()
+    spec, manifests, consumers = configuration()
+    original = message()
+    forged = replace(original, message_id="boundary:forged:identity")
+    with store.transaction() as uow:
+        uow.save_boundary_message(forged)
+        uow.save_boundary_delivery(BoundaryDelivery.pending(forged))
+    with pytest.raises(ValueError, match="forged deterministic identity"):
+        observe(spec, store, manifests, consumers, forged.message_id)
+
+
+@pytest.mark.parametrize("field", ("attempts", "claim_epoch"))
+def test_pending_delivery_cannot_be_replayed_with_prior_claim_history(field):
+    store = MemoryPersistence()
+    spec, manifests, consumers = configuration()
+    source = message()
+    delivery = BoundaryService(store).publish(source)
+    with store.transaction() as uow:
+        uow.save_boundary_delivery(replace(delivery, **{field: 1}))
+    with pytest.raises(ValueError, match="pending selected delivery carries impossible claim history"):
+        observe(spec, store, manifests, consumers, source.message_id)
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_read_model_accepts_independent_wall_lease_and_future_logical_source(
+    adapter, tmp_path,
+):
+    """The read model must not invent a shared logical/wall-clock authority."""
+    path = tmp_path / "independent-clock.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    spec, manifests, consumers = configuration()
+    source = message()
+    try:
+        service = BoundaryService(store)
+        delivery = service.publish(source)
+        lease_clock = NOW - timedelta(minutes=10)
+        lease = service.claim_next(
+            owner_id="worker:wm", message_id=source.message_id,
+            now=lease_clock, lease_duration=timedelta(minutes=5),
+        )
+        assert lease is not None
+        observed = observe(spec, store, manifests, consumers, source.message_id)
+        assert observed.records[0].status is DeliveryStatus.CLAIMED
+        ack = service.consume(lease=lease, registry=consumers, now=lease_clock)
+        after = observe(spec, store, manifests, consumers, source.message_id)
+        assert after.records[0].consumption_id == ack.consumption_id
+        assert after.records[0].status is DeliveryStatus.CONSUMED
+        assert service.delivery(delivery.delivery_id).consumed_at == lease_clock
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as recovered:
+            assert observe(spec, recovered, manifests, consumers, source.message_id) == after
