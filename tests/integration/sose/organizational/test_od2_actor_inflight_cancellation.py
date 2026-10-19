@@ -179,7 +179,7 @@ def test_actor_cancellation_rejects_forged_projection_without_real_assignment():
         actor.attributes["assigned_work_id"] = "work:B"
         uow.save_entity(actor)
     before = tuple(store.events())
-    with pytest.raises(ValueError, match="attested|original assignment"):
+    with pytest.raises(ValueError, match="actor projection contradicts immutable active work"):
         _transition(store, actor_id, "cancel_assigned", 3,
                     work_id="work:B", cost_us=1)
     # A forged completion must not silently close the old immutable work.
@@ -268,7 +268,7 @@ def test_corrupted_projection_cannot_create_overlapping_durable_work(adapter, tm
             actor.attributes["assigned_work_id"] = None
             uow.save_entity(actor)
         before = tuple(store.events())
-        with pytest.raises(ValueError, match="attested assignment remains active"):
+        with pytest.raises(ValueError, match="actor projection contradicts immutable lifecycle history"):
             _transition(store, actor_id, "assign", 3, work_id="work:B")
         assert tuple(store.events()) == before
         # Even a second tampering attempt making work:B the active projection
@@ -358,7 +358,7 @@ def test_corrupted_owner_cannot_filter_out_previous_attested_assignment(
             actor.state = "eligible"
             actor.attributes["assigned_work_id"] = None
             uow.save_entity(actor)
-        with pytest.raises((PermissionError, ValueError), match="attested.*owner|owner.*history"):
+        with pytest.raises((PermissionError, ValueError), match="actor immutable admission provenance contradicts projection"):
             _transition(
                 store, actor_id, "assign", 3,
                 owner_id="org:forged", work_id="work:B",
@@ -369,7 +369,7 @@ def test_corrupted_owner_cannot_filter_out_previous_attested_assignment(
             actor.state = "active"
             actor.attributes["assigned_work_id"] = "work:B"
             uow.save_entity(actor)
-        with pytest.raises((PermissionError, ValueError), match="attested.*owner|owner.*history"):
+        with pytest.raises((PermissionError, ValueError), match="actor immutable admission provenance contradicts projection"):
             _transition(
                 store, actor_id, "cancel_assigned", 4,
                 owner_id="org:forged", work_id="work:B", cost_us=1,
@@ -380,7 +380,7 @@ def test_corrupted_owner_cannot_filter_out_previous_attested_assignment(
             store.close()
     if adapter == "sqlite":
         with SQLitePersistence(path) as reopened:
-            with pytest.raises((PermissionError, ValueError), match="attested.*owner|owner.*history"):
+            with pytest.raises((PermissionError, ValueError), match="actor immutable admission provenance contradicts projection"):
                 _transition(
                     reopened, actor_id, "cancel_assigned", 4,
                     owner_id="org:forged", work_id="work:B", cost_us=1,
