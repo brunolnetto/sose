@@ -177,7 +177,7 @@ def test_real_owner_local_jobs_to_typed_event_staged_command_ack_and_terminal_ce
         assert command.owner_id == LG
         assert command.causation_id == message.message_id
         assert store.business_effect(ack.consumer_effect_id) is None
-        with pytest.raises(ValueError, match="lacks terminal state"):
+        with pytest.raises(ValueError, match="terminal transition not attested after ACK"):
             executor.certify(
                 producer_id="fulfillment", consumer_id="logistics",
                 message_id=message.message_id,
