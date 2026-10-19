@@ -404,7 +404,8 @@ def test_reject_unadmitted_boundary_without_creating_delivery():
             produced_at=event.occurred_at,
             payload={"shipment_id": shipment.bootstrap_state.shipment_id},
         )
-    assert not store.boundary_deliveries()
+    with store.transaction() as uow:
+        assert not uow.boundary_deliveries()
 
 
 @pytest.mark.parametrize(
