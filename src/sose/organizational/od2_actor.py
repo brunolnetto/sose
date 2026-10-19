@@ -317,6 +317,58 @@ def seed_actor(
     return identity
 
 
+def _verify_actor_work_command(
+    uow, *, actor_id: str, owner_id: str,
+    event: DomainEvent, action: str,
+) -> None:
+    """Authenticate one assign/complete against its exact issued Command.
+
+    Old in-flight v1 commands/events omitted work IDs on both sides. New
+    assignments and completions bind the identity in *both* durable records.
+    A Command for activate/another actor/owner/cause cannot be recycled as
+    evidence of work. No inferred global clock or coordination is needed.
+    """
+    if not isinstance(event.causation_id, str) or not event.causation_id:
+        raise ValueError("attested work transition lacks causal Command")
+    command = uow.get_command(event.causation_id)
+    if command is None:
+        raise ValueError("attested work transition causal Command missing")
+    cause = command.payload.get("external_cause_id")
+    if not isinstance(cause, str) or not cause.strip():
+        raise ValueError("attested work transition original cause missing")
+    payload = {"external_cause_id": cause}
+    key = "assigned_work_id" if action == "assign" else "completed_work_id"
+    event_work = event.payload.get(key)
+    command_work = command.payload.get(key)
+    if event_work is not None or command_work is not None:
+        if (
+            not isinstance(event_work, str) or not event_work.strip()
+            or command_work != event_work
+        ):
+            raise ValueError("attested work identity differs from original Command")
+        payload[key] = event_work
+    expected = Command(
+        command_id=deterministic_id("od2-actor-command", owner_id, actor_id, cause),
+        name=action, entity_type=ACTOR_KIND, entity_id=actor_id,
+        due_at=event.occurred_at, issued_at=event.occurred_at,
+        owner_id=owner_id, causation_id=None,
+        correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
+        payload=payload,
+    )
+    if (
+        command != expected
+        or event.causation_id != expected.command_id
+        or (event.correlation_id is not None
+            and event.correlation_id != expected.correlation_id)
+        or sum(
+            1 for item in uow.events()
+            if item.entity_type == ACTOR_KIND and item.entity_id == actor_id
+            and item.causation_id == expected.command_id
+        ) != 1
+    ):
+        raise ValueError("attested work transition causal Command metadata mismatch")
+
+
 def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> DomainEvent | None:
     """Reconstruct the actor's one-open-work invariant from durable events.
 
@@ -347,6 +399,10 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                 raise ValueError("attested original assignment work identity malformed")
             if opened is not None:
                 raise ValueError("attested assignments overlap without durable closure")
+            _verify_actor_work_command(
+                uow, actor_id=actor_id, owner_id=owner_id,
+                event=event, action="assign",
+            )
             opened = event
         elif action in {"complete", "cancel_assigned"}:
             if opened is None:
@@ -390,6 +446,10 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                         raise ValueError("attested historical completion carries unknown work")
                 elif completed_id != expected_id:
                     raise ValueError("attested work completion identity mismatch")
+                _verify_actor_work_command(
+                    uow, actor_id=actor_id, owner_id=owner_id,
+                    event=event, action="complete",
+                )
             opened = None
     return opened
 
@@ -601,6 +661,11 @@ def transition_actor(
                 correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
                 payload={
                     "external_cause_id": cause_id,
+                    **({"assigned_work_id": work_id} if action == "assign" else {}),
+                    **({
+                        "completed_work_id": work_id,
+                    } if action == "complete" and active_source is not None
+                    and active_source.payload.get("assigned_work_id") is not None else {}),
                     **({
                         "cancelled_work_id": work_id,
                         "charged_cost_us": cost_us,
