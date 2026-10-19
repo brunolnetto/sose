@@ -169,6 +169,8 @@ def test_protocol_integrity_rejects_corrupt_durable_ledger(violation):
         elif violation == "consumed_without_ack":
             uow.save_boundary_delivery(replace(
                 original, status=DeliveryStatus.CONSUMED,
+                attempts=1, claim_epoch=1, claim_owner_id="worker:wm",
+                claimed_at=NOW, lease_expires_at=NOW + timedelta(minutes=5),
                 consumed_at=NOW, consumer_effect_id="opaque:forged",
             ))
     if violation in ("missing_delivery", "orphan_ack"):
