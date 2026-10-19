@@ -26,11 +26,44 @@ CAUSE = "cause:cancel"
 
 def event(trigger, *, event_id=None, owner_id=OWNER, actor_id=ACTOR,
           at=NOW, **payload):
+    ident = event_id or "event:" + trigger
     return DomainEvent(
-        event_id=event_id or "event:" + trigger,
+        event_id=ident,
         name="od2." + trigger, entity_type=ACTOR_KIND, entity_id=actor_id,
-        occurred_at=at, owner_id=owner_id, causation_id="command:source",
+        occurred_at=at, owner_id=owner_id,
+        causation_id=deterministic_id("od2-actor-command", owner_id, actor_id, ident),
+        correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
         payload={"trigger": trigger, **payload},
+    )
+
+
+def issued_command_for(event):
+    """Explicitly materialize an issued test Command for a source transition.
+
+    The service's verifier, not this fixture, decides whether its fields
+    actually attest the event. A cancelled work command is supplied separately.
+    """
+    action = event.payload.get("trigger")
+    if action not in {"assign", "complete"}:
+        return None
+    payload = {"external_cause_id": event.event_id}
+    key = "assigned_work_id" if action == "assign" else "completed_work_id"
+    if key in event.payload:
+        payload[key] = event.payload[key]
+    return Command(
+        command_id=deterministic_id(
+            "od2-actor-command", event.owner_id, event.entity_id, event.event_id,
+        ),
+        name=action,
+        entity_type=ACTOR_KIND,
+        entity_id=event.entity_id,
+        owner_id=event.owner_id,
+        due_at=event.occurred_at,
+        issued_at=event.occurred_at,
+        correlation_id=deterministic_id(
+            "od2-actor-flow", event.owner_id, event.entity_id,
+        ),
+        payload=payload,
     )
 
 
@@ -44,7 +77,16 @@ class Ledger:
         return self._events
 
     def get_command(self, command_id):
-        return self._command
+        if self._command is not None and self._command.command_id == command_id:
+            return self._command
+        matches = [
+            issued_command_for(item) for item in self._events
+            if item.payload.get("trigger") in {"assign", "complete"}
+            and item.causation_id == command_id
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        return None
 
     def get_event(self, event_id):
         if self._source is not None and self._source.event_id == event_id:
