@@ -481,11 +481,12 @@ def _attested_actor_replay(
     # An immutable admitted actor cannot replay an unidentifiable work item
     # under the old pre-attestation convention. Legacy fixture-ledger replay
     # remains readable but is never upgraded to new enrollment authority.
-    admitted_here = any(
-        event.event_id == _calendar_origin_event_id(actor_id)
+    origin = next((
+        event for event in actor_events
+        if event.event_id == _calendar_origin_event_id(actor_id)
         and event.name in {"od2.actor_admitted", "od2.actor_calendar_admitted"}
-        for event in actor_events
-    )
+    ), None)
+    admitted_here = origin is not None
     causal_index: dict[str, list[DomainEvent]] = {}
     event_index: dict[str, DomainEvent] = {}
     for event in actor_events:
@@ -497,7 +498,10 @@ def _attested_actor_replay(
     descendants = {cause: len(events) for cause, events in causal_index.items()}
     opened = None
     lifecycle = "admitted"
-    last_lifecycle_at = None
+    # Every modern actor starts at its persisted, immutable admission instant.
+    # Earlier work and lifecycle edges cannot be replayed into a legitimate
+    # new actor by rewriting the mutable StateChart projection.
+    last_lifecycle_at = origin.occurred_at if origin is not None else None
     last_work_at = None
     for event in actor_events:
         # The actor ID is immutable; mutable actor.owner_id is not a selector

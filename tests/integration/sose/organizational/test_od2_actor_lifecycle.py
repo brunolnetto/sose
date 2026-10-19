@@ -571,3 +571,53 @@ def test_new_admission_rejects_fieldless_forged_assignment_across_replay():
         _transition(store, actor_id, "complete", 3, work_id="work:invented")
     assert tuple(store.events()) == original
     assert store.entity(ACTOR_KIND, actor_id).attributes["assigned_work_id"] == "work:invented"
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_immutable_admission_rejects_backdated_activated_actor_history(adapter, tmp_path):
+    """P1: forged exact Commands cannot make actor work before actor existed."""
+    from sose.core.events import Command, DomainEvent
+    from sose.core.identity import deterministic_id
+
+    path = tmp_path / "od2-pre-admission-falsifier.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = _seed(store)
+        admitted = next(e for e in store.events()
+                        if e.entity_id == actor_id and e.name == "od2.actor_admitted")
+        at = T0 - timedelta(minutes=10)
+        cause = "pre-admission:activation"
+        cmd_id = deterministic_id("od2-actor-command", OWNER, actor_id, cause)
+        correlation = deterministic_id("od2-actor-flow", OWNER, actor_id)
+        with store.transaction(owner_id=OWNER) as uow:
+            uow.save_command(Command(
+                command_id=cmd_id, name="activate",
+                entity_type=ACTOR_KIND, entity_id=actor_id,
+                due_at=at, issued_at=at, owner_id=OWNER,
+                correlation_id=correlation, payload={"external_cause_id": cause},
+            ))
+            uow.append_event(DomainEvent(
+                event_id=deterministic_id("forged-pre-admission", actor_id),
+                name="entity.state_transition", entity_type=ACTOR_KIND,
+                entity_id=actor_id, occurred_at=at, owner_id=OWNER,
+                causation_id=cmd_id, correlation_id=correlation,
+                payload={"trigger": "activate", "from_state": "admitted",
+                         "to_state": "eligible"},
+            ))
+            projected = uow.get_entity(ACTOR_KIND, actor_id)
+            projected.state = "eligible"
+            uow.save_entity(projected)
+        original = tuple(store.events())
+        assert admitted.occurred_at > at
+        with pytest.raises(ValueError, match="lifecycle causal time regressed"):
+            _transition(store, actor_id, "exit", 2)
+        assert tuple(store.events()) == original
+        assert store.entity(ACTOR_KIND, actor_id).state == "eligible"
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            assert tuple(restored.events()) == original
+            with pytest.raises(ValueError, match="lifecycle causal time regressed"):
+                _transition(restored, actor_id, "exit", 2)
