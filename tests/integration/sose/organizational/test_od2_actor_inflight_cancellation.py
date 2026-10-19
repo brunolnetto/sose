@@ -9,6 +9,8 @@ from dataclasses import replace
 
 import pytest
 
+from sose.core.events import Command
+from sose.core.identity import deterministic_id
 from sose.organizational.od2_actor import ACTOR_KIND, seed_actor, transition_actor
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
@@ -17,6 +19,33 @@ from sose.persistence.sqlite import SQLitePersistence
 T0 = datetime(2026, 10, 18, 8, tzinfo=timezone.utc)
 OWNER = "org:actors-cancel"
 MODEL = "actor-cancel-v1"
+
+
+def _append_real_legacy_work_event(uow, original, actor_id, *, action, at, payload):
+    """Materialize a valid pre-attestation Command and immutable event pair.
+
+    Do not forge legacy history by recycling a modern or activation Command:
+    source attribution must remain independently testable across restart.
+    """
+    cause = "legacy:" + action + ":" + at.isoformat()
+    command_id = deterministic_id(
+        "od2-actor-command", OWNER, actor_id, cause,
+    )
+    uow.save_command(Command(
+        command_id=command_id, name=action, entity_type=ACTOR_KIND,
+        entity_id=actor_id, due_at=at, issued_at=at, owner_id=OWNER,
+        causation_id=None,
+        correlation_id=deterministic_id("od2-actor-flow", OWNER, actor_id),
+        payload={"external_cause_id": cause},
+    ))
+    uow.append_event(replace(
+        original,
+        event_id="historical:" + cause,
+        occurred_at=at,
+        causation_id=command_id,
+        correlation_id=deterministic_id("od2-actor-flow", OWNER, actor_id),
+        payload=payload,
+    ))
 
 
 def _transition(store, actor_id, action, hour, *, work_id=None, cost_us=0,
@@ -403,14 +432,14 @@ def test_closed_pre_attestation_assign_and_complete_pair_is_accepted():
     old_complete_data = dict(old_complete.payload)
     old_complete_data.pop("completed_work_id")
     with store.transaction(owner_id=OWNER) as uow:
-        uow.append_event(replace(
-            old_assign, event_id="legacy-assign-pair",
-            occurred_at=T0 + timedelta(hours=4), payload=old_assign_data,
-        ))
-        uow.append_event(replace(
-            old_complete, event_id="legacy-complete-pair",
-            occurred_at=T0 + timedelta(hours=5), payload=old_complete_data,
-        ))
+        _append_real_legacy_work_event(
+            uow, old_assign, actor_id, action="assign",
+            at=T0 + timedelta(hours=4), payload=old_assign_data,
+        )
+        _append_real_legacy_work_event(
+            uow, old_complete, actor_id, action="complete",
+            at=T0 + timedelta(hours=5), payload=old_complete_data,
+        )
     assigned = _transition(store, actor_id, "assign", 6, work_id="work:new")
     assert assigned.state == "active"
     assert assigned.attributes["assigned_work_id"] == "work:new"
@@ -444,13 +473,13 @@ def test_upgrade_can_close_pre_attestation_inflight_work_without_poisoning_ledge
             actor.attributes["assigned_work_id"] = "work:legacy"
             actor.attributes["last_at"] = (T0 + timedelta(hours=2)).isoformat()
             uow.save_entity(actor)
-            uow.append_event(replace(
-                activated, event_id="pre-attestation-legacy-assign",
-                occurred_at=T0 + timedelta(hours=2),
+            _append_real_legacy_work_event(
+                uow, activated, actor_id, action="assign",
+                at=T0 + timedelta(hours=2),
                 payload={**activated.payload,
                          "trigger": "assign", "from_state": "eligible",
                          "to_state": "active"},
-            ))
+            )
         closed = _transition(
             store, actor_id, "complete", 3, work_id="work:legacy"
         )
