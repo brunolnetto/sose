@@ -369,6 +369,26 @@ def _verify_actor_work_command(
         raise ValueError("attested work transition causal Command metadata mismatch")
 
 
+def _require_canonical_work_transition(event: DomainEvent, action: str) -> None:
+    """Never infer a durable work grant/closure from a forged event trigger.
+
+    The StateChart transition is canonical and owner-local. A matching
+    trigger/work identity is not sufficient without the correct transition
+    event name and the exact source/destination state pair.
+    """
+    expected = (
+        ("eligible", "active") if action == "assign"
+        else ("active", "eligible")
+    )
+    if (
+        event.name != "entity.state_transition"
+        or event.payload.get("trigger") != action
+        or event.payload.get("from_state") != expected[0]
+        or event.payload.get("to_state") != expected[1]
+    ):
+        raise ValueError("attested work transition shape contradicts StateChart")
+
+
 def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> DomainEvent | None:
     """Reconstruct the actor's one-open-work invariant from durable events.
 
@@ -411,6 +431,7 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                 uow, actor_id=actor_id, owner_id=owner_id,
                 event=event, action="assign",
             )
+            _require_canonical_work_transition(event, "assign")
             opened = event
         elif action in {"complete", "cancel_assigned"}:
             if opened is None:
@@ -443,6 +464,7 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                     at=event.occurred_at, work_id=expected_id,
                     cost_us=charged,
                 )
+                _require_canonical_work_transition(event, action)
             # Pre-attestation assign+complete pairs may omit work IDs.
             # Once an assignment attests work, its closing completion MUST
             # attest the same explicit work ID (no default that silently
@@ -458,6 +480,7 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                     uow, actor_id=actor_id, owner_id=owner_id,
                     event=event, action="complete",
                 )
+                _require_canonical_work_transition(event, action)
             opened = None
     return opened
 
@@ -516,6 +539,7 @@ def _verify_durable_cancellation_replay(
     if len(matches) != 1:
         raise ValueError("cancellation durable evidence: append-only event missing")
     event = matches[0]
+    _require_canonical_work_transition(event, "cancel_assigned")
     if (
         event.occurred_at != at
         or event.payload.get("cancelled_work_id") != work_id
@@ -526,6 +550,8 @@ def _verify_durable_cancellation_replay(
     ):
         raise ValueError("cancellation durable evidence: event contradicts charged work")
     source = uow.get_event(event.payload["source_assignment_event_id"])
+    if source is not None:
+        _require_canonical_work_transition(source, "assign")
     if (
         source is None
         or source.entity_type != ACTOR_KIND
