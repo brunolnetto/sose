@@ -31,9 +31,9 @@ def enrollment(store, *, actor_key="person", **changes):
     return seed_actor(store, **args)
 
 
-def action(store, actor_id, name="activate", **changes):
+def action(store, actor_key, name="activate", **changes):
     args = dict(
-        owner_id=OWNER, actor_id=actor_id, action=name,
+        owner_id=OWNER, actor_id=actor_key, action=name,
         cause_id="cause:" + name, at=T0 + timedelta(hours=1),
         model_spec_hash=MODEL, config_epoch=1,
     )
