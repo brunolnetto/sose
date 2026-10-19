@@ -488,9 +488,19 @@ def test_claim_lease_blocks_duplicate_worker_and_does_not_ack_work():
 def test_consumed_delivery_missing_ack_is_not_reprocessed_or_released():
     store = MemoryPersistence()
     executor, _, _, event, message, delivery = _published_ingress(store)
+    # Acquire an authentic owner-bound lease first. We then corrupt ONLY the
+    # consumed ACK state, not the claim provenance, so this test falsifies
+    # missing durable receipts instead of stopping at the earlier owner gate.
+    lease = BoundaryService(store).claim_next(
+        owner_id=LG, message_id=message.message_id, now=event.occurred_at,
+        lease_duration=timedelta(minutes=10),
+    )
+    assert lease is not None
     with store.transaction() as uow:
+        original_claim = uow.get_boundary_delivery(delivery.delivery_id)
+        assert original_claim.status is DeliveryStatus.CLAIMED
         uow.save_boundary_delivery(replace(
-            delivery, status=DeliveryStatus.CONSUMED,
+            original_claim, status=DeliveryStatus.CONSUMED,
             consumed_at=event.occurred_at,
             consumer_effect_id="command:missing-ack",
         ))
