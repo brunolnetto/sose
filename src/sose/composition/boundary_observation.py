@@ -105,6 +105,13 @@ def inspect_selected_boundary_protocol(
         selected_delivery_ids.add(expected.delivery_id)
     for delivery in deliveries:
         if delivery.message_id in selected or delivery.delivery_id in selected_delivery_ids:
+            # A second delivery with the same message_id but a forged ID
+            # must not disappear merely because the correct delivery exists.
+            if delivery.message_id not in by_message:
+                raise ValueError("selected delivery references another durable message")
+            expected = BoundaryDelivery.pending(by_message[delivery.message_id])
+            if delivery.delivery_id != expected.delivery_id:
+                raise ValueError("selected delivery identity contradicts publication")
             if delivery.delivery_id in by_delivery:
                 raise ValueError("duplicate selected durable boundary delivery")
             by_delivery[delivery.delivery_id] = delivery
@@ -112,6 +119,11 @@ def inspect_selected_boundary_protocol(
     by_receipt = {}
     for receipt in consumptions:
         if receipt.message_id in selected or receipt.delivery_id in selected_delivery_ids:
+            if receipt.delivery_id not in selected_delivery_ids:
+                raise ValueError("selected ACK identity references foreign delivery")
+            delivery = by_delivery.get(receipt.delivery_id)
+            if delivery is None or receipt.message_id != delivery.message_id:
+                raise ValueError("selected ACK contradicts durable delivery identity")
             if receipt.delivery_id in by_receipt:
                 raise ValueError("duplicate selected durable boundary ACK")
             by_receipt[receipt.delivery_id] = receipt

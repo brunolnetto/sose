@@ -206,3 +206,30 @@ def test_invalid_admission_does_not_read_protocol_tables():
             spec, NeverRead(), message_ids=(),
             catalog=builtin_catalog(), manifests=builtin_process_manifests(), consumers=consumers,
         )
+
+
+@pytest.mark.parametrize("corruption", ("extra_wrong_delivery_id", "orphan_ack_id"))
+def test_unpaired_extra_protocol_descendant_cannot_be_silently_ignored(corruption):
+    """Every descendant naming a selected publication is validated, not just a happy pair."""
+    from sose.composition.model import BoundaryConsumption
+
+    store = MemoryPersistence()
+    spec, manifests, consumers = configuration()
+    source = message()
+    service = BoundaryService(store)
+    service.publish(source)
+    delivery = BoundaryDelivery.pending(source)
+    with store.transaction() as uow:
+        if corruption == "extra_wrong_delivery_id":
+            uow.save_boundary_delivery(replace(delivery, delivery_id="forged:delivery"))
+        else:
+            # Receipt claims the selected publication without the selected
+            # delivery identity. A pending real delivery cannot hide it.
+            uow.save_boundary_consumption(replace(
+                BoundaryConsumption.create(
+                    delivery=delivery, consumer_effect_id="effect:forged", consumed_at=NOW,
+                ),
+                delivery_id="forged:delivery",
+            ))
+    with pytest.raises(ValueError, match="delivery identity contradicts|ACK identity references"):
+        observe(spec, store, manifests, consumers, source.message_id)
