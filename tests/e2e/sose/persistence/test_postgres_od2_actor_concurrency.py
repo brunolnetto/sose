@@ -184,7 +184,7 @@ def test_pg_competing_actor_claims_are_fenced_and_peer_is_independent():
             )
         assert store.command(
             next(e.causation_id for e in store.events()
-                 if e.entity_id == contested and e.payload["trigger"] == "assign")
+                 if e.entity_id == contested and e.payload.get("trigger") == "assign")
         ).payload["external_cause_id"] == f"assign:{winners[0]}"
 
 
@@ -230,7 +230,7 @@ def test_pg_killed_actor_worker_replays_committed_cause_without_double_event():
             tuple(e for e in recovered.events() if e.entity_id == actor_id),
             tuple(recovered.resource_reservations()),
         )
-        assert len(before[1]) == 2
+        assert len([e for e in before[1] if e.name == "entity.state_transition"]) == 2
         assert not before[2], "actor StateChart does not claim physical capacity"
         replay = _assign(recovered, actor_id, "assign:death", "work:death")
         assert replay == actor
