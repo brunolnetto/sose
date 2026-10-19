@@ -956,3 +956,68 @@ def test_pg_aligned_advice_is_stale_not_a_physical_grant():
         )
         assert next_advice.proposed_start == when + timedelta(seconds=0.2)
         assert reopened.temporal_resources().audit()
+
+
+def test_pg_uncertain_successful_commit_replays_native_physical_effect_once(monkeypatch):
+    """#477: COMMIT is durable, but a worker loses the *response*.
+
+    This fault is injected immediately AFTER the actual PostgreSQL transaction
+    commits the first source tick. It is different from a pre-COMMIT rollback
+    and from a synthetic second replay in a live worker. A fresh connection
+    must discover the existing physical grant and avoid a second event/effect.
+    """
+    from contextlib import contextmanager
+
+    assert DSN
+    ns = _namespace()
+    org = "org:uncertain-commit"
+    binding = _binding("unit-1")
+    trigger = deterministic_id("od5a-recurring-tick", org, 1)
+
+    with PostgresPersistence(DSN, namespace=ns) as store:
+        _seed(store, org, binding)
+        committed = {"injected": False}
+        original_transaction = store.transaction
+
+        @contextmanager
+        def commit_then_lose_response(*args, **kwargs):
+            with original_transaction(*args, **kwargs) as uow:
+                yield uow
+            # Observe durable state only AFTER the connection's real COMMIT.
+            # Inject once, specifically after the source has finished tick 1.
+            if not committed["injected"] and store.job_state(org).run_count == 1:
+                committed["injected"] = True
+                raise ConnectionError("injected: server committed; client lost response")
+
+        monkeypatch.setattr(store, "transaction", commit_then_lose_response)
+        with pytest.raises(ConnectionError, match="client lost response"):
+            _tick(store, org, binding)
+        assert committed["injected"]
+
+    # Worker/process boundary: start with a completely fresh PostgreSQL
+    # persistence object, not the previous worker's in-memory cache.
+    with PostgresPersistence(DSN, namespace=ns) as recovered:
+        ledger = recovered.temporal_resources()
+        before_bookings = ledger.reservations()
+        assert len(before_bookings) == 1
+        assert before_bookings[0].owner_id == org
+        assert before_bookings[0].address.instance_id == "unit-1"
+        assert before_bookings[0].status == "reserved"
+        assert recovered.job_state(org).run_count == 1
+        assert _source(recovered, org)["step"] == 1
+        before_events = tuple(recovered.events())
+        before_snapshot = ledger.snapshot()
+
+        replay = run_od5a_recurring_tick(
+            recovered, job_id=org, owner_id="worker:recovery",
+            now=NOW, lease_duration=timedelta(seconds=60),
+            trigger_id=trigger, shared_pool_binding=binding,
+        )
+        assert replay.action == "replayed"
+        assert recovered.job_state(org).run_count == 1
+        assert _source(recovered, org)["step"] == 1
+        assert tuple(recovered.events()) == before_events
+        assert ledger.snapshot() == before_snapshot
+        assert ledger.reservations() == before_bookings
+        assert ledger.audit()
+
