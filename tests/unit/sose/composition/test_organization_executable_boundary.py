@@ -1,0 +1,305 @@
+"""#496 W4a: independently advanced real domain jobs and staged causal ingress.
+
+Logistics ingress provenance is *only* a test-scoped hypothetical manifest:
+this does NOT upgrade production PC5 Logistics to audited PC6 ingress.
+"""
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from sose.backends.simpy import SimPyBackend
+from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
+from sose.composition.model import BoundaryDelivery, DeliveryStatus
+from sose.composition.organization import (
+    BoundaryBinding, OrganizationDefinition, ProcessComponent, ScheduledJob,
+)
+from sose.composition.organization_execution import AdmittedOrganizationExecutor
+from sose.core.events import Command, DomainEvent
+from sose.core.identity import deterministic_id
+from sose.examples.catalog import builtin_catalog
+from sose.examples.process_manifest import ProcessEvidence, builtin_process_manifests
+from sose.jobs.runner import SimulationJob
+from sose.persistence.memory import MemoryPersistence
+from sose.persistence.sqlite import SQLitePersistence
+
+CONTRACT = "warehouse.dispatch_ready"
+WF = "owner:warehouse-fulfillment"
+LG = "owner:logistics"
+NOW = datetime(2026, 10, 19, 15, tzinfo=timezone.utc)
+
+
+def backend(at):
+    return SimPyBackend(origin=at)
+
+
+def topology():
+    return OrganizationDefinition(
+        organization_id="organization:bounded-executable", version=1,
+        components=(
+            ProcessComponent("fulfillment", "warehouse_fulfillment", WF,
+                             ("FulfillmentOrderChart",)),
+            ProcessComponent("logistics", "logistics", LG, ("ShipmentChart",)),
+        ),
+        boundaries=(BoundaryBinding("fulfillment", "logistics", CONTRACT, 1),),
+        jobs=(
+            ScheduledJob(WF, "fulfillment", "run:fulfillment"),
+            ScheduledJob(LG, "logistics", "run:logistics"),
+        ),
+    )
+
+
+def hypothetical_ingress():
+    manifests = builtin_process_manifests()
+    entry = manifests["logistics"]
+    evidence_file = "tests/unit/sose/composition/test_organization_executable_boundary.py"
+    manifests["logistics"] = replace(
+        entry,
+        evidence=entry.evidence | {ProcessEvidence.INGRESS_CONTRACTS},
+        ingress_contracts=frozenset({CONTRACT + ".v1"}),
+        evidence_sources={
+            **entry.evidence_sources,
+            ProcessEvidence.INGRESS_CONTRACTS: (evidence_file,),
+        },
+        contract_provenance=(("ingress", CONTRACT + ".v1", (evidence_file,)),),
+    )
+    return manifests
+
+
+def suite(store, *, wrong_handler=None):
+    catalog = builtin_catalog()
+    wf = SimulationJob(job_id=WF, definition=catalog.get("warehouse_fulfillment"),
+                       persistence=store, backend_factory=backend)
+    lg = SimulationJob(job_id=LG, definition=catalog.get("logistics"),
+                       persistence=store, backend_factory=backend)
+    original = lg.initialize({"pickup_delay": timedelta(hours=1)})
+    source = wf.initialize()
+    shipment_id = original.bootstrap_state.shipment_id
+    registry = BoundaryConsumerRegistry()
+
+    def valid_handler(message, uow):
+        effect_id = deterministic_id(
+            "composition-domain-intent", message.message_id,
+            "composition.deliver_shipment", "shipment", shipment_id,
+        )
+        command = Command(
+            command_id=effect_id, name="composition.deliver_shipment",
+            entity_type="shipment", entity_id=shipment_id,
+            due_at=message.produced_at, issued_at=message.produced_at,
+            owner_id=LG, causation_id=message.message_id,
+            correlation_id=message.correlation_id,
+            payload={
+                **message.payload(), "boundary_message_id": message.message_id,
+                "boundary_contract": message.contract_key,
+            },
+        )
+        existing = uow.get_command(effect_id)
+        if existing is not None and existing != command:
+            raise ValueError("conflicting original staged command")
+        if existing is None:
+            uow.save_command(command)
+        return effect_id
+
+    registry.register(
+        source_domain="warehouse_fulfillment",
+        destination_domain="logistics",
+        contract_name=CONTRACT, contract_version=1,
+        handler=valid_handler if wrong_handler is None else wrong_handler,
+    )
+    executor = AdmittedOrganizationExecutor(
+        definition=topology(), persistence=store, jobs={WF: wf, LG: lg},
+        catalog=catalog, manifests=hypothetical_ingress(), consumers=registry,
+    )
+    return executor, wf, lg, source, original, valid_handler
+
+
+def advance_fulfillment(executor, wf, store):
+    before_lg = store.job_state(LG)
+    for step in range(1, 6):
+        executor.run_job(
+            job_id=WF, trigger_id=f"run:fulfillment:{step}",
+        )
+    after_lg = store.job_state(LG)
+    assert before_lg == after_lg  # No global organizational tick.
+    events = [
+        event for event in store.events()
+        if event.owner_id == WF
+        and event.entity_type == "warehouse_fulfillment_order"
+        and event.name == "entity.state_transition"
+        and event.payload.get("to_state") == "shipped"
+    ]
+    assert len(events) == 1
+    return events[0]
+
+
+def publish_shipment(executor, event, shipment_id):
+    return executor.publish(
+        producer_id="fulfillment", consumer_id="logistics",
+        source_event_id=event.event_id,
+        contract_name=CONTRACT, contract_version=1,
+        occurrence_key="dispatch:" + event.event_id,
+        produced_at=event.occurred_at,
+        payload={"shipment_id": shipment_id},
+    )
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_real_owner_local_jobs_to_typed_event_staged_command_ack_and_terminal_certificate(adapter, tmp_path):
+    path = tmp_path / "bounded-organization.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        executor, wf, lg, source, shipment, _ = suite(store)
+        event = advance_fulfillment(executor, wf, store)
+        message, delivery = publish_shipment(
+            executor, event, shipment.bootstrap_state.shipment_id,
+        )
+        replay_message, replay_delivery = publish_shipment(
+            executor, event, shipment.bootstrap_state.shipment_id,
+        )
+        assert (message, delivery) == (replay_message, replay_delivery)
+        assert message.causation_kind == "event"
+        assert message.causation_id == event.event_id
+        assert message.correlation_id == event.correlation_id
+        before_ack = store.job_state(LG)
+        assert before_ack.next_tick == 0
+
+        ack = executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, now=event.occurred_at,
+            lease_duration=timedelta(minutes=10),
+        )
+        assert ack.message_id == message.message_id
+        command = store.command(ack.consumer_effect_id)
+        assert command is not None
+        assert command.owner_id == LG
+        assert command.causation_id == message.message_id
+        assert store.business_effect(ack.consumer_effect_id) is None
+        with pytest.raises(ValueError, match="lacks terminal state"):
+            executor.certify(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=message.message_id,
+                effect_id=ack.consumer_effect_id, completed_at=event.occurred_at,
+            )
+        assert store.business_effect(ack.consumer_effect_id) is None
+        assert store.command(ack.consumer_effect_id) == command
+
+        # Advance JUST the independently owned downstream real SimulationJob.
+        result = executor.run_job(
+            job_id=LG, trigger_id="run:logistics:1",
+        )
+        assert result.job_id == LG
+        assert store.job_state(WF).next_tick == 5
+        assert store.job_state(LG).next_tick == 1
+        entity = store.entity("shipment", shipment.bootstrap_state.shipment_id)
+        assert entity.state == "delivered"
+
+        certificate = executor.certify(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id,
+            effect_id=ack.consumer_effect_id, completed_at=event.occurred_at,
+        )
+        assert certificate.effect_id == ack.consumer_effect_id
+        assert certificate.boundary_message_id == message.message_id
+        assert certificate.correlation_id == message.correlation_id
+        assert store.business_effect(ack.consumer_effect_id) == certificate
+        assert store.command(ack.consumer_effect_id) is None
+        assert executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, now=event.occurred_at,
+            lease_duration=timedelta(minutes=10),
+        ) == ack
+        assert executor.certify(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id,
+            effect_id=ack.consumer_effect_id, completed_at=event.occurred_at,
+        ) == certificate
+        assert BoundaryService(store).delivery(delivery.delivery_id).status is DeliveryStatus.CONSUMED
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            assert restored.business_effect(ack.consumer_effect_id) == certificate
+            assert restored.command(ack.consumer_effect_id) is None
+            assert restored.job_state(LG).next_tick == 1
+            assert restored.job_state(WF).next_tick == 5
+
+
+@pytest.mark.parametrize("invalid", ("missing_command", "wrong_owner", "wrong_cause"))
+def test_wrong_causal_handler_rolls_back_ack_even_after_durable_claim(invalid):
+    store = MemoryPersistence()
+
+    def broken(message, uow):
+        command_id = "command:malicious"
+        if invalid == "missing_command":
+            return command_id
+        uow.save_command(Command(
+            command_id=command_id, name="composition.deliver_shipment",
+            entity_type="shipment", entity_id="shipment:fake",
+            due_at=message.produced_at, issued_at=message.produced_at,
+            owner_id="owner:forged" if invalid == "wrong_owner" else LG,
+            causation_id="unrelated" if invalid == "wrong_cause" else message.message_id,
+            correlation_id=message.correlation_id,
+        ))
+        return command_id
+
+    executor, wf, _, _, shipment, _ = suite(store, wrong_handler=broken)
+    event = advance_fulfillment(executor, wf, store)
+    message, delivery = publish_shipment(
+        executor, event, shipment.bootstrap_state.shipment_id,
+    )
+    with pytest.raises(ValueError, match="lacks durable staged Command|owner or causal"):
+        executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, now=event.occurred_at,
+            lease_duration=timedelta(minutes=1),
+        )
+    persisted = BoundaryService(store).delivery(delivery.delivery_id)
+    assert persisted.status is DeliveryStatus.CLAIMED
+    assert store.command("command:malicious") is None
+    assert BoundaryService(store).consumption(delivery.delivery_id) is None
+
+
+def test_foreign_owned_or_missing_source_event_cannot_be_published():
+    store = MemoryPersistence()
+    executor, wf, _, _, shipment, _ = suite(store)
+    before = tuple(store.events())
+    with pytest.raises(ValueError, match="source DomainEvent missing"):
+        publish_shipment(
+            executor,
+            DomainEvent(event_id="nonexistent", name="entity.state_transition",
+                        entity_type="warehouse_fulfillment_order", entity_id="order",
+                        occurred_at=NOW, owner_id=WF, correlation_id="corr",
+                        payload={"trigger": "ship", "from_state": "packing",
+                                 "to_state": "shipped"}),
+            shipment.bootstrap_state.shipment_id,
+        )
+    assert tuple(store.events()) == before
+    event = advance_fulfillment(executor, wf, store)
+    with store.transaction() as uow:
+        uow.append_event(replace(event, event_id="foreign-event", owner_id="other:org"))
+    before_messages = tuple(store.events())
+    with pytest.raises(ValueError, match="source owner/StateChart/causality mismatch"):
+        publish_shipment(
+            executor, replace(event, event_id="foreign-event"),
+            shipment.bootstrap_state.shipment_id,
+        )
+    assert tuple(store.events()) == before_messages
+
+
+def test_executor_rejects_mismatched_real_job_ownership_or_trigger_namespace():
+    store = MemoryPersistence()
+    ex, wf, lg, *_ = suite(store)
+    with pytest.raises(ValueError, match="component trigger"):
+        ex.run_job(job_id=WF, trigger_id="run:logistics:forged")
+    with pytest.raises(ValueError, match="undeclared"):
+        ex.run_job(job_id="foreign:job", trigger_id="anything")
+    with pytest.raises(ValueError, match="owner/domain/store"):
+        AdmittedOrganizationExecutor(
+            definition=topology(), persistence=store,
+            jobs={WF: lg, LG: wf},
+            catalog=builtin_catalog(), manifests=hypothetical_ingress(),
+            consumers=ex.consumers,
+        )
+    assert store.job_state(WF).next_tick == 0
+    assert store.job_state(LG).next_tick == 0
