@@ -390,3 +390,31 @@ def test_cancel_does_not_close_work_without_complete_causal_evidence(tamper):
             Ledger([source, done], command, source),
             actor_id=ACTOR, owner_id=OWNER,
         )
+
+
+
+@pytest.mark.parametrize("last_action", ("complete", "assign"))
+def test_actor_work_history_rejects_backdated_causal_transition(last_action):
+    """Independent actor-local event time cannot run backward across work."""
+    opened = event(
+        "assign", event_id="opened", at=NOW, assigned_work_id=WORK,
+    )
+    if last_action == "complete":
+        later = event(
+            "complete", event_id="backdated-complete",
+            at=NOW - timedelta(hours=1), completed_work_id=WORK,
+        )
+        events = [opened, later]
+    else:
+        closed = event(
+            "complete", event_id="closed", at=NOW, completed_work_id=WORK,
+        )
+        later = event(
+            "assign", event_id="backdated-assign",
+            at=NOW - timedelta(hours=1), assigned_work_id="work:B",
+        )
+        events = [opened, closed, later]
+    with pytest.raises(ValueError, match="causal time regressed"):
+        _attested_current_assignment(
+            Ledger(events), owner_id=OWNER, actor_id=ACTOR,
+        )
