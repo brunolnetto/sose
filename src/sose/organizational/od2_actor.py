@@ -402,12 +402,15 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
         event for event in snapshot
         if event.entity_type == ACTOR_KIND and event.entity_id == actor_id
     )
-    descendants: dict[str, int] = {}
+    causal_index: dict[str, list[DomainEvent]] = {}
+    event_index: dict[str, DomainEvent] = {}
     for event in actor_events:
+        original = event_index.setdefault(event.event_id, event)
+        if original != event:
+            raise ValueError("attested actor duplicate event identity")
         if event.causation_id is not None:
-            descendants[event.causation_id] = (
-                descendants.get(event.causation_id, 0) + 1
-            )
+            causal_index.setdefault(event.causation_id, []).append(event)
+    descendants = {cause: len(events) for cause, events in causal_index.items()}
     opened = None
     lifecycle = "admitted"
     last_lifecycle_at = None
@@ -510,6 +513,7 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                     cause_id=command.payload["external_cause_id"],
                     at=event.occurred_at, work_id=expected_id,
                     cost_us=charged,
+                    causal_index=causal_index, event_index=event_index,
                 )
                 _require_canonical_work_transition(event, action)
             # Pre-attestation assign+complete pairs may omit work IDs.
@@ -550,6 +554,8 @@ def _attested_active_assignment(uow, *, actor_id: str, owner_id: str,
 def _verify_durable_cancellation_replay(
     uow, *, owner_id: str, actor_id: str, cause_id: str,
     at: datetime, work_id: str, cost_us: int,
+    causal_index: dict[str, list[DomainEvent]] | None = None,
+    event_index: dict[str, DomainEvent] | None = None,
 ) -> None:
     """Never accept replay solely from the mutable applied_causes projection.
 
@@ -576,8 +582,12 @@ def _verify_durable_cancellation_replay(
         or command.payload["charged_cost_us"] != cost_us
     ):
         raise ValueError("cancellation durable evidence: Command is missing or altered")
+    event_candidates = (
+        causal_index.get(command_id, ())
+        if causal_index is not None else uow.events()
+    )
     matches = [
-        event for event in uow.events()
+        event for event in event_candidates
         if event.entity_type == ACTOR_KIND
         and event.entity_id == actor_id
         and event.owner_id == owner_id
@@ -597,7 +607,11 @@ def _verify_durable_cancellation_replay(
         or event.payload["source_assignment_event_id"] != command.payload["source_assignment_event_id"]
     ):
         raise ValueError("cancellation durable evidence: event contradicts charged work")
-    source = uow.get_event(event.payload["source_assignment_event_id"])
+    source_id = event.payload["source_assignment_event_id"]
+    source = (
+        event_index.get(source_id)
+        if event_index is not None else uow.get_event(source_id)
+    )
     if (
         source is None
         or source.entity_type != ACTOR_KIND
