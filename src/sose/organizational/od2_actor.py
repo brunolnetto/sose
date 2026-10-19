@@ -320,6 +320,7 @@ def seed_actor(
 def _verify_actor_work_command(
     uow, *, actor_id: str, owner_id: str,
     event: DomainEvent, action: str,
+    descendant_counts: dict[str, int] | None = None,
 ) -> None:
     """Authenticate one assign/complete against its exact issued Command.
 
@@ -360,11 +361,7 @@ def _verify_actor_work_command(
         or event.causation_id != expected.command_id
         or (event.correlation_id is not None
             and event.correlation_id != expected.correlation_id)
-        or sum(
-            1 for item in uow.events()
-            if item.entity_type == ACTOR_KIND and item.entity_id == actor_id
-            and item.causation_id == expected.command_id
-        ) != 1
+        or (descendant_counts or {}).get(expected.command_id, 0) != 1
     ):
         raise ValueError("attested work transition causal Command metadata mismatch")
 
@@ -398,11 +395,24 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
     any new assignment or cancellation. Legacy assignments without a durable
     work ID are deliberately un-certifiable for this strict path.
     """
+    # One authoritative UoW snapshot. Build per-actor causal indices ONCE:
+    # repeated uow.events() deep-copied the whole global ledger for each edge.
+    snapshot = uow.events()
+    actor_events = tuple(
+        event for event in snapshot
+        if event.entity_type == ACTOR_KIND and event.entity_id == actor_id
+    )
+    descendants: dict[str, int] = {}
+    for event in actor_events:
+        if event.causation_id is not None:
+            descendants[event.causation_id] = (
+                descendants.get(event.causation_id, 0) + 1
+            )
     opened = None
+    lifecycle = "admitted"
+    last_lifecycle_at = None
     last_work_at = None
-    for event in uow.events():
-        if event.entity_type != ACTOR_KIND or event.entity_id != actor_id:
-            continue
+    for event in actor_events:
         # The actor ID is immutable; mutable actor.owner_id is not a selector
         # for truth. Filtering by a forged owner would erase the old open
         # assignment and allow a second, cross-owner actor allocation.
@@ -411,6 +421,42 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                 "attested actor owner contradicts immutable event history"
             )
         action = event.payload.get("trigger")
+        transitions = {
+            "activate": ("admitted", "eligible"),
+            "assign": ("eligible", "active"),
+            "complete": ("active", "eligible"),
+            "cancel_assigned": ("active", "eligible"),
+            "make_unavailable": ("eligible", "unavailable"),
+            "resume": ("unavailable", "eligible"),
+            "begin_development": ("eligible", "development"),
+            "finish_development": ("development", "eligible"),
+        }
+        if action in transitions or action == "exit":
+            # Verify the real actor StateChart path, not only isolated
+            # work labels. In particular, no assign after an exited state
+            # and no assign before an admitted actor was activated.
+            if action in {"assign", "complete", "cancel_assigned"}:
+                _require_canonical_work_transition(event, action)
+            if last_lifecycle_at is not None and event.occurred_at < last_lifecycle_at:
+                raise ValueError("attested actor lifecycle causal time regressed")
+            actual_from = event.payload.get("from_state")
+            actual_to = event.payload.get("to_state")
+            expected = transitions.get(action)
+            if action == "exit":
+                eligible_exit = lifecycle in {"eligible", "unavailable", "development"}
+                if not eligible_exit or actual_from != lifecycle or actual_to != "exited":
+                    raise ValueError("attested actor lifecycle exit contradicts immutable StateChart")
+            elif expected is None or (
+                lifecycle != expected[0] or actual_from != expected[0]
+                or actual_to != expected[1]
+            ):
+                raise ValueError("attested actor lifecycle transition contradicts immutable StateChart")
+            if event.name != "entity.state_transition":
+                raise ValueError("attested actor lifecycle event name contradicts StateChart")
+            lifecycle = actual_to
+            last_lifecycle_at = event.occurred_at
+        elif event.name == "entity.state_transition":
+            raise ValueError("attested actor lifecycle transition has unknown trigger")
         if action in {"assign", "complete", "cancel_assigned"}:
             # Temporal position belongs to this actor, not a synthetic
             # organization-global clock. Append order cannot hide a
@@ -430,6 +476,7 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
             _verify_actor_work_command(
                 uow, actor_id=actor_id, owner_id=owner_id,
                 event=event, action="assign",
+                descendant_counts=descendants,
             )
             _require_canonical_work_transition(event, "assign")
             opened = event
@@ -479,6 +526,7 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                 _verify_actor_work_command(
                     uow, actor_id=actor_id, owner_id=owner_id,
                     event=event, action="complete",
+                    descendant_counts=descendants,
                 )
                 _require_canonical_work_transition(event, action)
             opened = None
