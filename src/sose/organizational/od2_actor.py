@@ -352,12 +352,33 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
             if opened is None:
                 raise ValueError("attested work completion/cancellation lacks open assignment")
             expected_id = opened.payload.get("assigned_work_id")
-            if action == "cancel_assigned" and (
-                not isinstance(expected_id, str)
-                or event.payload.get("cancelled_work_id") != expected_id
-                or event.payload.get("source_assignment_event_id") != opened.event_id
-            ):
-                raise ValueError("attested work cancellation does not close original assignment")
+            if action == "cancel_assigned":
+                if (
+                    not isinstance(expected_id, str)
+                    or event.payload.get("cancelled_work_id") != expected_id
+                    or event.payload.get("source_assignment_event_id") != opened.event_id
+                ):
+                    raise ValueError("attested work cancellation does not close original assignment")
+                # A forged fieldless/zero/boolean cost must NEVER close a
+                # previously attested work item. Validate the complete durable
+                # causal and economic chain BEFORE clearing open work. A
+                # writable actor projection cannot stand in for this evidence.
+                charged = event.payload.get("charged_cost_us")
+                if type(charged) is not int or charged <= 0:
+                    raise ValueError("attested work cancellation requires positive paid cost")
+                if not isinstance(event.causation_id, str) or not event.causation_id:
+                    raise ValueError("attested work cancellation lacks causal Command")
+                command = uow.get_command(event.causation_id)
+                if command is None or not isinstance(
+                    command.payload.get("external_cause_id"), str
+                ) or not command.payload["external_cause_id"]:
+                    raise ValueError("attested work cancellation lacks paid causal evidence")
+                _verify_durable_cancellation_replay(
+                    uow, owner_id=owner_id, actor_id=actor_id,
+                    cause_id=command.payload["external_cause_id"],
+                    at=event.occurred_at, work_id=expected_id,
+                    cost_us=charged,
+                )
             # Pre-attestation assign+complete pairs may omit work IDs.
             # Once an assignment attests work, its closing completion MUST
             # attest the same explicit work ID (no default that silently
