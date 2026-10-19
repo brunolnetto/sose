@@ -366,6 +366,41 @@ def _verify_actor_work_command(
         raise ValueError("attested work transition causal Command metadata mismatch")
 
 
+def _verify_actor_lifecycle_command(
+    uow, *, actor_id: str, owner_id: str,
+    event: DomainEvent, action: str, descendant_counts: dict[str, int],
+) -> None:
+    """Require one exact durable Command for each non-work StateChart edge.
+
+    A syntactically valid activation/exit event with no real Command must
+    never grant an actor eligibility. Work edges have their own stricter
+    work/economic verifiers.
+    """
+    if not isinstance(event.causation_id, str) or not event.causation_id:
+        raise ValueError("attested actor lifecycle lacks causal Command")
+    command = uow.get_command(event.causation_id)
+    if command is None:
+        raise ValueError("attested actor lifecycle causal Command missing")
+    cause = command.payload.get("external_cause_id")
+    if not isinstance(cause, str) or not cause.strip():
+        raise ValueError("attested actor lifecycle original cause missing")
+    expected = Command(
+        command_id=deterministic_id("od2-actor-command", owner_id, actor_id, cause),
+        name=action, entity_type=ACTOR_KIND, entity_id=actor_id,
+        due_at=event.occurred_at, issued_at=event.occurred_at,
+        owner_id=owner_id, causation_id=None,
+        correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
+        payload={"external_cause_id": cause},
+    )
+    if (
+        command != expected or event.causation_id != expected.command_id
+        or (event.correlation_id is not None
+            and event.correlation_id != expected.correlation_id)
+        or descendant_counts.get(expected.command_id, 0) != 1
+    ):
+        raise ValueError("attested actor lifecycle causal Command metadata mismatch")
+
+
 def _require_canonical_work_transition(event: DomainEvent, action: str) -> None:
     """Never infer a durable work grant/closure from a forged event trigger.
 
@@ -456,6 +491,11 @@ def _attested_current_assignment(uow, *, actor_id: str, owner_id: str) -> Domain
                 raise ValueError("attested actor lifecycle transition contradicts immutable StateChart")
             if event.name != "entity.state_transition":
                 raise ValueError("attested actor lifecycle event name contradicts StateChart")
+            if action not in {"assign", "complete", "cancel_assigned"}:
+                _verify_actor_lifecycle_command(
+                    uow, actor_id=actor_id, owner_id=owner_id,
+                    event=event, action=action, descendant_counts=descendants,
+                )
             lifecycle = actual_to
             last_lifecycle_at = event.occurred_at
         elif event.name == "entity.state_transition":
@@ -582,21 +622,26 @@ def _verify_durable_cancellation_replay(
         or command.payload["charged_cost_us"] != cost_us
     ):
         raise ValueError("cancellation durable evidence: Command is missing or altered")
-    event_candidates = (
+    candidates = (
         causal_index.get(command_id, ())
         if causal_index is not None else uow.events()
     )
-    matches = [
-        event for event in event_candidates
-        if event.entity_type == ACTOR_KIND
-        and event.entity_id == actor_id
-        and event.owner_id == owner_id
-        and event.causation_id == command_id
-        and event.payload.get("trigger") == "cancel_assigned"
+    # Exactly ONE actor-local DomainEvent may descend from a paid Command.
+    # Checking only matching trigger events would discard conflicting or
+    # trigger-less extra descendants and falsely certify cancellation.
+    descendants = [
+        item for item in candidates
+        if item.entity_type == ACTOR_KIND
+        and item.entity_id == actor_id
+        and item.causation_id == command_id
     ]
-    if len(matches) != 1:
-        raise ValueError("cancellation durable evidence: append-only event missing")
-    event = matches[0]
+    if (
+        len(descendants) != 1
+        or descendants[0].owner_id != owner_id
+        or descendants[0].payload.get("trigger") != "cancel_assigned"
+    ):
+        raise ValueError("cancellation durable evidence: unique append-only event missing")
+    event = descendants[0]
     _require_canonical_work_transition(event, "cancel_assigned")
     if (
         event.occurred_at != at
