@@ -170,3 +170,92 @@ def test_forged_warehouse_ship_with_matching_entity_version_cannot_gain_trust(
             with recovered.transaction(owner_id=OWNER) as uow:
                 with pytest.raises(ValueError, match="receipt missing"):
                     root.verify(uow=uow, event=forged)
+
+
+
+@pytest.mark.parametrize("mutation", ("event_name", "extra_payload", "same_id_duplicate"))
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_signed_receipt_does_not_authorize_mutated_or_replayed_source_event(
+    mutation, adapter, tmp_path,
+):
+    """P1: an HMAC must cover every semantic source field and its UoW identity."""
+    path = tmp_path / "tampered-signed-source.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    root = TransitionAuthority("engine:trusted", "source:v1", SECRET)
+    entity = OrganizationalActor(id="actor:source-mutation", state="admitted",
+                                  created_at=NOW, updated_at=NOW)
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_entity(entity)
+    command = Command(command_id="cmd:activate", name="activate", entity_type=entity.entity_type,
+                      entity_id=entity.id, owner_id=OWNER, due_at=NOW)
+    try:
+        engine(store, authority=root).dispatch(command)
+        original = next(e for e in store.events() if e.name == "entity.state_transition")
+        with store.transaction(owner_id=OWNER) as uow:
+            if mutation == "same_id_duplicate":
+                uow.append_event(original)
+            else:
+                raw = uow._working.events
+                for i, event in enumerate(raw):
+                    if event.event_id == original.event_id:
+                        raw[i] = replace(
+                            event,
+                            name="unrelated.event" if mutation == "event_name" else event.name,
+                            payload={**event.payload, "extra": "attacker"}
+                            if mutation == "extra_payload" else event.payload,
+                        )
+        with store.transaction(owner_id=OWNER) as uow:
+            with pytest.raises(ValueError, match="authenticated StateChart"):
+                root.verify(uow=uow, event=original)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            with restored.transaction(owner_id=OWNER) as uow:
+                with pytest.raises(ValueError, match="authenticated StateChart"):
+                    root.verify(uow=uow, event=original)
+
+
+@pytest.mark.parametrize("mode", ("direct", "scheduled"))
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_untrusted_prequeued_events_can_never_be_signed_by_engine(
+    mode, adapter, tmp_path,
+):
+    """P1: event preloaded before recorder output cannot turn Engine into oracle."""
+    from sose.core.durable import DurableScheduledItem
+
+    path = tmp_path / "signing-oracle-guard.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    root = TransitionAuthority("engine:trusted", "source:v1", SECRET)
+    actor = OrganizationalActor(id="actor:queue-attack", state="admitted",
+                                created_at=NOW, updated_at=NOW)
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_entity(actor)
+    command = Command(command_id="cmd:activate", name="activate",
+                      entity_type=actor.entity_type, entity_id=actor.id,
+                      owner_id=OWNER, due_at=NOW)
+    runtime = engine(store, authority=root)
+    forged = DomainEvent(
+        event_id="forged:before-dispatch", name="entity.state_transition",
+        entity_type=actor.entity_type, entity_id=actor.id,
+        occurred_at=NOW, owner_id=OWNER, tick=0, causation_id=command.command_id,
+        correlation_id=command.command_id,
+        payload={"trigger": "activate", "from_state": "admitted", "to_state": "eligible"},
+    )
+    if mode == "scheduled":
+        work = runtime.scheduler.schedule(command)
+    runtime.context.emit(forged)
+    try:
+        with pytest.raises(ValueError, match="preexisting pending source events"):
+            if mode == "direct":
+                runtime.dispatch(command)
+            else:
+                runtime.dispatch_scheduled(DurableScheduledItem(work, command))
+        assert not store.events()
+        assert store.entity(actor.entity_type, actor.id).state == "admitted"
+        if mode == "scheduled":
+            assert store.command(command.command_id) == command
+    finally:
+        if adapter == "sqlite":
+            store.close()
