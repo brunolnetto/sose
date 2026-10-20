@@ -1055,7 +1055,8 @@ def test_self_reported_ship_event_without_committed_state_is_not_egress_proof(
 
 @pytest.mark.xfail(
     strict=True,
-    reason="#545: public UoW can forge a versioned ship projection and exact DomainEvent; trusted Engine transition receipt not yet implemented",
+    raises=pytest.fail.Exception,
+    reason="#545: expected ONLY DID NOT RAISE from accepted forged event+entity; unrelated errors must fail CI",
 )
 @pytest.mark.parametrize("adapter", ("memory", "sqlite"))
 @pytest.mark.parametrize("entrypoint", ("publish", "consume"))
