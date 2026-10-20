@@ -455,6 +455,13 @@ class BoundaryService:
             raise StaleBoundaryClaimError(
                 f"stale boundary claim: {current.delivery_id}"
             )
+        # A lease clock is independent of the source's logical time, but
+        # its own claim/ACK chronology must still be monotonic. The writer
+        # must never produce an ACK that the read-only observer cannot audit.
+        if current.claimed_at is None or now < current.claimed_at:
+            raise StaleBoundaryClaimError(
+                f"boundary claim clock regressed: {current.delivery_id}"
+            )
         if current.lease_expires_at is None or current.lease_expires_at <= now:
             raise StaleBoundaryClaimError(
                 f"expired boundary claim: {current.delivery_id}"
