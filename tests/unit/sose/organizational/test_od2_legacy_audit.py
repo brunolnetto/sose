@@ -161,3 +161,103 @@ def test_sqlite_restored_legacy_calendar_source_non_json_value_is_quarantined(
         assert result.classification == "conflicting_legacy_marker"
         assert "cannot be hashed" in result.reason
         assert not result.admits_transition
+
+
+
+@pytest.mark.parametrize("malformed_attributes", (None, [], "invalid", True))
+def test_legacy_audit_quarantines_corrupt_actor_attribute_container(
+    malformed_attributes, tmp_path,
+):
+    """A malformed restored actor must not abort the rest of a snapshot audit."""
+    path = tmp_path / "legacy-broken-attributes.sqlite"
+    calendar = ActorAvailabilityCalendar(
+        version=1, config_epoch=3,
+        intervals=(ActorAvailabilityInterval(T0, T0 + timedelta(days=1)),),
+    )
+    with SQLitePersistence(path) as store:
+        bad = seed_actor(
+            store, owner_id=OWNER, actor_key="bad-attributes",
+            model_spec_hash=MODEL, config_epoch=3, at=T0,
+            availability_calendar=calendar,
+        )
+        good = seed_actor(
+            store, owner_id=OWNER, actor_key="intact-calendar",
+            model_spec_hash=MODEL, config_epoch=3, at=T0,
+            availability_calendar=calendar,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, bad)
+            actor.attributes = malformed_attributes
+            uow.save_entity(actor)
+    with SQLitePersistence(path) as restored:
+        result = {
+            item.actor_id: item
+            for item in audit_legacy_actor_origins(
+                restored.entities(), restored.events(),
+            )
+        }
+        assert result[bad].classification == "conflicting_legacy_marker"
+        assert "attributes" in result[bad].reason
+        assert result[good].classification == "legacy_calendar_evidence_only"
+        assert not result[bad].admits_transition
+        assert not result[good].admits_transition
+
+
+@pytest.mark.parametrize("invalid", (
+    "future_version", "wrong_epoch", "empty_intervals", "overlap",
+))
+def test_self_consistent_but_invalid_calendar_is_not_migration_evidence(
+    invalid, tmp_path,
+):
+    """Matching digests never make an invalid calendar an admission proof."""
+    from hashlib import sha256
+    from json import dumps
+
+    path = tmp_path / ("calendar-invalid-" + invalid + ".sqlite")
+    calendar = ActorAvailabilityCalendar(
+        version=1, config_epoch=3,
+        intervals=(ActorAvailabilityInterval(T0, T0 + timedelta(days=1)),),
+    )
+    with SQLitePersistence(path) as store:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="bad-calendar:" + invalid,
+            model_spec_hash=MODEL, config_epoch=3, at=T0,
+            availability_calendar=calendar,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            marker = uow._working.events[0]
+            source = dict(marker.payload["calendar_source"])
+            if invalid == "future_version":
+                source["version"] = 99
+            elif invalid == "wrong_epoch":
+                source["config_epoch"] = 4
+            elif invalid == "empty_intervals":
+                source["intervals"] = []
+            else:
+                source["intervals"] = [
+                    {"start": T0.isoformat(), "end": (T0 + timedelta(days=1)).isoformat()},
+                    {"start": (T0 + timedelta(hours=1)).isoformat(),
+                     "end": (T0 + timedelta(days=2)).isoformat()},
+                ]
+            digest = sha256(dumps(
+                source, sort_keys=True, separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")).hexdigest()
+            uow._working.events[0] = replace(
+                marker, payload={
+                    **marker.payload,
+                    "calendar_source": source,
+                    "calendar_digest": digest,
+                },
+            )
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.attributes["availability_calendar"] = {
+                **source, "source_digest": digest,
+            }
+            uow.save_entity(actor)
+
+    with SQLitePersistence(path) as recovered:
+        finding, = audit_legacy_actor_origins(
+            recovered.entities(), recovered.events(),
+        )
+        assert finding.classification == "conflicting_legacy_marker"
+        assert not finding.admits_transition
