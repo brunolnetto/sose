@@ -307,8 +307,8 @@ class BoundaryService:
 
             handler = registry.resolve(message)
             effect_id = handler(message, uow)
-            if not effect_id:
-                raise ValueError("boundary consumer effect identity cannot be empty")
+            if not isinstance(effect_id, str) or not effect_id.strip():
+                raise ValueError("boundary consumer effect identity must be a nonblank string")
 
             consumption = BoundaryConsumption.create(
                 delivery=current,
