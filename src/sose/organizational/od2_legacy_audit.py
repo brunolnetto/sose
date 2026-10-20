@@ -71,9 +71,15 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
             actor.id, "conflicting_legacy_marker", missing_work,
             "calendar source or persisted actor projection unavailable",
         )
-    expected_digest = sha256(dumps(
-        source, sort_keys=True, separators=(",", ":"), allow_nan=False,
-    ).encode("utf-8")).hexdigest()
+    try:
+        expected_digest = sha256(dumps(
+            source, sort_keys=True, separators=(",", ":"), allow_nan=False,
+        ).encode("utf-8")).hexdigest()
+    except (TypeError, ValueError, OverflowError):
+        return LegacyActorOriginAudit(
+            actor.id, "conflicting_legacy_marker", missing_work,
+            "noncanonical historical calendar source cannot be hashed",
+        )
     matched = (
         marker.event_id == origin_id
         and marker.name == "od2.actor_calendar_admitted"
