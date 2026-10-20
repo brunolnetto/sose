@@ -395,6 +395,22 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                 self._state = before
             raise
 
+    def boundary_protocol_snapshot(self):
+        """Fence-neutral, coherent read across SQLite incremental records.
+
+        Never claim an epoch, begin an immediate transaction, or persist the
+        forked working state. Read metadata revision and all records under the
+        same deferred SQLite snapshot, including after another writer commits.
+        """
+        before, revision = self._state, self._revision
+        self._connection.execute("BEGIN")
+        try:
+            self._refresh_from_db(force=True)
+            return super().boundary_protocol_snapshot()
+        finally:
+            self._connection.rollback()
+            self._state, self._revision = before, revision
+
     @contextmanager
     def transaction(
         self,
