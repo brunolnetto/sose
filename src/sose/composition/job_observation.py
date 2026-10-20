@@ -71,8 +71,9 @@ def observe_organization_jobs(
         component = components[declared[checkpoint.job_id].component_id]
         if checkpoint.domain_name != component.domain:
             raise ValueError("declared organizational job domain contradicts persisted checkpoint")
-        if checkpoint.logical_time.tzinfo is None or checkpoint.logical_time.utcoffset() is None:
-            raise ValueError("observed job logical time must be timezone-aware")
+        # Job writers allow naive as well as timezone-aware local logical
+        # clocks. Observation must preserve the committed value verbatim,
+        # not impose a stronger new timezone contract on old checkpoints.
         observed[checkpoint.job_id] = checkpoint
 
     output = []
