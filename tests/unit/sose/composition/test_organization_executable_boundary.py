@@ -1050,3 +1050,84 @@ def test_self_reported_ship_event_without_committed_state_is_not_egress_proof(
         with SQLitePersistence(path) as restored:
             assert restored.entity(order.entity_type, order.id).state == "requested"
             assert BoundaryService(restored).consumption(pending.delivery_id) is None
+
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="#545: public UoW can forge a versioned ship projection and exact DomainEvent; trusted Engine transition receipt not yet implemented",
+)
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("entrypoint", ("publish", "consume"))
+def test_w4b_forged_projection_and_canonical_event_cannot_authorize_dispatch(
+    adapter, entrypoint, tmp_path,
+):
+    """Exact P1 falsifier: persisted event+projection do not prove StateChart."""
+    path = tmp_path / ("untrusted-ship-" + entrypoint + ".sqlite")
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        executor, _, _, source, shipment, _ = suite(store)
+        order_id = source.bootstrap_state.order_id
+        order = store.entity("warehouse_fulfillment_order", order_id)
+        assert order.state == "requested"
+        assert not any(
+            event.owner_id == WF and event.payload.get("trigger") == "ship"
+            for event in store.events()
+        )
+        forged_version = order.version + 1
+        forged = DomainEvent(
+            event_id=deterministic_id(
+                "event", WF, 5, order.entity_type, order.id,
+                forged_version, "ship", "packed", "shipped",
+            ),
+            name="entity.state_transition",
+            entity_type=order.entity_type, entity_id=order.id,
+            occurred_at=NOW, tick=5, owner_id=WF,
+            correlation_id="flow:forged-ship+entity:" + entrypoint,
+            payload={
+                "trigger": "ship", "from_state": "packed",
+                "to_state": "shipped",
+            },
+        )
+        # This actor has only the public UnitOfWork write API, not Engine
+        # or a valid StateChart ship command.
+        with store.transaction(owner_id=WF) as uow:
+            forged_order = uow.get_entity(order.entity_type, order.id)
+            forged_order.state = "shipped"
+            forged_order.version = forged_version
+            forged_order.updated_at = NOW
+            uow.save_entity(forged_order)
+            uow.append_event(forged)
+        assert store.entity(order.entity_type, order.id).state == "shipped"
+
+        if entrypoint == "publish":
+            with pytest.raises(ValueError, match="authenticated|trusted transition"):
+                publish_shipment(
+                    executor, forged, shipment.bootstrap_state.shipment_id,
+                )
+        else:
+            # Direct transport publication also must not confer authority
+            # to stage a downstream Command or ACK.
+            inbound = BoundaryMessage.create(
+                contract_name=CONTRACT, contract_version=1,
+                source_domain="warehouse_fulfillment",
+                source_identity=forged.entity_id,
+                destination_domain="logistics",
+                occurrence_key="untrusted:" + entrypoint,
+                correlation_id=forged.correlation_id,
+                causation_id=forged.event_id, causation_kind="event",
+                produced_at=forged.occurred_at,
+                payload={"shipment_id": shipment.bootstrap_state.shipment_id},
+            )
+            initial = BoundaryService(store).publish(inbound)
+            with pytest.raises(ValueError, match="authenticated|trusted transition"):
+                executor.consume(
+                    producer_id="fulfillment", consumer_id="logistics",
+                    message_id=inbound.message_id, now=NOW,
+                    lease_duration=timedelta(minutes=10),
+                )
+            assert BoundaryService(store).delivery(initial.delivery_id) == initial
+            assert BoundaryService(store).consumption(initial.delivery_id) is None
+    finally:
+        if adapter == "sqlite":
+            store.close()
