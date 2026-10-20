@@ -59,6 +59,9 @@ class TransitionAuthority:
             or event.payload.get("trigger") != command.name
             or payload.get("from_state") != before.state
             or payload.get("to_state") != after.state
+            or type(event.tick) is not int
+            or type(before.version) is not int
+            or type(after.version) is not int
             or after.version != before.version + 1
             or after.updated_at != event.occurred_at
         ):
@@ -105,7 +108,8 @@ class TransitionAuthority:
         if len(matches) != 1:
             raise ValueError("authenticated StateChart receipt missing or duplicated")
         receipt = matches[0]
-        if (receipt.name != ATTESTATION_EVENT or receipt.causation_id != event.event_id
+        if (type(event.tick) is not int or type(receipt.tick) is not int
+            or receipt.name != ATTESTATION_EVENT or receipt.causation_id != event.event_id
             or receipt.owner_id != event.owner_id
             or receipt.entity_type != event.entity_type or receipt.entity_id != event.entity_id
             or receipt.occurred_at != event.occurred_at
@@ -132,6 +136,7 @@ class TransitionAuthority:
             or data.get("entity_id") != event.entity_id
             or data.get("entity_type") != event.entity_type
             or data.get("occurred_at") != event.occurred_at.isoformat()
+            or type(data.get("tick")) is not int
             or data.get("tick") != event.tick
             or data.get("correlation_id") != event.correlation_id
             or data.get("trigger") != event.payload.get("trigger")
