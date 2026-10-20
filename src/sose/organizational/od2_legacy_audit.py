@@ -126,7 +126,8 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
         and marker.payload.get("model_spec_hash") == attrs.get("model_spec_hash")
         and marker.payload.get("calendar_digest") == expected_digest
         and saved.get("source_digest") == expected_digest
-        and {k: saved.get(k) for k in ("version", "config_epoch", "intervals")} == source
+        and set(saved) == {"version", "config_epoch", "intervals", "source_digest"}
+        and {k: saved[k] for k in ("version", "config_epoch", "intervals")} == source
     )
     return LegacyActorOriginAudit(
         actor.id,
