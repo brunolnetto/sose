@@ -15,6 +15,7 @@ from sose.composition.effects import BusinessEffectService
 from sose.composition.model import BoundaryMessage, BoundaryDelivery, DeliveryStatus
 from sose.composition.organization import OrganizationDefinition, validate_organization_admission
 from sose.jobs.runner import SimulationJob
+from sose.core.identity import deterministic_id
 
 # This W4a executor admits exactly the reference-domain source transitions
 # independently demonstrated by its executable coverage. A manifest declares
@@ -130,6 +131,30 @@ class AdmittedOrganizationExecutor:
         ) != authorized:
             raise ValueError(
                 "executable boundary source transition does not authorize contract"
+            )
+        # A row tagged as a "ship" DomainEvent is not by itself a committed
+        # StateChart transition. For this *final* fulfillment state, the real
+        # recorder touches the entity and derives its immutable event identity
+        # from owner, tick, entity version and the transition tuple, while the
+        # Engine commits both entity and event in the same transaction.
+        # Checking the durable terminal projection AND its versioned event
+        # key rejects an appended self-reported ship for a requested order.
+        entity = uow.get_entity(event.entity_type, event.entity_id)
+        if (
+            entity is None
+            or entity.state != authorized[3]
+            or type(event.tick) is not int
+            or type(entity.version) is not int
+            or entity.version <= 0
+            or entity.updated_at != event.occurred_at
+            or event.event_id != deterministic_id(
+                "event", producer.owner_id, event.tick,
+                entity.entity_type, entity.id, entity.version,
+                authorized[1], authorized[2], authorized[3],
+            )
+        ):
+            raise ValueError(
+                "executable boundary source lacks committed StateChart version evidence"
             )
         return event
 
