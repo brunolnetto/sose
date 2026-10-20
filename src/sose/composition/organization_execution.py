@@ -16,6 +16,18 @@ from sose.composition.model import BoundaryMessage, BoundaryDelivery, DeliverySt
 from sose.composition.organization import OrganizationDefinition, validate_organization_admission
 from sose.jobs.runner import SimulationJob
 
+# This W4a executor admits exactly the reference-domain source transitions
+# independently demonstrated by its executable coverage. A manifest declares
+# an egress contract, but does NOT by itself prove that arbitrary StateChart
+# transitions in that domain can originate that business event.
+# (source domain, contract name, version) ->
+#     (entity type, trigger, from-state, to-state)
+_CERTIFIED_SOURCE_TRANSITIONS = {
+    ("warehouse_fulfillment", "warehouse.dispatch_ready", 1): (
+        "warehouse_fulfillment_order", "ship", "packed", "shipped",
+    ),
+}
+
 
 class AdmittedOrganizationExecutor:
     """Explicitly admitted component jobs and owner-fenced causal ingress.
@@ -108,6 +120,17 @@ class AdmittedOrganizationExecutor:
             )
         ):
             raise ValueError("executable boundary source owner/StateChart/causality mismatch")
+        source_contract = (
+            producer.domain, message.contract_name, message.contract_version,
+        )
+        authorized = _CERTIFIED_SOURCE_TRANSITIONS.get(source_contract)
+        if authorized is None or (
+            event.entity_type, event.payload["trigger"],
+            event.payload["from_state"], event.payload["to_state"],
+        ) != authorized:
+            raise ValueError(
+                "executable boundary source transition does not authorize contract"
+            )
         return event
 
     def _jobs_by_component(self, component_id: str) -> SimulationJob:
