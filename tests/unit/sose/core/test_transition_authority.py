@@ -119,3 +119,54 @@ def test_invalid_transition_is_not_attested_and_signature_key_is_not_data():
     assert SECRET.hex() not in str(store._state)
     with pytest.raises(ValueError, match="256-bit"):
         TransitionAuthority("issuer", "key", b"weak")
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_forged_warehouse_ship_with_matching_entity_version_cannot_gain_trust(
+    adapter, tmp_path,
+):
+    """#545 exact #546 counterexample without depending on closed W4a code."""
+    from sose.domain.entity import Entity
+
+    path = tmp_path / "warehouse-fake-transition.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    root = TransitionAuthority("real-warehouse-engine", "engine-key:v1", SECRET)
+    order = Entity(id="warehouse:order", entity_type="warehouse_fulfillment_order",
+                   state="requested", created_at=NOW, updated_at=NOW)
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_entity(order)
+    version = order.version + 1
+    forged = DomainEvent(
+        event_id=deterministic_id(
+            "event", OWNER, 5, order.entity_type, order.id, version,
+            "ship", "packed", "shipped",
+        ),
+        name="entity.state_transition", owner_id=OWNER,
+        entity_type=order.entity_type, entity_id=order.id,
+        occurred_at=NOW, tick=5,
+        correlation_id="forged:shipment",
+        causation_id="cmd:synthetic-ship",
+        payload={"trigger": "ship", "from_state": "packed", "to_state": "shipped"},
+    )
+    try:
+        with store.transaction(owner_id=OWNER) as uow:
+            mutable = uow.get_entity(order.entity_type, order.id)
+            mutable.state = "shipped"
+            mutable.version = version
+            mutable.updated_at = NOW
+            uow.save_entity(mutable)
+            uow.append_event(forged)
+        assert store.entity(order.entity_type, order.id).state == "shipped"
+        with store.transaction(owner_id=OWNER) as uow:
+            with pytest.raises(ValueError, match="receipt missing"):
+                root.verify(uow=uow, event=forged)
+        assert not any(x.name == ATTESTATION_EVENT for x in store.events())
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as recovered:
+            with recovered.transaction(owner_id=OWNER) as uow:
+                with pytest.raises(ValueError, match="receipt missing"):
+                    root.verify(uow=uow, event=forged)
