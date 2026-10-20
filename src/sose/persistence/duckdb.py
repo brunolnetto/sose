@@ -135,6 +135,22 @@ class DuckDBPersistence(MemoryPersistence):
                 )
         return len(changes)
 
+    def boundary_protocol_snapshot(self):
+        """Read the latest committed DuckDB/DuckLake data in one SQL snapshot.
+
+        DuckLake inherits this method. No UnitOfWork commit, DML or durable
+        writer claim occurs: ROLLBACK closes the read-only logical snapshot.
+        The process-local cache is restored after observing the DB contents.
+        """
+        before = self._state
+        self._connection.execute("BEGIN TRANSACTION")
+        try:
+            self._refresh_from_db()
+            return super().boundary_protocol_snapshot()
+        finally:
+            self._connection.execute("ROLLBACK")
+            self._state = before
+
     @contextmanager
     def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
         if owner_id is not None and not owner_id:
