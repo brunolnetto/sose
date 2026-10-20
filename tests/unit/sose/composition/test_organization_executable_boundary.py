@@ -10,7 +10,7 @@ import pytest
 
 from sose.backends.simpy import SimPyBackend
 from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
-from sose.composition.model import BoundaryDelivery, DeliveryStatus
+from sose.composition.model import BoundaryDelivery, BoundaryMessage, DeliveryStatus
 from sose.composition.organization import (
     BoundaryBinding, OrganizationDefinition, ProcessComponent, ScheduledJob,
 )
@@ -891,3 +891,92 @@ def test_certificate_write_failure_rolls_back_validated_effect_and_command(
     if adapter == "sqlite":
         with SQLitePersistence(path) as restored:
             assert restored.business_effect(ack.consumer_effect_id) == certified
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("unauthorized", ("allocate", "pack"))
+def test_real_source_transition_must_authorize_outbound_dispatch_contract(
+    adapter, unauthorized, tmp_path,
+):
+    """Even genuine allocate/pack transitions do not authorize dispatch_ready."""
+    path = tmp_path / ("wrong-source-" + unauthorized + ".sqlite")
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        executor, wf, _, _, shipment, _ = suite(store)
+        shipped = advance_fulfillment(executor, wf, store)
+        candidates = [
+            e for e in store.events()
+            if e.owner_id == WF
+            and e.entity_type == "warehouse_fulfillment_order"
+            and e.payload.get("trigger") == unauthorized
+        ]
+        assert len(candidates) == 1
+        source = candidates[0]
+        assert source.entity_id == shipped.entity_id
+        events_before = tuple(store.events())
+        service = BoundaryService(store)
+        with pytest.raises(ValueError, match="source transition does not authorize contract"):
+            publish_shipment(
+                executor, source, shipment.bootstrap_state.shipment_id,
+            )
+        assert tuple(store.events()) == events_before
+        with store.transaction() as uow:
+            assert not uow.boundary_messages()
+            assert not uow.boundary_deliveries()
+
+        # The public transport layer can persist a message from an actual
+        # non-authorizing event. Execution, ACK and effect MUST reject it.
+        forged = BoundaryMessage.create(
+            contract_name=CONTRACT, contract_version=1,
+            source_domain="warehouse_fulfillment",
+            source_identity=source.entity_id,
+            destination_domain="logistics",
+            occurrence_key="unauthorized:" + unauthorized,
+            correlation_id=source.correlation_id,
+            causation_id=source.event_id, causation_kind="event",
+            produced_at=source.occurred_at,
+            payload={"shipment_id": shipment.bootstrap_state.shipment_id},
+        )
+        pending = service.publish(forged)
+        with pytest.raises(ValueError, match="source transition does not authorize contract"):
+            executor.consume(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=forged.message_id, now=source.occurred_at,
+                lease_duration=timedelta(minutes=10),
+            )
+        with pytest.raises(ValueError, match="source transition does not authorize contract"):
+            executor.certify(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=forged.message_id, effect_id="effect:forged",
+                completed_at=source.occurred_at + timedelta(hours=3),
+            )
+        assert BoundaryService(store).delivery(pending.delivery_id) == pending
+        assert BoundaryService(store).consumption(pending.delivery_id) is None
+        assert store.business_effect("effect:forged") is None
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            assert BoundaryService(restored).consumption(pending.delivery_id) is None
+            assert BoundaryService(restored).delivery(pending.delivery_id) == pending
+
+
+def test_contract_gate_rejects_forged_ship_with_wrong_source_state():
+    """The source gate validates the exact StateChart transition tuple."""
+    store = MemoryPersistence()
+    executor, wf, _, _, shipment, _ = suite(store)
+    shipped = advance_fulfillment(executor, wf, store)
+    counterfeit = replace(
+        shipped, event_id="event:forged-premature-shipment",
+        payload={**shipped.payload, "from_state": "allocated"},
+    )
+    with store.transaction() as uow:
+        uow.append_event(counterfeit)
+    with pytest.raises(ValueError, match="source transition does not authorize contract"):
+        publish_shipment(
+            executor, counterfeit, shipment.bootstrap_state.shipment_id,
+        )
+    with store.transaction() as uow:
+        assert not uow.boundary_messages()
