@@ -149,7 +149,11 @@ class TransitionAuthority:
         ):
             raise ValueError("authenticated StateChart receipt evidence contradicts event")
         current = uow.get_entity(event.entity_type, event.entity_id)
-        if current is None or current.version < data["to_version"]:
+        if (
+            current is None
+            or type(current.version) is not int
+            or current.version < data["to_version"]
+        ):
             raise ValueError("authenticated StateChart receipt lacks committed entity version")
         if current.version == data["to_version"] and current.state != data["to_state"]:
             raise ValueError("authenticated StateChart receipt contradicts terminal projection")
