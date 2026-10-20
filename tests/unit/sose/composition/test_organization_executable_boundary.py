@@ -782,3 +782,112 @@ def test_preexisting_consumed_receipt_must_have_real_owner_and_causal_time(
         with SQLitePersistence(path) as recovered:
             assert recovered.business_effect(receipt.consumer_effect_id) is None
             assert BoundaryService(recovered).consumption(delivery.delivery_id) == receipt
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_terminal_attestation_and_business_certificate_share_one_uow(
+    adapter, tmp_path, monkeypatch,
+):
+    """#543: prevent commit-window TOCTOU between causal check and certificate."""
+    path = tmp_path / "atomic-organization-certificate.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        executor, wf, lg, _, shipment, _ = suite(store)
+        event = advance_fulfillment(executor, wf, store)
+        message, _ = publish_shipment(
+            executor, event, shipment.bootstrap_state.shipment_id,
+        )
+        ack = executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, now=event.occurred_at,
+            lease_duration=timedelta(minutes=10),
+        )
+        executor.run_job(job_id=LG, trigger_id="run:logistics:1")
+        now = store.job_state(LG).logical_time
+        called = []
+        original = type(store).transaction
+
+        def tracked(self, *args, **kwargs):
+            if self is store:
+                called.append("transaction")
+            return original(self, *args, **kwargs)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(type(store), "transaction", tracked)
+            certified = executor.certify(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=message.message_id,
+                effect_id=ack.consumer_effect_id, completed_at=now,
+            )
+        assert called == ["transaction"], (
+            "temporal attestation and certificate must never use separate UoWs"
+        )
+        assert certified == store.business_effect(ack.consumer_effect_id)
+        assert store.command(ack.consumer_effect_id) is None
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_certificate_write_failure_rolls_back_validated_effect_and_command(
+    adapter, tmp_path, monkeypatch,
+):
+    """An exception after a staged certificate must not commit a half-effect."""
+    from sose.composition.effects import BusinessEffectApplied
+
+    path = tmp_path / "atomic-certificate-rollback.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        executor, wf, lg, _, shipment, _ = suite(store)
+        event = advance_fulfillment(executor, wf, store)
+        message, delivery = publish_shipment(
+            executor, event, shipment.bootstrap_state.shipment_id,
+        )
+        ack = executor.consume(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, now=event.occurred_at,
+            lease_duration=timedelta(minutes=10),
+        )
+        executor.run_job(job_id=LG, trigger_id="run:logistics:1")
+        completion_time = store.job_state(LG).logical_time
+        pending = store.command(ack.consumer_effect_id)
+        assert pending is not None
+
+        def commit_then_fault(uow, *, effect_id, completed_at):
+            entity = uow.get_entity(pending.entity_type, pending.entity_id)
+            uow.save_business_effect(BusinessEffectApplied.from_applied(
+                effect_id=effect_id, boundary_message_id=message.message_id,
+                correlation_id=message.correlation_id,
+                entity_type=entity.entity_type, entity_id=entity.id,
+                terminal_state=entity.state, entity_version=entity.version,
+                completed_at=completed_at,
+            ))
+            uow.delete_command(effect_id)
+            raise RuntimeError("injected certificate write interruption")
+
+        with monkeypatch.context() as patch:
+            patch.setattr(executor._business, "_complete_in_uow", commit_then_fault)
+            with pytest.raises(RuntimeError, match="certificate write interruption"):
+                executor.certify(
+                    producer_id="fulfillment", consumer_id="logistics",
+                    message_id=message.message_id, effect_id=ack.consumer_effect_id,
+                    completed_at=completion_time,
+                )
+        assert store.business_effect(ack.consumer_effect_id) is None
+        assert store.command(ack.consumer_effect_id) == pending
+        assert BoundaryService(store).delivery(delivery.delivery_id).status is DeliveryStatus.CONSUMED
+        certified = executor.certify(
+            producer_id="fulfillment", consumer_id="logistics",
+            message_id=message.message_id, effect_id=ack.consumer_effect_id,
+            completed_at=completion_time,
+        )
+        assert store.business_effect(ack.consumer_effect_id) == certified
+        assert store.command(ack.consumer_effect_id) is None
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            assert restored.business_effect(ack.consumer_effect_id) == certified
