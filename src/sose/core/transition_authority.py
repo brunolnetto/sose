@@ -1,0 +1,131 @@
+"""Opt-in Engine-issued transition proofs with an externally held signing root.
+
+A writable UnitOfWork can append a syntactically perfect StateChart event.
+Only an Engine explicitly configured with a separately provisioned secret may
+attest actual execution. The key must NOT be persisted in a DomainEvent,
+UnitOfWork or the simulation dataset. This does not itself provide DB roles.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from hashlib import sha256
+from hmac import compare_digest, new as hmac_new
+from json import dumps
+
+from sose.core.events import Command, DomainEvent
+from sose.core.identity import deterministic_id
+from sose.domain.entity import Entity
+
+
+ATTESTATION_EVENT = "engine.statechart_transition_attested"
+
+
+def _encoded(data: dict) -> bytes:
+    return dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class TransitionAuthority:
+    """A capability issued OUTSIDE public UoW writer access.
+
+    This local reference implementation requires deployment-level key/role
+    separation. Code running in the same trusted Python process as the Engine
+    is not a cryptographically isolated adversary.
+    """
+
+    issuer_id: str
+    key_id: str
+    secret: bytes
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.secret, bytes) or len(self.secret) < 32:
+            raise ValueError("transition authority requires a protected 256-bit secret")
+        if not all(isinstance(x, str) and x.strip() for x in (self.issuer_id, self.key_id)):
+            raise ValueError("issuer and key IDs must be nonblank")
+
+    def _record_id(self, event_id: str) -> str:
+        return deterministic_id("engine-attested-transition", event_id)
+
+    def seal(self, *, before: Entity, after: Entity, event: DomainEvent,
+             command: Command) -> DomainEvent:
+        """Seal an actual emitted StateChart transition inside Engine's UoW."""
+        payload = event.payload
+        if (
+            event.name != "entity.state_transition"
+            or event.owner_id != command.owner_id
+            or event.causation_id != command.command_id
+            or event.entity_id != after.id or before.id != after.id
+            or event.entity_type != after.entity_type or before.entity_type != after.entity_type
+            or event.payload.get("trigger") != command.name
+            or payload.get("from_state") != before.state
+            or payload.get("to_state") != after.state
+            or after.version != before.version + 1
+            or after.updated_at != event.occurred_at
+        ):
+            raise ValueError("Engine attestation requires one genuine committed transition")
+        claims = {
+            "issuer_id": self.issuer_id, "key_id": self.key_id,
+            "event_id": event.event_id, "owner_id": event.owner_id,
+            "command_id": command.command_id,
+            "entity_type": after.entity_type, "entity_id": after.id,
+            "from_state": before.state, "to_state": after.state,
+            "from_version": before.version, "to_version": after.version,
+            "trigger": command.name, "occurred_at": event.occurred_at.isoformat(),
+            "tick": event.tick, "correlation_id": event.correlation_id,
+        }
+        signature = hmac_new(self.secret, _encoded(claims), sha256).hexdigest()
+        return DomainEvent(
+            event_id=self._record_id(event.event_id),
+            name=ATTESTATION_EVENT, entity_type=event.entity_type,
+            entity_id=event.entity_id, occurred_at=event.occurred_at,
+            tick=event.tick, owner_id=event.owner_id,
+            causation_id=event.event_id, correlation_id=event.correlation_id,
+            payload={**claims, "signature": signature},
+        )
+
+    def verify(self, *, uow, event: DomainEvent) -> DomainEvent:
+        """Verify bound issuer, source event and MAC; fail closed on replay."""
+        receipt_id = self._record_id(event.event_id)
+        matches = [x for x in uow.events() if x.event_id == receipt_id]
+        if len(matches) != 1:
+            raise ValueError("authenticated StateChart receipt missing or duplicated")
+        receipt = matches[0]
+        if (receipt.name != ATTESTATION_EVENT or receipt.causation_id != event.event_id
+            or receipt.owner_id != event.owner_id
+            or receipt.entity_type != event.entity_type or receipt.entity_id != event.entity_id
+            or receipt.occurred_at != event.occurred_at
+            or receipt.tick != event.tick
+            or receipt.correlation_id != event.correlation_id):
+            raise ValueError("authenticated StateChart receipt envelope mismatch")
+        data = dict(receipt.payload)
+        mac = data.pop("signature", None)
+        if not isinstance(mac, str) or len(mac) != 64:
+            raise ValueError("authenticated StateChart receipt signature missing")
+        if data.get("issuer_id") != self.issuer_id or data.get("key_id") != self.key_id:
+            raise ValueError("authenticated StateChart receipt issuer mismatch")
+        expected = hmac_new(self.secret, _encoded(data), sha256).hexdigest()
+        if not compare_digest(mac, expected):
+            raise ValueError("authenticated StateChart receipt signature invalid")
+        if (
+            data.get("event_id") != event.event_id
+            or data.get("owner_id") != event.owner_id
+            or data.get("entity_id") != event.entity_id
+            or data.get("entity_type") != event.entity_type
+            or data.get("occurred_at") != event.occurred_at.isoformat()
+            or data.get("tick") != event.tick
+            or data.get("correlation_id") != event.correlation_id
+            or data.get("trigger") != event.payload.get("trigger")
+            or data.get("from_state") != event.payload.get("from_state")
+            or data.get("to_state") != event.payload.get("to_state")
+            or data.get("command_id") != event.causation_id
+            or type(data.get("from_version")) is not int
+            or type(data.get("to_version")) is not int
+            or data["to_version"] != data["from_version"] + 1
+        ):
+            raise ValueError("authenticated StateChart receipt evidence contradicts event")
+        current = uow.get_entity(event.entity_type, event.entity_id)
+        if current is None or current.version < data["to_version"]:
+            raise ValueError("authenticated StateChart receipt lacks committed entity version")
+        if current.version == data["to_version"] and current.state != data["to_state"]:
+            raise ValueError("authenticated StateChart receipt contradicts terminal projection")
+        return receipt
