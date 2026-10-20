@@ -5,6 +5,7 @@ NOT a capability to grant work, replacement or paid cancellation.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
 from json import dumps
@@ -37,6 +38,11 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
     owned_events = tuple(event for event in events if (
         event.entity_id == actor.id and event.entity_type == ACTOR_KIND
     ))
+    if any(not isinstance(event.payload, Mapping) for event in owned_events):
+        return LegacyActorOriginAudit(
+            actor.id, "conflicting_legacy_marker", 0,
+            "non-mapping durable actor event payload cannot be migration evidence",
+        )
     missing_work = sum(
         event.name == "entity.state_transition"
         and event.payload.get("trigger") == "assign"
