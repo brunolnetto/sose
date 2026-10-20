@@ -365,3 +365,70 @@ def test_read_model_accepts_independent_wall_lease_and_future_logical_source(
     if adapter == "sqlite":
         with SQLitePersistence(path) as recovered:
             assert observe(spec, recovered, manifests, consumers, source.message_id) == after
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_selected_observer_rejects_unknown_delivery_status(adapter, tmp_path):
+    """An impossible status never becomes valid read-only protocol evidence."""
+    path = tmp_path / "invalid-selected-delivery-status.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    spec, manifests, consumers = configuration()
+    source = message()
+    try:
+        delivery = BoundaryService(store).publish(source)
+        with store.transaction() as uow:
+            uow.save_boundary_delivery(replace(delivery, status="forged"))
+        before = tuple(store.events())
+        with pytest.raises(ValueError, match="selected delivery has invalid status"):
+            observe(spec, store, manifests, consumers, source.message_id)
+        assert tuple(store.events()) == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            with pytest.raises(ValueError, match="selected delivery has invalid status"):
+                observe(spec, reopened, manifests, consumers, source.message_id)
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_boundary_writer_rejects_ack_before_same_lease_claim_clock(adapter, tmp_path):
+    """The service itself must never write an ACK contradicted by its lease."""
+    from sose.composition.boundary import StaleBoundaryClaimError
+
+    path = tmp_path / "backwards-lease-clock.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    spec, manifests, consumers = configuration()
+    source = message()
+    try:
+        service = BoundaryService(store)
+        delivery = service.publish(source)
+        claim_time = NOW - timedelta(minutes=5)
+        lease = service.claim_next(
+            owner_id="worker:wm", message_id=source.message_id,
+            now=claim_time, lease_duration=timedelta(minutes=10),
+        )
+        assert lease is not None
+        claimed = service.delivery(delivery.delivery_id)
+        assert claimed.status is DeliveryStatus.CLAIMED
+        before = tuple(store.events())
+        with pytest.raises(StaleBoundaryClaimError, match="claim clock regressed"):
+            service.consume(
+                lease=lease, registry=consumers,
+                now=claim_time - timedelta(seconds=1),
+            )
+        assert service.delivery(delivery.delivery_id) == claimed
+        assert service.consumption(delivery.delivery_id) is None
+        assert tuple(store.events()) == before
+        receipt = service.consume(
+            lease=lease, registry=consumers, now=claim_time,
+        )
+        observed = observe(spec, store, manifests, consumers, source.message_id)
+        assert observed.records[0].consumption_id == receipt.consumption_id
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            assert observe(spec, reopened, manifests, consumers, source.message_id) == observed
