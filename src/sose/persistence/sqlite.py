@@ -127,6 +127,22 @@ class SQLitePersistence(MemoryPersistence):
             ),
         )
 
+    def boundary_protocol_snapshot(self):
+        """Coherent BEGIN-deferred read; no BEGIN IMMEDIATE or state rewrite.
+
+        SQLite's deferred read transaction holds one WAL snapshot across all
+        protocol families. Restoring the local cache prevents this inspection
+        from changing the writer's in-process view.
+        """
+        before = self._state
+        self._connection.execute("BEGIN")
+        try:
+            self._refresh_from_db()
+            return super().boundary_protocol_snapshot()
+        finally:
+            self._connection.rollback()
+            self._state = before
+
     @contextmanager
     def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
         if owner_id is not None and not owner_id:
