@@ -171,6 +171,8 @@ def inspect_selected_boundary_protocol(
         ):
             raise ValueError("selected delivery contradicts immutable publication")
         receipt = by_receipt.get(delivery.delivery_id)
+        if not isinstance(delivery.status, DeliveryStatus):
+            raise ValueError("selected delivery has invalid status")
         if delivery.status is DeliveryStatus.PENDING and (
             type(delivery.attempts) is not int
             or type(delivery.claim_epoch) is not int
