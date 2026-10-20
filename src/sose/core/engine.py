@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable
+from copy import deepcopy
 
 from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry
@@ -19,6 +20,7 @@ from .durable import (
     RuntimeRebuilder,
 )
 from .events import Command
+from .transition_authority import TransitionAuthority
 from .resources import DurableResourceManager
 from .stores import DurableStoreManager
 from .preemption import DurablePreemptiveResourceManager
@@ -41,10 +43,14 @@ class Engine:
         store_filters=None,
         domain_warehouse: DomainWarehouse | None = None,
         owner_id: str,
+        transition_authority: TransitionAuthority | None = None,
     ) -> None:
         if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")
+        if transition_authority is not None and domain_warehouse is not None:
+            raise ValueError("transition proof requires entity and event in one store")
         self.owner_id = owner_id
+        self.transition_authority = transition_authority
         context.commands.bind_owner(owner_id)
         context.events.bind_owner(owner_id)
         self.context = context
@@ -99,12 +105,18 @@ class Engine:
                 if self.context.statecharts is None:  # pragma: no cover - constructor invariant
                     raise RuntimeError("statechart factory is not configured")
 
+                before_transition = deepcopy(entity)
                 chart = self.context.statecharts.bind(entity, caused_by=command)
                 chart.send(command.name, **dict(command.payload))
                 self._save_entity(uow, entity)
                 emitted = self.context.drain_events()
                 for event in emitted:
                     uow.append_event(event)
+                    if self.transition_authority is not None and event.name == "entity.state_transition":
+                        uow.append_event(self.transition_authority.seal(
+                            before=before_transition, after=entity,
+                            event=event, command=command,
+                        ))
                     self.context.scenarios.on_event(event)
                 uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
         except Exception:
@@ -141,12 +153,18 @@ class Engine:
         if self.context.statecharts is None:  # pragma: no cover - constructor invariant
             raise RuntimeError("statechart factory is not configured")
 
+        before_transition = deepcopy(entity)
         chart = self.context.statecharts.bind(entity, caused_by=command)
         chart.send(command.name, **dict(command.payload))
         self._save_entity(uow, entity)
         emitted = self.context.drain_events()
         for event in emitted:
             uow.append_event(event)
+            if self.transition_authority is not None and event.name == "entity.state_transition":
+                uow.append_event(self.transition_authority.seal(
+                    before=before_transition, after=entity,
+                    event=event, command=command,
+                ))
             self.context.scenarios.on_event(event)
         uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
 
