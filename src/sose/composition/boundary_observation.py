@@ -92,6 +92,8 @@ def inspect_selected_boundary_protocol(
     by_message = {}
     for message in messages:
         if message.message_id in selected:
+            if type(message.contract_version) is not int or message.contract_version < 1:
+                raise ValueError("selected boundary publication requires integer contract version")
             identity = deterministic_id(
                 "boundary-message", message.source_domain, message.source_identity,
                 message.contract_name, message.contract_version,
@@ -120,6 +122,8 @@ def inspect_selected_boundary_protocol(
         ))
     for delivery in deliveries:
         if delivery.message_id in selected or delivery.delivery_id in selected_delivery_ids:
+            if type(delivery.contract_version) is not int or delivery.contract_version < 1:
+                raise ValueError("selected boundary delivery requires integer contract version")
             # A second delivery with the same message_id but a forged ID
             # must not disappear merely because the correct delivery exists.
             if delivery.message_id not in by_message:
@@ -138,6 +142,8 @@ def inspect_selected_boundary_protocol(
             or receipt.delivery_id in selected_delivery_ids
             or receipt.consumption_id in selected_consumption_ids
         ):
+            if type(receipt.contract_version) is not int or receipt.contract_version < 1:
+                raise ValueError("selected boundary ACK requires integer contract version")
             if receipt.delivery_id not in selected_delivery_ids:
                 raise ValueError("selected ACK identity references foreign delivery")
             delivery = by_delivery.get(receipt.delivery_id)
