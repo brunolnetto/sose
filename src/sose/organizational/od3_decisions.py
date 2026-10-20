@@ -44,10 +44,16 @@ class OD3Policy:
     cooldown_us: int
     decision_cost_us: int
     starvation_bound_us: int
+    matched_policy: str | None = None
 
     def __post_init__(self) -> None:
         if self.name not in ("adaptive_follow_up", "cherry_picking", "sham"):
             raise ValueError("unsupported operational OD-3 policy")
+        if self.name == "sham":
+            if self.matched_policy not in ("adaptive_follow_up", "cherry_picking"):
+                raise ValueError("sham must declare its matched real policy")
+        elif self.matched_policy is not None:
+            raise ValueError("matched_policy is valid only on sham decisions")
         for key in ("delay_threshold_us", "cooldown_us", "decision_cost_us", "starvation_bound_us"):
             value = getattr(self, key)
             if type(value) is not int or value < 0:
@@ -61,6 +67,8 @@ class OD3Decision:
     owner_id: str
     policy: str
     observed_at: datetime
+    observation_id: str
+    matched_policy: str
     decision_id: str
     action: str
     selected_item_id: str | None
@@ -109,14 +117,24 @@ def decide_od3(
     ):
         reason = "decision cooldown"
     else:
+        effective_policy = policy.matched_policy if policy.name == "sham" else policy.name
         eligible = tuple(item for item in queue if not item.blocked)
         waiting = tuple(item for item in eligible if (
             now - _utc(item.arrived_at) >= timedelta(microseconds=policy.delay_threshold_us)
         ))
+        if effective_policy == "adaptive_follow_up":
+            # Filter cooling items first: the next oldest eligible item can
+            # still be contacted while a previously contacted item cools.
+            waiting = tuple(item for item in waiting if (
+                item.last_contact_at is None
+                or now - _utc(item.last_contact_at) >= timedelta(
+                    microseconds=policy.cooldown_us,
+                )
+            ))
         if waiting:
             oldest = min(waiting, key=lambda item: (_utc(item.arrived_at), item.item_id))
             target = oldest
-            if policy.name == "cherry_picking":
+            if effective_policy == "cherry_picking":
                 if now - _utc(oldest.arrived_at) < timedelta(
                     microseconds=policy.starvation_bound_us,
                 ):
@@ -126,17 +144,8 @@ def decide_od3(
                     reason = "shortest eligible service"
                 else:
                     reason = "starvation guard: oldest eligible work"
-            elif policy.name == "adaptive_follow_up":
-                if target.last_contact_at is not None and (
-                    now - _utc(target.last_contact_at) <
-                    timedelta(microseconds=policy.cooldown_us)
-                ):
-                    target = None
-                    reason = "item contact cooldown"
-                else:
-                    reason = "oldest overdue work contacted"
             else:
-                reason = "matched-cost sham without causal intervention"
+                reason = "oldest contactable overdue work"
             if target is not None:
                 selected = target.item_id
                 cost = policy.decision_cost_us
@@ -148,7 +157,8 @@ def decide_od3(
                     action = "PRIORITIZE"
                     after = (selected, *(key for key in before if key != selected))
     return OD3Decision(
-        owner_id, policy.name, now, decision_id,
+        owner_id, policy.name, now, observation_id,
+        policy.matched_policy or policy.name, decision_id,
         action, selected, before, tuple(after), cost, reason,
     )
 
@@ -159,12 +169,20 @@ def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
     The queue mutation must separately be applied by an owner-authorized
     scheduler; this diagnostic ledger is not a reservation or service permit.
     """
+    if decision.decision_id != deterministic_id(
+        "od3-decision", decision.owner_id, decision.observation_id, decision.policy,
+    ):
+        raise ValueError("OD-3 durable decision identity contradicts observation")
     event = DomainEvent(
         event_id=decision.decision_id, name="od3.policy_decided",
         entity_type="organizational_policy", entity_id=decision.owner_id,
         occurred_at=decision.observed_at, owner_id=decision.owner_id,
-        correlation_id=decision.decision_id,
+        correlation_id=deterministic_id(
+            "od3-observation", decision.owner_id, decision.observation_id,
+        ),
         payload={
+            "observation_id": decision.observation_id,
+            "matched_policy": decision.matched_policy,
             "policy": decision.policy, "action": decision.action,
             "selected_item_id": decision.selected_item_id,
             "before": list(decision.before), "after": list(decision.after),
