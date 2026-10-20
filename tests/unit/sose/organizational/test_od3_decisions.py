@@ -58,11 +58,11 @@ def test_cherry_picking_prefers_short_jobs_before_starvation_bound_then_oldest()
 def test_charged_sham_is_observational_and_cannot_reorder_work():
     queue = (item("old", 12, 80), item("fast", 7, 1))
     active = decide(queue, policy("cherry_picking"))
-    sham = decide(queue, policy("sham"))
+    sham = decide(queue, policy("sham", matched_policy="cherry_picking"))
     assert sham.action == "SHAM"
     assert sham.before == sham.after
     assert sham.cost_us == active.cost_us == 3
-    assert sham.selected_item_id == "old"
+    assert sham.selected_item_id == active.selected_item_id
 
 
 @pytest.mark.parametrize("bad", ("foreign", "future", "duplicate", "invalid_cost", "unsupported"))
@@ -106,3 +106,68 @@ def test_decision_ledger_replay_is_atomic_and_restartable(adapter, tmp_path):
         with SQLitePersistence(path) as restored:
             assert restored.events() == (event,)
             assert persist_od3_decision(restored, d) == event
+
+
+
+def test_follow_up_skips_oldest_item_in_cooldown_but_contacts_next_eligible():
+    oldest = replace(item("oldest", 20, 8),
+                     last_contact_at=NOW - timedelta(microseconds=2))
+    later = item("later", 10, 8)
+    outcome = decide((oldest, later), policy("adaptive_follow_up"))
+    assert outcome.action == "CONTACT"
+    assert outcome.selected_item_id == "later"
+    assert outcome.cost_us == 3
+
+
+def test_follow_up_sham_matches_null_and_positive_cost_under_item_cooldown():
+    cooling = (replace(item("oldest", 20, 8),
+                       last_contact_at=NOW - timedelta(microseconds=2)),)
+    active_policy = policy("adaptive_follow_up")
+    sham_policy = policy("sham", matched_policy="adaptive_follow_up")
+    active = decide(cooling, active_policy)
+    sham = decide(cooling, sham_policy)
+    assert (active.action, sham.action) == ("NOOP", "NOOP")
+    assert active.cost_us == sham.cost_us == 0
+    eligible = (item("overdue", 20, 8),)
+    active = decide(eligible, active_policy)
+    sham = decide(eligible, sham_policy)
+    assert active.action == "CONTACT" and sham.action == "SHAM"
+    assert active.selected_item_id == sham.selected_item_id
+    assert active.cost_us == sham.cost_us == 3
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_matched_policy_decisions_share_durable_observation_identity(
+    adapter, tmp_path,
+):
+    path = tmp_path / "od3-matched-sham.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    active = decide((item("slow", 10, 8), item("fast", 7, 1)),
+                    policy("cherry_picking"), observation="pair:001")
+    sham = decide((item("slow", 10, 8), item("fast", 7, 1)),
+                  policy("sham", matched_policy="cherry_picking"), observation="pair:001")
+    assert active.observation_id == sham.observation_id == "pair:001"
+    assert active.decision_id != sham.decision_id
+    try:
+        ev_active, ev_sham = persist_od3_decision(store, active), persist_od3_decision(store, sham)
+        assert ev_active.correlation_id == ev_sham.correlation_id
+        assert ev_active.payload["observation_id"] == ev_sham.payload["observation_id"]
+        assert ev_active.payload["matched_policy"] == ev_sham.payload["matched_policy"]
+        assert ev_active.payload["policy"] != ev_sham.payload["policy"]
+        with pytest.raises(ValueError, match="durable decision identity"):
+            persist_od3_decision(store, replace(active, observation_id="pair:fraud"))
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as recovered:
+            assert recovered.events() == (ev_active, ev_sham)
+            assert persist_od3_decision(recovered, active) == ev_active
+            assert persist_od3_decision(recovered, sham) == ev_sham
+
+
+def test_undeclared_sham_target_is_rejected():
+    with pytest.raises(ValueError, match="matched real policy"):
+        policy("sham")
+    with pytest.raises(ValueError, match="matched real policy"):
+        policy("sham", matched_policy="unsupported")
