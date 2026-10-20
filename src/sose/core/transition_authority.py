@@ -97,6 +97,9 @@ class TransitionAuthority:
 
     def verify(self, *, uow, event: DomainEvent) -> DomainEvent:
         """Verify bound issuer, source event and MAC; fail closed on replay."""
+        source_matches = [x for x in uow.events() if x.event_id == event.event_id]
+        if len(source_matches) != 1 or source_matches[0] != event:
+            raise ValueError("authenticated StateChart source event missing, duplicated or modified")
         receipt_id = self._record_id(event.event_id)
         matches = [x for x in uow.events() if x.event_id == receipt_id]
         if len(matches) != 1:
