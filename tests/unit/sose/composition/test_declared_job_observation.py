@@ -133,3 +133,28 @@ def test_declared_jobs_with_no_checkpoints_never_imply_runtime_execution():
     assert all(not item.checkpoint_present for item in observed.jobs)
     assert all(item.run_count is None for item in observed.jobs)
     assert store.count == 1
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_read_only_job_observation_preserves_naive_writer_checkpoint(adapter, tmp_path):
+    """A legal naive domain start clock must survive W3b inspection and restart."""
+    path = tmp_path / "naive-job-observation.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    naive_time = datetime(2026, 10, 19, 12)
+    persisted = replace(checkpoint(), logical_time=naive_time)
+    try:
+        with store.transaction() as uow:
+            uow.save_job_state(persisted)
+        before = tuple(store.job_states())
+        evidence = observe(specification(), store)
+        assert evidence.jobs[0].logical_time == naive_time
+        assert evidence.jobs[0].logical_time.tzinfo is None
+        assert evidence.jobs[0].checkpoint_present
+        assert tuple(store.job_states()) == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            assert observe(specification(), reopened) == evidence
