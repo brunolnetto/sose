@@ -171,3 +171,38 @@ def test_undeclared_sham_target_is_rejected():
         policy("sham")
     with pytest.raises(ValueError, match="matched real policy"):
         policy("sham", matched_policy="unsupported")
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_sham_controls_for_distinct_matched_policies_have_independent_identities(
+    adapter, tmp_path,
+):
+    path = tmp_path / "two-sham-semantics.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    queue = (item("slow", 20, 60), item("fast", 10, 1))
+    follow = decide(
+        queue, policy("sham", matched_policy="adaptive_follow_up"),
+        observation="pair:both-policies",
+    )
+    picking = decide(
+        queue, policy("sham", matched_policy="cherry_picking"),
+        observation="pair:both-policies",
+    )
+    assert follow.decision_id != picking.decision_id
+    assert follow.selected_item_id == "slow"
+    assert picking.selected_item_id == "fast"
+    try:
+        one = persist_od3_decision(store, follow)
+        two = persist_od3_decision(store, picking)
+        assert one.event_id != two.event_id
+        assert one.correlation_id == two.correlation_id
+        assert one.payload["matched_policy"] != two.payload["matched_policy"]
+        assert persist_od3_decision(store, follow) == one
+        assert persist_od3_decision(store, picking) == two
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            assert restored.events() == (one, two)
