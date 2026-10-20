@@ -7,11 +7,14 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from datetime import datetime
 from hashlib import sha256
 from json import dumps
 
 from sose.core.identity import deterministic_id
-from sose.organizational.od2_actor import ACTOR_KIND
+from sose.organizational.od2_actor import (
+    ACTOR_KIND, ActorAvailabilityCalendar, ActorAvailabilityInterval,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -64,7 +67,13 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
             "ambiguous original admission events",
         )
     marker = markers[0]
-    saved = actor.attributes.get("availability_calendar")
+    attrs = actor.attributes
+    if not isinstance(attrs, Mapping):
+        return LegacyActorOriginAudit(
+            actor.id, "conflicting_legacy_marker", missing_work,
+            "actor attributes are not a mapping and cannot establish provenance",
+        )
+    saved = attrs.get("availability_calendar")
     source = marker.payload.get("calendar_source")
     if not isinstance(saved, dict) or not isinstance(source, dict):
         return LegacyActorOriginAudit(
@@ -75,7 +84,34 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
         expected_digest = sha256(dumps(
             source, sort_keys=True, separators=(",", ":"), allow_nan=False,
         ).encode("utf-8")).hexdigest()
-    except (TypeError, ValueError, OverflowError):
+        # Structural/semantic validation is independent of the digest. A
+        # self-consistent but invalid or future-schema calendar is NOT origin
+        # evidence and must never upgrade a legacy actor.
+        if set(source) != {"version", "config_epoch", "intervals"}:
+            raise ValueError("legacy calendar shape mismatch")
+        raw_intervals = source["intervals"]
+        if not isinstance(raw_intervals, list):
+            raise ValueError("legacy calendar intervals must be a list")
+        intervals = []
+        for raw in raw_intervals:
+            if not isinstance(raw, dict) or set(raw) != {"start", "end"}:
+                raise ValueError("legacy calendar interval shape mismatch")
+            intervals.append(ActorAvailabilityInterval(
+                datetime.fromisoformat(raw["start"]),
+                datetime.fromisoformat(raw["end"]),
+            ))
+        calendar = ActorAvailabilityCalendar(
+            version=source["version"], config_epoch=source["config_epoch"],
+            intervals=tuple(intervals),
+        )
+        if (
+            calendar.snapshot() != source
+            or type(attrs.get("config_epoch")) is not int
+            or calendar.config_epoch != attrs["config_epoch"]
+            or calendar.digest() != expected_digest
+        ):
+            raise ValueError("legacy calendar schema or epoch mismatch")
+    except (TypeError, ValueError, OverflowError, KeyError, AttributeError):
         return LegacyActorOriginAudit(
             actor.id, "conflicting_legacy_marker", missing_work,
             "noncanonical historical calendar source cannot be hashed",
@@ -85,9 +121,9 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
         and marker.name == "od2.actor_calendar_admitted"
         and marker.entity_type == ACTOR_KIND
         and marker.entity_id == actor.id
-        and marker.owner_id == actor.attributes.get("owner_id")
-        and marker.payload.get("config_epoch") == actor.attributes.get("config_epoch")
-        and marker.payload.get("model_spec_hash") == actor.attributes.get("model_spec_hash")
+        and marker.owner_id == attrs.get("owner_id")
+        and marker.payload.get("config_epoch") == attrs.get("config_epoch")
+        and marker.payload.get("model_spec_hash") == attrs.get("model_spec_hash")
         and marker.payload.get("calendar_digest") == expected_digest
         and saved.get("source_digest") == expected_digest
         and {k: saved.get(k) for k in ("version", "config_epoch", "intervals")} == source
