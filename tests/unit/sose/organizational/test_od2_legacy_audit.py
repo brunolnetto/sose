@@ -261,3 +261,32 @@ def test_self_consistent_but_invalid_calendar_is_not_migration_evidence(
         )
         assert finding.classification == "conflicting_legacy_marker"
         assert not finding.admits_transition
+
+
+@pytest.mark.parametrize("unexpected_value", ("unexpected", None, {"nested": True}))
+def test_sqlite_restored_calendar_projection_rejects_unexpected_fields(
+    unexpected_value, tmp_path,
+):
+    """A matching source digest cannot authorize an extended projection schema."""
+    path = tmp_path / "legacy-extra-calendar-projection.sqlite"
+    calendar = ActorAvailabilityCalendar(
+        version=1, config_epoch=3,
+        intervals=(ActorAvailabilityInterval(T0, T0 + timedelta(days=1)),),
+    )
+    with SQLitePersistence(path) as store:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="extra-calendar-projection",
+            model_spec_hash=MODEL, config_epoch=3, at=T0,
+            availability_calendar=calendar,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.attributes["availability_calendar"]["unexpected"] = unexpected_value
+            uow.save_entity(actor)
+    with SQLitePersistence(path) as restored:
+        before_entities, before_events = restored.entities(), restored.events()
+        finding, = audit_legacy_actor_origins(before_entities, before_events)
+        assert finding.classification == "conflicting_legacy_marker"
+        assert not finding.admits_transition
+        assert restored.entities() == before_entities
+        assert restored.events() == before_events
