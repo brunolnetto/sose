@@ -620,6 +620,30 @@ class PostgresPersistence(MemoryPersistence):
                     uow.save_job_state(initial_job)
             return lease
 
+    def boundary_protocol_snapshot(self):
+        """Read all causal boundary records in ONE fence-neutral SQL snapshot.
+
+        PostgreSQL's global/scoped writer epoch protects mutations, not
+        observational queries. REPEATABLE READ keeps revision and rows from
+        one committed snapshot even when another worker is publishing.
+        Unlike transaction(), this never persists a UnitOfWork or acquires a
+        writer lease. No process-local cache is used as evidence.
+        """
+        with self._connection.transaction():
+            self._connection.execute(
+                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
+            )
+            self._refresh_from_db(force=True)
+            uow = MemoryUnitOfWork(fork_state(self._state), self)
+            try:
+                return (
+                    uow.boundary_messages(),
+                    uow.boundary_deliveries(),
+                    uow.boundary_consumptions(),
+                )
+            finally:
+                uow.rollback()
+
     @contextmanager
     def boundary_transaction(
         self, *, owner_epoch: int | None = None,
