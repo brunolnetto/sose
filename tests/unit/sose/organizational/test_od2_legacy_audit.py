@@ -130,3 +130,34 @@ def test_malformed_persisted_actor_event_payload_is_reported_not_executed(
         assert result.classification == "conflicting_legacy_marker"
         assert "non-mapping" in result.reason
         assert not result.admits_transition
+
+
+
+@pytest.mark.parametrize("bad_source", (T0, b"codec-supported", {1: "mixed", "x": 2}))
+def test_sqlite_restored_legacy_calendar_source_non_json_value_is_quarantined(
+    bad_source, tmp_path,
+):
+    """The tagged SOSE codec accepts values the calendar JSON digest cannot."""
+    path = tmp_path / "non-json-calendar-source.sqlite"
+    calendar = ActorAvailabilityCalendar(
+        version=1, config_epoch=3,
+        intervals=(ActorAvailabilityInterval(T0, T0 + timedelta(days=1)),),
+    )
+    with SQLitePersistence(path) as store:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="invalid-json-source",
+            model_spec_hash=MODEL, config_epoch=3, at=T0,
+            availability_calendar=calendar,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            event = uow._working.events[0]
+            payload = dict(event.payload)
+            payload["calendar_source"] = {
+                **payload["calendar_source"], "corruption": bad_source,
+            }
+            uow._working.events[0] = replace(event, payload=payload)
+    with SQLitePersistence(path) as recovered:
+        result, = audit_legacy_actor_origins(recovered.entities(), recovered.events())
+        assert result.classification == "conflicting_legacy_marker"
+        assert "cannot be hashed" in result.reason
+        assert not result.admits_transition
