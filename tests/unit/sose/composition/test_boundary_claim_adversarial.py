@@ -176,7 +176,7 @@ def test_consume_empty_handler_effect_is_not_acknowledged():
     service = BoundaryService(MemoryPersistence())
     service.publish(msg())
     lease = service.claim_next(owner_id="worker", now=NOW, lease_duration=TTL)
-    with pytest.raises(ValueError, match="effect identity cannot be empty"):
+    with pytest.raises(ValueError, match="effect identity must be a nonblank string"):
         service.consume(lease=lease, registry=registry(""), now=NOW)
     assert service.consumption(lease.delivery_id) is None
 
