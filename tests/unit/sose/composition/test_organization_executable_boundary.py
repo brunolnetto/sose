@@ -980,3 +980,73 @@ def test_contract_gate_rejects_forged_ship_with_wrong_source_state():
         )
     with store.transaction() as uow:
         assert not uow.boundary_messages()
+
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_self_reported_ship_event_without_committed_state_is_not_egress_proof(
+    adapter, tmp_path,
+):
+    """A self-authored exact event tuple cannot ship an unmodified order."""
+    path = tmp_path / "self-reported-fake-shipment.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        executor, _, _, source, shipment, _ = suite(store)
+        order = store.entity("warehouse_fulfillment_order", source.bootstrap_state.order_id)
+        assert order is not None and order.state == "requested"
+        forged = DomainEvent(
+            event_id=deterministic_id(
+                "event", WF, 5, order.entity_type, order.id, order.version + 1,
+                "ship", "packed", "shipped",
+            ),
+            name="entity.state_transition",
+            entity_type=order.entity_type, entity_id=order.id,
+            occurred_at=NOW, tick=5, owner_id=WF,
+            correlation_id="flow:forged-ship",
+            payload={"trigger": "ship", "from_state": "packed", "to_state": "shipped"},
+        )
+        with store.transaction(owner_id=WF) as uow:
+            uow.append_event(forged)
+        event_log = tuple(store.events())
+        with pytest.raises(ValueError, match="lacks committed StateChart version evidence"):
+            publish_shipment(executor, forged, shipment.bootstrap_state.shipment_id)
+        assert tuple(store.events()) == event_log
+        with store.transaction() as uow:
+            assert not uow.boundary_deliveries()
+
+        # Even if the transport API persisted the self-reported message,
+        # the executable ingress/ACK/effect path must reject it.
+        msg = BoundaryMessage.create(
+            contract_name=CONTRACT, contract_version=1,
+            source_domain="warehouse_fulfillment", source_identity=order.id,
+            destination_domain="logistics",
+            occurrence_key="forged-ship:" + forged.event_id,
+            correlation_id=forged.correlation_id,
+            causation_id=forged.event_id, causation_kind="event",
+            produced_at=forged.occurred_at,
+            payload={"shipment_id": shipment.bootstrap_state.shipment_id},
+        )
+        pending = BoundaryService(store).publish(msg)
+        with pytest.raises(ValueError, match="lacks committed StateChart version evidence"):
+            executor.consume(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=msg.message_id, now=forged.occurred_at,
+                lease_duration=timedelta(minutes=10),
+            )
+        with pytest.raises(ValueError, match="lacks committed StateChart version evidence"):
+            executor.certify(
+                producer_id="fulfillment", consumer_id="logistics",
+                message_id=msg.message_id, effect_id="effect:forged",
+                completed_at=forged.occurred_at + timedelta(hours=12),
+            )
+        assert BoundaryService(store).delivery(pending.delivery_id) == pending
+        assert BoundaryService(store).consumption(pending.delivery_id) is None
+        assert store.entity(order.entity_type, order.id).state == "requested"
+        assert store.business_effect("effect:forged") is None
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            assert restored.entity(order.entity_type, order.id).state == "requested"
+            assert BoundaryService(restored).consumption(pending.delivery_id) is None
