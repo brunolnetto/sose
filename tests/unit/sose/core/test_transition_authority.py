@@ -299,3 +299,44 @@ def test_boolean_or_float_tick_cannot_reuse_int_signed_transition(
             with restored.transaction(owner_id=OWNER) as uow:
                 with pytest.raises(ValueError, match="authenticated StateChart"):
                     root.verify(uow=uow, event=forged)
+
+
+
+@pytest.mark.parametrize("bad_version", (True, 1.0))
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_signed_transition_rejects_nonstrict_committed_entity_version(
+    bad_version, adapter, tmp_path,
+):
+    """A public writer must not exploit bool/float numeric equality to 1."""
+    path = tmp_path / "bad-committed-entity-version.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    root = TransitionAuthority("engine:trusted", "key:v1", SECRET)
+    actor = OrganizationalActor(
+        id="actor:bad-version", state="admitted", created_at=NOW, updated_at=NOW,
+    )
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_entity(actor)
+    command = Command(
+        command_id="cmd:activate", name="activate",
+        entity_type=actor.entity_type, entity_id=actor.id,
+        owner_id=OWNER, due_at=NOW,
+    )
+    try:
+        engine(store, authority=root).dispatch(command)
+        signed = next(x for x in store.events() if x.name == "entity.state_transition")
+        with store.transaction(owner_id=OWNER) as uow:
+            corrupted = uow.get_entity(actor.entity_type, actor.id)
+            assert corrupted.version == 1
+            corrupted.version = bad_version
+            uow.save_entity(corrupted)
+        with store.transaction(owner_id=OWNER) as uow:
+            with pytest.raises(ValueError, match="authenticated StateChart receipt lacks committed entity version"):
+                root.verify(uow=uow, event=signed)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            with restored.transaction(owner_id=OWNER) as uow:
+                with pytest.raises(ValueError, match="authenticated StateChart receipt lacks committed entity version"):
+                    root.verify(uow=uow, event=signed)
