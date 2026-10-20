@@ -802,6 +802,25 @@ class MemoryPersistence:
             raise
 
 
+    def boundary_protocol_snapshot(
+        self,
+    ) -> tuple[tuple[BoundaryMessage, ...], tuple[BoundaryDelivery, ...],
+               tuple[BoundaryConsumption, ...]]:
+        """Read three protocol families from one immutable in-memory snapshot.
+
+        This never opens a mutation transaction or publishes the forked state.
+        Persistent subclasses override it with a coherent database snapshot.
+        """
+        uow = MemoryUnitOfWork(fork_state(self._state), self)
+        try:
+            return (
+                uow.boundary_messages(),
+                uow.boundary_deliveries(),
+                uow.boundary_consumptions(),
+            )
+        finally:
+            uow.rollback()
+
     def job_state(self, job_id: str) -> SimulationJobState | None:
         value = self._state.job_states.get(job_id)
         return deepcopy(value) if value else None
