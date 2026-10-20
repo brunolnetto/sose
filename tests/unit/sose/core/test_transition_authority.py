@@ -259,3 +259,43 @@ def test_untrusted_prequeued_events_can_never_be_signed_by_engine(
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+
+@pytest.mark.parametrize("bad_tick", (False, 0.0))
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_boolean_or_float_tick_cannot_reuse_int_signed_transition(
+    bad_tick, adapter, tmp_path,
+):
+    """Python numeric equality cannot substitute for signed event field types."""
+    path = tmp_path / "noncanonical-tick.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    root = TransitionAuthority("engine:trusted", "key:v1", SECRET)
+    actor = OrganizationalActor(id="actor:tick", state="admitted",
+                                created_at=NOW, updated_at=NOW)
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_entity(actor)
+    command = Command(command_id="cmd:activate", name="activate",
+                      entity_type=actor.entity_type, entity_id=actor.id,
+                      owner_id=OWNER, due_at=NOW)
+    try:
+        engine(store, authority=root).dispatch(command)
+        source = next(e for e in store.events() if e.name == "entity.state_transition")
+        assert type(source.tick) is int
+        assert source.tick == bad_tick  # Numeric equality IS the adversarial trick.
+        with store.transaction(owner_id=OWNER) as uow:
+            for index, event in enumerate(uow._working.events):
+                if event.event_id == source.event_id:
+                    uow._working.events[index] = replace(event, tick=bad_tick)
+        forged = replace(source, tick=bad_tick)
+        with store.transaction(owner_id=OWNER) as uow:
+            with pytest.raises(ValueError, match="authenticated StateChart"):
+                root.verify(uow=uow, event=forged)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            with restored.transaction(owner_id=OWNER) as uow:
+                with pytest.raises(ValueError, match="authenticated StateChart"):
+                    root.verify(uow=uow, event=forged)
