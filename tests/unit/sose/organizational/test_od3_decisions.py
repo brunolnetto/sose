@@ -26,8 +26,11 @@ def policy(name, **updates):
 
 
 def decide(queue, p, *, previous=None, observation="observation:1"):
+    active = (replace(p, name=p.matched_policy, matched_policy=None)
+              if p.name == "sham" else None)
     return decide_od3(owner_id=OWNER, queue=queue, policy=p, observed_at=NOW,
-                      previous_decision_at=previous, observation_id=observation)
+                      previous_decision_at=previous, observation_id=observation,
+                      matched_active_policy=active)
 
 
 def test_adaptive_follow_up_contacts_oldest_overdue_without_fabricating_service():
@@ -207,3 +210,77 @@ def test_sham_controls_for_distinct_matched_policies_have_independent_identities
     if adapter == "sqlite":
         with SQLitePersistence(path) as restored:
             assert restored.events() == (one, two)
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_sham_requires_matching_active_configuration_and_carries_identity(adapter, tmp_path):
+    queue = (item("old", 12, 15), item("fast", 7, 2))
+    active_policy = policy("adaptive_follow_up")
+    mismatched_sham = policy("sham", matched_policy="adaptive_follow_up",
+                             delay_threshold_us=15, decision_cost_us=99)
+    with pytest.raises(ValueError, match="configuration mismatch"):
+        decide_od3(owner_id=OWNER, queue=queue, policy=mismatched_sham,
+                   observed_at=NOW, observation_id="pair:config",
+                   matched_active_policy=active_policy)
+    with pytest.raises(ValueError, match="explicit matched active"):
+        decide_od3(owner_id=OWNER, queue=queue,
+                   policy=policy("sham", matched_policy="adaptive_follow_up"),
+                   observed_at=NOW, observation_id="pair:config")
+    active = decide(queue, active_policy, observation="pair:config")
+    sham = decide(queue, policy("sham", matched_policy="adaptive_follow_up"),
+                  observation="pair:config")
+    assert active.policy_config_id == sham.policy_config_id
+    assert active.snapshot_id == sham.snapshot_id
+    path = tmp_path / "sham-config.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        a, b = persist_od3_decision(store, active), persist_od3_decision(store, sham)
+        assert a.correlation_id == b.correlation_id
+        assert a.payload["policy_config_id"] == b.payload["policy_config_id"]
+        assert a.payload["snapshot_id"] == b.payload["snapshot_id"]
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            assert restored.events() == (a, b)
+
+
+@pytest.mark.parametrize("mutation", ("clock", "service", "blocked", "contact", "prior"))
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_reused_observation_id_does_not_pair_different_snapshots(
+    mutation, adapter, tmp_path,
+):
+    queue = (item("old", 12, 15), item("fast", 7, 2))
+    before = decide(queue, policy("adaptive_follow_up"), observation="reused")
+    prior = None
+    now = NOW
+    if mutation == "clock":
+        now = NOW + timedelta(microseconds=1)
+    elif mutation == "service":
+        queue = (replace(queue[0], service_us=16), queue[1])
+    elif mutation == "blocked":
+        queue = (replace(queue[0], blocked=True), queue[1])
+    elif mutation == "contact":
+        queue = (replace(queue[0], last_contact_at=NOW - timedelta(microseconds=1)), queue[1])
+    else:
+        prior = NOW - timedelta(microseconds=20)
+    after = decide_od3(owner_id=OWNER, queue=queue,
+                       policy=policy("sham", matched_policy="adaptive_follow_up"),
+                       observed_at=now, previous_decision_at=prior,
+                       observation_id="reused",
+                       matched_active_policy=policy("adaptive_follow_up"))
+    assert before.snapshot_id != after.snapshot_id
+    assert before.decision_id != after.decision_id
+    path = tmp_path / "snapshot-identity.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        a, b = persist_od3_decision(store, before), persist_od3_decision(store, after)
+        assert a.correlation_id != b.correlation_id
+        assert a.payload["observation_id"] == b.payload["observation_id"]
+        assert a.payload["snapshot_id"] != b.payload["snapshot_id"]
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as restored:
+            assert restored.events() == (a, b)
