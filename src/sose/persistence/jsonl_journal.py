@@ -151,6 +151,22 @@ class JSONLJournalPersistence(MemoryPersistence):
 
         self._transaction_count = transaction
 
+    def boundary_protocol_snapshot(self):
+        """Observe the latest committed journal, not the opening-time cache.
+
+        Preserve this instance's working state and append index: a read must
+        neither emit a JSONL transaction nor mutate writer cursor metadata.
+        Refresh of the append-only journal completes before taking the
+        detached in-memory protocol snapshot.
+        """
+        previous, previous_count = self._state, self._transaction_count
+        try:
+            self._refresh_from_journal()
+            return super().boundary_protocol_snapshot()
+        finally:
+            self._state = previous
+            self._transaction_count = previous_count
+
     @contextmanager
     def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
         if owner_id is not None and not owner_id:
