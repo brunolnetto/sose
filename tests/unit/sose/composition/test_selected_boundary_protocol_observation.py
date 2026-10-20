@@ -465,10 +465,23 @@ def test_selected_protocol_rejects_boolean_and_float_contract_versions(
                 now=NOW, lease_duration=timedelta(minutes=5),
             )
             assert lease is not None
-            receipt = service.consume(lease=lease, registry=consumers, now=NOW)
+            from sose.composition.model import BoundaryConsumption
             with store.transaction() as uow:
+                claimed = uow.get_boundary_delivery(delivery.delivery_id)
+                assert claimed.status is DeliveryStatus.CLAIMED
+                uow.save_boundary_delivery(replace(
+                    claimed, status=DeliveryStatus.CONSUMED,
+                    consumed_at=NOW, consumer_effect_id="opaque:effect:id",
+                ))
+                # Persist a malformed historical receipt directly. The public
+                # service correctly prevents replacing an existing immutable
+                # ACK, so insert only this deliberately corrupted first ACK.
                 uow.save_boundary_consumption(replace(
-                    receipt, contract_version=wrong_version,
+                    BoundaryConsumption.create(
+                        delivery=claimed, consumer_effect_id="opaque:effect:id",
+                        consumed_at=NOW,
+                    ),
+                    contract_version=wrong_version,
                 ))
             expected = "selected boundary ACK requires integer contract version"
     with pytest.raises(ValueError, match=expected):
