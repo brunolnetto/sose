@@ -670,3 +670,55 @@ def test_in_memory_protocol_snapshot_does_not_persist_a_fork():
     assert store._state is original
     assert observe(spec, store, manifests, consumers, first.message_id).records[0].status is DeliveryStatus.PENDING
     assert store._state is original
+
+
+
+@pytest.mark.parametrize("adapter", ("jsonl", "duckdb"))
+def test_durable_snapshot_refreshes_after_independent_writer_commits(
+    adapter, tmp_path,
+):
+    """Long-lived readers cannot present an obsolete state as durable truth."""
+    from sose.persistence.jsonl_journal import JSONLJournalPersistence
+    from sose.persistence.duckdb import DuckDBPersistence
+
+    factory = JSONLJournalPersistence if adapter == "jsonl" else DuckDBPersistence
+    path = tmp_path / ("observer-stale-writer" + (".jsonl" if adapter == "jsonl" else ".duckdb"))
+    spec, manifests, consumers = configuration()
+    first = message(occurrence=adapter + ":first")
+    second = message(occurrence=adapter + ":remote")
+    reader = factory(path)
+    try:
+        writer = factory(path)
+        try:
+            BoundaryService(writer).publish(first)
+        finally:
+            if adapter == "duckdb":
+                writer.close()
+        initial = observe(spec, reader, manifests, consumers, first.message_id)
+        assert initial.records[0].status is DeliveryStatus.PENDING
+
+        writer = factory(path)
+        try:
+            BoundaryService(writer).publish(second)
+        finally:
+            if adapter == "duckdb":
+                writer.close()
+
+        # A coherent read must refresh from the journal or database without
+        # modifying this reader's durable writer index or cached state.
+        previous_state = reader._state
+        previous_count = getattr(reader, "_transaction_count", None)
+        evidence = observe(
+            spec, reader, manifests, consumers, first.message_id, second.message_id,
+        )
+        assert {row.message_id for row in evidence.records} == {
+            first.message_id, second.message_id,
+        }
+        assert reader._state is previous_state
+        assert getattr(reader, "_transaction_count", None) == previous_count
+        assert evidence == observe(
+            spec, reader, manifests, consumers, first.message_id, second.message_id,
+        )
+    finally:
+        if adapter == "duckdb":
+            reader.close()
