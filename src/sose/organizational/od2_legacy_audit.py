@@ -52,6 +52,12 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
         and "assigned_work_id" not in event.payload
         for event in owned_events
     )
+    attrs = actor.attributes
+    if not isinstance(attrs, Mapping):
+        return LegacyActorOriginAudit(
+            actor.id, "conflicting_legacy_marker", missing_work,
+            "actor attributes are not a mapping and cannot establish provenance",
+        )
     origin_id = deterministic_id("od2-actor-calendar-admitted", actor.id)
     markers = tuple(x for x in owned_events if (
         x.event_id == origin_id or x.name == "od2.actor_calendar_admitted"
@@ -67,12 +73,6 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
             "ambiguous original admission events",
         )
     marker = markers[0]
-    attrs = actor.attributes
-    if not isinstance(attrs, Mapping):
-        return LegacyActorOriginAudit(
-            actor.id, "conflicting_legacy_marker", missing_work,
-            "actor attributes are not a mapping and cannot establish provenance",
-        )
     saved = attrs.get("availability_calendar")
     source = marker.payload.get("calendar_source")
     if not isinstance(saved, dict) or not isinstance(source, dict):
