@@ -333,7 +333,10 @@ class AdmittedOrganizationExecutor:
     def certify(self, *, producer_id: str, consumer_id: str,
                 message_id: str, effect_id: str, completed_at: datetime):
         """Certify only after durable ACK and owner-qualified terminal evidence."""
-        with self.persistence.transaction() as uow:
+        # Use the same boundary-serialized UoW for temporal checks, receipt
+        # insertion and Command retirement: no concurrent certificate can
+        # intervene between attestation and the durable effect commit.
+        with self._business._transaction() as uow:
             msg = uow.get_boundary_message(message_id)
             if msg is None:
                 raise ValueError("certification lacks durable boundary message")
@@ -355,4 +358,6 @@ class AdmittedOrganizationExecutor:
                 certificate=certificate,
                 completed_at=(certificate.completed_at if certificate else completed_at),
             )
-        return self._business.complete(effect_id=effect_id, completed_at=completed_at)
+            return self._business._complete_in_uow(
+                uow, effect_id=effect_id, completed_at=completed_at,
+            )
