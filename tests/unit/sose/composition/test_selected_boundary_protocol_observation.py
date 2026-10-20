@@ -432,3 +432,73 @@ def test_boundary_writer_rejects_ack_before_same_lease_claim_clock(adapter, tmp_
     if adapter == "sqlite":
         with SQLitePersistence(path) as reopened:
             assert observe(spec, reopened, manifests, consumers, source.message_id) == observed
+
+
+
+@pytest.mark.parametrize("record", ("message", "delivery", "ack"))
+@pytest.mark.parametrize("wrong_version", (True, 1.0))
+def test_selected_protocol_rejects_boolean_and_float_contract_versions(
+    record, wrong_version,
+):
+    """Python bool/float equal 1 numerically but not as protocol evidence."""
+    store = MemoryPersistence()
+    spec, manifests, consumers = configuration()
+    source = message()
+    service = BoundaryService(store)
+    if record == "message":
+        invalid_message = replace(source, contract_version=wrong_version)
+        with store.transaction() as uow:
+            uow.save_boundary_message(invalid_message)
+            uow.save_boundary_delivery(BoundaryDelivery.pending(invalid_message))
+        expected = "selected boundary publication requires integer contract version"
+    else:
+        delivery = service.publish(source)
+        if record == "delivery":
+            with store.transaction() as uow:
+                uow.save_boundary_delivery(replace(
+                    delivery, contract_version=wrong_version,
+                ))
+            expected = "selected boundary delivery requires integer contract version"
+        else:
+            lease = service.claim_next(
+                owner_id="worker:wm", message_id=source.message_id,
+                now=NOW, lease_duration=timedelta(minutes=5),
+            )
+            assert lease is not None
+            receipt = service.consume(lease=lease, registry=consumers, now=NOW)
+            with store.transaction() as uow:
+                uow.save_boundary_consumption(replace(
+                    receipt, contract_version=wrong_version,
+                ))
+            expected = "selected boundary ACK requires integer contract version"
+    with pytest.raises(ValueError, match=expected):
+        observe(spec, store, manifests, consumers, source.message_id)
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("owner_id", ("", "   ", "\t\n", None, 123))
+def test_public_boundary_claim_rejects_noncanonical_owner_before_writing(
+    adapter, owner_id, tmp_path,
+):
+    path = tmp_path / "owner-claim-invalid.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    source = message()
+    try:
+        service = BoundaryService(store)
+        delivery = service.publish(source)
+        before = tuple(store.events())
+        with pytest.raises(ValueError, match="owner_id must be a nonblank string"):
+            service.claim_next(
+                owner_id=owner_id,
+                message_id=source.message_id,
+                now=NOW, lease_duration=timedelta(minutes=10),
+            )
+        assert service.delivery(delivery.delivery_id) == delivery
+        assert service.consumption(delivery.delivery_id) is None
+        assert tuple(store.events()) == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as recovered:
+            assert BoundaryService(recovered).delivery(delivery.delivery_id) == delivery
