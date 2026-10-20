@@ -63,7 +63,19 @@ class TransitionAuthority:
             or after.updated_at != event.occurred_at
         ):
             raise ValueError("Engine attestation requires one genuine committed transition")
+        expected_id = deterministic_id(
+            "event", event.owner_id, event.tick, after.entity_type, after.id,
+            after.version, command.name, before.state, after.state,
+        )
+        if (
+            event.event_id != expected_id
+            or event.correlation_id != (command.correlation_id or command.command_id)
+            or set(event.payload) != {"trigger", "from_state", "to_state"}
+        ):
+            raise ValueError("Engine attestation refuses unrecorded source-event identity")
         claims = {
+            "event_name": event.name,
+            "event_payload_sha256": sha256(_encoded(dict(event.payload))).hexdigest(),
             "issuer_id": self.issuer_id, "key_id": self.key_id,
             "event_id": event.event_id, "owner_id": event.owner_id,
             "command_id": command.command_id,
@@ -107,7 +119,12 @@ class TransitionAuthority:
         if not compare_digest(mac, expected):
             raise ValueError("authenticated StateChart receipt signature invalid")
         if (
-            data.get("event_id") != event.event_id
+            event.name != "entity.state_transition"
+            or data.get("event_name") != event.name
+            or data.get("event_payload_sha256") != sha256(
+                _encoded(dict(event.payload)),
+            ).hexdigest()
+            or data.get("event_id") != event.event_id
             or data.get("owner_id") != event.owner_id
             or data.get("entity_id") != event.entity_id
             or data.get("entity_type") != event.entity_type
