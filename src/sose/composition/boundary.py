@@ -196,8 +196,8 @@ class BoundaryService:
         The default None preserves the existing global deterministic claim
         order for old single-worker composition references.
         """
-        if not owner_id:
-            raise ValueError("owner_id cannot be empty")
+        if not isinstance(owner_id, str) or not owner_id.strip():
+            raise ValueError("owner_id must be a nonblank string")
         if destination_domain is not None and not destination_domain:
             raise ValueError("destination_domain must be nonempty when specified")
         if message_id is not None and not message_id:
