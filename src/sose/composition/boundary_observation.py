@@ -82,12 +82,18 @@ def inspect_selected_boundary_protocol(
     selected = set(message_ids)
     # Read all three protocol families from one authoritative UoW. No global
     # snapshot of other owners' jobs, clocks or shared physical reservations.
-    with persistence.transaction() as uow:
-        messages, deliveries, consumptions = (
-            uow.boundary_messages(),
-            uow.boundary_deliveries(),
-            uow.boundary_consumptions(),
-        )
+    reader = getattr(persistence, "boundary_protocol_snapshot", None)
+    if callable(reader):
+        # PostgreSQL: one repeatable-read read-only snapshot. No writer
+        # lease/epoch is required, even when global fencing is active.
+        messages, deliveries, consumptions = reader()
+    else:
+        with persistence.transaction() as uow:
+            messages, deliveries, consumptions = (
+                uow.boundary_messages(),
+                uow.boundary_deliveries(),
+                uow.boundary_consumptions(),
+            )
 
     by_message = {}
     for message in messages:
@@ -177,6 +183,16 @@ def inspect_selected_boundary_protocol(
         ):
             raise ValueError("selected delivery contradicts immutable publication")
         receipt = by_receipt.get(delivery.delivery_id)
+        if delivery.consumer_effect_id is not None and (
+            not isinstance(delivery.consumer_effect_id, str)
+            or not delivery.consumer_effect_id.strip()
+        ):
+            raise ValueError("selected delivery has invalid consumer effect identity")
+        if receipt is not None and (
+            not isinstance(receipt.consumer_effect_id, str)
+            or not receipt.consumer_effect_id.strip()
+        ):
+            raise ValueError("selected ACK has invalid consumer effect identity")
         if not isinstance(delivery.status, DeliveryStatus):
             raise ValueError("selected delivery has invalid status")
         if delivery.status is DeliveryStatus.PENDING and (
