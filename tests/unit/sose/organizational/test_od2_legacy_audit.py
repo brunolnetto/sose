@@ -1,4 +1,5 @@
 """OD-2 offline legacy audit must NEVER invent admission provenance (#462)."""
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -94,3 +95,38 @@ def test_legacy_fieldless_work_is_reported_without_making_up_id():
     assert result.classification == "quarantined_unattested"
     assert result.missing_work_id_assignments == 1
     assert not result.admits_transition
+
+
+
+@pytest.mark.parametrize("which", ("calendar_marker", "transition"))
+@pytest.mark.parametrize("malformed", (None, [], "opaque"))
+def test_malformed_persisted_actor_event_payload_is_reported_not_executed(
+    which, malformed, tmp_path,
+):
+    """Malformed historical SQLite JSON must quarantine, never crash audit."""
+    path = tmp_path / "invalid-historic-payload.sqlite"
+    calendar = ActorAvailabilityCalendar(
+        version=1, config_epoch=3,
+        intervals=(ActorAvailabilityInterval(T0, T0 + timedelta(days=1)),),
+    )
+    with SQLitePersistence(path) as store:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="invalid:" + which,
+            model_spec_hash=MODEL, config_epoch=3, at=T0,
+            availability_calendar=calendar,
+        )
+        if which == "transition":
+            transition_actor(
+                store, owner_id=OWNER, actor_id=actor_id, action="activate",
+                cause_id="activate", at=T0 + timedelta(hours=1),
+                model_spec_hash=MODEL, config_epoch=3,
+            )
+        with store.transaction(owner_id=OWNER) as uow:
+            all_events = uow._working.events
+            index = 0 if which == "calendar_marker" else -1
+            all_events[index] = replace(all_events[index], payload=malformed)
+    with SQLitePersistence(path) as restored:
+        result, = audit_legacy_actor_origins(restored.entities(), restored.events())
+        assert result.classification == "conflicting_legacy_marker"
+        assert "non-mapping" in result.reason
+        assert not result.admits_transition
