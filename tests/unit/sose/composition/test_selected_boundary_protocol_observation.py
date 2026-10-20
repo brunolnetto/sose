@@ -597,3 +597,76 @@ def test_observer_rejects_malformed_legacy_consumer_effect_ids(
     )
     with pytest.raises(ValueError, match=expected):
         observe(spec, store, manifests, consumers, source.message_id)
+
+
+
+@pytest.mark.parametrize("adapter", ("sqlite", "sqlite_incremental"))
+def test_boundary_observer_reads_durable_sqlite_without_writer_fence_or_mutation(
+    adapter, tmp_path,
+):
+    """#542: a reader sees committed remote writes without claiming writer epoch."""
+    from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+
+    path = tmp_path / (adapter + "-fence-neutral-observation.sqlite")
+    factory = SQLitePersistence if adapter == "sqlite" else SQLiteIncrementalPersistence
+    spec, manifests, consumers = configuration()
+    first, second = message(occurrence="epoch:1"), message(occurrence="epoch:2")
+    store = factory(path)
+    try:
+        # Establish a real committed boundary before claiming writer authority.
+        BoundaryService(store).publish(first)
+        epoch = (
+            store.claim_writer("writer:authorized", expected_epoch=0).epoch
+            if adapter == "sqlite_incremental" else None
+        )
+        before_changes = store._connection.total_changes
+        original = observe(spec, store, manifests, consumers, first.message_id)
+        assert original.records[0].status is DeliveryStatus.PENDING
+        assert store._connection.total_changes == before_changes
+        if adapter == "sqlite_incremental":
+            assert store.writer_epoch() == epoch
+
+        # Independent process/connection commits a second publication.
+        with factory(path) as writer:
+            if adapter == "sqlite_incremental":
+                with writer.transaction(owner_epoch=epoch) as uow:
+                    uow.save_boundary_message(second)
+                    uow.save_boundary_delivery(BoundaryDelivery.pending(second))
+            else:
+                BoundaryService(writer).publish(second)
+
+        before_read_changes = store._connection.total_changes
+        observed = observe(
+            spec, store, manifests, consumers, first.message_id, second.message_id,
+        )
+        assert len(observed.records) == 2
+        assert {r.message_id for r in observed.records} == {
+            first.message_id, second.message_id,
+        }
+        assert store._connection.total_changes == before_read_changes
+        assert observed == observe(
+            spec, store, manifests, consumers, first.message_id, second.message_id,
+        )
+        assert store._connection.total_changes == before_read_changes
+    finally:
+        store.close()
+    with factory(path) as recovered:
+        assert observe(
+            spec, recovered, manifests, consumers, first.message_id, second.message_id,
+        ) == observed
+        if adapter == "sqlite_incremental":
+            assert recovered.writer_epoch() == epoch
+
+
+def test_in_memory_protocol_snapshot_does_not_persist_a_fork():
+    store = MemoryPersistence()
+    spec, manifests, consumers = configuration()
+    first = message(occurrence="memory:read-only")
+    BoundaryService(store).publish(first)
+    original = store._state
+    records = store.boundary_protocol_snapshot()
+    assert len(records[0]) == len(records[1]) == 1
+    assert len(records[2]) == 0
+    assert store._state is original
+    assert observe(spec, store, manifests, consumers, first.message_id).records[0].status is DeliveryStatus.PENDING
+    assert store._state is original
