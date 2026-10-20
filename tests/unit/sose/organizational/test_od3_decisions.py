@@ -180,7 +180,8 @@ def test_sham_controls_for_distinct_matched_policies_have_independent_identities
 ):
     path = tmp_path / "two-sham-semantics.sqlite"
     store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
-    queue = (item("slow", 20, 60), item("fast", 10, 1))
+    # Keep oldest overdue but just below starvation bound: shortest is eligible.
+    queue = (item("slow", 19, 60), item("fast", 10, 1))
     follow = decide(
         queue, policy("sham", matched_policy="adaptive_follow_up"),
         observation="pair:both-policies",
