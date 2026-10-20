@@ -76,12 +76,21 @@ class OD3Decision:
     after: tuple[str, ...]
     cost_us: int
     reason: str
+    snapshot_id: str
+    policy_config_id: str
+
+
+def _policy_config_id(policy: OD3Policy) -> str:
+    return deterministic_id(
+        "od3-policy-config-v1", policy.name, policy.delay_threshold_us,
+        policy.cooldown_us, policy.decision_cost_us, policy.starvation_bound_us,
+    )
 
 
 def decide_od3(
     *, owner_id: str, queue: tuple[QueuedWork, ...], policy: OD3Policy,
     observed_at: datetime, previous_decision_at: datetime | None = None,
-    observation_id: str,
+    observation_id: str, matched_active_policy: OD3Policy | None = None,
 ) -> OD3Decision:
     """Observe only arrived items; produce a durable-ready deterministic action.
 
@@ -107,10 +116,35 @@ def decide_od3(
         raise ValueError("OD-3 decision cannot observe future queue history")
     if previous_decision_at is not None and _utc(previous_decision_at) > now:
         raise ValueError("OD-3 previous decision occurs in the future")
+    if policy.name == "sham":
+        if matched_active_policy is None or matched_active_policy.name != policy.matched_policy:
+            raise ValueError("sham requires explicit matched active policy configuration")
+        if (
+            policy.delay_threshold_us, policy.cooldown_us, policy.decision_cost_us,
+            policy.starvation_bound_us,
+        ) != (
+            matched_active_policy.delay_threshold_us, matched_active_policy.cooldown_us,
+            matched_active_policy.decision_cost_us, matched_active_policy.starvation_bound_us,
+        ):
+            raise ValueError("sham and active policy configuration mismatch")
+        active_policy = matched_active_policy
+    else:
+        if matched_active_policy is not None:
+            raise ValueError("active policy cannot declare a matched policy")
+        active_policy = policy
+    policy_config_id = _policy_config_id(active_policy)
+    snapshot_id = deterministic_id(
+        "od3-queue-snapshot-v1", owner_id, now.isoformat(),
+        _utc(previous_decision_at).isoformat() if previous_decision_at else None,
+        tuple((item.item_id, item.owner_id, _utc(item.arrived_at).isoformat(),
+               item.service_us,
+               _utc(item.last_contact_at).isoformat() if item.last_contact_at else None,
+               item.blocked) for item in queue),
+    )
     before = tuple(item.item_id for item in queue)
     decision_id = deterministic_id(
         "od3-decision", owner_id, observation_id, policy.name,
-        policy.matched_policy or policy.name,
+        policy.matched_policy or policy.name, snapshot_id, policy_config_id,
     )
     action, selected, reason, cost, after = "NOOP", None, "not triggered", 0, before
     if previous_decision_at is not None and (
@@ -161,6 +195,7 @@ def decide_od3(
         owner_id, policy.name, now, observation_id,
         policy.matched_policy or policy.name, decision_id,
         action, selected, before, tuple(after), cost, reason,
+        snapshot_id, policy_config_id,
     )
 
 
@@ -173,6 +208,7 @@ def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
     if decision.decision_id != deterministic_id(
         "od3-decision", decision.owner_id, decision.observation_id,
         decision.policy, decision.matched_policy,
+        decision.snapshot_id, decision.policy_config_id,
     ):
         raise ValueError("OD-3 durable decision identity contradicts observation")
     event = DomainEvent(
@@ -181,9 +217,12 @@ def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
         occurred_at=decision.observed_at, owner_id=decision.owner_id,
         correlation_id=deterministic_id(
             "od3-observation", decision.owner_id, decision.observation_id,
+            decision.snapshot_id,
         ),
         payload={
             "observation_id": decision.observation_id,
+            "snapshot_id": decision.snapshot_id,
+            "policy_config_id": decision.policy_config_id,
             "matched_policy": decision.matched_policy,
             "policy": decision.policy, "action": decision.action,
             "selected_item_id": decision.selected_item_id,
