@@ -105,11 +105,17 @@ class Engine:
                 if self.context.statecharts is None:  # pragma: no cover - constructor invariant
                     raise RuntimeError("statechart factory is not configured")
 
+                if self.transition_authority is not None and self.context.pending_events:
+                    raise ValueError("cannot attest preexisting pending source events")
                 before_transition = deepcopy(entity)
                 chart = self.context.statecharts.bind(entity, caused_by=command)
                 chart.send(command.name, **dict(command.payload))
                 self._save_entity(uow, entity)
                 emitted = self.context.drain_events()
+                if self.transition_authority is not None and (
+                    len(emitted) != 1 or emitted[0].name != "entity.state_transition"
+                ):
+                    raise ValueError("attested dispatch requires exactly one recorder-produced transition")
                 for event in emitted:
                     uow.append_event(event)
                     if self.transition_authority is not None and event.name == "entity.state_transition":
@@ -153,11 +159,17 @@ class Engine:
         if self.context.statecharts is None:  # pragma: no cover - constructor invariant
             raise RuntimeError("statechart factory is not configured")
 
+        if self.transition_authority is not None and self.context.pending_events:
+            raise ValueError("cannot attest preexisting pending source events")
         before_transition = deepcopy(entity)
         chart = self.context.statecharts.bind(entity, caused_by=command)
         chart.send(command.name, **dict(command.payload))
         self._save_entity(uow, entity)
         emitted = self.context.drain_events()
+        if self.transition_authority is not None and (
+            len(emitted) != 1 or emitted[0].name != "entity.state_transition"
+        ):
+            raise ValueError("attested dispatch requires exactly one recorder-produced transition")
         for event in emitted:
             uow.append_event(event)
             if self.transition_authority is not None and event.name == "entity.state_transition":
