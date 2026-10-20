@@ -515,3 +515,85 @@ def test_public_boundary_claim_rejects_noncanonical_owner_before_writing(
     if adapter == "sqlite":
         with SQLitePersistence(path) as recovered:
             assert BoundaryService(recovered).delivery(delivery.delivery_id) == delivery
+
+
+
+@pytest.mark.parametrize("invalid_effect", (True, 123, "   "))
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_consume_rejects_nonstr_effect_without_persisting_an_ack(
+    invalid_effect, adapter, tmp_path,
+):
+    """A truthy bool/int or whitespace identity cannot escape the writer."""
+    path = tmp_path / "bad-handler-effect.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    spec, manifests, _ = configuration()
+    source = message()
+    registry = BoundaryConsumerRegistry()
+    registry.register(
+        source_domain="warehouse_fulfillment",
+        destination_domain="warehouse_management",
+        contract_name=CONTRACT, contract_version=1,
+        handler=lambda _source, _uow: invalid_effect,
+    )
+    try:
+        service = BoundaryService(store)
+        delivery = service.publish(source)
+        lease = service.claim_next(
+            owner_id="worker:wm", message_id=source.message_id,
+            now=NOW, lease_duration=timedelta(minutes=5),
+        )
+        assert lease is not None
+        claimed = service.delivery(delivery.delivery_id)
+        before = tuple(store.events())
+        with pytest.raises(ValueError, match="consumer effect identity must be a nonblank string"):
+            service.consume(lease=lease, registry=registry, now=NOW)
+        assert service.delivery(delivery.delivery_id) == claimed
+        assert service.consumption(delivery.delivery_id) is None
+        assert tuple(store.events()) == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            assert BoundaryService(reopened).consumption(delivery.delivery_id) is None
+
+
+@pytest.mark.parametrize("invalid_effect", (True, 123, "   "))
+@pytest.mark.parametrize("corruption", ("delivery", "ack"))
+def test_observer_rejects_malformed_legacy_consumer_effect_ids(
+    invalid_effect, corruption,
+):
+    """Legacy storage can contain type-invalid records despite writer hardening."""
+    from sose.composition.model import BoundaryConsumption
+
+    store = MemoryPersistence()
+    spec, manifests, consumers = configuration()
+    source = message()
+    service = BoundaryService(store)
+    delivery = service.publish(source)
+    lease = service.claim_next(
+        owner_id="worker:wm", message_id=source.message_id,
+        now=NOW, lease_duration=timedelta(minutes=5),
+    )
+    assert lease is not None
+    with store.transaction() as uow:
+        claimed = uow.get_boundary_delivery(delivery.delivery_id)
+        delivery_effect = invalid_effect if corruption == "delivery" else "effect:valid"
+        receipt_effect = invalid_effect if corruption == "ack" else "effect:valid"
+        uow.save_boundary_delivery(replace(
+            claimed, status=DeliveryStatus.CONSUMED,
+            consumed_at=NOW, consumer_effect_id=delivery_effect,
+        ))
+        uow.save_boundary_consumption(
+            BoundaryConsumption.create(
+                delivery=claimed, consumer_effect_id=receipt_effect,
+                consumed_at=NOW,
+            )
+        )
+    expected = (
+        "selected delivery has invalid consumer effect identity"
+        if corruption == "delivery"
+        else "selected ACK has invalid consumer effect identity"
+    )
+    with pytest.raises(ValueError, match=expected):
+        observe(spec, store, manifests, consumers, source.message_id)
