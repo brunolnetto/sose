@@ -110,6 +110,7 @@ def decide_od3(
     before = tuple(item.item_id for item in queue)
     decision_id = deterministic_id(
         "od3-decision", owner_id, observation_id, policy.name,
+        policy.matched_policy or policy.name,
     )
     action, selected, reason, cost, after = "NOOP", None, "not triggered", 0, before
     if previous_decision_at is not None and (
@@ -170,7 +171,8 @@ def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
     scheduler; this diagnostic ledger is not a reservation or service permit.
     """
     if decision.decision_id != deterministic_id(
-        "od3-decision", decision.owner_id, decision.observation_id, decision.policy,
+        "od3-decision", decision.owner_id, decision.observation_id,
+        decision.policy, decision.matched_policy,
     ):
         raise ValueError("OD-3 durable decision identity contradicts observation")
     event = DomainEvent(
