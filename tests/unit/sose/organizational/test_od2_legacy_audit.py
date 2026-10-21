@@ -357,3 +357,31 @@ def test_restored_calendar_projection_rejects_numeric_type_confusion(
         assert not finding.admits_transition
         assert restored.entities() == entities
         assert restored.events() == events
+
+
+@pytest.mark.parametrize("bad_epoch", (True, 3.0))
+def test_restored_marker_epoch_type_confusion_is_conflicting(bad_epoch, tmp_path):
+    """An untrusted legacy marker must not exploit Python numeric equality."""
+    path = tmp_path / "legacy-marker-epoch.sqlite"
+    calendar = ActorAvailabilityCalendar(
+        version=1, config_epoch=3,
+        intervals=(ActorAvailabilityInterval(T0, T0 + timedelta(days=1)),),
+    )
+    with SQLitePersistence(path) as store:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="marker-epoch",
+            model_spec_hash=MODEL, config_epoch=3, at=T0,
+            availability_calendar=calendar,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            marker = uow._working.events[0]
+            uow._working.events[0] = replace(
+                marker, payload={**marker.payload, "config_epoch": bad_epoch},
+            )
+    with SQLitePersistence(path) as restored:
+        before_entities, before_events = restored.entities(), restored.events()
+        finding, = audit_legacy_actor_origins(before_entities, before_events)
+        assert finding.classification == "conflicting_legacy_marker"
+        assert not finding.admits_transition
+        assert restored.entities() == before_entities
+        assert restored.events() == before_events
