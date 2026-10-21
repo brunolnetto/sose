@@ -58,6 +58,23 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
             actor.id, "conflicting_legacy_marker", missing_work,
             "actor attributes are not a mapping and cannot establish provenance",
         )
+    # Two mutually missing fields do not establish historical provenance.
+    if any(
+        not isinstance(value, str) or not value.strip()
+        for value in (
+            attrs.get("owner_id"), attrs.get("model_spec_hash"),
+            getattr(actor, "owner_id", None),
+        )
+    ):
+        return LegacyActorOriginAudit(
+            actor.id, "conflicting_legacy_marker", missing_work,
+            "missing or malformed owner/model provenance identity",
+        )
+    if attrs["owner_id"] != actor.owner_id:
+        return LegacyActorOriginAudit(
+            actor.id, "conflicting_legacy_marker", missing_work,
+            "actor owner contradicts projected provenance",
+        )
     origin_id = deterministic_id("od2-actor-calendar-admitted", actor.id)
     markers = tuple(x for x in owned_events if (
         x.event_id == origin_id or x.name == "od2.actor_calendar_admitted"
