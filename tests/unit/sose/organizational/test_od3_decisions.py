@@ -284,3 +284,81 @@ def test_reused_observation_id_does_not_pair_different_snapshots(
     if adapter == "sqlite":
         with SQLitePersistence(path) as restored:
             assert restored.events() == (a, b)
+
+
+@pytest.mark.parametrize("bad_owner", ("", "  ", None))
+def test_decision_rejects_invalid_owner_identity(bad_owner):
+    with pytest.raises(ValueError, match="owner"):
+        decide_od3(owner_id=bad_owner, queue=(), policy=policy("adaptive_follow_up"),
+                   observed_at=NOW, observation_id="identity")
+
+
+@pytest.mark.parametrize("bad_observation", ("", "  ", None))
+def test_decision_rejects_invalid_observation_identity(bad_observation):
+    with pytest.raises(ValueError, match="observation identity"):
+        decide_od3(owner_id=OWNER, queue=(), policy=policy("adaptive_follow_up"),
+                   observed_at=NOW, observation_id=bad_observation)
+
+
+def test_decision_rejects_mutable_queue_and_future_prior_decision():
+    with pytest.raises(ValueError, match="immutable tuple"):
+        decide_od3(owner_id=OWNER, queue=[], policy=policy("adaptive_follow_up"),
+                   observed_at=NOW, observation_id="queue")
+    with pytest.raises(ValueError, match="future"):
+        decide((item("old", 15, 2),), policy("adaptive_follow_up"),
+               previous=NOW + timedelta(microseconds=1))
+
+
+@pytest.mark.parametrize("bad", ("negative", "boolean", "starvation"))
+def test_policy_rejects_invalid_numeric_configuration(bad):
+    changes = {
+        "negative": {"decision_cost_us": -1},
+        "boolean": {"cooldown_us": True},
+        "starvation": {"starvation_bound_us": 4},
+    }
+    with pytest.raises(ValueError):
+        policy("adaptive_follow_up", **changes[bad])
+
+
+def test_sham_rejects_wrong_matched_active_policy_and_active_rejects_override():
+    q = (item("job", 12, 2),)
+    with pytest.raises(ValueError, match="explicit matched active"):
+        decide_od3(owner_id=OWNER, queue=q,
+                   policy=policy("sham", matched_policy="cherry_picking"),
+                   matched_active_policy=policy("adaptive_follow_up"),
+                   observed_at=NOW, observation_id="wrong-active")
+    with pytest.raises(ValueError, match="active policy cannot"):
+        decide_od3(owner_id=OWNER, queue=q, policy=policy("cherry_picking"),
+                   matched_active_policy=policy("adaptive_follow_up"),
+                   observed_at=NOW, observation_id="wrong-active")
+
+
+@pytest.mark.parametrize("attribute", ("arrived_at", "last_contact_at"))
+def test_work_rejects_naive_datetime(attribute):
+    q = item("job", 10, 2)
+    with pytest.raises(ValueError, match="timezone-aware"):
+        replace(q, **{attribute: NOW.replace(tzinfo=None)})
+
+
+def test_work_rejects_nonpositive_and_boolean_effort():
+    q = item("job", 10, 2)
+    for bad in (0, -1, True):
+        with pytest.raises(ValueError, match="positive integer"):
+            replace(q, service_us=bad)
+
+
+def test_queue_all_blocked_produces_noop_without_cost():
+    d = decide((item("blocked", 30, 3, blocked=True),), policy("cherry_picking"))
+    assert d.action == "NOOP" and d.cost_us == 0 and d.selected_item_id is None
+    assert d.before == d.after
+
+
+def test_follow_up_does_not_select_not_yet_overdue_item():
+    d = decide((item("young", 1, 2),), policy("adaptive_follow_up"))
+    assert d.action == "NOOP" and d.cost_us == 0
+
+
+def test_snapshot_timestamp_requires_timezone_awareness():
+    with pytest.raises(ValueError, match="timezone-aware"):
+        decide_od3(owner_id=OWNER, queue=(), policy=policy("adaptive_follow_up"),
+                   observed_at=NOW.replace(tzinfo=None), observation_id="naive")
