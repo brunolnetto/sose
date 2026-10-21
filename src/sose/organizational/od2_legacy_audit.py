@@ -138,6 +138,8 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
         and marker.payload.get("calendar_digest") == expected_digest
         and saved.get("source_digest") == expected_digest
         and set(saved) == {"version", "config_epoch", "intervals", "source_digest"}
+        and type(saved.get("version")) is int
+        and type(saved.get("config_epoch")) is int
         and {k: saved[k] for k in ("version", "config_epoch", "intervals")} == source
     )
     return LegacyActorOriginAudit(
