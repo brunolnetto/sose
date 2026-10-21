@@ -133,6 +133,7 @@ def audit_legacy_actor_origin(actor, events) -> LegacyActorOriginAudit:
         and marker.entity_type == ACTOR_KIND
         and marker.entity_id == actor.id
         and marker.owner_id == attrs.get("owner_id")
+        and type(marker.payload.get("config_epoch")) is int
         and marker.payload.get("config_epoch") == attrs.get("config_epoch")
         and marker.payload.get("model_spec_hash") == attrs.get("model_spec_hash")
         and marker.payload.get("calendar_digest") == expected_digest
