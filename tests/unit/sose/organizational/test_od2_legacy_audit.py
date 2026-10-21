@@ -325,3 +325,35 @@ def test_restored_missing_provenance_identity_fails_closed(field, bad_value, tmp
         assert not finding.admits_transition
         assert restored.events() == original_events
         assert restored.entities() == original_entities
+
+
+@pytest.mark.parametrize("key,value", (
+    ("version", True), ("version", 1.0),
+    ("config_epoch", True), ("config_epoch", 3.0),
+))
+def test_restored_calendar_projection_rejects_numeric_type_confusion(
+    key, value, tmp_path,
+):
+    """Python numeric equality cannot authenticate a malformed projection."""
+    path = tmp_path / "legacy-projection-numeric-types.sqlite"
+    calendar = ActorAvailabilityCalendar(
+        version=1, config_epoch=3,
+        intervals=(ActorAvailabilityInterval(T0, T0 + timedelta(days=1)),),
+    )
+    with SQLitePersistence(path) as store:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="numeric-projection",
+            model_spec_hash=MODEL, config_epoch=3, at=T0,
+            availability_calendar=calendar,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.attributes["availability_calendar"][key] = value
+            uow.save_entity(actor)
+    with SQLitePersistence(path) as restored:
+        entities, events = restored.entities(), restored.events()
+        finding, = audit_legacy_actor_origins(entities, events)
+        assert finding.classification == "conflicting_legacy_marker"
+        assert not finding.admits_transition
+        assert restored.entities() == entities
+        assert restored.events() == events
