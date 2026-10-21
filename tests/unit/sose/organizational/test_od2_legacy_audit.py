@@ -290,3 +290,38 @@ def test_sqlite_restored_calendar_projection_rejects_unexpected_fields(
         assert not finding.admits_transition
         assert restored.entities() == before_entities
         assert restored.events() == before_events
+
+
+@pytest.mark.parametrize("field,bad_value", (
+    ("owner_id", None), ("owner_id", ""), ("owner_id", 42),
+    ("model_spec_hash", None), ("model_spec_hash", ""),
+    ("model_spec_hash", 42),
+))
+def test_restored_missing_provenance_identity_fails_closed(field, bad_value, tmp_path):
+    path = tmp_path / "invalid-legacy-provenance.sqlite"
+    calendar = ActorAvailabilityCalendar(
+        version=1, config_epoch=3,
+        intervals=(ActorAvailabilityInterval(T0, T0 + timedelta(days=1)),),
+    )
+    with SQLitePersistence(path) as store:
+        actor_id = seed_actor(
+            store, owner_id=OWNER, actor_key="invalid-provenance",
+            model_spec_hash=MODEL, config_epoch=3, at=T0,
+            availability_calendar=calendar,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            actor.attributes[field] = bad_value
+            uow.save_entity(actor)
+            marker = uow._working.events[0]
+            payload = dict(marker.payload)
+            payload[field] = bad_value
+            uow._working.events[0] = replace(marker, payload=payload)
+    with SQLitePersistence(path) as restored:
+        original_events = restored.events()
+        original_entities = restored.entities()
+        finding, = audit_legacy_actor_origins(original_entities, original_events)
+        assert finding.classification == "conflicting_legacy_marker"
+        assert not finding.admits_transition
+        assert restored.events() == original_events
+        assert restored.entities() == original_entities
