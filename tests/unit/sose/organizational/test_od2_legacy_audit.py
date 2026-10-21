@@ -359,18 +359,18 @@ def test_restored_calendar_projection_rejects_numeric_type_confusion(
         assert restored.events() == events
 
 
-@pytest.mark.parametrize("bad_epoch", (True, 3.0))
-def test_restored_marker_epoch_type_confusion_is_conflicting(bad_epoch, tmp_path):
+@pytest.mark.parametrize("bad_epoch,valid_epoch", ((True, 1), (3.0, 3)))
+def test_restored_marker_epoch_type_confusion_is_conflicting(bad_epoch, valid_epoch, tmp_path):
     """An untrusted legacy marker must not exploit Python numeric equality."""
     path = tmp_path / "legacy-marker-epoch.sqlite"
     calendar = ActorAvailabilityCalendar(
-        version=1, config_epoch=3,
+        version=1, config_epoch=valid_epoch,
         intervals=(ActorAvailabilityInterval(T0, T0 + timedelta(days=1)),),
     )
     with SQLitePersistence(path) as store:
         actor_id = seed_actor(
             store, owner_id=OWNER, actor_key="marker-epoch",
-            model_spec_hash=MODEL, config_epoch=3, at=T0,
+            model_spec_hash=MODEL, config_epoch=valid_epoch, at=T0,
             availability_calendar=calendar,
         )
         with store.transaction(owner_id=OWNER) as uow:
