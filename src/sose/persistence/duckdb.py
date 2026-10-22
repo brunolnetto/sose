@@ -7,7 +7,7 @@ from typing import Iterator
 
 import duckdb
 
-from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
@@ -151,6 +151,7 @@ class DuckDBPersistence(MemoryPersistence):
             self._connection.execute("ROLLBACK")
             self._state = before
 
+    @tracked_transaction_depth
     @contextmanager
     def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
         if owner_id is not None and not owner_id:
