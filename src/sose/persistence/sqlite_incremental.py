@@ -9,7 +9,7 @@ import sqlite3
 from time import monotonic, sleep
 from typing import Iterator
 
-from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
@@ -411,6 +411,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             self._connection.rollback()
             self._state, self._revision = before, revision
 
+    @tracked_transaction_depth
     @contextmanager
     def transaction(
         self,
