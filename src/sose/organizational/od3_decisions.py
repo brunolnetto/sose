@@ -199,12 +199,73 @@ def decide_od3(
     )
 
 
+def _validate_decision_evidence(decision: OD3Decision) -> None:
+    """Refuse contradictory observational evidence, without granting authority.
+
+    This validates the shape of the *claimed* action. Only an authorized
+    scheduler/actor ledger can establish that an effect or paid cost occurred.
+    """
+    if not isinstance(decision, OD3Decision):
+        raise TypeError("OD-3 decision evidence must be an OD3Decision")
+    if any(
+        not isinstance(value, str) or not value.strip()
+        for value in (
+            decision.owner_id, decision.observation_id, decision.decision_id,
+            decision.snapshot_id, decision.policy_config_id, decision.reason,
+        )
+    ):
+        raise ValueError("OD-3 decision evidence has an invalid identity or reason")
+    _utc(decision.observed_at)
+    before, after = decision.before, decision.after
+    if (
+        not isinstance(before, tuple) or not isinstance(after, tuple)
+        or any(not isinstance(item_id, str) or not item_id.strip()
+               for item_id in before + after)
+        or len(set(before)) != len(before)
+        or len(set(after)) != len(after)
+        or set(before) != set(after)
+    ):
+        raise ValueError("OD-3 decision evidence changes the queue membership")
+    if type(decision.cost_us) is not int or decision.cost_us < 0:
+        raise ValueError("OD-3 decision evidence requires nonnegative integer cost")
+    if decision.policy == "sham":
+        if decision.matched_policy not in ("adaptive_follow_up", "cherry_picking"):
+            raise ValueError("OD-3 decision evidence has an invalid sham pairing")
+    elif (
+        decision.policy not in ("adaptive_follow_up", "cherry_picking")
+        or decision.matched_policy != decision.policy
+    ):
+        raise ValueError("OD-3 decision evidence has an invalid policy pairing")
+
+    if decision.action == "NOOP":
+        if decision.selected_item_id is not None or decision.cost_us or after != before:
+            raise ValueError("OD-3 decision evidence has an effectful NOOP")
+        return
+    if decision.selected_item_id not in before:
+        raise ValueError("OD-3 decision evidence selects absent work")
+    if decision.action == "CONTACT":
+        valid = decision.policy == "adaptive_follow_up" and after == before
+    elif decision.action == "SHAM":
+        valid = decision.policy == "sham" and after == before
+    elif decision.action == "PRIORITIZE":
+        expected = (
+            decision.selected_item_id,
+            *(item_id for item_id in before if item_id != decision.selected_item_id),
+        )
+        valid = decision.policy == "cherry_picking" and after == expected
+    else:
+        valid = False
+    if not valid:
+        raise ValueError("OD-3 decision evidence contradicts its policy action")
+
+
 def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
     """Append idempotent decision evidence in owner-fenced existing UoW.
 
     The queue mutation must separately be applied by an owner-authorized
     scheduler; this diagnostic ledger is not a reservation or service permit.
     """
+    _validate_decision_evidence(decision)
     if decision.decision_id != deterministic_id(
         "od3-decision", decision.owner_id, decision.observation_id,
         decision.policy, decision.matched_policy,
