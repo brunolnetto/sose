@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field, fields
 from datetime import datetime
@@ -787,11 +788,21 @@ class MemoryUnitOfWork:
 class MemoryPersistence:
     def __init__(self) -> None:
         self._state = _State()
+        # Queryable per async/thread context. Memory UoW forks must never be
+        # mistaken for nested commits: the outer fork can overwrite the inner.
+        self._transaction_depth = ContextVar(
+            f"sose-memory-transaction-depth-{id(self)}", default=0,
+        )
+
+    @property
+    def transaction_depth(self) -> int:
+        return self._transaction_depth.get()
 
     @contextmanager
     def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
         if owner_id is not None and not owner_id:
             raise ValueError("owner_id must not be empty")
+        token = self._transaction_depth.set(self.transaction_depth + 1)
         uow = MemoryUnitOfWork(fork_state(self._state), self)
         try:
             yield uow
@@ -800,6 +811,8 @@ class MemoryPersistence:
         except Exception:
             uow.rollback()
             raise
+        finally:
+            self._transaction_depth.reset(token)
 
 
     def boundary_protocol_snapshot(
