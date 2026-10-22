@@ -166,6 +166,30 @@ def _verify_decision_ledger(uow, work: ManagementWork,
             {"accept": "accepted", "reject": "rejected"}.get(action)
             if action != "sham" else effective_state
         )
+        # A native transition is a separate immutable causal witness. A
+        # decision payload carrying a mere non-null source ID is insufficient:
+        # duplicated, deleted or retargeted StateChart evidence must fail
+        # closed on subsequent interventions and on idempotent replays.
+        sources = tuple(event for event in uow.events() if (
+            event.name == "entity.state_transition"
+            and event.entity_type == WORK_KIND
+            and event.entity_id == work.id
+            and event.causation_id == command_id
+        ))
+        if action == "sham":
+            if sources:
+                raise ValueError("OD-4 sham has unexpected native transition evidence")
+        elif (
+            len(sources) != 1
+            or sources[0].event_id != payload.get("source_event_id")
+            or sources[0].owner_id != owner_id
+            or sources[0].occurred_at != decision.occurred_at
+            or sources[0].correlation_id != decision.correlation_id
+            or sources[0].payload.get("trigger") != action
+            or sources[0].payload.get("from_state") != effective_state
+            or sources[0].payload.get("to_state") != next_state
+        ):
+            raise ValueError("OD-4 durable native transition evidence inconsistent")
         cumulative += protocol.cost_us
         if (
             decision.owner_id != owner_id
