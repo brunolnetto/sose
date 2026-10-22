@@ -791,6 +791,17 @@ class _TransactionLifetime:
     active: bool = True
 
 
+def _transaction_tracker(store):
+    """Lazy bootstrap for explicit adapter/coverage probes skipping __init__."""
+    tracker = getattr(store, "_transaction_depth", None)
+    if tracker is None:
+        tracker = ContextVar(
+            f"sose-memory-transaction-depth-{id(store)}", default=(),
+        )
+        store._transaction_depth = tracker
+    return tracker
+
+
 def tracked_transaction_depth(factory):
     """Track the live transaction context in Memory-derived persistence adapters.
 
@@ -801,8 +812,9 @@ def tracked_transaction_depth(factory):
     @contextmanager
     def scope(self, *args, **kwargs):
         lifetime = _TransactionLifetime()
-        inherited = self._transaction_depth.get()
-        token = self._transaction_depth.set((*inherited, lifetime))
+        tracker = _transaction_tracker(self)
+        inherited = tracker.get()
+        token = tracker.set((*inherited, lifetime))
         try:
             with factory(self, *args, **kwargs) as uow:
                 yield uow
@@ -810,7 +822,7 @@ def tracked_transaction_depth(factory):
             # Child tasks may inherit this ContextVar by reference. Mark the
             # shared lifetime dead BEFORE resetting the parent's context.
             lifetime.active = False
-            self._transaction_depth.reset(token)
+            tracker.reset(token)
     return scope
 
 
@@ -825,7 +837,7 @@ class MemoryPersistence:
 
     @property
     def transaction_depth(self) -> int:
-        return sum(lifetime.active for lifetime in self._transaction_depth.get())
+        return sum(lifetime.active for lifetime in _transaction_tracker(self).get())
 
     @tracked_transaction_depth
     @contextmanager
