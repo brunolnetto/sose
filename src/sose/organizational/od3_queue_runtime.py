@@ -173,6 +173,10 @@ def apply_od3_queue_policy(
             matched_active_policy.starvation_bound_us,
         ) if matched_active_policy is not None else None,
     )
+    # Memory snapshots are not nested transactions: an outer transaction
+    # would otherwise silently overwrite an inner committed effect.
+    if getattr(store, "transaction_depth", 0):
+        raise RuntimeError("OD-3 queue mutation refuses a nested transaction")
     with _lock(store, queue_id):
         with store.transaction(owner_id=owner_id) as uow:
             queue = uow.get_entity(QUEUE_KIND, queue_id)
@@ -209,7 +213,11 @@ def apply_od3_queue_policy(
             decision = decide_od3(
                 owner_id=owner_id, queue=items, policy=policy,
                 observed_at=now, previous_decision_at=previous_decision_at,
-                observation_id=observation_id, matched_active_policy=matched_active_policy,
+                # Distinct queues may share external observation IDs and even
+                # identical snapshots; operational diagnostic IDs must not.
+                observation_id=deterministic_id(
+                    "od3-operational-observation", queue_id, observation_id,
+                ), matched_active_policy=matched_active_policy,
             )
             decided_event = od3_decision_event(decision)
             if uow.get_event(decided_event.event_id) is not None:
