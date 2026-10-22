@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Iterator
 
-from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .records import (
     StateRecord,
     StateRecordChange,
@@ -167,6 +167,7 @@ class JSONLJournalPersistence(MemoryPersistence):
             self._state = previous
             self._transaction_count = previous_count
 
+    @tracked_transaction_depth
     @contextmanager
     def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
         if owner_id is not None and not owner_id:
