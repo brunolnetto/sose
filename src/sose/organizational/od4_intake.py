@@ -132,6 +132,50 @@ def _check_admission(uow, work: ManagementWork, protocol: IntakeProtocol,
         raise ValueError("OD-4 work admission lacks original protocol event")
 
 
+def _verify_decision_ledger(uow, work: ManagementWork,
+                            protocol: IntakeProtocol, owner_id: str) -> None:
+    """Paid management time must equal the existing durable decision ledger.
+
+    Mutating the projection or replay registry cannot forgive already paid
+    interventions. Decision records are the ledger within this public-writer
+    reference model; independent signer trust remains a W4b requirement.
+    """
+    history = tuple(e for e in uow.events() if (
+        e.name == _DECISION_EVENT
+        and e.entity_type == WORK_KIND and e.entity_id == work.id
+    ))
+    applied = work.attributes["applied_causes"]
+    cumulative = 0
+    seen = set()
+    for decision in history:
+        payload = decision.payload
+        cause = payload.get("cause_id")
+        command_id = deterministic_id("od4-command-v1", owner_id, work.id, cause)
+        cumulative += protocol.cost_us
+        if (
+            decision.owner_id != owner_id
+            or not isinstance(cause, str) or not cause.strip()
+            or cause in seen
+            or decision.event_id != deterministic_id(
+                "od4-intake-v1", owner_id, work.id, cause
+            )
+            or decision.causation_id != command_id
+            or payload.get("cost_us") != protocol.cost_us
+            or payload.get("paid_management_us") != cumulative
+            or payload.get("config_epoch") != protocol.config_epoch
+            or payload.get("protocol_id") != protocol.protocol_id
+            or payload.get("model_spec_hash") != protocol.model_spec_hash
+            or cause not in applied
+        ):
+            raise ValueError("OD-4 durable management cost ledger inconsistent")
+        seen.add(cause)
+    if (
+        len(applied) != len(history)
+        or work.attributes["paid_management_us"] != cumulative
+    ):
+        raise ValueError("OD-4 paid management projection contradicts durable ledger")
+
+
 def admit_work(store, *, owner_id: str, work_key: str,
                protocol: IntakeProtocol, at: datetime) -> str:
     """Freeze a management protocol before observing and charging decisions."""
@@ -203,6 +247,7 @@ def intervene_work(
             if work is None:
                 raise KeyError(f"OD-4 work not admitted: {work_id}")
             _check_admission(uow, work, protocol, owner_id, work_key)
+            _verify_decision_ledger(uow, work, protocol, owner_id)
             recorded = work.attributes["applied_causes"].get(cause_id)
             original = uow.get_event(decision_id)
             if recorded is not None:
@@ -213,9 +258,25 @@ def intervene_work(
                     raise ValueError("OD-4 replay lacks unique causal decision")
                 command = uow.get_command(command_id)
                 if (
-                    command is None or command.payload.get("request") != list(request)
+                    command is None
+                    or command.command_id != command_id
+                    or command.name != action
+                    or command.entity_type != WORK_KIND
+                    or command.entity_id != work_id
+                    or command.owner_id != owner_id
+                    or command.due_at != now or command.issued_at != now
+                    or command.causation_id is not None
+                    or command.correlation_id != deterministic_id(
+                        "od4-work-flow", owner_id, work_id
+                    )
+                    or command.payload.get("request") != list(request)
+                    or command.payload.get("cause_id") != cause_id
+                    or command.payload.get("protocol") != protocol.snapshot()
                     or original.causation_id != command_id
                     or original.payload.get("action") != action
+                    or original.owner_id != owner_id
+                    or original.entity_id != work_id
+                    or original.occurred_at != now
                 ):
                     raise ValueError("OD-4 replay lacks corresponding command")
                 return original
