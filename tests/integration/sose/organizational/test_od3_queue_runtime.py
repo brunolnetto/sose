@@ -350,3 +350,72 @@ def test_memory_nested_transaction_rejected_before_any_queue_mutation(tmp_path):
         policy=policy("cherry_picking"), observed_at=NOW,
     )
     assert effect.payload["paid_policy_us"] == 3
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite", "jsonl", "duckdb"))
+def test_every_memory_derived_adapter_rejects_nested_queue_mutation(
+    adapter, tmp_path,
+):
+    from sose.core.events import DomainEvent
+    from sose.persistence.jsonl_journal import JSONLJournalPersistence
+    from sose.persistence.duckdb import DuckDBPersistence
+
+    constructors = {
+        "memory": lambda: MemoryPersistence(),
+        "sqlite": lambda: SQLitePersistence(tmp_path / "nested.sqlite"),
+        "jsonl": lambda: JSONLJournalPersistence(tmp_path / "nested.jsonl"),
+        "duckdb": lambda: DuckDBPersistence(tmp_path / "nested.duckdb"),
+    }
+    store = constructors[adapter]()
+    queue = (work("old", 15, 100), work("short", 8, 1))
+    qid = seed_od3_queue(
+        store, owner_id=OWNER, queue_key=KEY, items=queue, at=NOW,
+    )
+    marker = DomainEvent(
+        event_id="outer:event", name="outer.preserved",
+        entity_type="test", entity_id="marker",
+        occurred_at=NOW, owner_id=OWNER,
+    )
+    try:
+        with store.transaction(owner_id=OWNER) as outer:
+            outer.append_event(marker)
+            assert store.transaction_depth == 1
+            with pytest.raises(RuntimeError, match="nested transaction"):
+                apply_od3_queue_policy(
+                    store, owner_id=OWNER, queue_key=KEY,
+                    observation_id="nested:policy",
+                    policy=policy("cherry_picking"), observed_at=NOW,
+                )
+            with pytest.raises(RuntimeError, match="nested transaction"):
+                seed_od3_queue(
+                    store, owner_id=OWNER, queue_key="nested:new",
+                    items=queue, at=NOW,
+                )
+        assert store.transaction_depth == 0
+        assert snapshot(store, qid)[0]["paid_policy_us"] == 0
+        assert tuple(event.name for event in store.events()) == ("outer.preserved",)
+        effect = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY,
+            observation_id="nested:policy",
+            policy=policy("cherry_picking"), observed_at=NOW,
+        )
+        assert effect.payload["paid_policy_us"] == 3
+    finally:
+        close = getattr(store, "close", None)
+        if callable(close):
+            close()
+    if adapter == "jsonl":
+        recovered = JSONLJournalPersistence(tmp_path / "nested.jsonl")
+        assert snapshot(recovered, qid)[0]["paid_policy_us"] == 3
+        assert tuple(event.name for event in recovered.events()) == (
+            "outer.preserved", "od3.policy_decided", "od3.queue_effect_applied",
+        )
+
+
+@pytest.mark.parametrize("bad_id", ("", " ", "  \t", "  padded", None, 42))
+def test_invalid_work_identity_is_rejected_before_any_queue_is_admitted(bad_id):
+    with pytest.raises(ValueError, match="canonical nonblank"):
+        QueuedWork(
+            item_id=bad_id, owner_id=OWNER,
+            arrived_at=NOW, service_us=1,
+        )
