@@ -378,3 +378,134 @@ def test_management_rejects_retrograde_sham_after_prior_paid_observation(adapter
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("field, value", (
+    ("name", "reject"),
+    ("entity_id", "work:other"),
+    ("owner_id", "org:forged"),
+    ("entity_type", "fake_entity_type"),
+    ("due_at", T0 + timedelta(minutes=2)),
+    ("issued_at", T0 + timedelta(minutes=2)),
+    ("correlation_id", "correlation:wrong"),
+))
+def test_od4_replay_refuses_command_target_action_owner_and_time_forgery(
+    adapter, field, value, tmp_path,
+):
+    from dataclasses import replace as dc_replace
+    store = _store(adapter, tmp_path)
+    try:
+        ident = admit_work(
+            store, owner_id=OWNER, work_key="command-check",
+            protocol=PROTOCOL, at=T0,
+        )
+        committed = _run(store, "command-check")
+        cmd_id = deterministic_id(
+            "od4-command-v1", OWNER, ident, "observation:1",
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            cmd = uow.get_command(cmd_id)
+            assert cmd is not None
+            uow.save_command(dc_replace(cmd, **{field: value}))
+        before = store.events()
+        with pytest.raises(ValueError, match="corresponding command"):
+            _run(store, "command-check")
+        assert store.events() == before
+        assert store.entity(WORK_KIND, ident).attributes["paid_management_us"] == 11
+        assert committed.payload["after"] == "accepted"
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("forgery", (
+    "paid_projection", "missing_cause_registry",
+    "decision_cost", "duplicate_cause",
+))
+def test_od4_second_paid_sham_reconciles_real_durable_decision_history(
+    adapter, forgery, tmp_path,
+):
+    from dataclasses import replace as dc_replace
+    store = _store(adapter, tmp_path)
+    try:
+        ident = admit_work(
+            store, owner_id=OWNER, work_key="charge-check",
+            protocol=PROTOCOL, at=T0,
+        )
+        first = _run(
+            store, "charge-check", cause="paid:first", action="sham",
+            matched="accept", at=T0 + timedelta(seconds=1),
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            row = uow.get_entity(WORK_KIND, ident)
+            if forgery == "paid_projection":
+                row.attributes["paid_management_us"] = 0
+                uow.save_entity(row)
+            elif forgery == "missing_cause_registry":
+                row.attributes["applied_causes"].clear()
+                uow.save_entity(row)
+            elif forgery == "decision_cost":
+                uow._working.events.remove(first)
+                uow.append_event(dc_replace(
+                    first, payload={**first.payload, "cost_us": 12},
+                ))
+            else:
+                uow.append_event(first)
+        before = store.events()
+        with pytest.raises(ValueError, match=(
+            "paid management projection contradicts durable ledger"
+            if forgery == "paid_projection" else
+            "durable management cost ledger inconsistent"
+        )):
+            _run(
+                store, "charge-check", cause="paid:next",
+                action="sham", matched="reject",
+                at=T0 + timedelta(seconds=2),
+            )
+        assert store.events() == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_od4_second_paid_sham_accumulates_exactly_and_survives_restart(
+    adapter, tmp_path,
+):
+    store = _store(adapter, tmp_path)
+    try:
+        ident = admit_work(
+            store, owner_id=OWNER, work_key="charge-positive",
+            protocol=PROTOCOL, at=T0,
+        )
+        first = _run(
+            store, "charge-positive", cause="paid:first",
+            action="sham", matched="accept",
+            at=T0 + timedelta(seconds=1),
+        )
+        second = _run(
+            store, "charge-positive", cause="paid:second",
+            action="sham", matched="reject",
+            at=T0 + timedelta(seconds=2),
+        )
+        assert first.payload["paid_management_us"] == 11
+        assert second.payload["paid_management_us"] == 22
+        assert store.entity(WORK_KIND, ident).attributes["paid_management_us"] == 22
+        assert _run(
+            store, "charge-positive", cause="paid:second",
+            action="sham", matched="reject",
+            at=T0 + timedelta(seconds=2),
+        ) == second
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(tmp_path / "management.sqlite") as reopened:
+            assert reopened.entity(WORK_KIND, ident).attributes["paid_management_us"] == 22
+            assert _run(
+                reopened, "charge-positive", cause="paid:second",
+                action="sham", matched="reject",
+                at=T0 + timedelta(seconds=2),
+            ) == second
