@@ -5,6 +5,7 @@ from pathlib import Path
 import duckdb
 
 from .duckdb import DuckDBPersistence
+from .memory import MemoryPersistence
 from .records import changes_for_dirty_records
 
 
@@ -23,7 +24,9 @@ class DuckLakePersistence(DuckDBPersistence):
         data_path: str | Path,
         alias: str = "sose_ducklake",
     ) -> None:
-        # Build the inherited object without opening its local DuckDB database.
+        # Initialize in-memory UoW state + context lifetime tracking while
+        # deliberately NOT opening DuckDBPersistence's local database.
+        MemoryPersistence.__init__(self)
         self.path = str(catalog)
         catalog_path = Path(catalog)
         catalog_path.parent.mkdir(parents=True, exist_ok=True)
