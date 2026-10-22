@@ -652,3 +652,98 @@ def test_sham_unchanged_pairing_replays_after_two_charged_observations(
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("action", ("accept", "reject"))
+@pytest.mark.parametrize("tamper", (
+    "missing", "duplicate", "other_target", "other_owner",
+    "wrong_cause", "wrong_time", "wrong_correlation",
+    "wrong_trigger", "wrong_before", "wrong_after",
+))
+def test_od4_real_intervention_replay_requires_unique_original_native_source(
+    adapter, action, tamper, tmp_path,
+):
+    from dataclasses import replace as dc_replace
+
+    store = _store(adapter, tmp_path)
+    try:
+        key = "native-source:" + action + ":" + tamper
+        ident = admit_work(
+            store, owner_id=OWNER, work_key=key,
+            protocol=PROTOCOL, at=T0,
+        )
+        decision = _run(store, key, action=action)
+        with store.transaction(owner_id=OWNER) as uow:
+            sources = tuple(e for e in uow.events() if (
+                e.name == "entity.state_transition"
+                and e.entity_id == ident
+            ))
+            assert len(sources) == 1
+            original = sources[0]
+            if tamper == "duplicate":
+                uow.append_event(original)
+            else:
+                uow._working.events.remove(original)
+                replacement = {
+                    "missing": None,
+                    "other_target": dc_replace(original, entity_id="work:another"),
+                    "other_owner": dc_replace(original, owner_id=OTHER),
+                    "wrong_cause": dc_replace(original, causation_id="command:forged"),
+                    "wrong_time": dc_replace(
+                        original, occurred_at=T0 + timedelta(seconds=4),
+                    ),
+                    "wrong_correlation": dc_replace(
+                        original, correlation_id="correlation:forged",
+                    ),
+                    "wrong_trigger": dc_replace(
+                        original,
+                        payload={**original.payload, "trigger": "other"},
+                    ),
+                    "wrong_before": dc_replace(
+                        original,
+                        payload={**original.payload, "from_state": "rejected"},
+                    ),
+                    "wrong_after": dc_replace(
+                        original,
+                        payload={**original.payload, "to_state": "pending"},
+                    ),
+                }[tamper]
+                if replacement is not None:
+                    uow.append_event(replacement)
+        before = store.events()
+        with pytest.raises(ValueError, match="native transition evidence inconsistent"):
+            _run(store, key, action=action)
+        assert store.events() == before
+        assert store.entity(WORK_KIND, ident).attributes["paid_management_us"] == 11
+        assert decision.payload["action"] == action
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_od4_sham_replay_rejects_fake_native_transition_for_same_command(
+    adapter, tmp_path,
+):
+    from sose.core.events import DomainEvent
+    store = _store(adapter, tmp_path)
+    try:
+        key = "sham-extra-native"
+        ident = admit_work(store, owner_id=OWNER, work_key=key,
+                           protocol=PROTOCOL, at=T0)
+        committed = _run(store, key, action="sham", matched="accept")
+        with store.transaction(owner_id=OWNER) as uow:
+            uow.append_event(DomainEvent(
+                event_id="forged-sham-native", name="entity.state_transition",
+                entity_type=WORK_KIND, entity_id=ident,
+                occurred_at=committed.occurred_at, owner_id=OWNER,
+                causation_id=committed.causation_id,
+                payload={"trigger": "accept",
+                         "from_state": "pending", "to_state": "accepted"},
+            ))
+        with pytest.raises(ValueError, match="sham has unexpected native transition"):
+            _run(store, key, action="sham", matched="accept")
+    finally:
+        if adapter == "sqlite":
+            store.close()
