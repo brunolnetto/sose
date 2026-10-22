@@ -8,6 +8,7 @@ UnitOfWork or the simulation dataset. This does not itself provide DB roles.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from hashlib import sha256
 from hmac import compare_digest, new as hmac_new
 from json import dumps
@@ -22,6 +23,17 @@ ATTESTATION_EVENT = "engine.statechart_transition_attested"
 
 def _encoded(data: dict) -> bytes:
     return dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
+
+
+def _utc_timestamp(value: datetime) -> datetime:
+    """Reject timezone-free or untyped timestamps before signing evidence."""
+    if (
+        not isinstance(value, datetime)
+        or value.tzinfo is None
+        or value.utcoffset() is None
+    ):
+        raise ValueError("Engine attestation requires timezone-aware causal timestamps")
+    return value.astimezone(timezone.utc)
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -49,9 +61,25 @@ class TransitionAuthority:
     def seal(self, *, before: Entity, after: Entity, event: DomainEvent,
              command: Command) -> DomainEvent:
         """Seal an actual emitted StateChart transition inside Engine's UoW."""
+        # An attestation cannot authorize an event that predates the command,
+        # its due time or its predecessor's last durable update. In particular,
+        # never sign a forged event for a different Command target.
+        event_at = _utc_timestamp(event.occurred_at)
+        due_at = _utc_timestamp(command.due_at)
+        before_at = _utc_timestamp(before.updated_at)
+        _utc_timestamp(after.updated_at)
+        issued_at = (
+            _utc_timestamp(command.issued_at)
+            if command.issued_at is not None else None
+        )
         payload = event.payload
         if (
-            event.name != "entity.state_transition"
+            event_at < due_at
+            or event_at < before_at
+            or (issued_at is not None and event_at < issued_at)
+            or command.entity_id != after.id
+            or command.entity_type != after.entity_type
+            or event.name != "entity.state_transition"
             or event.owner_id != command.owner_id
             or event.causation_id != command.command_id
             or event.entity_id != after.id or before.id != after.id
