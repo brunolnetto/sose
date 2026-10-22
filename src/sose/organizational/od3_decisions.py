@@ -259,11 +259,10 @@ def _validate_decision_evidence(decision: OD3Decision) -> None:
         raise ValueError("OD-3 decision evidence contradicts its policy action")
 
 
-def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
-    """Append idempotent decision evidence in owner-fenced existing UoW.
+def od3_decision_event(decision: OD3Decision) -> DomainEvent:
+    """Construct deterministic decision evidence for a caller-owned atomic UoW.
 
-    The queue mutation must separately be applied by an owner-authorized
-    scheduler; this diagnostic ledger is not a reservation or service permit.
+    This event is diagnostic unless accompanied by an actual committed effect.
     """
     _validate_decision_evidence(decision)
     if decision.decision_id != deterministic_id(
@@ -291,6 +290,12 @@ def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
             "cost_us": decision.cost_us, "reason": decision.reason,
         },
     )
+    return event
+
+
+def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
+    """Persist diagnostic (non-authorizing) OD-3 decision evidence idempotently."""
+    event = od3_decision_event(decision)
     with store.transaction(owner_id=decision.owner_id) as uow:
         original = uow.get_event(event.event_id)
         if original is not None:
