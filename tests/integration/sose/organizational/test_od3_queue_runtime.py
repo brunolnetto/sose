@@ -270,3 +270,83 @@ def test_reject_queue_admission_conflicts_and_foreign_work(adapter, tmp_path):
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_distinct_identical_queues_and_diagnostic_observations_cannot_collide(
+    adapter, tmp_path,
+):
+    from sose.organizational.od3_decisions import (
+        decide_od3, persist_od3_decision,
+    )
+
+    store = store_for(adapter, tmp_path)
+    queue = (work("same", 15, 1),)
+    p = policy("adaptive_follow_up")
+    try:
+        # This preexisting pure diagnostic has the external observation ID.
+        diagnostic = decide_od3(
+            owner_id=OWNER, queue=queue, policy=p, observed_at=NOW,
+            observation_id="same:observation",
+        )
+        persist_od3_decision(store, diagnostic)
+        first_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key="q:first", items=queue, at=NOW,
+        )
+        second_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key="q:second", items=queue, at=NOW,
+        )
+        first = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key="q:first",
+            observation_id="same:observation", policy=p, observed_at=NOW,
+        )
+        second = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key="q:second",
+            observation_id="same:observation", policy=p, observed_at=NOW,
+        )
+        assert first.event_id != second.event_id
+        assert first.causation_id != second.causation_id
+        assert first.causation_id != diagnostic.decision_id
+        assert second.causation_id != diagnostic.decision_id
+        assert snapshot(store, first_id)[0]["paid_policy_us"] == 3
+        assert snapshot(store, second_id)[0]["paid_policy_us"] == 3
+        assert len(store.events()) == 5  # pure diagnostic + 2 x (decision/effect)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+def test_memory_nested_transaction_rejected_before_any_queue_mutation(tmp_path):
+    store = MemoryPersistence()
+    queue = (work("slow", 15, 30), work("fast", 8, 1))
+    qid = seed_od3_queue(
+        store, owner_id=OWNER, queue_key=KEY, items=queue, at=NOW,
+    )
+    before = snapshot(store, qid)
+    assert store.transaction_depth == 0
+    with store.transaction(owner_id=OWNER) as outer:
+        assert store.transaction_depth == 1
+        with pytest.raises(RuntimeError, match="nested transaction"):
+            apply_od3_queue_policy(
+                store, owner_id=OWNER, queue_key=KEY,
+                observation_id="no-nesting", policy=policy("cherry_picking"),
+                observed_at=NOW,
+            )
+        with pytest.raises(RuntimeError, match="nested transaction"):
+            seed_od3_queue(
+                store, owner_id=OWNER, queue_key="nested",
+                items=queue, at=NOW,
+            )
+        assert outer.get_entity(QUEUE_KIND, qid).attributes["paid_policy_us"] == 0
+    assert store.transaction_depth == 0
+    assert snapshot(store, qid) == before
+    with pytest.raises(OSError, match="outer rollback"):
+        with store.transaction(owner_id=OWNER):
+            assert store.transaction_depth == 1
+            raise OSError("outer rollback")
+    assert store.transaction_depth == 0
+    effect = apply_od3_queue_policy(
+        store, owner_id=OWNER, queue_key=KEY, observation_id="no-nesting",
+        policy=policy("cherry_picking"), observed_at=NOW,
+    )
+    assert effect.payload["paid_policy_us"] == 3
