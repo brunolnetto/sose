@@ -145,21 +145,51 @@ def _verify_decision_ledger(uow, work: ManagementWork,
         and e.entity_type == WORK_KIND and e.entity_id == work.id
     ))
     applied = work.attributes["applied_causes"]
+    admission = uow.get_event(_origin_id(work.id))
+    # _check_admission already validated this unique original event and its
+    # protocol payload. Time starts at the immutable event, not mutable attrs.
+    if admission is None or work.created_at != admission.occurred_at:
+        raise ValueError("OD-4 work admission timestamp contradicts durable origin")
+    last_at = _utc(admission.occurred_at)
+    effective_state = "pending"
     cumulative = 0
     seen = set()
     for decision in history:
         payload = decision.payload
         cause = payload.get("cause_id")
+        if not isinstance(cause, str) or not cause.strip() or cause in seen:
+            raise ValueError("OD-4 durable management cost ledger inconsistent")
         command_id = deterministic_id("od4-command-v1", owner_id, work.id, cause)
+        action = payload.get("action")
+        observed = _utc(decision.occurred_at)
+        next_state = (
+            {"accept": "accepted", "reject": "rejected"}.get(action)
+            if action != "sham" else effective_state
+        )
         cumulative += protocol.cost_us
         if (
             decision.owner_id != owner_id
-            or not isinstance(cause, str) or not cause.strip()
-            or cause in seen
             or decision.event_id != deterministic_id(
                 "od4-intake-v1", owner_id, work.id, cause
             )
             or decision.causation_id != command_id
+            or observed < last_at
+            or effective_state != "pending"
+            or next_state is None
+            or payload.get("before") != effective_state
+            or payload.get("after") != next_state
+            or (
+                action == "sham" and (
+                    payload.get("matched_action") not in ("accept", "reject")
+                    or payload.get("source_event_id") is not None
+                )
+            )
+            or (
+                action != "sham" and (
+                    payload.get("matched_action") is not None
+                    or payload.get("source_event_id") is None
+                )
+            )
             or payload.get("cost_us") != protocol.cost_us
             or payload.get("paid_management_us") != cumulative
             or payload.get("config_epoch") != protocol.config_epoch
@@ -168,10 +198,16 @@ def _verify_decision_ledger(uow, work: ManagementWork,
             or cause not in applied
         ):
             raise ValueError("OD-4 durable management cost ledger inconsistent")
+        effective_state = next_state
+        last_at = observed
         seen.add(cause)
     if (
         len(applied) != len(history)
         or work.attributes["paid_management_us"] != cumulative
+        or work.attributes["last_at"] != last_at.isoformat()
+        or work.state != effective_state
+        or work.updated_at != last_at
+        or work.version != len(history)
     ):
         raise ValueError("OD-4 paid management projection contradicts durable ledger")
 
