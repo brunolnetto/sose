@@ -220,3 +220,161 @@ def test_management_causal_command_replay_rejects_missing_or_duplicate_receipt(
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+@pytest.mark.parametrize("invalid, expected", (
+    ({"model_spec_hash": " "}, "canonical nonblank"),
+    ({"protocol_id": ""}, "canonical nonblank"),
+    ({"config_epoch": -1}, "nonnegative"),
+    ({"config_epoch": True}, "nonnegative"),
+    ({"cost_us": 0}, "positive integer"),
+    ({"cost_us": True}, "positive integer"),
+))
+def test_management_protocol_rejects_bad_preregistration(invalid, expected):
+    with pytest.raises(ValueError, match=expected):
+        replace(PROTOCOL, **invalid)
+
+
+@pytest.mark.parametrize("operation", ("admit", "intervene"))
+@pytest.mark.parametrize("field", ("owner_id", "work_key", "at", "protocol"))
+def test_management_request_rejects_untyped_blank_or_unbounded_inputs(
+    operation, field,
+):
+    store = MemoryPersistence()
+    if operation == "admit":
+        params = dict(owner_id=OWNER, work_key="case", protocol=PROTOCOL, at=T0)
+        params[field] = (T0.replace(tzinfo=None) if field == "at"
+                         else object() if field == "protocol" else " ")
+        expected = ("timezone-aware" if field == "at"
+                    else "typed protocol" if field == "protocol"
+                    else "canonical nonblank")
+        with pytest.raises((ValueError, TypeError), match=expected):
+            admit_work(store, **params)
+    else:
+        admit_work(store, owner_id=OWNER, work_key="case",
+                   protocol=PROTOCOL, at=T0)
+        params = dict(owner_id=OWNER, work_key="case",
+                      protocol=PROTOCOL, cause_id="sample",
+                      action="accept", at=T0 + timedelta(seconds=1))
+        params[field] = (T0.replace(tzinfo=None) if field == "at"
+                         else None if field == "protocol" else " ")
+        expected = ("timezone-aware" if field == "at"
+                    else "typed protocol" if field == "protocol"
+                    else "canonical nonblank")
+        baseline = store.events()
+        with pytest.raises((ValueError, TypeError), match=expected):
+            intervene_work(store, **params)
+        assert store.events() == baseline
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("origin_mutation", (
+    "missing", "duplicate", "foreign_owner", "wrong_payload",
+))
+def test_management_origin_evidence_is_immutable_and_unique(
+    adapter, origin_mutation, tmp_path,
+):
+    from dataclasses import replace as dc_replace
+    store = _store(adapter, tmp_path)
+    try:
+        work_id = admit_work(
+            store, owner_id=OWNER, work_key="origin", protocol=PROTOCOL, at=T0,
+        )
+        origin_id = deterministic_id("od4-work-admission-v1", work_id)
+        with store.transaction(owner_id=OWNER) as uow:
+            source = next(e for e in uow.events() if e.event_id == origin_id)
+            if origin_mutation != "duplicate":
+                uow._working.events.remove(source)
+            if origin_mutation == "duplicate":
+                uow.append_event(source)
+            elif origin_mutation == "foreign_owner":
+                uow.append_event(dc_replace(source, owner_id=OTHER))
+            elif origin_mutation == "wrong_payload":
+                uow.append_event(dc_replace(
+                    source, payload={**source.payload, "protocol": {"forged": True}},
+                ))
+        baseline = store.events()
+        with pytest.raises(ValueError, match="original protocol event"):
+            _run(store, "origin")
+        assert store.events() == baseline
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("mutation", (
+    "duplicate_decision", "missing_decision", "wrong_command", "orphan_identity",
+))
+def test_replay_and_fresh_intervention_require_single_causal_identity(
+    adapter, mutation, tmp_path,
+):
+    from dataclasses import replace as dc_replace
+    from sose.core.events import DomainEvent, Command
+
+    store = _store(adapter, tmp_path)
+    try:
+        work_id = admit_work(
+            store, owner_id=OWNER, work_key="replay", protocol=PROTOCOL, at=T0,
+        )
+        if mutation == "orphan_identity":
+            conflict = DomainEvent(
+                event_id=deterministic_id(
+                    "od4-intake-v1", OWNER, work_id, "observation:1",
+                ),
+                name="untrusted.fake_event", entity_type=WORK_KIND,
+                entity_id=work_id, owner_id=OWNER, occurred_at=T0,
+            )
+            with store.transaction(owner_id=OWNER) as uow:
+                uow.append_event(conflict)
+            with pytest.raises(ValueError, match="cause identity already used"):
+                _run(store, "replay")
+        else:
+            decision = _run(store, "replay")
+            with store.transaction(owner_id=OWNER) as uow:
+                if mutation == "duplicate_decision":
+                    uow.append_event(decision)
+                elif mutation == "missing_decision":
+                    uow._working.events.remove(decision)
+                elif mutation == "wrong_command":
+                    command_id = deterministic_id(
+                        "od4-command-v1", OWNER, work_id, "observation:1",
+                    )
+                    cmd = uow.get_command(command_id)
+                    uow.save_command(dc_replace(
+                        cmd, payload={**cmd.payload, "request": ["forged"]},
+                    ))
+            with pytest.raises(ValueError, match=(
+                "unique causal decision" if mutation != "wrong_command"
+                else "corresponding command"
+            )):
+                _run(store, "replay")
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_management_rejects_retrograde_sham_after_prior_paid_observation(adapter, tmp_path):
+    store = _store(adapter, tmp_path)
+    try:
+        admit_work(store, owner_id=OWNER, work_key="time", protocol=PROTOCOL, at=T0)
+        first = _run(
+            store, "time", action="sham", matched="reject",
+            at=T0 + timedelta(minutes=2),
+        )
+        with pytest.raises(ValueError, match="time regressed"):
+            _run(
+                store, "time", cause="older", action="sham", matched="accept",
+                at=T0 + timedelta(minutes=1),
+            )
+        with pytest.raises(ValueError, match="sham pairing"):
+            _run(
+                store, "time", cause="wrong-match",
+                action="accept", matched="outside",
+            )
+        assert first.payload["cost_us"] == 11
+        assert len(tuple(e for e in store.events() if e.name == "od4.intake_decided")) == 1
+    finally:
+        if adapter == "sqlite":
+            store.close()
