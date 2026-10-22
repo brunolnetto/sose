@@ -362,3 +362,55 @@ def test_snapshot_timestamp_requires_timezone_awareness():
     with pytest.raises(ValueError, match="timezone-aware"):
         decide_od3(owner_id=OWNER, queue=(), policy=policy("adaptive_follow_up"),
                    observed_at=NOW.replace(tzinfo=None), observation_id="naive")
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("mutation", (
+    "wrong_action", "phantom_selection", "fake_priority_order",
+    "duplicate_queue_id", "swapped_membership", "negative_cost",
+    "boolean_cost", "charged_noop", "reordered_sham",
+    "reordered_contact", "invalid_policy", "unrecognized_action",
+    "empty_reason",
+))
+def test_durable_od3_evidence_rejects_contradictory_claims_before_append(
+    adapter, mutation, tmp_path,
+):
+    """Diagnostic evidence cannot imply impossible queue effects or costs (#463)."""
+    queue = (item("old", 18, 100), item("fast", 8, 1))
+    active = decide(queue, policy("cherry_picking"), observation="invalid-evidence")
+    assert active.selected_item_id == "fast"
+    sham = decide(queue, policy("sham", matched_policy="cherry_picking"),
+                  observation="invalid-evidence")
+    follow_up = decide(queue, policy("adaptive_follow_up"),
+                       observation="invalid-evidence")
+    bad = {
+        "wrong_action": replace(active, action="CONTACT"),
+        "phantom_selection": replace(active, selected_item_id="unknown"),
+        "fake_priority_order": replace(active, after=active.before),
+        "duplicate_queue_id": replace(active, before=("old", "old")),
+        "swapped_membership": replace(active, after=("fast", "unknown")),
+        "negative_cost": replace(active, cost_us=-1),
+        "boolean_cost": replace(active, cost_us=True),
+        "charged_noop": replace(active, action="NOOP", selected_item_id=None,
+                                after=active.before),
+        "reordered_sham": replace(sham, after=active.after),
+        "reordered_contact": replace(follow_up, after=active.after),
+        "invalid_policy": replace(active, policy="unsupported"),
+        "unrecognized_action": replace(active, action="DONE"),
+        "empty_reason": replace(active, reason=""),
+    }[mutation]
+    path = tmp_path / "od3-invalid-evidence.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        with pytest.raises(ValueError, match="OD-3 decision evidence"):
+            persist_od3_decision(store, bad)
+        assert store.events() == ()
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            assert reopened.events() == ()
+            with pytest.raises(ValueError, match="OD-3 decision evidence"):
+                persist_od3_decision(reopened, bad)
+
