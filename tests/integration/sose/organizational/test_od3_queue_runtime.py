@@ -167,11 +167,20 @@ def test_starvation_guard_and_replay_conflict_fail_closed(adapter, tmp_path):
                 store, owner_id=OWNER, queue_key=KEY, observation_id="starvation",
                 policy=policy("adaptive_follow_up"), observed_at=NOW,
             )
+        # A later NOOP is still a durable observation. An out-of-order
+        # observation must not silently rewrite the queue history.
+        second = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY, observation_id="later",
+            policy=policy("cherry_picking"),
+            observed_at=NOW + timedelta(microseconds=2),
+        )
+        assert second.payload["action"] == "NOOP"
+        before = snapshot(store, qid)
         with pytest.raises(ValueError, match="regressed"):
             apply_od3_queue_policy(
                 store, owner_id=OWNER, queue_key=KEY, observation_id="past",
                 policy=policy("cherry_picking"),
-                observed_at=NOW - timedelta(microseconds=1),
+                observed_at=NOW + timedelta(microseconds=1),
             )
         with pytest.raises(KeyError, match="not admitted"):
             apply_od3_queue_policy(
