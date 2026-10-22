@@ -7,7 +7,7 @@ import sqlite3
 from typing import Iterator
 
 from .codec import dumps, loads
-from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .sqlite_migrations import (
     CURRENT_CODEC_VERSION,
     CURRENT_SCHEMA_VERSION,
@@ -143,6 +143,7 @@ class SQLitePersistence(MemoryPersistence):
             self._connection.rollback()
             self._state = before
 
+    @tracked_transaction_depth
     @contextmanager
     def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
         if owner_id is not None and not owner_id:
