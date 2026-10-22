@@ -785,6 +785,12 @@ class MemoryUnitOfWork:
         self._closed = True
 
 
+@dataclass(slots=True)
+class _TransactionLifetime:
+    """Shared mutable lifetime across copied asyncio ContextVar contexts."""
+    active: bool = True
+
+
 def tracked_transaction_depth(factory):
     """Track the live transaction context in Memory-derived persistence adapters.
 
@@ -794,11 +800,16 @@ def tracked_transaction_depth(factory):
     """
     @contextmanager
     def scope(self, *args, **kwargs):
-        token = self._transaction_depth.set(self.transaction_depth + 1)
+        lifetime = _TransactionLifetime()
+        inherited = self._transaction_depth.get()
+        token = self._transaction_depth.set((*inherited, lifetime))
         try:
             with factory(self, *args, **kwargs) as uow:
                 yield uow
         finally:
+            # Child tasks may inherit this ContextVar by reference. Mark the
+            # shared lifetime dead BEFORE resetting the parent's context.
+            lifetime.active = False
             self._transaction_depth.reset(token)
     return scope
 
@@ -809,12 +820,12 @@ class MemoryPersistence:
         # Queryable per async/thread context. Memory UoW forks must never be
         # mistaken for nested commits: the outer fork can overwrite the inner.
         self._transaction_depth = ContextVar(
-            f"sose-memory-transaction-depth-{id(self)}", default=0,
+            f"sose-memory-transaction-depth-{id(self)}", default=(),
         )
 
     @property
     def transaction_depth(self) -> int:
-        return self._transaction_depth.get()
+        return sum(lifetime.active for lifetime in self._transaction_depth.get())
 
     @tracked_transaction_depth
     @contextmanager
