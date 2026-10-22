@@ -261,7 +261,8 @@ def test_actor_calendar_fences_assignment_at_exact_window_boundary(adapter, tmp_
         # NOT proof of continued service or a live ResourceReservation.
         _transition(store, actor_id, "complete", 4, work_id="work:calendar")
         assert store.entity(ACTOR_KIND, actor_id).state == "eligible"
-        assert len(store.events()) == len(events_before) + 2
+        # Each assign/complete now also emits distinct work/cost source evidence.
+        assert len(store.events()) == len(events_before) + 4
     finally:
         if adapter == "sqlite":
             store.close()
