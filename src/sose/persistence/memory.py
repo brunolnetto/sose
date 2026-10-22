@@ -785,6 +785,24 @@ class MemoryUnitOfWork:
         self._closed = True
 
 
+def tracked_transaction_depth(factory):
+    """Track the live transaction context in Memory-derived persistence adapters.
+
+    Overrides that construct their own UoW must opt in as well; otherwise a
+    nested queue service can fork/commit an inner snapshot that disagrees with
+    its outer UoW (especially the incremental JSONL journal).
+    """
+    @contextmanager
+    def scope(self, *args, **kwargs):
+        token = self._transaction_depth.set(self.transaction_depth + 1)
+        try:
+            with factory(self, *args, **kwargs) as uow:
+                yield uow
+        finally:
+            self._transaction_depth.reset(token)
+    return scope
+
+
 class MemoryPersistence:
     def __init__(self) -> None:
         self._state = _State()
@@ -798,11 +816,11 @@ class MemoryPersistence:
     def transaction_depth(self) -> int:
         return self._transaction_depth.get()
 
+    @tracked_transaction_depth
     @contextmanager
     def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
         if owner_id is not None and not owner_id:
             raise ValueError("owner_id must not be empty")
-        token = self._transaction_depth.set(self.transaction_depth + 1)
         uow = MemoryUnitOfWork(fork_state(self._state), self)
         try:
             yield uow
@@ -811,8 +829,6 @@ class MemoryPersistence:
         except Exception:
             uow.rollback()
             raise
-        finally:
-            self._transaction_depth.reset(token)
 
 
     def boundary_protocol_snapshot(
