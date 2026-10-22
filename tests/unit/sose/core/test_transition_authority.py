@@ -340,3 +340,101 @@ def test_signed_transition_rejects_nonstrict_committed_entity_version(
             with restored.transaction(owner_id=OWNER) as uow:
                 with pytest.raises(ValueError, match="authenticated StateChart receipt lacks committed entity version"):
                     root.verify(uow=uow, event=signed)
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("mutation", (
+    "wrong_target", "wrong_target_type", "future_due",
+    "future_issued", "naive_due", "naive_issued",
+    "naive_event", "naive_before", "backdated_before",
+))
+def test_signer_rejects_noncausal_command_envelopes(
+    adapter, mutation, tmp_path,
+):
+    """#545: a valid StateChart event cannot authorize another target/time."""
+    path = tmp_path / "command-envelope.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    root = TransitionAuthority("engine:trusted", "source:v1", SECRET)
+    actor = OrganizationalActor(
+        id="actor:envelope", state="admitted", created_at=NOW, updated_at=NOW,
+    )
+    original = Command(
+        command_id="cmd:envelope", name="activate",
+        entity_type=actor.entity_type, entity_id=actor.id,
+        owner_id=OWNER, due_at=NOW, issued_at=NOW,
+    )
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_entity(actor)
+    try:
+        engine(store, authority=root).dispatch(original)
+        source = next(event for event in store.events()
+                      if event.name == "entity.state_transition")
+        receipt = next(event for event in store.events()
+                       if event.name == ATTESTATION_EVENT)
+        after = store.entity(actor.entity_type, actor.id)
+        assert root.seal(before=actor, after=after,
+                         event=source, command=original) == receipt
+
+        bad_command = original
+        bad_before = actor
+        bad_source = source
+        if mutation == "wrong_target":
+            bad_command = replace(original, entity_id="actor:another")
+        elif mutation == "wrong_target_type":
+            bad_command = replace(original, entity_type="other_actor_type")
+        elif mutation == "future_due":
+            bad_command = replace(original, due_at=NOW + timedelta(microseconds=1))
+        elif mutation == "future_issued":
+            bad_command = replace(original, issued_at=NOW + timedelta(microseconds=1))
+        elif mutation == "naive_due":
+            bad_command = replace(original, due_at=NOW.replace(tzinfo=None))
+        elif mutation == "naive_issued":
+            bad_command = replace(original, issued_at=NOW.replace(tzinfo=None))
+        elif mutation == "naive_event":
+            bad_source = replace(source, occurred_at=NOW.replace(tzinfo=None))
+        elif mutation == "naive_before":
+            bad_before = replace(actor, updated_at=NOW.replace(tzinfo=None))
+        elif mutation == "backdated_before":
+            bad_before = replace(actor, updated_at=NOW + timedelta(microseconds=1))
+        with pytest.raises(ValueError, match="Engine attestation"):
+            root.seal(before=bad_before, after=after,
+                      event=bad_source, command=bad_command)
+        assert len(store.events()) == 2
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            with reopened.transaction(owner_id=OWNER) as uow:
+                assert root.verify(uow=uow, event=source) == receipt
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_attested_early_dispatch_rolls_back_atomically(adapter, tmp_path):
+    """Dispatch cannot sign a future Command and must leave no entity/event."""
+    path = tmp_path / "premature-dispatch.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    root = TransitionAuthority("engine:trusted", "source:v1", SECRET)
+    actor = OrganizationalActor(
+        id="actor:premature", state="admitted", created_at=NOW, updated_at=NOW,
+    )
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_entity(actor)
+    command = Command(
+        command_id="cmd:future", name="activate",
+        entity_type=actor.entity_type, entity_id=actor.id,
+        owner_id=OWNER, due_at=NOW + timedelta(microseconds=1),
+    )
+    try:
+        with pytest.raises(ValueError, match="Engine attestation"):
+            engine(store, authority=root).dispatch(command)
+        persisted = store.entity(actor.entity_type, actor.id)
+        assert persisted.state == "admitted" and persisted.version == 0
+        assert not store.events()
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            assert reopened.entity(actor.entity_type, actor.id).state == "admitted"
+            assert not reopened.events()
