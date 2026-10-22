@@ -196,6 +196,10 @@ def _verify_decision_ledger(uow, work: ManagementWork,
             or payload.get("protocol_id") != protocol.protocol_id
             or payload.get("model_spec_hash") != protocol.model_spec_hash
             or cause not in applied
+            or applied[cause] != [
+                action, payload.get("matched_action"),
+                observed.isoformat(), protocol.snapshot(),
+            ]
         ):
             raise ValueError("OD-4 durable management cost ledger inconsistent")
         effective_state = next_state
@@ -310,6 +314,9 @@ def intervene_work(
                     or command.payload.get("protocol") != protocol.snapshot()
                     or original.causation_id != command_id
                     or original.payload.get("action") != action
+                    or original.payload.get("matched_action") != matched_action
+                    or original.payload.get("cost_us") != protocol.cost_us
+                    or original.payload.get("config_epoch") != protocol.config_epoch
                     or original.owner_id != owner_id
                     or original.entity_id != work_id
                     or original.occurred_at != now
