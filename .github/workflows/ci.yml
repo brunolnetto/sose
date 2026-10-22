@@ -594,6 +594,7 @@ jobs:
             tests/e2e/sose/persistence/test_postgres_pc6_logistics_transfer_contention.py \
             tests/e2e/sose/persistence/test_postgres_pc6_uncertain_effect_commit.py \
             tests/e2e/sose/persistence/test_postgres_od2_actor_concurrency.py \
+            tests/e2e/sose/persistence/test_postgres_trusted_transition_receipts.py \
             tests/e2e/sose/persistence/test_postgres_od2_actor_replacement.py \
             tests/e2e/sose/persistence/test_postgres_pc6_scoped_organizational_fixtures.py \
             tests/e2e/sose/persistence/test_postgres_resource_identity.py \
