@@ -123,6 +123,8 @@ def seed_od3_queue(
     ):
         raise ValueError("OD-3 queue admission rejects duplicate, foreign or future work")
     queue_id = deterministic_id("od3-queue", owner_id, queue_key)
+    if getattr(store, "transaction_depth", 0):
+        raise RuntimeError("OD-3 queue admission refuses a nested transaction")
     with _lock(store, queue_id):
         with store.transaction(owner_id=owner_id) as uow:
             if uow.get_entity(QUEUE_KIND, queue_id) is not None:
