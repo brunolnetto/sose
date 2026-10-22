@@ -83,6 +83,20 @@ class OD3Decision:
     policy_config_id: str
 
 
+def _decision_identity_namespace(policy_name: str, matched_policy: str) -> str:
+    """Preserve v1 cherry IDs; version the changed fair follow-up semantics.
+
+    Old persisted v1 follow-up evidence remains immutable, but cannot silently
+    be reused as if it had the new contact selection and reason fields.
+    """
+    effective = matched_policy if policy_name == "sham" else policy_name
+    return (
+        "od3-decision-fair-followup-v2"
+        if effective == "adaptive_follow_up"
+        else "od3-decision"
+    )
+
+
 def _policy_config_id(policy: OD3Policy) -> str:
     return deterministic_id(
         "od3-policy-config-v1", policy.name, policy.delay_threshold_us,
@@ -146,7 +160,8 @@ def decide_od3(
     )
     before = tuple(item.item_id for item in queue)
     decision_id = deterministic_id(
-        "od3-decision", owner_id, observation_id, policy.name,
+        _decision_identity_namespace(policy.name, policy.matched_policy or policy.name),
+        owner_id, observation_id, policy.name,
         policy.matched_policy or policy.name, snapshot_id, policy_config_id,
     )
     action, selected, reason, cost, after = "NOOP", None, "not triggered", 0, before
@@ -280,7 +295,8 @@ def od3_decision_event(decision: OD3Decision) -> DomainEvent:
     """
     _validate_decision_evidence(decision)
     if decision.decision_id != deterministic_id(
-        "od3-decision", decision.owner_id, decision.observation_id,
+        _decision_identity_namespace(decision.policy, decision.matched_policy),
+        decision.owner_id, decision.observation_id,
         decision.policy, decision.matched_policy,
         decision.snapshot_id, decision.policy_config_id,
     ):
