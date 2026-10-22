@@ -344,10 +344,11 @@ def test_replay_and_fresh_intervention_require_single_causal_identity(
                     uow.save_command(dc_replace(
                         cmd, payload={**cmd.payload, "request": ["forged"]},
                     ))
-            with pytest.raises(ValueError, match=(
-                "unique causal decision" if mutation != "wrong_command"
-                else "corresponding command"
-            )):
+            with pytest.raises(ValueError, match={
+                "wrong_command": "corresponding command",
+                "duplicate_decision": "durable management cost ledger inconsistent",
+                "missing_decision": "paid management projection contradicts durable ledger",
+            }[mutation]):
                 _run(store, "replay")
     finally:
         if adapter == "sqlite":
@@ -509,3 +510,78 @@ def test_od4_second_paid_sham_accumulates_exactly_and_survives_restart(
                 action="sham", matched="reject",
                 at=T0 + timedelta(seconds=2),
             ) == second
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("mutation, expected", (
+    ("accepted_back_to_pending", "projection contradicts durable ledger"),
+    ("paid_sham_time_regressed", "projection contradicts durable ledger"),
+    ("updated_at_forged", "projection contradicts durable ledger"),
+    ("version_rewound", "projection contradicts durable ledger"),
+    ("created_at_forged", "admission timestamp contradicts durable origin"),
+))
+def test_od4_projection_reconstructs_state_and_time_from_durable_history(
+    adapter, mutation, expected, tmp_path,
+):
+    store = _store(adapter, tmp_path)
+    try:
+        key = "mutation:" + mutation
+        identity = admit_work(
+            store, owner_id=OWNER, work_key=key, protocol=PROTOCOL, at=T0,
+        )
+        action = ("sham" if mutation == "paid_sham_time_regressed" else "accept")
+        first = _run(
+            store, key, action=action,
+            matched=("accept" if action == "sham" else None),
+            at=T0 + timedelta(minutes=2),
+        )
+        assert first.payload["cost_us"] == 11
+        with store.transaction(owner_id=OWNER) as uow:
+            row = uow.get_entity(WORK_KIND, identity)
+            if mutation == "accepted_back_to_pending":
+                row.state = "pending"
+            elif mutation == "paid_sham_time_regressed":
+                row.attributes["last_at"] = T0.isoformat()
+            elif mutation == "updated_at_forged":
+                row.updated_at = T0
+            elif mutation == "version_rewound":
+                row.version = 0
+            else:
+                row.created_at = T0 + timedelta(minutes=1)
+            uow.save_entity(row)
+        before = tuple(store.events())
+        with pytest.raises(ValueError, match=expected):
+            _run(
+                store, key, cause="second:event",
+                action="reject" if mutation == "accepted_back_to_pending" else "sham",
+                matched=None if mutation == "accepted_back_to_pending" else "reject",
+                at=T0 + timedelta(minutes=1),
+            )
+        assert tuple(store.events()) == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_od4_sham_backdating_rejected_using_unmodified_durable_event(
+    adapter, tmp_path,
+):
+    store = _store(adapter, tmp_path)
+    try:
+        key = "chronology"
+        ident = admit_work(store, owner_id=OWNER, work_key=key,
+                           protocol=PROTOCOL, at=T0)
+        _run(store, key, action="sham", matched="accept",
+             at=T0 + timedelta(minutes=2))
+        with store.transaction(owner_id=OWNER) as uow:
+            row = uow.get_entity(WORK_KIND, ident)
+            row.attributes["last_at"] = T0.isoformat()
+            uow.save_entity(row)
+        with pytest.raises(ValueError, match="projection contradicts durable ledger"):
+            _run(store, key, cause="backdated", action="sham",
+                 matched="reject", at=T0 + timedelta(minutes=1))
+        assert store.entity(WORK_KIND, ident).attributes["paid_management_us"] == 11
+    finally:
+        if adapter == "sqlite":
+            store.close()
