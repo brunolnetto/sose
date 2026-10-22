@@ -180,7 +180,18 @@ def decide_od3(
                 else:
                     reason = "starvation guard: oldest eligible work"
             else:
-                reason = "oldest contactable overdue work"
+                # Across repeated paid contacts, never-contacted work takes
+                # precedence over repeatedly contacted older work. Among
+                # contacted items, the least recently contacted goes first.
+                # This prevents one permanently overdue item from monopolizing
+                # the finite contact budget after its cooldown expires.
+                target = min(waiting, key=lambda item: (
+                    item.last_contact_at is not None,
+                    _utc(item.last_contact_at) if item.last_contact_at is not None
+                    else _utc(item.arrived_at),
+                    _utc(item.arrived_at), item.item_id,
+                ))
+                reason = "uncontacted or least-recently-contacted overdue work"
             if target is not None:
                 selected = target.item_id
                 cost = policy.decision_cost_us
