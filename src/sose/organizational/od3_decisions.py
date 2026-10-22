@@ -28,8 +28,11 @@ class QueuedWork:
     blocked: bool = False
 
     def __post_init__(self) -> None:
-        if not self.item_id or not self.owner_id:
-            raise ValueError("work identity and owner must be nonblank")
+        if any(
+            not isinstance(value, str) or not value.strip() or value != value.strip()
+            for value in (self.item_id, self.owner_id)
+        ):
+            raise ValueError("work identity and owner must be canonical nonblank strings")
         if type(self.service_us) is not int or self.service_us <= 0:
             raise ValueError("service effort must be a positive integer")
         _utc(self.arrived_at)
@@ -78,6 +81,20 @@ class OD3Decision:
     reason: str
     snapshot_id: str
     policy_config_id: str
+
+
+def _decision_identity_namespace(policy_name: str, matched_policy: str) -> str:
+    """Preserve v1 cherry IDs; version the changed fair follow-up semantics.
+
+    Old persisted v1 follow-up evidence remains immutable, but cannot silently
+    be reused as if it had the new contact selection and reason fields.
+    """
+    effective = matched_policy if policy_name == "sham" else policy_name
+    return (
+        "od3-decision-fair-followup-v2"
+        if effective == "adaptive_follow_up"
+        else "od3-decision"
+    )
 
 
 def _policy_config_id(policy: OD3Policy) -> str:
@@ -143,7 +160,8 @@ def decide_od3(
     )
     before = tuple(item.item_id for item in queue)
     decision_id = deterministic_id(
-        "od3-decision", owner_id, observation_id, policy.name,
+        _decision_identity_namespace(policy.name, policy.matched_policy or policy.name),
+        owner_id, observation_id, policy.name,
         policy.matched_policy or policy.name, snapshot_id, policy_config_id,
     )
     action, selected, reason, cost, after = "NOOP", None, "not triggered", 0, before
@@ -180,7 +198,18 @@ def decide_od3(
                 else:
                     reason = "starvation guard: oldest eligible work"
             else:
-                reason = "oldest contactable overdue work"
+                # Across repeated paid contacts, never-contacted work takes
+                # precedence over repeatedly contacted older work. Among
+                # contacted items, the least recently contacted goes first.
+                # This prevents one permanently overdue item from monopolizing
+                # the finite contact budget after its cooldown expires.
+                target = min(waiting, key=lambda item: (
+                    item.last_contact_at is not None,
+                    _utc(item.last_contact_at) if item.last_contact_at is not None
+                    else _utc(item.arrived_at),
+                    _utc(item.arrived_at), item.item_id,
+                ))
+                reason = "uncontacted or least-recently-contacted overdue work"
             if target is not None:
                 selected = target.item_id
                 cost = policy.decision_cost_us
@@ -259,15 +288,15 @@ def _validate_decision_evidence(decision: OD3Decision) -> None:
         raise ValueError("OD-3 decision evidence contradicts its policy action")
 
 
-def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
-    """Append idempotent decision evidence in owner-fenced existing UoW.
+def od3_decision_event(decision: OD3Decision) -> DomainEvent:
+    """Construct deterministic decision evidence for a caller-owned atomic UoW.
 
-    The queue mutation must separately be applied by an owner-authorized
-    scheduler; this diagnostic ledger is not a reservation or service permit.
+    This event is diagnostic unless accompanied by an actual committed effect.
     """
     _validate_decision_evidence(decision)
     if decision.decision_id != deterministic_id(
-        "od3-decision", decision.owner_id, decision.observation_id,
+        _decision_identity_namespace(decision.policy, decision.matched_policy),
+        decision.owner_id, decision.observation_id,
         decision.policy, decision.matched_policy,
         decision.snapshot_id, decision.policy_config_id,
     ):
@@ -291,6 +320,12 @@ def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
             "cost_us": decision.cost_us, "reason": decision.reason,
         },
     )
+    return event
+
+
+def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
+    """Persist diagnostic (non-authorizing) OD-3 decision evidence idempotently."""
+    event = od3_decision_event(decision)
     with store.transaction(owner_id=decision.owner_id) as uow:
         original = uow.get_event(event.event_id)
         if original is not None:

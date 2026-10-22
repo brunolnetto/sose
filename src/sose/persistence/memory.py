@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from contextvars import ContextVar
 from copy import deepcopy
 from dataclasses import dataclass, field, fields
 from datetime import datetime
@@ -784,10 +785,61 @@ class MemoryUnitOfWork:
         self._closed = True
 
 
+@dataclass(slots=True)
+class _TransactionLifetime:
+    """Shared mutable lifetime across copied asyncio ContextVar contexts."""
+    active: bool = True
+
+
+def _transaction_tracker(store):
+    """Lazy bootstrap for explicit adapter/coverage probes skipping __init__."""
+    tracker = getattr(store, "_transaction_depth", None)
+    if tracker is None:
+        tracker = ContextVar(
+            f"sose-memory-transaction-depth-{id(store)}", default=(),
+        )
+        store._transaction_depth = tracker
+    return tracker
+
+
+def tracked_transaction_depth(factory):
+    """Track the live transaction context in Memory-derived persistence adapters.
+
+    Overrides that construct their own UoW must opt in as well; otherwise a
+    nested queue service can fork/commit an inner snapshot that disagrees with
+    its outer UoW (especially the incremental JSONL journal).
+    """
+    @contextmanager
+    def scope(self, *args, **kwargs):
+        lifetime = _TransactionLifetime()
+        tracker = _transaction_tracker(self)
+        inherited = tracker.get()
+        token = tracker.set((*inherited, lifetime))
+        try:
+            with factory(self, *args, **kwargs) as uow:
+                yield uow
+        finally:
+            # Child tasks may inherit this ContextVar by reference. Mark the
+            # shared lifetime dead BEFORE resetting the parent's context.
+            lifetime.active = False
+            tracker.reset(token)
+    return scope
+
+
 class MemoryPersistence:
     def __init__(self) -> None:
         self._state = _State()
+        # Queryable per async/thread context. Memory UoW forks must never be
+        # mistaken for nested commits: the outer fork can overwrite the inner.
+        self._transaction_depth = ContextVar(
+            f"sose-memory-transaction-depth-{id(self)}", default=(),
+        )
 
+    @property
+    def transaction_depth(self) -> int:
+        return sum(lifetime.active for lifetime in _transaction_tracker(self).get())
+
+    @tracked_transaction_depth
     @contextmanager
     def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
         if owner_id is not None and not owner_id:

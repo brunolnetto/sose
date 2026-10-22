@@ -414,3 +414,83 @@ def test_durable_od3_evidence_rejects_contradictory_claims_before_append(
             with pytest.raises(ValueError, match="OD-3 decision evidence"):
                 persist_od3_decision(reopened, bad)
 
+
+
+def test_repeated_follow_up_never_starves_uncontacted_work_after_cooldown():
+    """Oldest contacted work cannot monopolize an operational contact budget."""
+    oldest = replace(item("old", 100, 90),
+                     last_contact_at=NOW - timedelta(microseconds=11))
+    never_contacted = item("new", 15, 20)
+    active = decide((oldest, never_contacted), policy("adaptive_follow_up"))
+    sham = decide((oldest, never_contacted),
+                  policy("sham", matched_policy="adaptive_follow_up"))
+    assert active.selected_item_id == sham.selected_item_id == "new"
+    assert active.action == "CONTACT" and sham.action == "SHAM"
+    assert active.cost_us == sham.cost_us == 3
+    both_contacted = (
+        replace(oldest, last_contact_at=NOW - timedelta(microseconds=13)),
+        replace(never_contacted, last_contact_at=NOW - timedelta(microseconds=17)),
+    )
+    after = decide(both_contacted, policy("adaptive_follow_up"))
+    assert after.selected_item_id == "new"  # least-recently-contacted
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_v2_fair_follow_up_identity_never_reuses_legacy_v1_evidence(
+    adapter, tmp_path,
+):
+    from sose.core.events import DomainEvent
+    from sose.core.identity import deterministic_id
+
+    queue = (replace(item("old", 40, 80),
+                     last_contact_at=NOW - timedelta(microseconds=11)),
+             item("uncontacted", 15, 5))
+    p = policy("adaptive_follow_up")
+    fresh = decide(queue, p, observation="historical:contact")
+    old_id = deterministic_id(
+        "od3-decision", OWNER, fresh.observation_id,
+        fresh.policy, fresh.matched_policy,
+        fresh.snapshot_id, fresh.policy_config_id,
+    )
+    assert old_id != fresh.decision_id
+    assert fresh.selected_item_id == "uncontacted"
+    path = tmp_path / "legacy-fairness.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    legacy = DomainEvent(
+        event_id=old_id, name="od3.policy_decided",
+        entity_type="organizational_policy", entity_id=OWNER,
+        occurred_at=NOW, owner_id=OWNER,
+        payload={"reason": "oldest contactable overdue work",
+                 "selected_item_id": "old"},
+    )
+    try:
+        with store.transaction(owner_id=OWNER) as uow:
+            uow.append_event(legacy)
+        applied = persist_od3_decision(store, fresh)
+        assert applied.event_id != legacy.event_id
+        assert applied.payload["selected_item_id"] == "uncontacted"
+        assert store.events() == (legacy, applied)
+        assert persist_od3_decision(store, fresh) == applied
+        assert store.events() == (legacy, applied)
+        # Cherry-picking did not change semantics and retains v1 identity.
+        picking = decide(queue, policy("cherry_picking"),
+                         observation="historical:cherry")
+        assert picking.decision_id == deterministic_id(
+            "od3-decision", OWNER, picking.observation_id,
+            picking.policy, picking.matched_policy,
+            picking.snapshot_id, picking.policy_config_id,
+        )
+        placebo = decide(queue, policy("sham", matched_policy="adaptive_follow_up"),
+                         observation="historical:contact")
+        assert placebo.decision_id != deterministic_id(
+            "od3-decision", OWNER, placebo.observation_id,
+            placebo.policy, placebo.matched_policy,
+            placebo.snapshot_id, placebo.policy_config_id,
+        )
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            assert reopened.events() == (legacy, applied)
+            assert persist_od3_decision(reopened, fresh) == applied

@@ -12,7 +12,7 @@ from psycopg import sql
 from sose.core.resource_identity import ResourceAddress
 
 from .codec import dumps, loads
-from .memory import MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
@@ -677,6 +677,7 @@ class PostgresPersistence(MemoryPersistence):
             ) as uow:
                 yield uow
 
+    @tracked_transaction_depth
     @contextmanager
     def transaction(
         self,
