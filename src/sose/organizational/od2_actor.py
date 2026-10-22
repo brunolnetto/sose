@@ -314,6 +314,38 @@ def seed_actor(
     return identity
 
 
+def _committed_work_event(
+    *, command: Command, actor_id: str, cause_id: str,
+    source: DomainEvent, model_spec_hash: str, config_epoch: int,
+    work_id: str | None, cost_us: int,
+) -> DomainEvent:
+    """Append-only work/cost evidence causally attached to a native event.
+
+    The event is deliberately NOT a native entity.state_transition. It binds
+    work identity to the original StateChart event without turning mutable
+    Commands or projection attributes into historical authorization.
+    """
+    return DomainEvent(
+        event_id=deterministic_id(
+            "od2-actor-work-evidence-v1", command.owner_id, actor_id, cause_id,
+        ),
+        name="od2.actor_work_caused",
+        entity_type="organizational_actor_work_cause",
+        entity_id=command.command_id,
+        occurred_at=source.occurred_at,
+        owner_id=command.owner_id,
+        causation_id=source.event_id,
+        correlation_id=command.correlation_id,
+        payload={
+            "actor_id": actor_id, "command_id": command.command_id,
+            "source_event_id": source.event_id, "action": command.name,
+            "external_cause_id": cause_id, "work_id": work_id,
+            "cost_us": cost_us, "model_spec_hash": model_spec_hash,
+            "config_epoch": config_epoch,
+        },
+    )
+
+
 def transition_actor(
     store: Persistence, *, owner_id: str, actor_id: str,
     action: str, cause_id: str, at: datetime,
@@ -393,6 +425,19 @@ def transition_actor(
                     raise ValueError(
                         "actor replay lacks matching durable StateChart source event"
                     )
+                if action in ("assign", "complete"):
+                    expected = _committed_work_event(
+                        command=command, actor_id=actor_id, cause_id=cause_id,
+                        source=matching[0], model_spec_hash=model_spec_hash,
+                        config_epoch=config_epoch, work_id=work_id, cost_us=cost_us,
+                    )
+                    matches = tuple(
+                        event for event in uow.events() if event.event_id == expected.event_id
+                    )
+                    if len(matches) != 1 or matches[0] != expected:
+                        raise ValueError(
+                            "actor replay lacks immutable work/cost causal evidence"
+                        )
                 return actor
             prior_at = datetime.fromisoformat(meta["last_at"])
             if now < prior_at:
@@ -430,6 +475,15 @@ def transition_actor(
                 uow.save_command(command)
                 for event in emitted:
                     uow.append_event(event)
+                if action in ("assign", "complete"):
+                    work_evidence = _committed_work_event(
+                        command=command, actor_id=actor_id, cause_id=cause_id,
+                        source=emitted[0], model_spec_hash=model_spec_hash,
+                        config_epoch=config_epoch, work_id=work_id, cost_us=cost_us,
+                    )
+                    if uow.get_event(work_evidence.event_id) is not None:
+                        raise ValueError("actor work evidence ID already committed")
+                    uow.append_event(work_evidence)
                 return actor
             finally:
                 engine.context.drain_events()
