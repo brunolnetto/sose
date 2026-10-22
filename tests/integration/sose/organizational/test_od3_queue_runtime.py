@@ -419,3 +419,36 @@ def test_invalid_work_identity_is_rejected_before_any_queue_is_admitted(bad_id):
             item_id=bad_id, owner_id=OWNER,
             arrived_at=NOW, service_us=1,
         )
+
+
+@pytest.mark.parametrize("adapter", ("memory", "jsonl"))
+def test_inherited_async_transaction_context_expires_after_parent_exit(adapter, tmp_path):
+    import asyncio
+    from sose.persistence.jsonl_journal import JSONLJournalPersistence
+
+    store = (MemoryPersistence() if adapter == "memory"
+             else JSONLJournalPersistence(tmp_path / "async-context.jsonl"))
+
+    async def exercise():
+        async def child_created_under_parent():
+            # The task inherited the parent's context, but must not inherit
+            # a permanently live transaction after its parent has committed.
+            assert store.transaction_depth == 0
+            seed_od3_queue(
+                store, owner_id=OWNER, queue_key="async:child",
+                items=(work("child-item", 8, 1),), at=NOW,
+            )
+            return store.transaction_depth
+
+        with store.transaction(owner_id=OWNER):
+            assert store.transaction_depth == 1
+            child = asyncio.create_task(child_created_under_parent())
+        assert store.transaction_depth == 0
+        return await child
+
+    assert asyncio.run(exercise()) == 0
+    child_id = seed_od3_queue(
+        store, owner_id=OWNER, queue_key="async:other",
+        items=(work("other", 8, 1),), at=NOW,
+    )
+    assert snapshot(store, child_id)[1] == 0
