@@ -414,3 +414,22 @@ def test_durable_od3_evidence_rejects_contradictory_claims_before_append(
             with pytest.raises(ValueError, match="OD-3 decision evidence"):
                 persist_od3_decision(reopened, bad)
 
+
+
+def test_repeated_follow_up_never_starves_uncontacted_work_after_cooldown():
+    """Oldest contacted work cannot monopolize an operational contact budget."""
+    oldest = replace(item("old", 100, 90),
+                     last_contact_at=NOW - timedelta(microseconds=11))
+    never_contacted = item("new", 15, 20)
+    active = decide((oldest, never_contacted), policy("adaptive_follow_up"))
+    sham = decide((oldest, never_contacted),
+                  policy("sham", matched_policy="adaptive_follow_up"))
+    assert active.selected_item_id == sham.selected_item_id == "new"
+    assert active.action == "CONTACT" and sham.action == "SHAM"
+    assert active.cost_us == sham.cost_us == 3
+    both_contacted = (
+        replace(oldest, last_contact_at=NOW - timedelta(microseconds=13)),
+        replace(never_contacted, last_contact_at=NOW - timedelta(microseconds=17)),
+    )
+    after = decide(both_contacted, policy("adaptive_follow_up"))
+    assert after.selected_item_id == "new"  # least-recently-contacted
