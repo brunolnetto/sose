@@ -43,6 +43,7 @@ def _run(store, key, *, cause="observation:1", action="accept",
 def test_native_intake_change_and_charged_sham_have_same_cost_not_same_effect(
     adapter, action, tmp_path,
 ):
+    expected_state = {"accept": "accepted", "reject": "rejected"}[action]
     store = _store(adapter, tmp_path)
     try:
         active_id = admit_work(
@@ -57,14 +58,14 @@ def test_native_intake_change_and_charged_sham_have_same_cost_not_same_effect(
         control = _run(store, "sham", action="sham", matched=action)
         assert active.name == control.name == "od4.intake_decided"
         assert active.payload["before"] == control.payload["before"] == "pending"
-        assert active.payload["after"] == action
+        assert active.payload["after"] == expected_state
         assert control.payload["after"] == "pending"
         assert active.payload["source_event_id"] is not None
         assert control.payload["source_event_id"] is None
         assert active.payload["cost_us"] == control.payload["cost_us"] == 11
         active_entity = store.entity(WORK_KIND, active_id)
         sham_entity = store.entity(WORK_KIND, sham_id)
-        assert active_entity.state == action and sham_entity.state == "pending"
+        assert active_entity.state == expected_state and sham_entity.state == "pending"
         assert active_entity.version == sham_entity.version == 1
         assert (active_entity.attributes["paid_management_us"] ==
                 sham_entity.attributes["paid_management_us"] == 11)
@@ -91,7 +92,7 @@ def test_native_intake_change_and_charged_sham_have_same_cost_not_same_effect(
         with SQLitePersistence(tmp_path / "management.sqlite") as recovered:
             assert _run(recovered, "active", action=action) == active
             assert _run(recovered, "sham", action="sham", matched=action) == control
-            assert recovered.entity(WORK_KIND, active_id).state == action
+            assert recovered.entity(WORK_KIND, active_id).state == expected_state
             assert recovered.entity(WORK_KIND, sham_id).state == "pending"
 
 
@@ -155,7 +156,7 @@ def test_admission_is_immutable_even_if_actor_projection_is_tampered(adapter, tm
             entity.attributes["protocol"]["cost_us"] = 999
             uow.save_entity(entity)
         baseline = tuple(store.events())
-        with pytest.raises(ValueError, match="admission/protocol"):
+        with pytest.raises(ValueError, match="original protocol event"):
             _run(store, "calendar", protocol=replace(PROTOCOL, cost_us=999))
         with pytest.raises(ValueError, match="admission/protocol"):
             _run(store, "calendar")
