@@ -28,8 +28,11 @@ class QueuedWork:
     blocked: bool = False
 
     def __post_init__(self) -> None:
-        if not self.item_id or not self.owner_id:
-            raise ValueError("work identity and owner must be nonblank")
+        if any(
+            not isinstance(value, str) or not value.strip() or value != value.strip()
+            for value in (self.item_id, self.owner_id)
+        ):
+            raise ValueError("work identity and owner must be canonical nonblank strings")
         if type(self.service_us) is not int or self.service_us <= 0:
             raise ValueError("service effort must be a positive integer")
         _utc(self.arrived_at)
