@@ -1,0 +1,240 @@
+"""OD-3 real queue decisions: follow-up, cherry picking and charged sham.
+
+An isolated deterministic scheduler contract, not a claim that A1 BATCHING
+implements these behaviors. Durable item/actor ledger integration remains #463.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+from sose.core.events import DomainEvent
+from sose.core.identity import deterministic_id
+
+
+def _utc(value: datetime) -> datetime:
+    if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+        raise ValueError("OD-3 decision requires timezone-aware observation time")
+    return value.astimezone(timezone.utc)
+
+
+@dataclass(frozen=True, slots=True)
+class QueuedWork:
+    item_id: str
+    owner_id: str
+    arrived_at: datetime
+    service_us: int
+    last_contact_at: datetime | None = None
+    blocked: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.item_id or not self.owner_id:
+            raise ValueError("work identity and owner must be nonblank")
+        if type(self.service_us) is not int or self.service_us <= 0:
+            raise ValueError("service effort must be a positive integer")
+        _utc(self.arrived_at)
+        if self.last_contact_at is not None:
+            _utc(self.last_contact_at)
+
+
+@dataclass(frozen=True, slots=True)
+class OD3Policy:
+    name: str
+    delay_threshold_us: int
+    cooldown_us: int
+    decision_cost_us: int
+    starvation_bound_us: int
+    matched_policy: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.name not in ("adaptive_follow_up", "cherry_picking", "sham"):
+            raise ValueError("unsupported operational OD-3 policy")
+        if self.name == "sham":
+            if self.matched_policy not in ("adaptive_follow_up", "cherry_picking"):
+                raise ValueError("sham must declare its matched real policy")
+        elif self.matched_policy is not None:
+            raise ValueError("matched_policy is valid only on sham decisions")
+        for key in ("delay_threshold_us", "cooldown_us", "decision_cost_us", "starvation_bound_us"):
+            value = getattr(self, key)
+            if type(value) is not int or value < 0:
+                raise ValueError("OD-3 policy bounds/cost must be nonnegative integer")
+        if self.starvation_bound_us < self.delay_threshold_us:
+            raise ValueError("starvation guard must cover policy trigger")
+
+
+@dataclass(frozen=True, slots=True)
+class OD3Decision:
+    owner_id: str
+    policy: str
+    observed_at: datetime
+    observation_id: str
+    matched_policy: str
+    decision_id: str
+    action: str
+    selected_item_id: str | None
+    before: tuple[str, ...]
+    after: tuple[str, ...]
+    cost_us: int
+    reason: str
+    snapshot_id: str
+    policy_config_id: str
+
+
+def _policy_config_id(policy: OD3Policy) -> str:
+    return deterministic_id(
+        "od3-policy-config-v1", policy.name, policy.delay_threshold_us,
+        policy.cooldown_us, policy.decision_cost_us, policy.starvation_bound_us,
+    )
+
+
+def decide_od3(
+    *, owner_id: str, queue: tuple[QueuedWork, ...], policy: OD3Policy,
+    observed_at: datetime, previous_decision_at: datetime | None = None,
+    observation_id: str, matched_active_policy: OD3Policy | None = None,
+) -> OD3Decision:
+    """Observe only arrived items; produce a durable-ready deterministic action.
+
+    A successful policy decision changes queue priority or records a follow-up
+    contact. Cherry-picking preferentially selects short jobs until the oldest
+    eligible item reaches a fixed starvation bound, then MUST favor that item.
+    A matched-cost sham emits no queue reorder or contact.
+    """
+    now = _utc(observed_at)
+    if not isinstance(owner_id, str) or not owner_id.strip():
+        raise ValueError("OD-3 owner must be nonblank")
+    if not isinstance(observation_id, str) or not observation_id.strip():
+        raise ValueError("OD-3 observation identity required")
+    if not isinstance(queue, tuple):
+        raise ValueError("queue must be an immutable tuple")
+    if len({item.item_id for item in queue}) != len(queue):
+        raise ValueError("duplicate work identity")
+    if any(item.owner_id != owner_id for item in queue):
+        raise PermissionError("OD-3 queue contains foreign owner")
+    if any(_utc(item.arrived_at) > now or (
+        item.last_contact_at is not None and _utc(item.last_contact_at) > now
+    ) for item in queue):
+        raise ValueError("OD-3 decision cannot observe future queue history")
+    if previous_decision_at is not None and _utc(previous_decision_at) > now:
+        raise ValueError("OD-3 previous decision occurs in the future")
+    if policy.name == "sham":
+        if matched_active_policy is None or matched_active_policy.name != policy.matched_policy:
+            raise ValueError("sham requires explicit matched active policy configuration")
+        if (
+            policy.delay_threshold_us, policy.cooldown_us, policy.decision_cost_us,
+            policy.starvation_bound_us,
+        ) != (
+            matched_active_policy.delay_threshold_us, matched_active_policy.cooldown_us,
+            matched_active_policy.decision_cost_us, matched_active_policy.starvation_bound_us,
+        ):
+            raise ValueError("sham and active policy configuration mismatch")
+        active_policy = matched_active_policy
+    else:
+        if matched_active_policy is not None:
+            raise ValueError("active policy cannot declare a matched policy")
+        active_policy = policy
+    policy_config_id = _policy_config_id(active_policy)
+    snapshot_id = deterministic_id(
+        "od3-queue-snapshot-v1", owner_id, now.isoformat(),
+        _utc(previous_decision_at).isoformat() if previous_decision_at else None,
+        tuple((item.item_id, item.owner_id, _utc(item.arrived_at).isoformat(),
+               item.service_us,
+               _utc(item.last_contact_at).isoformat() if item.last_contact_at else None,
+               item.blocked) for item in queue),
+    )
+    before = tuple(item.item_id for item in queue)
+    decision_id = deterministic_id(
+        "od3-decision", owner_id, observation_id, policy.name,
+        policy.matched_policy or policy.name, snapshot_id, policy_config_id,
+    )
+    action, selected, reason, cost, after = "NOOP", None, "not triggered", 0, before
+    if previous_decision_at is not None and (
+        now - _utc(previous_decision_at) < timedelta(microseconds=policy.cooldown_us)
+    ):
+        reason = "decision cooldown"
+    else:
+        effective_policy = policy.matched_policy if policy.name == "sham" else policy.name
+        eligible = tuple(item for item in queue if not item.blocked)
+        waiting = tuple(item for item in eligible if (
+            now - _utc(item.arrived_at) >= timedelta(microseconds=policy.delay_threshold_us)
+        ))
+        if effective_policy == "adaptive_follow_up":
+            # Filter cooling items first: the next oldest eligible item can
+            # still be contacted while a previously contacted item cools.
+            waiting = tuple(item for item in waiting if (
+                item.last_contact_at is None
+                or now - _utc(item.last_contact_at) >= timedelta(
+                    microseconds=policy.cooldown_us,
+                )
+            ))
+        if waiting:
+            oldest = min(waiting, key=lambda item: (_utc(item.arrived_at), item.item_id))
+            target = oldest
+            if effective_policy == "cherry_picking":
+                if now - _utc(oldest.arrived_at) < timedelta(
+                    microseconds=policy.starvation_bound_us,
+                ):
+                    target = min(waiting, key=lambda x: (
+                        x.service_us, _utc(x.arrived_at), x.item_id,
+                    ))
+                    reason = "shortest eligible service"
+                else:
+                    reason = "starvation guard: oldest eligible work"
+            else:
+                reason = "oldest contactable overdue work"
+            if target is not None:
+                selected = target.item_id
+                cost = policy.decision_cost_us
+                if policy.name == "sham":
+                    action = "SHAM"
+                elif policy.name == "adaptive_follow_up":
+                    action = "CONTACT"
+                else:
+                    action = "PRIORITIZE"
+                    after = (selected, *(key for key in before if key != selected))
+    return OD3Decision(
+        owner_id, policy.name, now, observation_id,
+        policy.matched_policy or policy.name, decision_id,
+        action, selected, before, tuple(after), cost, reason,
+        snapshot_id, policy_config_id,
+    )
+
+
+def persist_od3_decision(store, decision: OD3Decision) -> DomainEvent:
+    """Append idempotent decision evidence in owner-fenced existing UoW.
+
+    The queue mutation must separately be applied by an owner-authorized
+    scheduler; this diagnostic ledger is not a reservation or service permit.
+    """
+    if decision.decision_id != deterministic_id(
+        "od3-decision", decision.owner_id, decision.observation_id,
+        decision.policy, decision.matched_policy,
+        decision.snapshot_id, decision.policy_config_id,
+    ):
+        raise ValueError("OD-3 durable decision identity contradicts observation")
+    event = DomainEvent(
+        event_id=decision.decision_id, name="od3.policy_decided",
+        entity_type="organizational_policy", entity_id=decision.owner_id,
+        occurred_at=decision.observed_at, owner_id=decision.owner_id,
+        correlation_id=deterministic_id(
+            "od3-observation", decision.owner_id, decision.observation_id,
+            decision.snapshot_id,
+        ),
+        payload={
+            "observation_id": decision.observation_id,
+            "snapshot_id": decision.snapshot_id,
+            "policy_config_id": decision.policy_config_id,
+            "matched_policy": decision.matched_policy,
+            "policy": decision.policy, "action": decision.action,
+            "selected_item_id": decision.selected_item_id,
+            "before": list(decision.before), "after": list(decision.after),
+            "cost_us": decision.cost_us, "reason": decision.reason,
+        },
+    )
+    with store.transaction(owner_id=decision.owner_id) as uow:
+        original = uow.get_event(event.event_id)
+        if original is not None:
+            if original != event:
+                raise ValueError("OD-3 decision identity replay conflict")
+            return original
+        uow.append_event(event)
+    return event
