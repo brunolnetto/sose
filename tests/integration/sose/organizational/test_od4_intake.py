@@ -585,3 +585,70 @@ def test_od4_sham_backdating_rejected_using_unmodified_durable_event(
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_sham_replay_cannot_replace_original_pairing_by_rewriting_command_and_projection(
+    adapter, tmp_path,
+):
+    from dataclasses import replace as dc_replace
+    store = _store(adapter, tmp_path)
+    try:
+        key = "sham-pairing"
+        identity = admit_work(
+            store, owner_id=OWNER, work_key=key, protocol=PROTOCOL, at=T0,
+        )
+        original = _run(
+            store, key, cause="paired:cause", action="sham", matched="accept",
+        )
+        command_id = deterministic_id(
+            "od4-command-v1", OWNER, identity, "paired:cause",
+        )
+        before_event = original
+        with store.transaction(owner_id=OWNER) as uow:
+            row = uow.get_entity(WORK_KIND, identity)
+            row.attributes["applied_causes"]["paired:cause"][1] = "reject"
+            uow.save_entity(row)
+            command = uow.get_command(command_id)
+            altered_payload = {**command.payload}
+            altered_payload["request"] = list(command.payload["request"])
+            altered_payload["request"][1] = "reject"
+            uow.save_command(dc_replace(command, payload=altered_payload))
+        event_set = store.events()
+        with pytest.raises(ValueError, match="durable management cost ledger inconsistent"):
+            _run(
+                store, key, cause="paired:cause", action="sham", matched="reject",
+            )
+        assert store.events() == event_set
+        assert next(
+            ev for ev in store.events()
+            if ev.event_id == before_event.event_id
+        ).payload["matched_action"] == "accept"
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_sham_unchanged_pairing_replays_after_two_charged_observations(
+    adapter, tmp_path,
+):
+    store = _store(adapter, tmp_path)
+    try:
+        key = "sham-unchanged"
+        identity = admit_work(store, owner_id=OWNER, work_key=key,
+                              protocol=PROTOCOL, at=T0)
+        first = _run(store, key, cause="c1", action="sham",
+                     matched="accept", at=T0 + timedelta(seconds=1))
+        second = _run(store, key, cause="c2", action="sham",
+                      matched="reject", at=T0 + timedelta(seconds=2))
+        before = store.events()
+        assert _run(store, key, cause="c1", action="sham",
+                    matched="accept", at=T0 + timedelta(seconds=1)) == first
+        assert _run(store, key, cause="c2", action="sham",
+                    matched="reject", at=T0 + timedelta(seconds=2)) == second
+        assert store.events() == before
+        assert store.entity(WORK_KIND, identity).attributes["paid_management_us"] == 22
+    finally:
+        if adapter == "sqlite":
+            store.close()
