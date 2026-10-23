@@ -249,6 +249,8 @@ def admit_work(store, *, owner_id: str, work_key: str,
         raise TypeError("OD-4 admission requires typed protocol")
     now = _utc(at)
     work_id = deterministic_id("od4-work", owner_id, work_key)
+    if getattr(store, "transaction_depth", 0):
+        raise RuntimeError("OD-4 intake refuses nested transaction")
     with _guard(store, work_id):
         with store.transaction(owner_id=owner_id) as uow:
             if uow.get_entity(WORK_KIND, work_id) is not None:
@@ -305,6 +307,8 @@ def intervene_work(
     request = (
         action, matched_action, now.isoformat(), protocol.snapshot(),
     )
+    if getattr(store, "transaction_depth", 0):
+        raise RuntimeError("OD-4 intervention refuses nested transaction")
     with _guard(store, work_id):
         with store.transaction(owner_id=owner_id) as uow:
             work = uow.get_entity(WORK_KIND, work_id)
