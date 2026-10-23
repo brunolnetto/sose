@@ -747,3 +747,33 @@ def test_od4_sham_replay_rejects_fake_native_transition_for_same_command(
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_od4_nested_outer_transaction_cannot_erase_committed_intake(adapter, tmp_path):
+    store = _store(adapter, tmp_path)
+    try:
+        ident = admit_work(
+            store, owner_id=OWNER, work_key="nested-case",
+            protocol=PROTOCOL, at=T0,
+        )
+        initial_events = store.events()
+        with store.transaction(owner_id=OWNER) as outer:
+            assert store.transaction_depth == 1
+            with pytest.raises(RuntimeError, match="nested transaction"):
+                _run(store, "nested-case", action="accept")
+            with pytest.raises(RuntimeError, match="nested transaction"):
+                admit_work(
+                    store, owner_id=OWNER, work_key="nested-admission",
+                    protocol=PROTOCOL, at=T0,
+                )
+            assert outer.get_entity(WORK_KIND, ident).state == "pending"
+        assert store.transaction_depth == 0
+        assert store.events() == initial_events
+        assert store.entity(WORK_KIND, ident).attributes["paid_management_us"] == 0
+        effect = _run(store, "nested-case", action="accept")
+        assert effect.payload["paid_management_us"] == PROTOCOL.cost_us
+        assert store.entity(WORK_KIND, ident).state == "accepted"
+    finally:
+        if adapter == "sqlite":
+            store.close()
