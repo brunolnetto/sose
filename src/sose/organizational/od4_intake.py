@@ -226,6 +226,23 @@ def _verify_decision_ledger(uow, work: ManagementWork,
             ]
         ):
             raise ValueError("OD-4 durable management cost ledger inconsistent")
+        if action != "sham":
+            source_id = payload["source_event_id"]
+            sources = tuple(e for e in uow.events() if e.event_id == source_id)
+            if (
+                len(sources) != 1
+                or sources[0].name != "entity.state_transition"
+                or sources[0].entity_type != WORK_KIND
+                or sources[0].entity_id != work.id
+                or sources[0].owner_id != owner_id
+                or sources[0].causation_id != command_id
+                or sources[0].correlation_id != decision.correlation_id
+                or sources[0].occurred_at != decision.occurred_at
+                or sources[0].payload.get("trigger") != action
+                or sources[0].payload.get("from_state") != effective_state
+                or sources[0].payload.get("to_state") != next_state
+            ):
+                raise ValueError("OD-4 native transition source missing or inconsistent")
         effective_state = next_state
         last_at = observed
         seen.add(cause)
