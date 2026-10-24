@@ -777,3 +777,57 @@ def test_od4_nested_outer_transaction_cannot_erase_committed_intake(adapter, tmp
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("tamper", (
+    "removed", "duplicated", "wrong_owner", "wrong_target",
+    "wrong_trigger", "wrong_previous_state", "wrong_next_state",
+    "wrong_cause", "wrong_timestamp",
+))
+def test_od4_replay_requires_exactly_one_native_transition_receipt(
+    adapter, tamper, tmp_path,
+):
+    from dataclasses import replace as dc_replace
+
+    store = _store(adapter, tmp_path)
+    try:
+        key = "native:" + tamper
+        work_id = admit_work(store, owner_id=OWNER, work_key=key,
+                             protocol=PROTOCOL, at=T0)
+        decision = _run(store, key, action="accept")
+        with store.transaction(owner_id=OWNER) as uow:
+            source = next(e for e in uow.events()
+                          if e.event_id == decision.payload["source_event_id"])
+            if tamper != "duplicated":
+                uow._working.events.remove(source)
+            if tamper == "duplicated":
+                uow.append_event(source)
+            elif tamper != "removed":
+                changed = {}
+                if tamper == "wrong_owner":
+                    changed["owner_id"] = OTHER
+                elif tamper == "wrong_target":
+                    changed["entity_id"] = "wrong-work"
+                elif tamper == "wrong_cause":
+                    changed["causation_id"] = "wrong-command"
+                elif tamper == "wrong_timestamp":
+                    changed["occurred_at"] = T0 + timedelta(minutes=3)
+                else:
+                    payload = dict(source.payload)
+                    key_name = {
+                        "wrong_trigger": "trigger",
+                        "wrong_previous_state": "from_state",
+                        "wrong_next_state": "to_state",
+                    }[tamper]
+                    payload[key_name] = "forged"
+                    changed["payload"] = payload
+                uow.append_event(dc_replace(source, **changed))
+        before = store.events()
+        with pytest.raises(ValueError, match="native transition source missing or inconsistent"):
+            _run(store, key, action="accept")
+        assert store.events() == before
+        assert store.entity(WORK_KIND, work_id).state == "accepted"
+    finally:
+        if adapter == "sqlite":
+            store.close()
