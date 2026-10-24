@@ -9,7 +9,7 @@ from pathlib import PurePosixPath
 from types import MappingProxyType
 from typing import Annotated, Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, InstanceOf, StringConstraints, field_serializer, model_validator
+from pydantic import BaseModel, ConfigDict, Field, InstanceOf, StringConstraints, field_serializer, field_validator, model_validator
 
 from .agency import AgencyLevel
 from .experiment import ParameterRange
@@ -388,6 +388,26 @@ class ExperimentObservation(BaseModel):
     world_hash: NonBlankString
     replication: int = Field(ge=0)
     metrics: dict[str, float] = Field(min_length=1)
+
+    @field_validator("metrics", mode="before")
+    @classmethod
+    def reject_ambiguous_metrics(cls, metrics: object) -> object:
+        # Pydantic coerces bool to 1.0 and string numerals to floats by default.
+        # Neither is an observed numeric metric with verifiable source semantics.
+        if not isinstance(metrics, Mapping):
+            raise ValueError("observation metrics must be a mapping")
+        for name, value in metrics.items():
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("observation metric names must be non-blank strings")
+            if isinstance(value, bool) or not isinstance(value, (int, float)):
+                raise ValueError(f"observation metric {name} must be a numeric value, not bool or text")
+            try:
+                finite = isfinite(value)
+            except (OverflowError, TypeError, ValueError):
+                finite = False
+            if not finite:
+                raise ValueError(f"observation metric {name} must be finite")
+        return metrics
 
     @model_validator(mode="after")
     def validate_and_freeze(self) -> "ExperimentObservation":
