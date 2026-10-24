@@ -127,7 +127,7 @@ def test_reject_self_consistent_replacement_commit_and_manifest(tmp_path):
     for row in replacement_manifest["files"]:
         data = (replacement_repo / row["path"]).read_bytes()
         row["git_blob_sha1"] = hashlib.sha1(
-            b"blob " + str(len(data)).encode() + b"\\0" + data
+            b"blob " + str(len(data)).encode() + b"\0" + data
         ).hexdigest()
         row["size_bytes"] = len(data)
     assert len(entries) == 15
