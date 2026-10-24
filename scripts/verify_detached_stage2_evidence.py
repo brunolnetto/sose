@@ -18,7 +18,17 @@ def _git(repo: Path, *args: str) -> bytes:
     ).stdout
 
 
-def verify_manifest(repo: Path, manifest_path: Path) -> dict:
+# Independent of the manifest and its candidate file table. This is a source
+# trust anchor approved with the archival gate, not a value read from evidence.
+HISTORICAL_SOURCE_COMMIT = "f7bda7c51fecdf40d337e8bc8b850e4dc32b17d5"
+
+
+def verify_manifest(
+    repo: Path,
+    manifest_path: Path,
+    *,
+    expected_source_commit: str = HISTORICAL_SOURCE_COMMIT,
+) -> dict:
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     if manifest.get("schema_version") != "sose-stage2-detached-evidence/v1":
         raise ValueError("unknown detached evidence manifest schema")
@@ -33,6 +43,8 @@ def verify_manifest(repo: Path, manifest_path: Path) -> dict:
     source = manifest.get("source_commit")
     if not isinstance(source, str) or len(source) != 40 or any(c not in "0123456789abcdef" for c in source):
         raise ValueError("invalid pinned source commit")
+    if source != expected_source_commit:
+        raise ValueError("manifest source_commit differs from independently pinned source")
     actual_commit = _git(repo, "rev-parse", "--verify", source + "^{commit}").decode().strip()
     if actual_commit != source:
         raise ValueError("pinned source commit mismatch")
