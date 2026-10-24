@@ -1,0 +1,108 @@
+{
+  "archive_version": "sose-detached-stage2-evidence/v1",
+  "source_repository": "brunolnetto/sose",
+  "source_commit": "f7bda7c51fecdf40d337e8bc8b850e4dc32b17d5",
+  "source_tree": "723edc3d8e2990de61b8310c2b77e97586fe0108",
+  "origin_root": "docs/organizational/evidence/pr-review-v2-stage2-runtime",
+  "archive_date": "2026-10-24",
+  "interpretation": "Incomplete historical prospective evidence only; not validated for Stage-2 confirmation.",
+  "expected_checkpoint_observed": {
+    "checkpoint-004": 4,
+    "checkpoint-005": 5,
+    "latest": 5
+  },
+  "holdout_target": 12,
+  "validation_allowed": false,
+  "entries": [
+    {
+      "path": "checkpoint-004/cumulative-acquisition.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/checkpoint-004/cumulative-acquisition.json",
+      "git_blob_sha": "0fb737ffaa8d888c15090ad4f012da1a25074c38",
+      "size": 378320
+    },
+    {
+      "path": "checkpoint-004/prospective-state.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/checkpoint-004/prospective-state.json",
+      "git_blob_sha": "0632c2dcf3fb0e1099ede160aa5cf1e710c6c936",
+      "size": 331087
+    },
+    {
+      "path": "checkpoint-004/source.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/checkpoint-004/source.json",
+      "git_blob_sha": "57425ba448e13272fca24f00a5380891a2197532",
+      "size": 106
+    },
+    {
+      "path": "checkpoint-004/stage2-checkpoint.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/checkpoint-004/stage2-checkpoint.json",
+      "git_blob_sha": "5ccf55e3912829d362fcbc81b3ab9c2aa17e25db",
+      "size": 760
+    },
+    {
+      "path": "checkpoint-004/tranche-acquisition.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/checkpoint-004/tranche-acquisition.json",
+      "git_blob_sha": "a317efab7820e1458dab687f5b33a2ec3839410b",
+      "size": 5902
+    },
+    {
+      "path": "checkpoint-005/cumulative-acquisition.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/checkpoint-005/cumulative-acquisition.json",
+      "git_blob_sha": "8ac110e7b88615f90b87c6c438b4e3a7855515c4",
+      "size": 393957
+    },
+    {
+      "path": "checkpoint-005/prospective-state.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/checkpoint-005/prospective-state.json",
+      "git_blob_sha": "44e9aefa7b008d58772b94283215744df8ee0324",
+      "size": 344692
+    },
+    {
+      "path": "checkpoint-005/source.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/checkpoint-005/source.json",
+      "git_blob_sha": "df4dbdfe412c556713b705afd55038d668c30b6d",
+      "size": 106
+    },
+    {
+      "path": "checkpoint-005/stage2-checkpoint.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/checkpoint-005/stage2-checkpoint.json",
+      "git_blob_sha": "f9cb8e23bd736d46a8a4f7743c4d7b0b5928d1f1",
+      "size": 785
+    },
+    {
+      "path": "checkpoint-005/tranche-acquisition.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/checkpoint-005/tranche-acquisition.json",
+      "git_blob_sha": "61aa946ea0d538b229ea4ef2a33bd5b72166053c",
+      "size": 15653
+    },
+    {
+      "path": "latest/cumulative-acquisition.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/latest/cumulative-acquisition.json",
+      "git_blob_sha": "8ac110e7b88615f90b87c6c438b4e3a7855515c4",
+      "size": 393957
+    },
+    {
+      "path": "latest/prospective-state.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/latest/prospective-state.json",
+      "git_blob_sha": "44e9aefa7b008d58772b94283215744df8ee0324",
+      "size": 344692
+    },
+    {
+      "path": "latest/source.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/latest/source.json",
+      "git_blob_sha": "df4dbdfe412c556713b705afd55038d668c30b6d",
+      "size": 106
+    },
+    {
+      "path": "latest/stage2-checkpoint.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/latest/stage2-checkpoint.json",
+      "git_blob_sha": "f9cb8e23bd736d46a8a4f7743c4d7b0b5928d1f1",
+      "size": 785
+    },
+    {
+      "path": "latest/tranche-acquisition.json",
+      "source_path": "docs/organizational/evidence/pr-review-v2-stage2-runtime/latest/tranche-acquisition.json",
+      "git_blob_sha": "61aa946ea0d538b229ea4ef2a33bd5b72166053c",
+      "size": 15653
+    }
+  ]
+}
