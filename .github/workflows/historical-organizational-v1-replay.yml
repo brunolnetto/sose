@@ -12,7 +12,7 @@ on:
       - ".github/workflows/historical-organizational-v1-replay.yml"
       - ".github/organizational-v1-published-digests.json"
       - "docs/architecture/decisions/adr-0007-versioned-scientific-freezes.md"
-      - "tests/unit/sose/organizational/test_historical_replay_governance.py"
+      - "tests/unit/sose/organizational/**"
   push:
     branches: [main]
     paths:
@@ -25,7 +25,7 @@ on:
       - ".github/workflows/historical-organizational-v1-replay.yml"
       - ".github/organizational-v1-published-digests.json"
       - "docs/architecture/decisions/adr-0007-versioned-scientific-freezes.md"
-      - "tests/unit/sose/organizational/test_historical_replay_governance.py"
+      - "tests/unit/sose/organizational/**"
   workflow_dispatch:
 
 permissions:
