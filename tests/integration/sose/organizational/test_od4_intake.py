@@ -824,7 +824,7 @@ def test_od4_replay_requires_exactly_one_native_transition_receipt(
                     changed["payload"] = payload
                 uow.append_event(dc_replace(source, **changed))
         before = store.events()
-        with pytest.raises(ValueError, match="native transition source missing or inconsistent"):
+        with pytest.raises(ValueError, match="durable native transition evidence inconsistent"):
             _run(store, key, action="accept")
         assert store.events() == before
         assert store.entity(WORK_KIND, work_id).state == "accepted"
