@@ -5,7 +5,7 @@ from hashlib import sha256
 import json
 from math import isfinite
 from types import MappingProxyType
-from typing import Annotated, Protocol
+from typing import Annotated, Protocol, runtime_checkable
 
 from pydantic import (
     BaseModel,
@@ -175,7 +175,8 @@ class DomainExecutionResult(BaseModel):
         return self
 
 
-class _RuntimeDomainReference(Protocol):
+@runtime_checkable
+class DomainReference(Protocol):
     descriptor: DomainReferenceDescriptor
 
     def build_model(self, point: dict[str, float]) -> ModelSpec: ...
@@ -344,7 +345,7 @@ class DomainExperimentResult(BaseModel):
 
 def run_domain_experiment(
     *,
-    reference: _RuntimeDomainReference,
+    reference: DomainReference,
     plan: DomainExperimentPlan,
 ) -> DomainExperimentResult:
     """Execute one fixed-replication Gate-A experiment through generic orchestration."""
