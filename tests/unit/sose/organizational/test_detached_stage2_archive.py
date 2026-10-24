@@ -43,7 +43,7 @@ def test_detached_verifier_rejects_forged_admission(tmp_path):
     data = json.loads(manifest.read_text())
     data["validation_allowed"] = True
     manifest.write_text(json.dumps(data))
-    with pytest.raises(ValueError, match="registered source"):
+    with pytest.raises(ValueError, match="manifest does not match"):
         verify_detached_stage2_archive(dest)
 
 
