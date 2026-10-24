@@ -5,6 +5,8 @@ on:
       - "docs/organizational/evidence/archives/pr-review-v2-stage2-detached/**"
       - "scripts/verify_detached_stage2_evidence.py"
       - "tests/unit/sose/organizational/test_detached_stage2_evidence_verifier.py"
+      - "scripts/report_detached_stage2_evidence.py"
+      - "tests/unit/sose/organizational/test_detached_stage2_readonly_report.py"
       - ".github/workflows/detached-stage2-evidence.yml"
   workflow_dispatch:
 permissions:
@@ -25,3 +27,5 @@ jobs:
           test "$(git rev-parse f7bda7c51fecdf40d337e8bc8b850e4dc32b17d5^{commit})" = "f7bda7c51fecdf40d337e8bc8b850e4dc32b17d5"
       - name: Verify all 15 actual source blobs and incomplete holdout
         run: python scripts/verify_detached_stage2_evidence.py --repository .
+      - name: Prove original checkpoint-004 to 005 chain without admission
+        run: python -m scripts.report_detached_stage2_evidence --repository .
