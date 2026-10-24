@@ -1,0 +1,27 @@
+name: Detached Stage-2 evidence archive gate
+on:
+  pull_request:
+    paths:
+      - "docs/organizational/evidence/archives/pr-review-v2-stage2-detached/**"
+      - "scripts/verify_detached_stage2_evidence.py"
+      - "tests/unit/sose/organizational/test_detached_stage2_evidence_verifier.py"
+      - ".github/workflows/detached-stage2-evidence.yml"
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  immutable-checkpoints:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - name: Fetch only the exact historical immutable commit
+        shell: bash
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin f7bda7c51fecdf40d337e8bc8b850e4dc32b17d5
+          test "$(git rev-parse f7bda7c51fecdf40d337e8bc8b850e4dc32b17d5^{commit})" = "f7bda7c51fecdf40d337e8bc8b850e4dc32b17d5"
+      - name: Verify all 15 actual source blobs and incomplete holdout
+        run: python scripts/verify_detached_stage2_evidence.py --repository .
