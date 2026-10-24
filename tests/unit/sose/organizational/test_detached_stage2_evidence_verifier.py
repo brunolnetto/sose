@@ -57,7 +57,7 @@ def _fixture(tmp_path: Path):
 
 def test_exact_detached_source_matches_pinned_blob_identity(tmp_path):
     repo, path, _ = _fixture(tmp_path)
-    report = verify_manifest(repo, path)
+    report = verify_manifest(repo, path, expected_source_commit=_git(repo, "rev-parse", "HEAD"))
     assert report == {
         "source_commit": _git(repo, "rev-parse", "HEAD"),
         "verified_blobs": 15,
@@ -89,7 +89,7 @@ def test_falsify_evidence_metadata_tampering(tmp_path, tampering):
         manifest["source_commit"] = "0" * 40
     path.write_text(json.dumps(manifest))
     with pytest.raises((ValueError, subprocess.CalledProcessError)):
-        verify_manifest(repo, path)
+        verify_manifest(repo, path, expected_source_commit=_git(repo, "rev-parse", "HEAD"))
 
 
 def test_falsify_new_unregistered_source_file(tmp_path):
@@ -102,4 +102,43 @@ def test_falsify_new_unregistered_source_file(tmp_path):
     manifest["source_commit"] = _git(repo, "rev-parse", "HEAD")
     path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="unregistered"):
-        verify_manifest(repo, path)
+        verify_manifest(repo, path, expected_source_commit=_git(repo, "rev-parse", "HEAD"))
+
+
+def test_reject_self_consistent_replacement_commit_and_manifest(tmp_path):
+    """Changing all rows and source SHA coherently cannot replace the trusted root."""
+    first_dir = tmp_path / "first"
+    replacement_dir = tmp_path / "replacement"
+    first_dir.mkdir()
+    replacement_dir.mkdir()
+    original_repo, original_path, _ = _fixture(first_dir)
+    replacement_repo, replacement_path, _ = _fixture(replacement_dir)
+    trusted_commit = _git(original_repo, "rev-parse", "HEAD")
+
+    # Even a valid but *different* source+manifest pair is not the accepted evidence.
+    alternate = replacement_repo / (PREFIX + "checkpoint-004/source.json")
+    alternate.write_text('{"provenance": "substituted"}')
+    _git(replacement_repo, "add", ".")
+    _git(replacement_repo, "commit", "-qm", "alternative source")
+    replacement_manifest = json.loads(replacement_path.read_text())
+    replacement_manifest["source_commit"] = _git(replacement_repo, "rev-parse", "HEAD")
+    # Reconstruct a self-consistent blob table, not just one wrong sha.
+    entries = _git(replacement_repo, "ls-tree", "-r", "--name-only", "HEAD").splitlines()
+    for row in replacement_manifest["files"]:
+        data = (replacement_repo / row["path"]).read_bytes()
+        row["git_blob_sha1"] = hashlib.sha1(
+            b"blob " + str(len(data)).encode() + b"\\0" + data
+        ).hexdigest()
+        row["size_bytes"] = len(data)
+    assert len(entries) == 15
+    replacement_path.write_text(json.dumps(replacement_manifest))
+
+    assert verify_manifest(
+        replacement_repo, replacement_path,
+        expected_source_commit=replacement_manifest["source_commit"]
+    )["verified_blobs"] == 15
+    with pytest.raises(ValueError, match="independently pinned source"):
+        verify_manifest(
+            replacement_repo, replacement_path,
+            expected_source_commit=trusted_commit,
+        )
