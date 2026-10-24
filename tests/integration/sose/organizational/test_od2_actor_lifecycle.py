@@ -450,3 +450,82 @@ def test_actor_owner_and_calendar_deletion_cannot_hide_enrollment_marker():
         )
     assert tuple(store.events()) == original_events
     assert store.entity(ACTOR_KIND, actor_id).attributes["assigned_work_id"] is None
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_od2_nested_uow_refuses_admission_and_transition_without_leaked_evidence(
+    adapter, tmp_path,
+):
+    """An outer UoW must never erase a successful-looking inner actor mutation."""
+    store = (MemoryPersistence() if adapter == "memory"
+             else SQLitePersistence(tmp_path / "od2-nested.sqlite"))
+    try:
+        actor_id = _seed(store)
+        original = store.entity(ACTOR_KIND, actor_id)
+        original_events = tuple(store.events())
+        with store.transaction(owner_id=OWNER) as outer:
+            assert store.transaction_depth == 1
+            with pytest.raises(RuntimeError, match="admission refuses nested transaction"):
+                _seed(store, key="nested-admission")
+            with pytest.raises(RuntimeError, match="transition refuses nested transaction"):
+                _transition(store, actor_id, "activate", 1)
+            assert outer.get_entity(ACTOR_KIND, actor_id) == original
+            assert tuple(outer.events()) == original_events
+
+        from sose.core.identity import deterministic_id
+        nested_id = deterministic_id("od2-actor", OWNER, "nested-admission")
+        assert store.entity(ACTOR_KIND, nested_id) is None
+        assert store.entity(ACTOR_KIND, actor_id) == original
+        assert tuple(store.events()) == original_events
+        assert store.transaction_depth == 0
+
+        # Outside the outer transaction, both legitimate paths still work.
+        added = _seed(store, key="nested-admission")
+        _transition(store, actor_id, "activate", 1)
+        assert added == nested_id
+        assert store.entity(ACTOR_KIND, actor_id).state == "eligible"
+        assert len(tuple(store.events())) == len(original_events) + 1
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_od2_nested_uow_cannot_claim_predecessor_replacement(adapter, tmp_path):
+    """An inner replacement must not commit a one-way claim outside the caller UoW."""
+    store = (MemoryPersistence() if adapter == "memory"
+             else SQLitePersistence(tmp_path / "od2-nested-replacement.sqlite"))
+    try:
+        predecessor = _seed(store)
+        _transition(store, predecessor, "activate", 1)
+        _transition(store, predecessor, "exit", 2)
+        before = store.entity(ACTOR_KIND, predecessor)
+        before_events = tuple(store.events())
+        with store.transaction(owner_id=OWNER) as outer:
+            with pytest.raises(RuntimeError, match="admission refuses nested transaction"):
+                seed_actor(
+                    store, owner_id=OWNER, actor_key="successor",
+                    model_spec_hash=MODEL, config_epoch=1,
+                    at=T0 + timedelta(hours=2),
+                    replaces_actor_id=predecessor,
+                )
+            assert outer.get_entity(ACTOR_KIND, predecessor) == before
+            assert tuple(outer.events()) == before_events
+        assert store.entity(ACTOR_KIND, predecessor) == before
+        assert tuple(store.events()) == before_events
+
+        successor = seed_actor(
+            store, owner_id=OWNER, actor_key="successor",
+            model_spec_hash=MODEL, config_epoch=1,
+            at=T0 + timedelta(hours=2),
+            replaces_actor_id=predecessor,
+        )
+        assert store.entity(ACTOR_KIND, predecessor).attributes[
+            "replaced_by_actor_id"
+        ] == successor
+        assert store.entity(ACTOR_KIND, successor).attributes[
+            "replaces_actor_id"
+        ] == predecessor
+    finally:
+        if adapter == "sqlite":
+            store.close()

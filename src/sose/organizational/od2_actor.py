@@ -246,6 +246,10 @@ def seed_actor(
         _identity(replaces_actor_id, "replaces_actor_id")
         if replaces_actor_id == identity:
             raise ValueError("actor cannot replace itself")
+    # A nested Memory snapshot can erase an independently committed actor or
+    # replacement claim; SQLite refuses nesting, so reject consistently.
+    if getattr(store, "transaction_depth", 0):
+        raise RuntimeError("OD-2 actor admission refuses nested transaction")
     # A replacement is serialized by the PREDECESSOR resource identity, not
     # by a new actor ID. Otherwise two concurrently proposed successors
     # could both pass a check on the old actor and fork its lineage.
@@ -385,6 +389,10 @@ def transition_actor(
             "model_spec_hash": model_spec_hash, "config_epoch": config_epoch,
         },
     )
+    # Never commit a lifecycle Command/event inside an independently owned UoW.
+    # The parent's final snapshot would otherwise erase or orphan that evidence.
+    if getattr(store, "transaction_depth", 0):
+        raise RuntimeError("OD-2 actor transition refuses nested transaction")
     with _guard(store, actor_id):
         with store.transaction(owner_id=owner_id) as uow:
             actor = uow.get_entity(ACTOR_KIND, actor_id)
