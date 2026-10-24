@@ -16,6 +16,7 @@ _ARCHIVE = (
 )
 _SOURCE_COMMIT = "f7bda7c51fecdf40d337e8bc8b850e4dc32b17d5"
 _VERSION = "sose-detached-stage2-evidence/v1"
+_MANIFEST_BLOB_SHA = "9c5a1e11a2ce890cea0c4e44a5966ca1b876f280"
 
 
 def _load(path: Path) -> Any:
@@ -33,7 +34,10 @@ def verify_detached_stage2_archive(root: Path = _ARCHIVE) -> dict[str, object]:
     A SHA-pinned manifest authenticates bytes against the original detached
     Git tree; it does not authenticate external observational claims.
     """
-    manifest = _load(root / "manifest.json")
+    manifest_bytes = (root / "manifest.json").read_bytes()
+    if _git_blob_sha(manifest_bytes) != _MANIFEST_BLOB_SHA:
+        raise ValueError("detached archive manifest does not match pinned immutable identity")
+    manifest = json.loads(manifest_bytes)
     if (manifest.get("archive_version") != _VERSION
             or manifest.get("source_commit") != _SOURCE_COMMIT
             or manifest.get("validation_allowed") is not False
