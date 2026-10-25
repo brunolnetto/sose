@@ -604,6 +604,7 @@ jobs:
             tests/e2e/sose/persistence/test_postgres_od5a_shared_native_physical_authority.py \
             tests/e2e/sose/persistence/test_postgres_od5a_physical_backend_loss.py \
             tests/e2e/sose/persistence/test_postgres_od5a_five_arm_pg_trace.py \
+            tests/e2e/sose/persistence/test_postgres_od5a_native_commit_reply_loss.py \
             tests/e2e/sose/persistence/test_postgres_temporal_resource_negative.py \
             tests/e2e/sose/persistence/test_postgres_temporal_resource_audit_falsification.py \
             tests/e2e/sose/persistence/test_postgres_pc6_durable_intent_wait.py \
