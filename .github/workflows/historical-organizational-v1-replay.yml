@@ -70,7 +70,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up locked uv interpreter
-        uses: astral-sh/setup-uv@v10.3.2
+        uses: astral-sh/setup-uv@v10.3.3
 
       - name: Install frozen historical environment
         working-directory: historical-source

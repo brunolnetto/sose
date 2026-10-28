@@ -20,7 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
       - name: Check official runner syntax only; never run worlds on a PR
         run: |
           uv sync --frozen --extra dev
@@ -49,7 +49,7 @@ jobs:
         with:
           ref: 3c356fea6adba2d27f583d3a1469e5df1c0b651b
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.3.2
+      - uses: astral-sh/setup-uv@v10.3.3
       - name: Verify approved historical source identity
         run: test "$(git rev-parse HEAD)" = "3c356fea6adba2d27f583d3a1469e5df1c0b651b"
       - name: Install exact locked dependencies
