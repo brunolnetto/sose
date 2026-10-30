@@ -128,7 +128,16 @@ def _encode_dataclass_value(value: object) -> object | None:
             # discriminator. Omitting None preserves their tagged JSON bytes.
             if not (
                 _class_path(value) == "sose.composition.model:BoundaryMessage"
-                and field.name == "causation_kind"
+                and field.name in {
+                    "causation_kind",
+                    "organization_id",
+                    "definition_fingerprint",
+                    "config_epoch",
+                    "source_component_id",
+                    "source_owner_id",
+                    "destination_component_id",
+                    "destination_owner_id",
+                }
                 and getattr(value, field.name) is None
             )
         },
