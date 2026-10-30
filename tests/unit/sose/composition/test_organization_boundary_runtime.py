@@ -118,7 +118,7 @@ def _message(
     *,
     organization_id: str | None = None,
     source_owner_id: str | None = None,
- ):
+):
     return BoundaryMessage.create(
         contract_name=CONTRACT,
         contract_version=1,
