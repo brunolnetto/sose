@@ -132,13 +132,13 @@ def _message(
         produced_at=NOW,
         payload={"order_id": "42", "sku": "widget-a", "quantity": 2},
         organization_id=(
-            definition.organization_id if organization_id is None else organization_id,
+            definition.organization_id if organization_id is None else organization_id
         ),
         definition_fingerprint=definition.fingerprint(),
         config_epoch=definition.config_epoch,
         source_component_id="fulfillment",
         source_owner_id=(
-            "owner:fulfillment" if source_owner_id is None else source_owner_id,
+            "owner:fulfillment" if source_owner_id is None else source_owner_id
         ),
         destination_component_id="warehouse",
         destination_owner_id="owner:warehouse",
