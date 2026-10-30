@@ -9,6 +9,7 @@ from sose.composition.boundary import (
 )
 from sose.composition.model import (
     BoundaryConsumption,
+    BoundaryDelivery,
     BoundaryLease,
     BoundaryMessage,
 )
@@ -98,6 +99,10 @@ class OrganizationBoundaryConsumerRegistry:
         contract_version: int,
         handler: OrganizationBoundaryHandler,
     ) -> None:
+        if type(contract_version) is not int or contract_version < 1:
+            raise ValueError("contract_version must be a positive integer")
+        if not isinstance(contract_name, str) or not contract_name.strip():
+            raise ValueError("contract_name must be a nonempty identity")
         key = (
             producer_component_id,
             consumer_component_id,
@@ -190,7 +195,7 @@ class OrganizationBoundaryService:
         message: BoundaryMessage,
         *,
         recovery_job_id: str | None = None,
-    ):
+    ) -> BoundaryDelivery:
         source = self.registry.validate_message(message)
         if message.causation_kind not in {"event", "boundary"}:
             raise ValueError(
@@ -265,7 +270,7 @@ class OrganizationBoundaryService:
             correlation_id=message.correlation_id,
         )
 
-    def delivery(self, delivery_id: str):
+    def delivery(self, delivery_id: str) -> BoundaryDelivery | None:
         """Return a delivery only after revalidating its organizational message."""
         with self.persistence.transaction() as uow:
             delivery = uow.get_boundary_delivery(delivery_id)
