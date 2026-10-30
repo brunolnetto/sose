@@ -264,7 +264,8 @@ def test_publish_rejects_event_from_another_component_owner_without_persisting()
     # source event ownership is independently checked at publication.
     with pytest.raises(PermissionError, match="different component owner"):
         service.publish(forged)
-    with persistence.transaction() as uow:\n        assert uow.boundary_messages() == ()
+    with persistence.transaction() as uow:
+        assert uow.boundary_messages() == ()
 
 
 def test_exact_message_claim_does_not_select_another_organizations_delivery():
