@@ -124,8 +124,9 @@ def _encode_dataclass_value(value: object) -> object | None:
         "fields": {
             field.name: _encode(getattr(value, field.name))
             for field in fields(value)
-            # Legacy v1 BoundaryMessage records did not have this optional
-            # discriminator. Omitting None preserves their tagged JSON bytes.
+            # Legacy v1 BoundaryMessage records omit optional causal and
+            # organization binding fields. Omitting None preserves their
+            # tagged JSON bytes.
             if not (
                 _class_path(value) == "sose.composition.model:BoundaryMessage"
                 and field.name in {
