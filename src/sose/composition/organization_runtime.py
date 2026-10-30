@@ -265,6 +265,18 @@ class OrganizationBoundaryService:
             correlation_id=message.correlation_id,
         )
 
+    def delivery(self, delivery_id: str):
+        """Return a delivery only after revalidating its organizational message."""
+        with self.persistence.transaction() as uow:
+            delivery = uow.get_boundary_delivery(delivery_id)
+            if delivery is None:
+                return None
+            message = uow.get_boundary_message(delivery.message_id)
+        if message is None:
+            raise RuntimeError("organization boundary delivery has no publication")
+        self.registry.validate_message(message)
+        return delivery
+
     def consume(
         self,
         *,
