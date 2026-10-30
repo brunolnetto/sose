@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING, Callable
 from sose.composition.boundary import (
     BoundaryConsumerRegistry,
     BoundaryService,
-    StaleBoundaryClaimError,
     UnsupportedBoundaryContractError,
 )
 from sose.composition.model import (
@@ -18,7 +17,6 @@ from sose.composition.organization import (
     ProcessComponent,
     validate_organization_admission,
 )
-from sose.core.events import DomainEvent
 
 if TYPE_CHECKING:
     from datetime import datetime, timedelta
