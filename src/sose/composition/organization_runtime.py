@@ -280,6 +280,15 @@ class OrganizationBoundaryService:
         if message is None:
             raise RuntimeError("organization boundary delivery has no publication")
         self.registry.validate_message(message)
+        expected = BoundaryDelivery.pending(message)
+        if (
+            delivery.delivery_id != expected.delivery_id
+            or delivery.message_id != expected.message_id
+            or delivery.destination_domain != expected.destination_domain
+            or delivery.contract_name != expected.contract_name
+            or delivery.contract_version != expected.contract_version
+        ):
+            raise RuntimeError("organization boundary delivery contradicts publication")
         return delivery
 
     def consume(
