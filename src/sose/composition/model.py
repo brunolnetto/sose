@@ -156,8 +156,8 @@ class BoundaryMessage:
         ):
             if not getattr(self, field_name):
                 raise ValueError(f"{field_name} cannot be empty")
-        if self.contract_version <= 0:
-            raise ValueError("contract_version must be positive")
+        if type(self.contract_version) is not int or self.contract_version < 1:
+            raise ValueError("contract_version must be a positive integer")
         if self.causation_kind not in (None, "boundary", "event"):
             raise ValueError("unsupported causal reference kind")
         if self.causation_kind is not None and not self.causation_id:
