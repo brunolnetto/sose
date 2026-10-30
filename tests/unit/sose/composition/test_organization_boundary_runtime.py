@@ -293,3 +293,47 @@ def test_exact_message_claim_does_not_select_another_organizations_delivery():
             now=NOW + timedelta(seconds=1),
             lease_duration=timedelta(seconds=30),
         )
+
+
+def test_v1_codec_omits_new_optional_organization_fields():
+    import json
+
+    from sose.persistence.codec import dumps, loads
+
+    message = BoundaryMessage.create(
+        contract_name=CONTRACT,
+        contract_version=1,
+        source_domain="warehouse_fulfillment",
+        source_identity="order:42",
+        destination_domain="warehouse_management",
+        occurrence_key="reservation:1",
+        correlation_id="flow:42",
+        causation_id=None,
+        produced_at=NOW,
+        payload={"quantity": 2},
+    )
+    encoded = dumps(message)
+    fields = json.loads(encoded)["fields"]
+    assert "causation_kind" not in fields
+    for name in (
+        "organization_id",
+        "definition_fingerprint",
+        "config_epoch",
+        "source_component_id",
+        "source_owner_id",
+        "destination_component_id",
+        "destination_owner_id",
+    ):
+        assert name not in fields
+    assert loads(encoded) == message
+
+
+def test_v2_codec_roundtrip_preserves_complete_organization_binding():
+    from sose.persistence.codec import dumps, loads
+
+    definition, _registry = _runtime()
+    message = _message(definition)
+    restored = loads(dumps(message))
+    assert restored == message
+    assert restored.organization_scoped
+    assert restored.definition_fingerprint == definition.fingerprint()
