@@ -239,7 +239,7 @@ def test_publish_claim_ack_is_scoped_to_exact_component_route_and_source_owner()
     assert lease is not None
     receipt = service.consume(lease=lease, now=NOW + timedelta(seconds=2))
     assert receipt.message_id == message.message_id
-    assert persistence.boundary_delivery(delivery.delivery_id).status is DeliveryStatus.CONSUMED
+    assert service.delivery(delivery.delivery_id).status is DeliveryStatus.CONSUMED
     assert service.consume(lease=lease, now=NOW + timedelta(seconds=3)) == receipt
 
 
@@ -264,7 +264,7 @@ def test_publish_rejects_event_from_another_component_owner_without_persisting()
     # source event ownership is independently checked at publication.
     with pytest.raises(PermissionError, match="different component owner"):
         service.publish(forged)
-    assert persistence.boundary_messages() == ()
+    with persistence.transaction() as uow:\n        assert uow.boundary_messages() == ()
 
 
 def test_exact_message_claim_does_not_select_another_organizations_delivery():
