@@ -70,6 +70,10 @@ causation, not every acceptance criterion in #496.
   reservations and job positions.
 - It does not admit operational policy/calendar/cost references or physical
   pools; static admission intentionally remains fail-closed for those.
+- Static admission still rejects multiple components from the same domain
+  participating in active boundaries because the audited process-manifest
+  contract catalogue remains domain-keyed. The v2 router is component/owner
+  qualified after admission; it does not silently waive that existing guard.
 - A handler is still trusted domain code operating through the existing UoW.
   This route envelope is not a protected writer-role/key boundary and does
   not replace #545 authority hardening.
