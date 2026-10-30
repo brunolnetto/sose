@@ -25,7 +25,7 @@ from sose.domain.registry import DomainRegistry, EntityType
 from sose.examples.warehouse_fulfillment.entities import FulfillmentOrder
 from sose.examples.warehouse_fulfillment.statecharts import FulfillmentOrderChart
 from sose.persistence.ownership import FencedEnginePersistence
-from sose.persistence.postgres import PostgresPersistence, StaleWriterError
+from sose.persistence.postgres import PostgresPersistence, StaleWriterError, WriterLease
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
@@ -294,3 +294,103 @@ def test_postgres_fenced_native_statechart_rejects_stale_issuer_after_takeover()
             for event in signed:
                 assert authority.verify(uow=uow, event=event).name == ATTESTATION_EVENT
         assert recovered.entity(order.entity_type, order.id).state == "picking"
+
+
+def _stale_os_worker_dispatch(dsn, namespace, epoch, response):
+    """Independent OS process holding a stale writer epoch attempts a native dispatch."""
+    try:
+        with PostgresPersistence(dsn, namespace=namespace) as store:
+            lease = WriterLease(owner_id=OWNER, epoch=epoch)
+            runtime = _runtime(FencedEnginePersistence(store, lease), TransitionAuthority(
+                ISSUER, KEY_ID, SECRET,
+            ))
+            runtime.dispatch(Command(
+                command_id="command:stale-os-worker-start-pick", name="start_pick",
+                entity_type="warehouse_fulfillment_order",
+                entity_id="order:fenced-os-worker",
+                owner_id=OWNER, due_at=NOW, issued_at=NOW,
+                correlation_id="flow:fenced-os-worker",
+            ))
+        response.put(("committed", None))
+    except StaleWriterError as exc:
+        response.put(("stale", str(exc)))
+    except BaseException as exc:
+        response.put(("unexpected", repr(exc)))
+
+
+def test_postgres_os_worker_stale_issuer_cannot_sign_after_epoch_takeover():
+    """#545: a displaced OS worker with the HMAC key still cannot durably sign.
+
+    Distinct from the same-process two-connection case: the stale issuer
+    reconstructs its fenced Engine in a spawned interpreter. This is still
+    not key-service or writer-role isolation.
+    """
+    assert DSN is not None
+    namespace = "trusted_os_fence_" + uuid4().hex[:12]
+    authority = TransitionAuthority(ISSUER, KEY_ID, SECRET)
+    order = FulfillmentOrder(
+        id="order:fenced-os-worker", state="requested",
+        created_at=NOW, updated_at=NOW,
+    )
+    with PostgresPersistence(DSN, namespace=namespace) as parent:
+        with parent.transaction(owner_id=OWNER) as uow:
+            uow.save_entity(order)
+        first = parent.claim_writer(OWNER, expected_epoch=parent.writer_epoch())
+        assert first.epoch == 1
+        _runtime(FencedEnginePersistence(parent, first), authority).dispatch(Command(
+            command_id="command:os-worker-initial-allocate", name="allocate",
+            entity_type=order.entity_type, entity_id=order.id, owner_id=OWNER,
+            due_at=NOW, issued_at=NOW, correlation_id="flow:fenced-os-worker",
+        ))
+        before = tuple(parent.events())
+        assert sum(e.name == ATTESTATION_EVENT for e in before) == 1
+
+        second = parent.claim_writer(OWNER, expected_epoch=parent.writer_epoch())
+        assert second.epoch == first.epoch + 1
+
+        ctx = get_context("spawn")
+        response = ctx.Queue()
+        worker = ctx.Process(
+            target=_stale_os_worker_dispatch,
+            args=(DSN, namespace, first.epoch, response),
+        )
+        try:
+            worker.start()
+            worker.join(timeout=45)
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=10)
+                raise AssertionError("stale OS writer process hung")
+            assert worker.exitcode == 0, f"stale OS writer crashed: {worker.exitcode}"
+            outcome, detail = response.get(timeout=10)
+        finally:
+            if worker.is_alive():
+                worker.kill()
+                worker.join(timeout=10)
+            response.close()
+            response.join_thread()
+            worker.close()
+
+        assert outcome == "stale", (outcome, detail)
+        assert "stale writer epoch" in detail
+        assert tuple(parent.events()) == before
+        assert parent.entity(order.entity_type, order.id).state == "allocated"
+
+        _runtime(FencedEnginePersistence(parent, second), authority).dispatch(Command(
+            command_id="command:os-worker-legitimate-start-pick", name="start_pick",
+            entity_type=order.entity_type, entity_id=order.id, owner_id=OWNER,
+            due_at=NOW, issued_at=NOW, correlation_id="flow:fenced-os-worker",
+        ))
+        assert parent.entity(order.entity_type, order.id).state == "picking"
+        assert sum(e.name == ATTESTATION_EVENT for e in parent.events()) == 2
+
+    with PostgresPersistence(DSN, namespace=namespace) as recovered:
+        restored = FencedEnginePersistence(recovered, second)
+        with restored.transaction(owner_id=OWNER) as uow:
+            signed = [e for e in uow.events() if e.name == "entity.state_transition"]
+            assert [e.payload["trigger"] for e in signed] == ["allocate", "start_pick"]
+            for event in signed:
+                assert authority.verify(uow=uow, event=event).name == ATTESTATION_EVENT
+        assert not any(
+            e.causation_id == "command:stale-os-worker-start-pick" for e in recovered.events()
+        )
