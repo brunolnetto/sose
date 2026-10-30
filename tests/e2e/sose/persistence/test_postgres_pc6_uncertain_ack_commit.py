@@ -27,13 +27,14 @@ from tests.e2e.sose.persistence.test_postgres_pc6_full_real_domain_recovery impo
     _seed_before_logistics_ack, _proof, _terminal, _tick,
 )
 from tests.e2e.sose.persistence.test_postgres_infrastructure_chaos import (
-    _docker, _free_port, _start_proxy, _wait_postgres,
+    _docker, _free_port, _start_proxy,
 )
 from tests.support.chaos_waits import wait_for_marker_exists, wait_for_process_exit
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 CONTAINER_ID = os.environ.get("SOSE_POSTGRES_CONTAINER_ID")
-pytestmark = pytest.mark.skipif(not DSN, reason="PostgreSQL required")
+# Proxy cases require the shared DSN; real server cases provision their own
+# PostgreSQL through isolated_postgres_service even if no shared DSN exists.
 
 _ACK_WORKER = """
 import os, sys, time
@@ -109,7 +110,7 @@ def _complete(dsn, domains, physical, seeds):
     return _proof(dsn, domains, physical, seeds)
 
 
-def _scenario(tmp_path, *, phase, transport):
+def _scenario(tmp_path, *, phase, transport, isolated_postgres_service=None):
     domains = {org: f"commit_{org}_{uuid4().hex[:12]}" for org in ("a", "b")}
     physical = f"commit_phys_{uuid4().hex[:12]}"
     seeded = {org: _seed_before_logistics_ack(DSN, ns, org)
@@ -157,9 +158,10 @@ def _scenario(tmp_path, *, phase, transport):
             worker.communicate(timeout=10)
         assert worker.returncode != 0
     finally:
-        if transport == "server" and CONTAINER_ID:
-            _docker("start", CONTAINER_ID)
-            _wait_postgres(DSN)
+        if transport == "server":
+            if isolated_postgres_service is None:
+                raise AssertionError("server transport requires isolated PostgreSQL service")
+            isolated_postgres_service.restart()
         if worker is not None and worker.poll() is None:
             worker.kill()
             worker.communicate(timeout=10)
@@ -285,13 +287,23 @@ def _canonical_infrastructure_controls():
 @pytest.mark.parametrize("phase", ("before_commit", "after_commit"))
 def test_real_pc6_atomic_ack_infrastructure_failure_preserves_full_canonical_truth(
     tmp_path, phase, transport, _canonical_infrastructure_controls,
+    isolated_postgres_service,
 ):
-    if transport == "server" and not CONTAINER_ID:
-        pytest.skip("real PostgreSQL container control is mandatory for server restart")
+    if transport == "proxy" and not DSN:
+        pytest.skip("shared PostgreSQL DSN required for proxy transport")
+    if transport == "server":
+        assert DSN and CONTAINER_ID, (
+            "isolated real PostgreSQL is mandatory for physical restart"
+        )
     if phase not in _canonical_infrastructure_controls:
         _canonical_infrastructure_controls[phase] = _uninterrupted_reference(phase)
     baseline = _canonical_infrastructure_controls[phase]
-    recovered = _scenario(tmp_path, phase=phase, transport=transport)
+    recovered = _scenario(
+        tmp_path,
+        phase=phase,
+        transport=transport,
+        isolated_postgres_service=isolated_postgres_service,
+    )
     assert recovered == baseline, (transport, phase)
     _record_infrastructure_equivalence(
         transport, phase, baseline, recovered,
