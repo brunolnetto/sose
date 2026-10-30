@@ -34,7 +34,7 @@ def _canonical_payload(payload: Mapping[str, Any]) -> tuple[str, str]:
     return encoded, digest
 
 
-_ORGANIZATION_FINGERPRINT = re.compile(r"[0-9a-f]{64}\\Z")
+_ORGANIZATION_FINGERPRINT = re.compile(r"[0-9a-f]{64}\Z")
 
 
 @dataclass(frozen=True, slots=True)
