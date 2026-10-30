@@ -19,7 +19,10 @@ from sose.composition.organization_runtime import (
 from sose.core.events import DomainEvent
 from sose.core.identity import deterministic_id
 from sose.examples.catalog import builtin_catalog
-from sose.examples.process_manifest import ProcessEvidence, builtin_process_manifests
+from sose.examples.process_manifest import (
+    ProcessEvidence,
+    builtin_process_manifests,
+)
 from sose.persistence.memory import MemoryPersistence
 
 
@@ -110,7 +113,12 @@ def _runtime():
     return definition, registry
 
 
-def _message(definition: OrganizationDefinition, *, organization_id=None, source_owner_id=None):
+def _message(
+    definition: OrganizationDefinition,
+    *,
+    organization_id: str | None = None,
+    source_owner_id: str | None = None,
+ ):
     return BoundaryMessage.create(
         contract_name=CONTRACT,
         contract_version=1,
@@ -123,11 +131,15 @@ def _message(definition: OrganizationDefinition, *, organization_id=None, source
         causation_kind="event",
         produced_at=NOW,
         payload={"order_id": "42", "sku": "widget-a", "quantity": 2},
-        organization_id=organization_id or definition.organization_id,
+        organization_id=(
+            definition.organization_id if organization_id is None else organization_id,
+        ),
         definition_fingerprint=definition.fingerprint(),
         config_epoch=definition.config_epoch,
         source_component_id="fulfillment",
-        source_owner_id=source_owner_id or "owner:fulfillment",
+        source_owner_id=(
+            "owner:fulfillment" if source_owner_id is None else source_owner_id,
+        ),
         destination_component_id="warehouse",
         destination_owner_id="owner:warehouse",
     )
