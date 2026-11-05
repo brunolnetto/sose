@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from typing import Any
 
 from sose.core.runtime import SimulationPosition
-from sose.persistence.base import BatchCommandExistence, Persistence
+from sose.persistence.base import (
+    BatchCommandExistence,
+    OwnerEventCount,
+    Persistence,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -292,7 +296,13 @@ def collect_runtime_diagnostics(persistence: Persistence, *, owner_id: str) -> R
     # on remote stores, this ensures counts and referential checks describe the
     # same observation rather than independent reads.
     scheduled = tuple(work for work in persistence.scheduled_work() if work.owner_id == owner_id)
-    events = tuple(event for event in persistence.events() if event.owner_id == owner_id)
+    if isinstance(persistence, OwnerEventCount):
+        event_count = persistence.count_events(owner_id=owner_id)
+    else:
+        event_count = sum(
+            event.owner_id == owner_id
+            for event in persistence.events()
+        )
     resource_definitions = persistence.resource_definitions()
     resource_demands = persistence.resource_demands()
     resource_reservations = persistence.resource_reservations()
@@ -362,7 +372,7 @@ def collect_runtime_diagnostics(persistence: Persistence, *, owner_id: str) -> R
 
     scenario_state = persistence.scenario_state(owner_id=owner_id)
     counts = RuntimeCounts(
-        events=len(events),
+        events=event_count,
         scheduled_work=len(scheduled),
         scenario_decisions=0 if scenario_state is None else len(scenario_state.decisions),
         scenario_activations=0 if scenario_state is None else len(scenario_state.activations),

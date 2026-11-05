@@ -141,6 +141,13 @@ class BatchCommandExistence(Protocol):
     ) -> frozenset[str]: ...
 
 
+@runtime_checkable
+class OwnerEventCount(Protocol):
+    """Optional capability for counting events belonging to one owner."""
+
+    def count_events(self, *, owner_id: str) -> int: ...
+
+
 class Persistence(Protocol):
     def business_effect(self, effect_id: str) -> BusinessEffectApplied | None: ...
     def business_effects(self) -> tuple[BusinessEffectApplied, ...]: ...

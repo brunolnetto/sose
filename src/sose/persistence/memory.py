@@ -950,6 +950,14 @@ class MemoryPersistence:
             raise ValueError("owner_id must not be empty")
         return self._state.committed_ticks.get(owner_id, -1)
 
+    def count_events(self, *, owner_id: str) -> int:
+        if not isinstance(owner_id, str) or not owner_id.strip():
+            raise ValueError("owner_id must not be empty")
+        return sum(
+            event.owner_id == owner_id
+            for event in self._state.events
+        )
+
     def events(self) -> tuple[DomainEvent, ...]:
         return tuple(deepcopy(self._state.events))
 
@@ -972,7 +980,7 @@ class MemoryPersistence:
         return requested.difference(self._state.commands)
 
     def scheduled_work(self) -> tuple[ScheduledWork, ...]:
-        return tuple(sorted(deepcopy(tuple(self._state.scheduled_work.values()))))
+        return tuple(sorted(self._state.scheduled_work.values()))
 
     def due_scheduled_work(self, at: datetime) -> tuple[ScheduledWork, ...]:
         return tuple(work for work in self.scheduled_work() if work.due_at <= at)

@@ -394,3 +394,28 @@ def test_diagnostics_uses_batch_command_existence_without_changing_issue_order()
         "scheduled work work-bad-1 references missing command command-missing",
         "scheduled work work-bad-2 references missing command command-missing",
     ]
+
+
+def test_diagnostics_uses_owner_event_count_without_reading_events():
+    persistence = _DiagnosticsFixturePersistence()
+    count_calls = []
+
+    def count_events(*, owner_id):
+        count_calls.append(owner_id)
+        return 2
+
+    def unexpected_events():
+        raise AssertionError(
+            "diagnostics should use OwnerEventCount instead of events()"
+        )
+
+    persistence.count_events = count_events
+    persistence.events = unexpected_events
+
+    diagnostics = collect_runtime_diagnostics(
+        persistence,
+        owner_id=OWNER_ID,
+    )
+
+    assert diagnostics.counts.events == 2
+    assert count_calls == [OWNER_ID]

@@ -523,6 +523,10 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         self._fresh()
         return super().events()
 
+    def count_events(self, *, owner_id: str) -> int:
+        self._fresh()
+        return super().count_events(owner_id=owner_id)
+
     def entity(self, entity_type: str, entity_id: str):
         self._fresh()
         return super().entity(entity_type, entity_id)

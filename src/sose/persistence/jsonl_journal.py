@@ -240,6 +240,10 @@ class JSONLJournalPersistence(MemoryPersistence):
         self._refresh_from_journal()
         return super().events()
 
+    def count_events(self, *, owner_id: str) -> int:
+        self._refresh_from_journal()
+        return super().count_events(owner_id=owner_id)
+
     def entity(self, entity_type: str, entity_id: str):
         self._refresh_from_journal()
         return super().entity(entity_type, entity_id)
