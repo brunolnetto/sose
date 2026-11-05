@@ -1,5 +1,3 @@
-OWNER_ID = "test-runtime_diagnostics"
-
 from datetime import timedelta
 from types import SimpleNamespace
 
@@ -17,6 +15,8 @@ from sose.examples.tutorial_job.simulation import (
     start_and_schedule_completion,
 )
 from sose.persistence.memory import MemoryPersistence
+
+OWNER_ID = "test-runtime_diagnostics"
 
 
 def test_engine_diagnostics_reports_clean_pending_runtime():
