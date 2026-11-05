@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import os
 from uuid import uuid4
 
 import pytest
@@ -9,7 +10,7 @@ from sose.core.events import Command
 from sose.persistence.postgres import PostgresPersistence
 
 
-DSN = __import__("os").environ.get("SOSE_TEST_POSTGRES_DSN")
+DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 
 pytestmark = pytest.mark.skipif(
     not DSN,
