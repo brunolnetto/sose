@@ -529,6 +529,10 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         return super().entity(entity_type, entity_id)
 
     def command(self, command_id: str):
+    def missing_command_ids(self, command_ids):
+        self._fresh()
+        return super().missing_command_ids(command_ids)
+
         self._fresh()
         return super().command(command_id)
 
