@@ -62,10 +62,16 @@ class _State:
     container_states: dict[str, ContainerState] = field(default_factory=dict)
     container_operation_intents: dict[str, ContainerOperationIntent] = field(default_factory=dict)
     container_operation_results: dict[str, ContainerOperationResult] = field(default_factory=dict)
-    preemptive_resource_definitions: dict[str, PreemptiveResourceDefinition] = field(default_factory=dict)
+    preemptive_resource_definitions: dict[str, PreemptiveResourceDefinition] = field(
+        default_factory=dict
+    )
     preemptive_resource_demands: dict[str, PreemptiveResourceDemand] = field(default_factory=dict)
-    preemptive_resource_reservations: dict[str, PreemptiveResourceReservation] = field(default_factory=dict)
-    preemptive_resource_release_intents: dict[str, PreemptiveResourceReleaseIntent] = field(default_factory=dict)
+    preemptive_resource_reservations: dict[str, PreemptiveResourceReservation] = field(
+        default_factory=dict
+    )
+    preemptive_resource_release_intents: dict[str, PreemptiveResourceReleaseIntent] = field(
+        default_factory=dict
+    )
     resource_preemption_results: dict[str, ResourcePreemptionResult] = field(default_factory=dict)
     job_states: dict[str, SimulationJobState] = field(default_factory=dict)
     sink_deliveries: dict[str, SinkDelivery] = field(default_factory=dict)
@@ -74,7 +80,9 @@ class _State:
     boundary_deliveries: dict[str, BoundaryDelivery] = field(default_factory=dict)
     boundary_consumptions: dict[str, BoundaryConsumption] = field(default_factory=dict)
     business_effects: dict[str, BusinessEffectApplied] = field(default_factory=dict)
-    customer_settlement_bindings: dict[tuple[str, str], CustomerSettlementBinding] = field(default_factory=dict)
+    customer_settlement_bindings: dict[tuple[str, str], CustomerSettlementBinding] = field(
+        default_factory=dict
+    )
     domain_deliveries: dict[str, DomainDelivery] = field(default_factory=dict)
     committed_ticks: dict[str, int] = field(default_factory=dict)
 
@@ -115,7 +123,6 @@ class MemoryUnitOfWork:
     def _mark_dirty(self, collection: str, key: object) -> None:
         self._dirty_records.add((collection, key))
 
-
     def get_job_state(self, job_id: str) -> SimulationJobState | None:
         value = self._working.job_states.get(job_id)
         return deepcopy(value) if value else None
@@ -129,7 +136,6 @@ class MemoryUnitOfWork:
             )
         self._working.job_states[state.job_id] = deepcopy(state)
         self._mark_dirty("job_states", state.job_id)
-
 
     def get_boundary_message(self, message_id: str) -> BoundaryMessage | None:
         value = self._working.boundary_messages.get(message_id)
@@ -149,9 +155,7 @@ class MemoryUnitOfWork:
     def save_boundary_message(self, message: BoundaryMessage) -> None:
         existing = self._working.boundary_messages.get(message.message_id)
         if existing is not None and existing != message:
-            raise ValueError(
-                f"boundary message identity conflict: {message.message_id}"
-            )
+            raise ValueError(f"boundary message identity conflict: {message.message_id}")
         self._working.boundary_messages[message.message_id] = deepcopy(message)
         self._mark_dirty("boundary_messages", message.message_id)
 
@@ -168,9 +172,7 @@ class MemoryUnitOfWork:
     def save_boundary_delivery(self, delivery: BoundaryDelivery) -> None:
         existing = self._working.boundary_deliveries.get(delivery.delivery_id)
         if existing is not None and existing.message_id != delivery.message_id:
-            raise ValueError(
-                f"boundary delivery identity conflict: {delivery.delivery_id}"
-            )
+            raise ValueError(f"boundary delivery identity conflict: {delivery.delivery_id}")
         self._working.boundary_deliveries[delivery.delivery_id] = deepcopy(delivery)
         self._mark_dirty("boundary_deliveries", delivery.delivery_id)
 
@@ -188,16 +190,14 @@ class MemoryUnitOfWork:
     def save_boundary_consumption(self, consumption: BoundaryConsumption) -> None:
         existing = self._working.boundary_consumptions.get(consumption.delivery_id)
         if existing is not None and existing != consumption:
-            raise ValueError(
-                f"boundary consumption identity conflict: {consumption.delivery_id}"
-            )
-        self._working.boundary_consumptions[consumption.delivery_id] = deepcopy(
-            consumption
-        )
+            raise ValueError(f"boundary consumption identity conflict: {consumption.delivery_id}")
+        self._working.boundary_consumptions[consumption.delivery_id] = deepcopy(consumption)
         self._mark_dirty("boundary_consumptions", consumption.delivery_id)
 
     def get_customer_settlement_binding(
-        self, kind: str, entity_id: str,
+        self,
+        kind: str,
+        entity_id: str,
     ) -> CustomerSettlementBinding | None:
         if kind not in {"order", "payment", "journal"}:
             raise ValueError("unknown settlement binding identity kind")
@@ -209,10 +209,7 @@ class MemoryUnitOfWork:
             ("payment", value.payment_id),
             ("journal", value.journal_id),
         )
-        if any(
-            self._working.customer_settlement_bindings.get(key) != value
-            for key in expected
-        ):
+        if any(self._working.customer_settlement_bindings.get(key) != value for key in expected):
             raise RuntimeError("incomplete settlement binding identity indices")
         return deepcopy(value)
 
@@ -225,10 +222,7 @@ class MemoryUnitOfWork:
             ("payment", binding.payment_id),
             ("journal", binding.journal_id),
         )
-        previously = [
-            self._working.customer_settlement_bindings.get(key)
-            for key in indices
-        ]
+        previously = [self._working.customer_settlement_bindings.get(key) for key in indices]
         for key, existing in zip(indices, previously):
             if existing is not None and existing != binding:
                 raise ValueError(f"settlement identity already bound: {key}")
@@ -265,9 +259,7 @@ class MemoryUnitOfWork:
     def save_domain_delivery(self, delivery: DomainDelivery) -> None:
         existing = self._working.domain_deliveries.get(delivery.mutation_id)
         if existing is not None and existing.mutation != delivery.mutation:
-            raise ValueError(
-                f"domain mutation identity conflict: {delivery.mutation_id}"
-            )
+            raise ValueError(f"domain mutation identity conflict: {delivery.mutation_id}")
         self._working.domain_deliveries[delivery.mutation_id] = deepcopy(delivery)
         self._mark_dirty("domain_deliveries", delivery.mutation_id)
 
@@ -307,8 +299,7 @@ class MemoryUnitOfWork:
     def entities(self) -> tuple[Entity, ...]:
         """Inspect all entities including orphan observations in this snapshot."""
         return tuple(
-            deepcopy(self._working.entities[key])
-            for key in sorted(self._working.entities)
+            deepcopy(self._working.entities[key]) for key in sorted(self._working.entities)
         )
 
     def save_entity(self, entity: Entity) -> None:
@@ -343,8 +334,7 @@ class MemoryUnitOfWork:
         boundary message. Preserve complete values and deterministic order.
         """
         return tuple(
-            deepcopy(self._working.commands[key])
-            for key in sorted(self._working.commands)
+            deepcopy(self._working.commands[key]) for key in sorted(self._working.commands)
         )
 
     def save_command(self, command: Command) -> None:
@@ -480,7 +470,6 @@ class MemoryUnitOfWork:
         self._working.resource_release_intents.pop(intent_id, None)
         self._mark_dirty("resource_release_intents", intent_id)
 
-
     def get_store_item(self, item_id: str) -> DurableStoreItem | None:
         value = self._working.store_items.get(item_id)
         return deepcopy(value) if value else None
@@ -565,20 +554,15 @@ class MemoryUnitOfWork:
         self._working.store_get_results[result.request_id] = deepcopy(result)
         self._mark_dirty("store_get_results", result.request_id)
 
-
     def get_container_state(self, name: str) -> ContainerState | None:
         value = self._working.container_states.get(name)
         return deepcopy(value) if value else None
 
-    def get_container_operation_intent(
-        self, request_id: str
-    ) -> ContainerOperationIntent | None:
+    def get_container_operation_intent(self, request_id: str) -> ContainerOperationIntent | None:
         value = self._working.container_operation_intents.get(request_id)
         return deepcopy(value) if value else None
 
-    def get_container_operation_result(
-        self, request_id: str
-    ) -> ContainerOperationResult | None:
+    def get_container_operation_result(self, request_id: str) -> ContainerOperationResult | None:
         value = self._working.container_operation_results.get(request_id)
         return deepcopy(value) if value else None
 
@@ -627,9 +611,7 @@ class MemoryUnitOfWork:
         self._working.container_operation_results[result.request_id] = deepcopy(result)
         self._mark_dirty("container_operation_results", result.request_id)
 
-    def get_preemptive_resource_demand(
-        self, request_id: str
-    ) -> PreemptiveResourceDemand | None:
+    def get_preemptive_resource_demand(self, request_id: str) -> PreemptiveResourceDemand | None:
         value = self._working.preemptive_resource_demands.get(request_id)
         return deepcopy(value) if value else None
 
@@ -645,15 +627,11 @@ class MemoryUnitOfWork:
         value = self._working.preemptive_resource_release_intents.get(intent_id)
         return deepcopy(value) if value else None
 
-    def get_resource_preemption_result(
-        self, result_id: str
-    ) -> ResourcePreemptionResult | None:
+    def get_resource_preemption_result(self, result_id: str) -> ResourcePreemptionResult | None:
         value = self._working.resource_preemption_results.get(result_id)
         return deepcopy(value) if value else None
 
-    def save_preemptive_resource_definition(
-        self, definition: PreemptiveResourceDefinition
-    ) -> None:
+    def save_preemptive_resource_definition(self, definition: PreemptiveResourceDefinition) -> None:
         existing = self._working.preemptive_resource_definitions.get(definition.name)
         if existing is not None and existing != definition:
             raise ValueError(f"preemptive resource definition already exists: {definition.name}")
@@ -682,9 +660,7 @@ class MemoryUnitOfWork:
         self, reservation: PreemptiveResourceReservation
     ) -> None:
         if reservation.resource_name not in self._working.preemptive_resource_definitions:
-            raise KeyError(
-                f"unknown preemptive resource definition: {reservation.resource_name}"
-            )
+            raise KeyError(f"unknown preemptive resource definition: {reservation.resource_name}")
         if reservation.request_id in self._working.preemptive_resource_demands:
             raise ValueError(
                 f"preemptive resource request is still pending: {reservation.request_id}"
@@ -713,9 +689,7 @@ class MemoryUnitOfWork:
         self, intent: PreemptiveResourceReleaseIntent
     ) -> None:
         if intent.reservation_id not in self._working.preemptive_resource_reservations:
-            raise KeyError(
-                f"unknown preemptive resource reservation: {intent.reservation_id}"
-            )
+            raise KeyError(f"unknown preemptive resource reservation: {intent.reservation_id}")
         existing = self._working.preemptive_resource_release_intents.get(intent.intent_id)
         if existing is not None and existing != intent:
             raise ValueError(
@@ -761,14 +735,11 @@ class MemoryUnitOfWork:
 
     def commit(self) -> None:
         store_overlap = (
-            self._working.store_get_requests.keys()
-            & self._working.store_get_results.keys()
+            self._working.store_get_requests.keys() & self._working.store_get_results.keys()
         )
         if store_overlap:
             request_id = sorted(store_overlap)[0]
-            raise ValueError(
-                f"store get identity cannot be pending and completed: {request_id}"
-            )
+            raise ValueError(f"store get identity cannot be pending and completed: {request_id}")
         container_overlap = (
             self._working.container_operation_intents.keys()
             & self._working.container_operation_results.keys()
@@ -776,8 +747,7 @@ class MemoryUnitOfWork:
         if container_overlap:
             request_id = sorted(container_overlap)[0]
             raise ValueError(
-                "container operation identity cannot be pending and completed: "
-                f"{request_id}"
+                f"container operation identity cannot be pending and completed: {request_id}"
             )
         self._owner._state = self._working
         self._closed = True
@@ -789,6 +759,7 @@ class MemoryUnitOfWork:
 @dataclass(slots=True)
 class _TransactionLifetime:
     """Shared mutable lifetime across copied asyncio ContextVar contexts."""
+
     active: bool = True
 
 
@@ -797,7 +768,8 @@ def _transaction_tracker(store):
     tracker = getattr(store, "_transaction_depth", None)
     if tracker is None:
         tracker = ContextVar(
-            f"sose-memory-transaction-depth-{id(store)}", default=(),
+            f"sose-memory-transaction-depth-{id(store)}",
+            default=(),
         )
         store._transaction_depth = tracker
     return tracker
@@ -810,6 +782,7 @@ def tracked_transaction_depth(factory):
     nested queue service can fork/commit an inner snapshot that disagrees with
     its outer UoW (especially the incremental JSONL journal).
     """
+
     @contextmanager
     def scope(self, *args, **kwargs):
         lifetime = _TransactionLifetime()
@@ -824,6 +797,7 @@ def tracked_transaction_depth(factory):
             # shared lifetime dead BEFORE resetting the parent's context.
             lifetime.active = False
             tracker.reset(token)
+
     return scope
 
 
@@ -833,16 +807,53 @@ class MemoryPersistence:
         # Queryable per async/thread context. Memory UoW forks must never be
         # mistaken for nested commits: the outer fork can overwrite the inner.
         self._transaction_depth = ContextVar(
-            f"sose-memory-transaction-depth-{id(self)}", default=(),
+            f"sose-memory-transaction-depth-{id(self)}",
+            default=(),
         )
+        self._active_read_snapshot = ContextVar(
+            f"sose-memory-read-snapshot-{id(self)}",
+            default=None,
+        )
+        self._read_only = False
 
     @property
     def transaction_depth(self) -> int:
         return sum(lifetime.active for lifetime in _transaction_tracker(self).get())
 
+    def _snapshot_state(self) -> _State:
+        """Return the state version observed by a read-snapshot operation."""
+        return self._state
+
+    @staticmethod
+    def _read_view(state: _State) -> "MemoryPersistence":
+        """Build an in-memory read facade without copying the captured state."""
+        view = MemoryPersistence()
+        view._state = state
+        view._read_only = True
+        return view
+
+    @contextmanager
+    def read_snapshot(self) -> Iterator["MemoryPersistence"]:
+        """Yield one detached read-only view for this context and nested scopes."""
+        active = self._active_read_snapshot.get()
+        if active is not None:
+            yield active
+            return
+        if self.transaction_depth:
+            raise RuntimeError("cannot open read snapshot inside a write transaction")
+
+        view = self._read_view(self._snapshot_state())
+        token = self._active_read_snapshot.set(view)
+        try:
+            yield view
+        finally:
+            self._active_read_snapshot.reset(token)
+
     @tracked_transaction_depth
     @contextmanager
     def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
+        if self._read_only:
+            raise RuntimeError("read snapshot is read-only")
         if owner_id is not None and not owner_id:
             raise ValueError("owner_id must not be empty")
         uow = MemoryUnitOfWork(fork_state(self._state), self)
@@ -854,11 +865,11 @@ class MemoryPersistence:
             uow.rollback()
             raise
 
-
     def boundary_protocol_snapshot(
         self,
-    ) -> tuple[tuple[BoundaryMessage, ...], tuple[BoundaryDelivery, ...],
-               tuple[BoundaryConsumption, ...]]:
+    ) -> tuple[
+        tuple[BoundaryMessage, ...], tuple[BoundaryDelivery, ...], tuple[BoundaryConsumption, ...]
+    ]:
         """Read three protocol families from one immutable in-memory snapshot.
 
         This never opens a mutation transaction or publishes the forked state.
@@ -880,8 +891,7 @@ class MemoryPersistence:
 
     def job_states(self) -> tuple[SimulationJobState, ...]:
         return tuple(
-            deepcopy(self._state.job_states[job_id])
-            for job_id in sorted(self._state.job_states)
+            deepcopy(self._state.job_states[job_id]) for job_id in sorted(self._state.job_states)
         )
 
     def business_effect(self, effect_id: str) -> BusinessEffectApplied | None:
@@ -950,6 +960,11 @@ class MemoryPersistence:
             raise ValueError("owner_id must not be empty")
         return self._state.committed_ticks.get(owner_id, -1)
 
+    def count_events(self, *, owner_id: str) -> int:
+        if not isinstance(owner_id, str) or not owner_id.strip():
+            raise ValueError("owner_id must not be empty")
+        return sum(event.owner_id == owner_id for event in self._state.events)
+
     def events(self) -> tuple[DomainEvent, ...]:
         return tuple(deepcopy(self._state.events))
 
@@ -964,15 +979,13 @@ class MemoryPersistence:
         value = self._state.commands.get(command_id)
         return deepcopy(value) if value else None
 
-    def missing_command_ids(
-        self, command_ids: Iterable[str]
-    ) -> frozenset[str]:
+    def missing_command_ids(self, command_ids: Iterable[str]) -> frozenset[str]:
         """Return absent command IDs without copying command objects."""
         requested = frozenset(command_ids)
         return requested.difference(self._state.commands)
 
     def scheduled_work(self) -> tuple[ScheduledWork, ...]:
-        return tuple(sorted(deepcopy(tuple(self._state.scheduled_work.values()))))
+        return tuple(sorted(self._state.scheduled_work.values()))
 
     def due_scheduled_work(self, at: datetime) -> tuple[ScheduledWork, ...]:
         return tuple(work for work in self.scheduled_work() if work.due_at <= at)
@@ -1008,7 +1021,6 @@ class MemoryPersistence:
             for key in sorted(self._state.resource_release_intents)
         )
 
-
     def store_definitions(self) -> tuple[StoreDefinition, ...]:
         return tuple(
             deepcopy(self._state.store_definitions[name])
@@ -1039,7 +1051,6 @@ class MemoryPersistence:
             )
         )
 
-
     def store_get_results(self) -> tuple[StoreGetResult, ...]:
         return tuple(
             sorted(
@@ -1047,8 +1058,6 @@ class MemoryPersistence:
                 key=lambda result: (result.sequence, result.request_id),
             )
         )
-
-
 
     def container_definitions(self) -> tuple[ContainerDefinition, ...]:
         return tuple(
@@ -1085,9 +1094,7 @@ class MemoryPersistence:
         )
 
     def preemptive_resource_demands(self) -> tuple[PreemptiveResourceDemand, ...]:
-        return tuple(
-            sorted(deepcopy(tuple(self._state.preemptive_resource_demands.values())))
-        )
+        return tuple(sorted(deepcopy(tuple(self._state.preemptive_resource_demands.values()))))
 
     def preemptive_resource_reservations(
         self,
@@ -1118,4 +1125,3 @@ class MemoryPersistence:
                 key=lambda result: (result.sequence, result.result_id),
             )
         )
-

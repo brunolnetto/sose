@@ -12,11 +12,18 @@ from psycopg import sql
 from sose.core.resource_identity import ResourceAddress
 
 from .codec import dumps, loads
-from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import (
+    tracked_transaction_depth,
+    MemoryPersistence,
+    MemoryUnitOfWork,
+    _State,
+    fork_state,
+)
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
 _SCHEMA_VERSION = 2
+
 
 @dataclass(frozen=True, slots=True)
 class WriterLease:
@@ -35,6 +42,7 @@ class ScopedWriterLease:
     owner_id: str
     epoch: int
     scope: str
+
 
 _NAMESPACE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}$")
 
@@ -76,8 +84,7 @@ class PostgresPersistence(MemoryPersistence):
         # Schema bootstrap/migration still uses the exclusive namespace lock
         # below, so concurrent first-time provisioners remain serialized.
         relations = self._connection.execute(
-            "SELECT to_regclass(%s), to_regclass(%s), "
-            "to_regclass(%s), to_regclass(%s)",
+            "SELECT to_regclass(%s), to_regclass(%s), to_regclass(%s), to_regclass(%s)",
             (
                 f"{namespace}_record_meta",
                 f"{namespace}_record",
@@ -163,9 +170,9 @@ class PostgresPersistence(MemoryPersistence):
                 ).format(self._correlation_owners_table)
             )
             row = self._connection.execute(
-                sql.SQL(
-                    "SELECT schema_version FROM {} WHERE singleton = 1"
-                ).format(self._meta_table)
+                sql.SQL("SELECT schema_version FROM {} WHERE singleton = 1").format(
+                    self._meta_table
+                )
             ).fetchone()
             if row is None:  # pragma: no cover - defensive database invariant
                 raise RuntimeError("PostgresPersistence metadata bootstrap failed")
@@ -189,10 +196,7 @@ class PostgresPersistence(MemoryPersistence):
                 )
                 version = 2
             if version != _SCHEMA_VERSION:
-                raise RuntimeError(
-                    "unsupported PostgresPersistence schema version: "
-                    f"{version}"
-                )
+                raise RuntimeError(f"unsupported PostgresPersistence schema version: {version}")
 
         self._revision = -1
         self._refresh_from_db(force=True)
@@ -212,7 +216,8 @@ class PostgresPersistence(MemoryPersistence):
 
     @contextmanager
     def business_resource_guard(
-        self, resource_name: str | ResourceAddress,
+        self,
+        resource_name: str | ResourceAddress,
     ) -> Iterator[None]:
         """Coordinate a multi-commit domain operation on one resource identity.
 
@@ -248,6 +253,7 @@ class PostgresPersistence(MemoryPersistence):
         skip DDL and namespace advisory locks, fail if tables are absent.
         """
         from .postgres_resource_ledger import PostgresTemporalResourceLedger
+
         return PostgresTemporalResourceLedger(self, bootstrap=bootstrap)
 
     def close(self) -> None:
@@ -261,19 +267,13 @@ class PostgresPersistence(MemoryPersistence):
 
     def _database_revision(self) -> int:
         row = self._connection.execute(
-            sql.SQL("SELECT revision FROM {} WHERE singleton = 1").format(
-                self._meta_table
-            )
+            sql.SQL("SELECT revision FROM {} WHERE singleton = 1").format(self._meta_table)
         ).fetchone()
         if row is None:
             raise RuntimeError("PostgresPersistence metadata row is missing")
         return int(row[0])
 
-    def _refresh_from_db(self, *, force: bool = False) -> None:
-        revision = self._database_revision()
-        if not force and revision == self._revision:
-            return
-
+    def _load_records_from_db(self) -> _State:
         rows = self._connection.execute(
             sql.SQL(
                 """
@@ -292,8 +292,22 @@ class PostgresPersistence(MemoryPersistence):
             )
             for collection, record_key, position, payload in rows
         )
-        self._state = records_to_state(records)
+        return records_to_state(records)
+
+    def _refresh_from_db(self, *, force: bool = False) -> None:
+        revision = self._database_revision()
+        if not force and revision == self._revision:
+            return
+        self._state = self._load_records_from_db()
         self._revision = revision
+
+    def _snapshot_state(self) -> _State:
+        with self._connection.transaction():
+            self._connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
+            revision = self._database_revision()
+            if revision == self._revision:
+                return self._state
+            return self._load_records_from_db()
 
     def _apply_changes(
         self,
@@ -309,10 +323,7 @@ class PostgresPersistence(MemoryPersistence):
                 # belong to independent organizations. Their index in the
                 # UoW snapshot is NOT a globally unique record key.
                 continue
-            if (
-                change.collection == "simulation_positions"
-                and change.operation == "upsert"
-            ):
+            if change.collection == "simulation_positions" and change.operation == "upsert":
                 # Each owner has its own authoritative recovery boundary. A
                 # writer must atomically replace exactly the position it read,
                 # not overwrite a newer one committed by another connection.
@@ -345,20 +356,21 @@ class PostgresPersistence(MemoryPersistence):
                             """
                         ).format(self._record_table),
                         (
-                            change.position, change.payload,
-                            change.collection, change.key, dumps(expected),
+                            change.position,
+                            change.payload,
+                            change.collection,
+                            change.key,
+                            dumps(expected),
                         ),
                     )
                 if result.fetchone() is None:
-                    raise StaleWriterError(
-                        f"stale simulation position for owner {owner_id!r}"
-                    )
+                    raise StaleWriterError(f"stale simulation position for owner {owner_id!r}")
                 continue
             if change.operation == "delete":
                 self._connection.execute(
-                    sql.SQL(
-                        "DELETE FROM {} WHERE collection = %s AND record_key = %s"
-                    ).format(self._record_table),
+                    sql.SQL("DELETE FROM {} WHERE collection = %s AND record_key = %s").format(
+                        self._record_table
+                    ),
                     (change.collection, change.key),
                 )
             elif change.operation == "upsert":
@@ -382,15 +394,16 @@ class PostgresPersistence(MemoryPersistence):
                     ),
                 )
             else:  # pragma: no cover - closed record operation set
-                raise RuntimeError(
-                    f"unknown state record operation: {change.operation}"
-                )
+                raise RuntimeError(f"unknown state record operation: {change.operation}")
         if event_appends:
             self._append_postgres_events(before, after, event_appends)
         return len(changes)
 
     def _append_postgres_events(
-        self, before: _State, after: _State, changes,
+        self,
+        before: _State,
+        after: _State,
+        changes,
     ) -> None:
         """Linearize only the shared event-log tail, never organizational work.
 
@@ -404,9 +417,9 @@ class PostgresPersistence(MemoryPersistence):
             (self.namespace, "durable:event-append"),
         )
         row = self._connection.execute(
-            sql.SQL(
-                "SELECT COALESCE(MAX(position), -1) FROM {} WHERE collection = %s"
-            ).format(self._record_table),
+            sql.SQL("SELECT COALESCE(MAX(position), -1) FROM {} WHERE collection = %s").format(
+                self._record_table
+            ),
             ("events",),
         ).fetchone()
         assert row is not None
@@ -425,14 +438,10 @@ class PostgresPersistence(MemoryPersistence):
             # Exact deterministic replay is idempotent; a reused identity
             # with changed causal facts is not. Inspect legacy numeric-key
             # events in this UoW's snapshot as well as new identity keys.
-            earlier = tuple(
-                item for item in before.events if item.event_id == event.event_id
-            )
+            earlier = tuple(item for item in before.events if item.event_id == event.event_id)
             if earlier:
                 if any(item != event for item in earlier):
-                    raise ValueError(
-                        f"conflicting PostgreSQL durable event ID: {event.event_id}"
-                    )
+                    raise ValueError(f"conflicting PostgreSQL durable event ID: {event.event_id}")
                 continue
             payload = dumps(event)
             key = "event:" + event.event_id
@@ -455,17 +464,13 @@ class PostgresPersistence(MemoryPersistence):
                     ("events", key),
                 ).fetchone()
                 if original is None or loads(str(original[0])) != event:
-                    raise ValueError(
-                        f"conflicting PostgreSQL durable event ID: {event.event_id}"
-                    )
+                    raise ValueError(f"conflicting PostgreSQL durable event ID: {event.event_id}")
                 continue
             next_position += 1
 
     def writer_epoch(self) -> int:
         row = self._connection.execute(
-            sql.SQL("SELECT owner_epoch FROM {} WHERE singleton = 1").format(
-                self._meta_table
-            )
+            sql.SQL("SELECT owner_epoch FROM {} WHERE singleton = 1").format(self._meta_table)
         ).fetchone()
         if row is None:
             raise RuntimeError("writer metadata disappeared")
@@ -493,13 +498,15 @@ class PostgresPersistence(MemoryPersistence):
                 (owner_id, expected_epoch),
             ).fetchone()
             if row is None:
-                raise StaleWriterError(
-                    f"writer claim lost: expected epoch {expected_epoch}"
-                )
+                raise StaleWriterError(f"writer claim lost: expected epoch {expected_epoch}")
             return WriterLease(owner_id=owner_id, epoch=int(row[0]))
 
     def claim_writer_and_register(
-        self, owner_id: str, *, expected_epoch: int, initial_job,
+        self,
+        owner_id: str,
+        *,
+        expected_epoch: int,
+        initial_job,
     ) -> WriterLease:
         """Atomically fence the writer AND persist a previously absent job ID.
 
@@ -531,7 +538,11 @@ class PostgresPersistence(MemoryPersistence):
         return 0 if row is None else int(row[0])
 
     def claim_scoped_writer(
-        self, scope: str, owner_id: str, *, expected_epoch: int,
+        self,
+        scope: str,
+        owner_id: str,
+        *,
+        expected_epoch: int,
         correlation_id: str | None = None,
     ) -> ScopedWriterLease:
         if not scope or not owner_id:
@@ -549,15 +560,13 @@ class PostgresPersistence(MemoryPersistence):
             )
             if correlation_id is not None:
                 original = self._connection.execute(
-                    sql.SQL(
-                        "SELECT correlation_id FROM {} WHERE scope = %s"
-                    ).format(self._correlation_owners_table),
+                    sql.SQL("SELECT correlation_id FROM {} WHERE scope = %s").format(
+                        self._correlation_owners_table
+                    ),
                     (scope,),
                 ).fetchone()
                 if original is not None and original[0] != correlation_id:
-                    raise ValueError(
-                        "recovery job's durable organizational binding changed"
-                    )
+                    raise ValueError("recovery job's durable organizational binding changed")
                 self._connection.execute(
                     sql.SQL(
                         "INSERT INTO {} (correlation_id, scope) VALUES (%s, %s) "
@@ -566,19 +575,18 @@ class PostgresPersistence(MemoryPersistence):
                     (correlation_id, scope),
                 )
                 owner = self._connection.execute(
-                    sql.SQL(
-                        "SELECT scope FROM {} WHERE correlation_id = %s"
-                    ).format(self._correlation_owners_table),
+                    sql.SQL("SELECT scope FROM {} WHERE correlation_id = %s").format(
+                        self._correlation_owners_table
+                    ),
                     (correlation_id,),
                 ).fetchone()
                 if owner is None or owner[0] != scope:
-                    raise ValueError(
-                        "recovery correlation is already owned by another job"
-                    )
+                    raise ValueError("recovery correlation is already owned by another job")
             row = self._connection.execute(
                 sql.SQL("SELECT owner_epoch FROM {} WHERE scope = %s").format(
                     self._scoped_writers_table
-                ), (scope,),
+                ),
+                (scope,),
             ).fetchone()
             current = 0 if row is None else int(row[0])
             if current != expected_epoch:
@@ -600,13 +608,20 @@ class PostgresPersistence(MemoryPersistence):
             return ScopedWriterLease(owner_id, current + 1, scope)
 
     def claim_scoped_writer_and_register(
-        self, scope: str, owner_id: str, *, expected_epoch: int,
-        correlation_id: str | None, initial_job,
+        self,
+        scope: str,
+        owner_id: str,
+        *,
+        expected_epoch: int,
+        correlation_id: str | None,
+        initial_job,
     ) -> ScopedWriterLease:
         """Commit scoped claim/correlation reservation and job ID together."""
         with self._connection.transaction():
             lease = self.claim_scoped_writer(
-                scope, owner_id, expected_epoch=expected_epoch,
+                scope,
+                owner_id,
+                expected_epoch=expected_epoch,
                 correlation_id=correlation_id,
             )
             with self.transaction(owner_epoch=lease.epoch, writer_scope=scope) as uow:
@@ -630,9 +645,7 @@ class PostgresPersistence(MemoryPersistence):
         writer lease. No process-local cache is used as evidence.
         """
         with self._connection.transaction():
-            self._connection.execute(
-                "SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY"
-            )
+            self._connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY")
             self._refresh_from_db(force=True)
             uow = MemoryUnitOfWork(fork_state(self._state), self)
             try:
@@ -646,7 +659,9 @@ class PostgresPersistence(MemoryPersistence):
 
     @contextmanager
     def boundary_transaction(
-        self, *, owner_epoch: int | None = None,
+        self,
+        *,
+        owner_epoch: int | None = None,
         writer_scope: str | None = None,
     ) -> Iterator[MemoryUnitOfWork]:
         """Serialize overlapping causal boundary writes, not unrelated jobs.
@@ -673,7 +688,8 @@ class PostgresPersistence(MemoryPersistence):
                     (boundary_namespace, "job:" + writer_scope),
                 )
             with self.transaction(
-                owner_epoch=owner_epoch, writer_scope=writer_scope,
+                owner_epoch=owner_epoch,
+                writer_scope=writer_scope,
             ) as uow:
                 yield uow
 
@@ -703,7 +719,8 @@ class PostgresPersistence(MemoryPersistence):
                     self._lock_and_validate_epoch(owner_epoch)
                 else:
                     self._lock_and_validate_epoch(
-                        owner_epoch, writer_scope=writer_scope,
+                        owner_epoch,
+                        writer_scope=writer_scope,
                     )
                 before, uow = self._begin_transaction_uow()
                 yield uow
@@ -711,11 +728,7 @@ class PostgresPersistence(MemoryPersistence):
                     uow.commit()
 
                 changed = self._apply_changes(before, self._state, uow.dirty_records)
-                next_revision = (
-                    self._increment_revision()
-                    if changed
-                    else self._revision
-                )
+                next_revision = self._increment_revision() if changed else self._revision
             # A concurrent writer may have committed records that were not
             # present in this transaction's in-memory snapshot before our
             # revision increment. Never claim the local cache represents the
@@ -727,7 +740,10 @@ class PostgresPersistence(MemoryPersistence):
             raise
 
     def _lock_and_validate_epoch(
-        self, owner_epoch: int | None, *, writer_scope: str | None = None,
+        self,
+        owner_epoch: int | None,
+        *,
+        writer_scope: str | None = None,
     ) -> int:
         if writer_scope is not None:
             if not writer_scope or owner_epoch is None:
@@ -741,7 +757,8 @@ class PostgresPersistence(MemoryPersistence):
             row = self._connection.execute(
                 sql.SQL("SELECT owner_epoch FROM {} WHERE scope = %s").format(
                     self._scoped_writers_table
-                ), (writer_scope,),
+                ),
+                (writer_scope,),
             ).fetchone()
             current = -1 if row is None else int(row[0])
             if current != owner_epoch:
@@ -755,15 +772,12 @@ class PostgresPersistence(MemoryPersistence):
             (self.namespace,),
         )
         owner_row = self._connection.execute(
-            sql.SQL("SELECT owner_epoch FROM {} WHERE singleton = 1").format(
-                self._meta_table
-            )
+            sql.SQL("SELECT owner_epoch FROM {} WHERE singleton = 1").format(self._meta_table)
         ).fetchone()
         current_epoch = -1 if owner_row is None else int(owner_row[0])
         if current_epoch > 0 and owner_epoch is None:
             raise StaleWriterError(
-                f"writer fencing is active at epoch {current_epoch}; "
-                "owner_epoch is required"
+                f"writer fencing is active at epoch {current_epoch}; owner_epoch is required"
             )
         if owner_epoch is not None and current_epoch != owner_epoch:
             raise StaleWriterError(
@@ -850,6 +864,10 @@ class PostgresPersistence(MemoryPersistence):
         self._fresh()
         return super().events()
 
+    def count_events(self, *, owner_id: str) -> int:
+        self._fresh()
+        return super().count_events(owner_id=owner_id)
+
     def entity(self, entity_type: str, entity_id: str):
         self._fresh()
         return super().entity(entity_type, entity_id)
@@ -868,10 +886,7 @@ class PostgresPersistence(MemoryPersistence):
 
     def due_scheduled_work(self, at):
         self._fresh()
-        return tuple(
-            work for work in super().scheduled_work()
-            if work.due_at <= at
-        )
+        return tuple(work for work in super().scheduled_work() if work.due_at <= at)
 
     def simulation_position(self, *, owner_id: str):
         self._fresh()

@@ -6,7 +6,13 @@ import os
 from pathlib import Path
 from typing import Iterator
 
-from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, fork_state
+from .memory import (
+    tracked_transaction_depth,
+    MemoryPersistence,
+    MemoryUnitOfWork,
+    _State,
+    fork_state,
+)
 from .records import (
     StateRecord,
     StateRecordChange,
@@ -36,21 +42,12 @@ class JSONLJournalPersistence(MemoryPersistence):
         self._refresh_from_journal()
 
     @staticmethod
-    def _is_truncated_final_line(handle) -> bool:
-        remaining = handle.read().strip()
-        return not remaining
-
-    @staticmethod
     def _journal_change(raw: dict[str, object]) -> StateRecordChange:
         return StateRecordChange(
             operation=str(raw["operation"]),
             collection=str(raw["collection"]),
             key=str(raw["key"]),
-            position=(
-                None
-                if raw.get("position") is None
-                else int(raw["position"])
-            ),
+            position=(None if raw.get("position") is None else int(raw["position"])),
             payload=raw.get("payload"),
         )
 
@@ -64,14 +61,9 @@ class JSONLJournalPersistence(MemoryPersistence):
             records.pop(identity, None)
             return
         if change.operation != "upsert":
-            raise RuntimeError(
-                "unknown JSONL journal operation: "
-                f"{change.operation}"
-            )
+            raise RuntimeError(f"unknown JSONL journal operation: {change.operation}")
         if change.position is None or change.payload is None:
-            raise RuntimeError(
-                "invalid JSONL journal upsert without payload"
-            )
+            raise RuntimeError("invalid JSONL journal upsert without payload")
         records[identity] = StateRecord(
             collection=change.collection,
             key=change.key,
@@ -79,40 +71,56 @@ class JSONLJournalPersistence(MemoryPersistence):
             payload=str(change.payload),
         )
 
-    def _refresh_from_journal(self) -> None:
+    def _load_state_from_journal(self) -> tuple[_State, int]:
         records: dict[tuple[str, str], StateRecord] = {}
         transaction_count = 0
 
-        with self.path.open("r", encoding="utf-8") as handle:
-            for line_number, line in enumerate(handle, start=1):
-                if not line.strip():
-                    continue
-                try:
-                    entry = json.loads(line)
-                except json.JSONDecodeError:
-                    # A process crash can leave one partial final append. Ignore
-                    # only that final fragment; corruption in the middle is fatal.
-                    if not self._is_truncated_final_line(handle):
-                        raise RuntimeError(
-                            f"corrupt JSONL journal at line {line_number}"
-                        )
+        with self.path.open("rb") as handle:
+            snapshot_size = os.fstat(handle.fileno()).st_size
+            snapshot_bytes = handle.read(snapshot_size)
+
+        lines = snapshot_bytes.splitlines(keepends=True)
+
+        for index, raw_line in enumerate(lines):
+            try:
+                line = raw_line.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                if not b"".join(lines[index + 1 :]).strip():
                     break
+                raise RuntimeError(f"corrupt JSONL journal at line {index + 1}") from exc
 
-                if int(entry.get("schema_version", -1)) != _SCHEMA_VERSION:
-                    raise RuntimeError(
-                        "unsupported JSONLJournalPersistence schema version: "
-                        f"{entry.get('schema_version')}"
-                    )
-                transaction_count = max(
-                    transaction_count,
-                    int(entry["transaction"]),
+            if not line.strip():
+                continue
+
+            try:
+                entry = json.loads(line)
+            except json.JSONDecodeError as exc:
+                if not b"".join(lines[index + 1 :]).strip():
+                    break
+                raise RuntimeError(f"corrupt JSONL journal at line {index + 1}") from exc
+
+            if int(entry.get("schema_version", -1)) != _SCHEMA_VERSION:
+                raise RuntimeError(
+                    "unsupported JSONLJournalPersistence schema version: "
+                    f"{entry.get('schema_version')}"
                 )
-                for raw in entry["changes"]:
-                    change = self._journal_change(raw)
-                    self._apply_change(records, change)
 
-        self._transaction_count = transaction_count
-        self._state = records_to_state(records.values())
+            transaction_count = max(
+                transaction_count,
+                int(entry["transaction"]),
+            )
+            for raw in entry["changes"]:
+                change = self._journal_change(raw)
+                self._apply_change(records, change)
+
+        return records_to_state(records.values()), transaction_count
+
+    def _refresh_from_journal(self) -> None:
+        self._state, self._transaction_count = self._load_state_from_journal()
+
+    def _snapshot_state(self) -> _State:
+        state, _ = self._load_state_from_journal()
+        return state
 
     def _append_transaction(
         self,
@@ -136,12 +144,15 @@ class JSONLJournalPersistence(MemoryPersistence):
                 for change in changes
             ],
         }
-        payload = json.dumps(
-            entry,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ) + "\n"
+        payload = (
+            json.dumps(
+                entry,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            )
+            + "\n"
+        )
 
         with self.path.open("a", encoding="utf-8") as handle:
             handle.write(payload)
@@ -240,6 +251,10 @@ class JSONLJournalPersistence(MemoryPersistence):
         self._refresh_from_journal()
         return super().events()
 
+    def count_events(self, *, owner_id: str) -> int:
+        self._refresh_from_journal()
+        return super().count_events(owner_id=owner_id)
+
     def entity(self, entity_type: str, entity_id: str):
         self._refresh_from_journal()
         return super().entity(entity_type, entity_id)
@@ -258,10 +273,7 @@ class JSONLJournalPersistence(MemoryPersistence):
 
     def due_scheduled_work(self, at):
         self._refresh_from_journal()
-        return tuple(
-            work for work in super().scheduled_work()
-            if work.due_at <= at
-        )
+        return tuple(work for work in super().scheduled_work() if work.due_at <= at)
 
     def simulation_position(self, *, owner_id: str):
         self._refresh_from_journal()

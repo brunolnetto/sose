@@ -10,9 +10,13 @@ on:
         type: boolean
   pull_request:
     paths:
-      - "benchmarks/persistence_scaling.py"
+      - "benchmarks/**"
+      - "src/sose/core/engine.py"
+      - "src/sose/core/diagnostics.py"
       - "src/sose/persistence/**"
       - "tests/unit/sose/domain/test_uow_*.py"
+      - "pyproject.toml"
+      - "uv.lock"
       - ".github/workflows/benchmark.yml"
   schedule:
     - cron: "17 5 * * 1"
@@ -65,6 +69,14 @@ jobs:
               --output persistence-scaling.json
           fi
 
+      - name: Run focused pytest-benchmark suite
+        run: |
+          python -m pytest \
+            -o addopts= \
+            benchmarks/pytest_benchmarks \
+            --benchmark-only \
+            --benchmark-json=pytest-benchmark-results.json
+
       - name: Upload benchmark report
         uses: actions/upload-artifact@v7
         with:
@@ -72,5 +84,6 @@ jobs:
           path: |
             benchmark-results.json
             persistence-scaling.json
+            pytest-benchmark-results.json
           if-no-files-found: error
           retention-days: 90

@@ -8,7 +8,13 @@ import sqlite3
 from time import monotonic, sleep
 from typing import Iterator
 
-from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import (
+    tracked_transaction_depth,
+    MemoryPersistence,
+    MemoryUnitOfWork,
+    _State,
+    fork_state,
+)
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
@@ -24,7 +30,6 @@ class WriterLease:
 
 class StaleWriterError(RuntimeError):
     """Raised when a writer attempts to commit with an obsolete fencing epoch."""
-
 
 
 class SQLiteIncrementalPersistence(MemoryPersistence):
@@ -112,9 +117,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
     def _meta_columns(self) -> set[str]:
         return {
             str(row[1])
-            for row in self._connection.execute(
-                f"PRAGMA table_info({self._meta_table})"
-            ).fetchall()
+            for row in self._connection.execute(f"PRAGMA table_info({self._meta_table})").fetchall()
         }
 
     def _meta_schema_version(self) -> int:
@@ -156,9 +159,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             version = 2
         if version == 2:
             if "owner_id" not in columns:
-                self._connection.execute(
-                    f"ALTER TABLE {self._meta_table} ADD COLUMN owner_id TEXT"
-                )
+                self._connection.execute(f"ALTER TABLE {self._meta_table} ADD COLUMN owner_id TEXT")
             if "owner_epoch" not in columns:
                 self._connection.execute(
                     f"""
@@ -176,8 +177,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             return
         if version != _SCHEMA_VERSION:
             raise RuntimeError(
-                "unsupported SQLiteIncrementalPersistence schema version: "
-                f"{version}"
+                f"unsupported SQLiteIncrementalPersistence schema version: {version}"
             )
 
     def _ensure_wal(self) -> None:
@@ -186,14 +186,10 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         deadline = monotonic() + 30.0
         while True:
             try:
-                row = self._connection.execute(
-                    "PRAGMA journal_mode = WAL"
-                ).fetchone()
+                row = self._connection.execute("PRAGMA journal_mode = WAL").fetchone()
                 mode = "" if row is None else str(row[0]).lower()
                 if mode != "wal":
-                    raise RuntimeError(
-                        "SQLiteIncrementalPersistence requires WAL journal mode"
-                    )
+                    raise RuntimeError("SQLiteIncrementalPersistence requires WAL journal mode")
                 return
             except sqlite3.OperationalError as exc:
                 if "locked" not in str(exc).lower() or monotonic() >= deadline:
@@ -229,10 +225,10 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             return 0
         return int(row[0])
 
-    def _refresh_from_db(self, *, force: bool = False) -> None:
+    def _load_state_from_db(self, *, force: bool = False) -> tuple[_State, int]:
         revision = self._database_revision()
         if not force and revision == self._revision:
-            return
+            return self._state, revision
 
         rows = self._connection.execute(
             f"""
@@ -250,8 +246,18 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             )
             for collection, record_key, position, payload in rows
         )
-        self._state = records_to_state(records)
-        self._revision = revision
+        return records_to_state(records), revision
+
+    def _refresh_from_db(self, *, force: bool = False) -> None:
+        self._state, self._revision = self._load_state_from_db(force=force)
+
+    def _snapshot_state(self) -> _State:
+        self._connection.execute("BEGIN")
+        try:
+            state, _ = self._load_state_from_db()
+            return state
+        finally:
+            self._connection.rollback()
 
     def _apply_changes(
         self,
@@ -285,9 +291,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                     ),
                 )
             else:  # pragma: no cover - defensive guard for internal enum-by-string
-                raise RuntimeError(
-                    f"unknown state record operation: {change.operation}"
-                )
+                raise RuntimeError(f"unknown state record operation: {change.operation}")
         return len(changes)
 
     def writer_epoch(self) -> int:
@@ -317,9 +321,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                 (owner_id, expected_epoch),
             )
             if cursor.rowcount != 1:
-                raise StaleWriterError(
-                    f"writer claim lost: expected epoch {expected_epoch}"
-                )
+                raise StaleWriterError(f"writer claim lost: expected epoch {expected_epoch}")
             row = self._connection.execute(
                 f"SELECT owner_epoch FROM {self._meta_table} WHERE singleton = 1"
             ).fetchone()
@@ -332,7 +334,11 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             raise
 
     def claim_writer_and_register(
-        self, owner_id: str, *, expected_epoch: int, initial_job,
+        self,
+        owner_id: str,
+        *,
+        expected_epoch: int,
+        initial_job,
     ) -> WriterLease:
         """One BEGIN IMMEDIATE commits the global fencing epoch and job ID.
 
@@ -356,9 +362,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
                 (owner_id, expected_epoch),
             )
             if cursor.rowcount != 1:
-                raise StaleWriterError(
-                    f"writer claim lost: expected epoch {expected_epoch}"
-                )
+                raise StaleWriterError(f"writer claim lost: expected epoch {expected_epoch}")
             row = self._connection.execute(
                 f"SELECT owner_epoch FROM {self._meta_table} WHERE singleton = 1"
             ).fetchone()
@@ -467,9 +471,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             raise
 
     def persisted_record_count(self) -> int:
-        row = self._connection.execute(
-            f"SELECT COUNT(*) FROM {self._record_table}"
-        ).fetchone()
+        row = self._connection.execute(f"SELECT COUNT(*) FROM {self._record_table}").fetchone()
         return 0 if row is None else int(row[0])
 
     def _fresh(self) -> None:
@@ -523,6 +525,10 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         self._fresh()
         return super().events()
 
+    def count_events(self, *, owner_id: str) -> int:
+        self._fresh()
+        return super().count_events(owner_id=owner_id)
+
     def entity(self, entity_type: str, entity_id: str):
         self._fresh()
         return super().entity(entity_type, entity_id)
@@ -541,10 +547,7 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
 
     def due_scheduled_work(self, at):
         self._fresh()
-        return tuple(
-            work for work in super().scheduled_work()
-            if work.due_at <= at
-        )
+        return tuple(work for work in super().scheduled_work() if work.due_at <= at)
 
     def simulation_position(self, *, owner_id: str):
         self._fresh()

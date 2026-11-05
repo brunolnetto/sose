@@ -179,7 +179,6 @@ def test_diagnostics_reports_failed_sink_delivery():
     ]
 
 
-
 def _record(**fields):
     return SimpleNamespace(**fields)
 
@@ -346,9 +345,7 @@ def test_diagnostics_reference_matrix_and_snapshot_reads_are_complete():
         "preemptive.definition_missing",
         "sink.delivery_failed",
     ]
-    assert diagnostics.issues[8].message == (
-        "container state container-missing has no definition"
-    )
+    assert diagnostics.issues[8].message == ("container state container-missing has no definition")
     assert diagnostics.counts.events == 2
     assert diagnostics.counts.scenario_decisions == 2
     assert diagnostics.counts.scenario_activations == 1
@@ -362,7 +359,6 @@ def test_diagnostics_reference_matrix_and_snapshot_reads_are_complete():
     assert persistence.calls["command"] == 2
     assert persistence.calls["scenario_state"] == 1
     assert persistence.calls["simulation_position"] == 1
-
 
 
 def test_diagnostics_uses_batch_command_existence_without_changing_issue_order():
@@ -379,9 +375,7 @@ def test_diagnostics_uses_batch_command_existence_without_changing_issue_order()
         requested = tuple(command_ids)
         batch_calls.append(requested)
         return frozenset(
-            command_id
-            for command_id in requested
-            if command_id not in persistence.commands
+            command_id for command_id in requested if command_id not in persistence.commands
         )
 
     persistence.missing_command_ids = missing_command_ids
@@ -394,3 +388,47 @@ def test_diagnostics_uses_batch_command_existence_without_changing_issue_order()
         "scheduled work work-bad-1 references missing command command-missing",
         "scheduled work work-bad-2 references missing command command-missing",
     ]
+
+
+def test_diagnostics_uses_owner_event_count_without_reading_events():
+    persistence = _DiagnosticsFixturePersistence()
+    count_calls = []
+
+    def count_events(*, owner_id):
+        count_calls.append(owner_id)
+        return 2
+
+    def unexpected_events():
+        raise AssertionError("diagnostics should use OwnerEventCount instead of events()")
+
+    persistence.count_events = count_events
+    persistence.events = unexpected_events
+
+    diagnostics = collect_runtime_diagnostics(
+        persistence,
+        owner_id=OWNER_ID,
+    )
+
+    assert diagnostics.counts.events == 2
+    assert count_calls == [OWNER_ID]
+
+
+def test_diagnostics_enters_read_snapshot_scope():
+    persistence = _DiagnosticsFixturePersistence()
+    scope_entries = []
+
+    class ReadScope:
+        def __enter__(self):
+            scope_entries.append("entered")
+            return persistence
+
+        def __exit__(self, exc_type, exc, traceback):
+            scope_entries.append("exited")
+            return False
+
+    persistence.read_snapshot = lambda: ReadScope()
+
+    diagnostics = collect_runtime_diagnostics(persistence, owner_id=OWNER_ID)
+
+    assert diagnostics.counts.events == 2
+    assert scope_entries == ["entered", "exited"]
