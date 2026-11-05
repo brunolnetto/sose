@@ -362,3 +362,35 @@ def test_diagnostics_reference_matrix_and_snapshot_reads_are_complete():
     assert persistence.calls["command"] == 2
     assert persistence.calls["scenario_state"] == 1
     assert persistence.calls["simulation_position"] == 1
+
+
+
+def test_diagnostics_uses_batch_command_existence_without_changing_issue_order():
+    persistence = _DiagnosticsFixturePersistence()
+    persistence.values["scheduled_work"] = (
+        _record(work_id="work-ok", command_id="command-ok", owner_id=OWNER_ID),
+        _record(work_id="work-bad-1", command_id="command-missing", owner_id=OWNER_ID),
+        _record(work_id="work-foreign", command_id="foreign-missing", owner_id="another-owner"),
+        _record(work_id="work-bad-2", command_id="command-missing", owner_id=OWNER_ID),
+    )
+    batch_calls = []
+
+    def missing_command_ids(command_ids):
+        requested = tuple(command_ids)
+        batch_calls.append(requested)
+        return frozenset(
+            command_id
+            for command_id in requested
+            if command_id not in persistence.commands
+        )
+
+    persistence.missing_command_ids = missing_command_ids
+
+    diagnostics = collect_runtime_diagnostics(persistence, owner_id=OWNER_ID)
+
+    assert batch_calls == [("command-ok", "command-missing", "command-missing")]
+    assert persistence.calls.get("command", 0) == 0
+    assert [issue.message for issue in diagnostics.issues[:2]] == [
+        "scheduled work work-bad-1 references missing command command-missing",
+        "scheduled work work-bad-2 references missing command command-missing",
+    ]
