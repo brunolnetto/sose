@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from copy import deepcopy
@@ -962,6 +963,13 @@ class MemoryPersistence:
     def command(self, command_id: str) -> Command | None:
         value = self._state.commands.get(command_id)
         return deepcopy(value) if value else None
+
+    def missing_command_ids(
+        self, command_ids: Iterable[str]
+    ) -> frozenset[str]:
+        """Return absent command IDs without copying command objects."""
+        requested = frozenset(command_ids)
+        return requested.difference(self._state.commands)
 
     def scheduled_work(self) -> tuple[ScheduledWork, ...]:
         return tuple(sorted(deepcopy(tuple(self._state.scheduled_work.values()))))
