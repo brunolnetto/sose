@@ -582,6 +582,11 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip check
 
+      - name: Run PostgreSQL batch command-existence integration test
+        run: |
+          python -m pytest -q \\
+            tests/e2e/sose/persistence/test_postgres_batch_command_existence.py
+
       - name: Run PostgreSQL conformance, restart, and concurrency tests
         run: |
           python -m pytest -q \
