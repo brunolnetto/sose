@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from copy import deepcopy
 from pathlib import Path
 import re
 import sqlite3

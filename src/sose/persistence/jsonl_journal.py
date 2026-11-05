@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from copy import deepcopy
 import json
 import os
 from pathlib import Path
 from typing import Iterator
 
-from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, fork_state
 from .records import (
     StateRecord,
     StateRecordChange,
