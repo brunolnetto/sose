@@ -248,6 +248,7 @@ def test_whole_postgres_outage_and_restart_recovers_control_state(
     name,
     phase,
     _control_cache,
+    isolated_postgres_service,
 ):
     if not DSN:
         pytest.skip("SOSE_TEST_POSTGRES_DSN is required")
@@ -298,8 +299,9 @@ def test_whole_postgres_outage_and_restart_recovers_control_state(
                 )
             assert worker.returncode != 0
         finally:
-            _docker("start", CONTAINER_ID)
-            _wait_postgres(DSN)
+            if isolated_postgres_service is None:
+                raise AssertionError("physical outage requires isolated PostgreSQL service")
+            isolated_postgres_service.restart()
 
         actual = _recover(definition, DSN, namespace)
     else:
