@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from dataclasses import dataclass
-from copy import deepcopy
 from pathlib import Path
 import re
 import sqlite3
@@ -531,6 +530,10 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
     def command(self, command_id: str):
         self._fresh()
         return super().command(command_id)
+
+    def missing_command_ids(self, command_ids):
+        self._fresh()
+        return super().missing_command_ids(command_ids)
 
     def scheduled_work(self):
         self._fresh()

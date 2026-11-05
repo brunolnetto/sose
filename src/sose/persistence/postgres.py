@@ -858,6 +858,10 @@ class PostgresPersistence(MemoryPersistence):
         self._fresh()
         return super().command(command_id)
 
+    def missing_command_ids(self, command_ids):
+        self._fresh()
+        return super().missing_command_ids(command_ids)
+
     def scheduled_work(self):
         self._fresh()
         return super().scheduled_work()

@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from contextlib import AbstractContextManager
 from datetime import datetime
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from sose.core.events import Command, DomainEvent
 from sose.core.runtime import (
@@ -129,6 +130,15 @@ class UnitOfWork(Protocol):
     def set_committed_tick(self, tick: int, *, owner_id: str) -> None: ...
     def commit(self) -> None: ...
     def rollback(self) -> None: ...
+
+
+@runtime_checkable
+class BatchCommandExistence(Protocol):
+    """Optional capability for checking command references in one snapshot."""
+
+    def missing_command_ids(
+        self, command_ids: Iterable[str]
+    ) -> frozenset[str]: ...
 
 
 class Persistence(Protocol):

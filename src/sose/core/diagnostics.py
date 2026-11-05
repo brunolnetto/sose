@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from sose.core.runtime import SimulationPosition
-from sose.persistence.base import Persistence
+from sose.persistence.base import BatchCommandExistence, Persistence
 
 
 @dataclass(frozen=True, slots=True)
@@ -70,8 +70,21 @@ def _append_missing_command_issues(
     persistence: Persistence,
     scheduled,
 ) -> None:
+    if isinstance(persistence, BatchCommandExistence):
+        missing_command_ids = persistence.missing_command_ids(
+            work.command_id for work in scheduled
+        )
+    else:
+        # Preserve compatibility with third-party Persistence implementations
+        # that have not adopted the optional batch capability.
+        missing_command_ids = frozenset(
+            work.command_id
+            for work in scheduled
+            if persistence.command(work.command_id) is None
+        )
+
     for work in scheduled:
-        if persistence.command(work.command_id) is None:
+        if work.command_id in missing_command_ids:
             issues.append(
                 DiagnosticIssue(
                     "scheduled.command_missing",

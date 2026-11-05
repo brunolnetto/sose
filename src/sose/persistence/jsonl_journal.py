@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from copy import deepcopy
 import json
 import os
 from pathlib import Path
 from typing import Iterator
 
-from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, fork_state
 from .records import (
     StateRecord,
     StateRecordChange,
@@ -248,6 +247,10 @@ class JSONLJournalPersistence(MemoryPersistence):
     def command(self, command_id: str):
         self._refresh_from_journal()
         return super().command(command_id)
+
+    def missing_command_ids(self, command_ids):
+        self._refresh_from_journal()
+        return super().missing_command_ids(command_ids)
 
     def scheduled_work(self):
         self._refresh_from_journal()
