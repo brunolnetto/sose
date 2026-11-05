@@ -44,6 +44,7 @@ dev = [
   "duckdb>=2,<3",
   "psycopg[binary]>=3.3.6,<4",
   "pytest>=8,<10",
+  "pytest-benchmark>=5.3.1,<6",
   "pytest-cov>=7,<8",
   "coverage>=7.16,<8",
   "ruff>=0.11,<1",
@@ -72,6 +73,7 @@ dev = [
     "codebase-stats>=0.0.3",
     "simpy>=4.1.1,<5",
     "pytest-json-report>=1.5.0",
+    "pytest-benchmark>=5.3.1,<6",
     "pytest-cov>=7.1.0",
     "test-containers[postgres]>=0.1.10",
 ]
