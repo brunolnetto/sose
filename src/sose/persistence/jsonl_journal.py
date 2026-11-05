@@ -246,12 +246,12 @@ class JSONLJournalPersistence(MemoryPersistence):
         return super().entity(entity_type, entity_id)
 
     def command(self, command_id: str):
+        self._refresh_from_journal()
+        return super().command(command_id)
+
     def missing_command_ids(self, command_ids):
         self._refresh_from_journal()
         return super().missing_command_ids(command_ids)
-
-        self._refresh_from_journal()
-        return super().command(command_id)
 
     def scheduled_work(self):
         self._refresh_from_journal()
