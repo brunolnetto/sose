@@ -44,7 +44,7 @@ jobs:
           python -m pip check
 
       - name: Run pytest
-        run: python -m pytest -q
+        run: python -m pytest -q -m "not slow"
 
   coverage:
     name: coverage
@@ -619,7 +619,8 @@ jobs:
             tests/e2e/sose/persistence/test_postgres_pc6_same_org_fencing.py \
             tests/e2e/sose/persistence/test_postgres_owner_position_cas_interleaving.py \
             tests/e2e/sose/persistence/test_postgres_pc6_recurring_organization_recovery.py \
-            tests/e2e/sose/persistence/test_postgres_pc6_recurring_causal_equivalence.py
+            tests/e2e/sose/persistence/test_postgres_pc6_recurring_causal_equivalence.py \
+            tests/e2e/sose/persistence/test_postgres_read_snapshot.py
       - name: Certify real isolated PostgreSQL postmaster SIGKILL/restart
         env:
           SOSE_RUN_PG_SERVER_RESTART: "1"

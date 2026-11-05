@@ -6,7 +6,13 @@ from typing import Iterator
 
 import duckdb
 
-from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import (
+    tracked_transaction_depth,
+    MemoryPersistence,
+    MemoryUnitOfWork,
+    _State,
+    fork_state,
+)
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 
 
@@ -51,10 +57,7 @@ class DuckDBPersistence(MemoryPersistence):
                 [_SCHEMA_VERSION],
             )
         elif int(row[0]) != _SCHEMA_VERSION:
-            raise RuntimeError(
-                "unsupported DuckDBPersistence schema version: "
-                f"{row[0]}"
-            )
+            raise RuntimeError(f"unsupported DuckDBPersistence schema version: {row[0]}")
         self._refresh_from_db()
 
     def close(self) -> None:
@@ -66,7 +69,7 @@ class DuckDBPersistence(MemoryPersistence):
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
-    def _refresh_from_db(self) -> None:
+    def _load_state_from_db(self) -> _State:
         rows = self._connection.execute(
             """
             SELECT collection, record_key, position, payload
@@ -83,7 +86,17 @@ class DuckDBPersistence(MemoryPersistence):
             )
             for collection, record_key, position, payload in rows
         )
-        self._state = records_to_state(records)
+        return records_to_state(records)
+
+    def _refresh_from_db(self) -> None:
+        self._state = self._load_state_from_db()
+
+    def _snapshot_state(self) -> _State:
+        self._connection.execute("BEGIN TRANSACTION")
+        try:
+            return self._load_state_from_db()
+        finally:
+            self._connection.execute("ROLLBACK")
 
     def _apply_changes(
         self,
@@ -129,9 +142,7 @@ class DuckDBPersistence(MemoryPersistence):
                     ],
                 )
             else:  # pragma: no cover - closed record operation set
-                raise RuntimeError(
-                    f"unknown state record operation: {change.operation}"
-                )
+                raise RuntimeError(f"unknown state record operation: {change.operation}")
         return len(changes)
 
     def boundary_protocol_snapshot(self):
@@ -175,9 +186,7 @@ class DuckDBPersistence(MemoryPersistence):
             raise
 
     def persisted_record_count(self) -> int:
-        row = self._connection.execute(
-            "SELECT COUNT(*) FROM sose_record"
-        ).fetchone()
+        row = self._connection.execute("SELECT COUNT(*) FROM sose_record").fetchone()
         return 0 if row is None else int(row[0])
 
     def _fresh(self) -> None:
@@ -253,10 +262,7 @@ class DuckDBPersistence(MemoryPersistence):
 
     def due_scheduled_work(self, at):
         self._fresh()
-        return tuple(
-            work for work in super().scheduled_work()
-            if work.due_at <= at
-        )
+        return tuple(work for work in super().scheduled_work() if work.due_at <= at)
 
     def simulation_position(self, *, owner_id: str):
         self._fresh()

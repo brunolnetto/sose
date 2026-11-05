@@ -9,6 +9,7 @@ from sose.persistence.base import (
     BatchCommandExistence,
     OwnerEventCount,
     Persistence,
+    ReadSnapshot,
 )
 
 
@@ -75,16 +76,12 @@ def _append_missing_command_issues(
     scheduled,
 ) -> None:
     if isinstance(persistence, BatchCommandExistence):
-        missing_command_ids = persistence.missing_command_ids(
-            work.command_id for work in scheduled
-        )
+        missing_command_ids = persistence.missing_command_ids(work.command_id for work in scheduled)
     else:
         # Preserve compatibility with third-party Persistence implementations
         # that have not adopted the optional batch capability.
         missing_command_ids = frozenset(
-            work.command_id
-            for work in scheduled
-            if persistence.command(work.command_id) is None
+            work.command_id for work in scheduled if persistence.command(work.command_id) is None
         )
 
     for work in scheduled:
@@ -92,8 +89,7 @@ def _append_missing_command_issues(
             issues.append(
                 DiagnosticIssue(
                     "scheduled.command_missing",
-                    f"scheduled work {work.work_id} references missing command "
-                    f"{work.command_id}",
+                    f"scheduled work {work.work_id} references missing command {work.command_id}",
                 )
             )
 
@@ -124,8 +120,7 @@ def _append_resource_reference_issues(
         code="resource.definition_missing",
         reference_of=lambda reservation: reservation.resource_name,
         message_of=lambda reservation, name: (
-            f"resource reservation {reservation.reservation_id} references "
-            f"unknown resource {name}"
+            f"resource reservation {reservation.reservation_id} references unknown resource {name}"
         ),
     )
     _append_missing_reference_issues(
@@ -156,9 +151,7 @@ def _append_store_reference_issues(
         store_names,
         code="store.definition_missing",
         reference_of=lambda item: item.store_name,
-        message_of=lambda item, name: (
-            f"store item {item.item_id} references unknown store {name}"
-        ),
+        message_of=lambda item, name: f"store item {item.item_id} references unknown store {name}",
     )
     _append_missing_reference_issues(
         issues,
@@ -278,18 +271,27 @@ def _sink_delivery_health(sink_deliveries) -> tuple[tuple[Any, ...], tuple[Any, 
         delivery for delivery in sink_deliveries if delivery.status == "pending"
     )
     failed_sink_deliveries = tuple(
-        delivery
-        for delivery in pending_sink_deliveries
-        if delivery.last_error is not None
+        delivery for delivery in pending_sink_deliveries if delivery.last_error is not None
     )
     return pending_sink_deliveries, failed_sink_deliveries
 
 
 def collect_runtime_diagnostics(persistence: Persistence, *, owner_id: str) -> RuntimeDiagnostics:
-    """Inspect one owner\'s durable runtime truth without mutating it."""
+    """Inspect one owner's durable runtime truth without mutating it."""
     if not isinstance(owner_id, str) or not owner_id.strip():
         raise ValueError("owner_id must not be empty")
 
+    if isinstance(persistence, ReadSnapshot):
+        with persistence.read_snapshot() as snapshot:
+            return _collect_runtime_diagnostics(snapshot, owner_id=owner_id)
+    return _collect_runtime_diagnostics(persistence, owner_id=owner_id)
+
+
+def _collect_runtime_diagnostics(
+    persistence: Persistence,
+    *,
+    owner_id: str,
+) -> RuntimeDiagnostics:
     issues: list[DiagnosticIssue] = []
 
     # Snapshot every durable collection once. Besides making diagnostics cheaper
@@ -299,10 +301,7 @@ def collect_runtime_diagnostics(persistence: Persistence, *, owner_id: str) -> R
     if isinstance(persistence, OwnerEventCount):
         event_count = persistence.count_events(owner_id=owner_id)
     else:
-        event_count = sum(
-            event.owner_id == owner_id
-            for event in persistence.events()
-        )
+        event_count = sum(event.owner_id == owner_id for event in persistence.events())
     resource_definitions = persistence.resource_definitions()
     resource_demands = persistence.resource_demands()
     resource_reservations = persistence.resource_reservations()
@@ -358,9 +357,7 @@ def collect_runtime_diagnostics(persistence: Persistence, *, owner_id: str) -> R
         preemptive_release_intents=preemptive_release_intents,
     )
 
-    pending_sink_deliveries, failed_sink_deliveries = _sink_delivery_health(
-        sink_deliveries
-    )
+    pending_sink_deliveries, failed_sink_deliveries = _sink_delivery_health(sink_deliveries)
     issues.extend(
         DiagnosticIssue(
             "sink.delivery_failed",
