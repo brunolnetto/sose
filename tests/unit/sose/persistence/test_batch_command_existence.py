@@ -7,6 +7,8 @@ import pytest
 from sose.core.events import Command
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+from sose.persistence.duckdb import DuckDBPersistence
+from sose.persistence.jsonl_journal import JSONLJournalPersistence
 
 
 @pytest.mark.parametrize(
@@ -14,12 +16,20 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
     (
         (SQLitePersistence, "_fresh"),
         (SQLiteIncrementalPersistence, "_fresh"),
+        (DuckDBPersistence, "_fresh"),
+        (JSONLJournalPersistence, "_refresh_from_journal"),
     ),
 )
 def test_batch_command_lookup_refreshes_once_and_observes_other_connection(
     tmp_path, adapter, refresh_method
 ):
-    path = tmp_path / f"{adapter.__name__}.sqlite"
+    suffix = {
+        SQLitePersistence: ".sqlite",
+        SQLiteIncrementalPersistence: ".sqlite",
+        DuckDBPersistence: ".duckdb",
+        JSONLJournalPersistence: ".jsonl",
+    }[adapter]
+    path = tmp_path / f"{adapter.__name__}{suffix}"
     reader = adapter(path)
     writer = adapter(path)
     refresh_count = 0
@@ -58,5 +68,7 @@ def test_batch_command_lookup_refreshes_once_and_observes_other_connection(
         assert reader.missing_command_ids(()) == frozenset()
         assert refresh_count == 1
     finally:
-        reader.close()
-        writer.close()
+        if hasattr(reader, "close"):
+            reader.close()
+        if hasattr(writer, "close"):
+            writer.close()
