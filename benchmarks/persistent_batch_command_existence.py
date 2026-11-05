@@ -91,12 +91,15 @@ def _benchmark_adapter(
                 ]
             )
 
-            batch = lambda: persistence.missing_command_ids(command_ids)
-            per_id = lambda: frozenset(
-                command_id
-                for command_id in command_ids
-                if persistence.command(command_id) is None
-            )
+            def batch():
+                return persistence.missing_command_ids(command_ids)
+
+            def per_id():
+                return frozenset(
+                    command_id
+                    for command_id in command_ids
+                    if persistence.command(command_id) is None
+                )
             expected = batch()
             assert per_id() == expected
 
