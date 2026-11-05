@@ -44,12 +44,16 @@ def _median_us_per_call(operation, *, number: int, rounds: int) -> float:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--command-count", type=int, default=10_000)
-    parser.add_argument("--lookup-counts", type=int, nargs="+", default=[100, 500, 1_000])
+    parser.add_argument(
+        "--lookup-counts", type=int, nargs="+", default=[100, 500, 1_000]
+    )
     parser.add_argument("--number", type=int, default=100)
     parser.add_argument("--rounds", type=int, default=7)
     args = parser.parse_args()
 
-    if args.command_count < 1 or any(count < 1 for count in args.lookup_counts):
+    if args.command_count < 1 or any(
+        count < 1 for count in args.lookup_counts
+    ):
         parser.error("command and lookup counts must be positive")
     if args.number < 1 or args.rounds < 1:
         parser.error("--number and --rounds must be positive")
@@ -85,6 +89,7 @@ def main() -> None:
                     for command_id in command_ids
                     if persistence.command(command_id) is None
                 )
+
             expected = batch()
             assert per_id() == expected
 
