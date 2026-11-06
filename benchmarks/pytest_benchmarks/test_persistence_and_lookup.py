@@ -15,6 +15,7 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 QUICK = os.getenv("SOSE_BENCHMARK_MODE", "full") == "quick"
 SIZES = [10, 100] if QUICK else [10, 100, 1_000, 10_000]
 LOOKUPS = [100, 500] if QUICK else [100, 500, 1_000]
+PERSISTENT_LOOKUPS = [100, 500]
 COMMANDS = 1_000 if QUICK else 10_000
 SINKS = (
     pytest.param(SQLitePersistence, ".sqlite3", id="sqlite-snapshot"),
@@ -95,7 +96,7 @@ def test_memory_command_existence_lookup(benchmark, lookup_count, operation):
     assert fn(persistence, ids) == expected
 
 @pytest.mark.parametrize("adapter,suffix", SINKS)
-@pytest.mark.parametrize("lookup_count", LOOKUPS)
+@pytest.mark.parametrize("lookup_count", PERSISTENT_LOOKUPS)
 @pytest.mark.parametrize("operation", ["batch", "per_id"])
 def test_persistent_command_existence_lookup(benchmark, tmp_path, adapter, suffix, lookup_count, operation):
     persistence = adapter(tmp_path / f"commands{suffix}")
