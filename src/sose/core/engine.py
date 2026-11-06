@@ -109,6 +109,11 @@ class Engine:
                     raise ValueError("cannot attest preexisting pending source events")
                 before_transition = deepcopy(entity)
                 chart = self.context.statecharts.bind(entity, caused_by=command)
+                if self.transition_authority is not None:
+                    self.transition_authority.validate_prestate(
+                        uow=uow, before=before_transition, chart=chart,
+                        owner_id=self.owner_id,
+                    )
                 chart.send(command.name, **dict(command.payload))
                 self._save_entity(uow, entity)
                 emitted = self.context.drain_events()
@@ -163,6 +168,11 @@ class Engine:
             raise ValueError("cannot attest preexisting pending source events")
         before_transition = deepcopy(entity)
         chart = self.context.statecharts.bind(entity, caused_by=command)
+        if self.transition_authority is not None:
+            self.transition_authority.validate_prestate(
+                uow=uow, before=before_transition, chart=chart,
+                owner_id=self.owner_id,
+            )
         chart.send(command.name, **dict(command.payload))
         self._save_entity(uow, entity)
         emitted = self.context.drain_events()
