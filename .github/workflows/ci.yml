@@ -207,21 +207,18 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip check
 
-      - name: Execute reduced benchmark suite
+      - name: Execute reduced pytest-benchmark suite
+        env:
+          SOSE_BENCHMARK_MODE: quick
         run: |
-          python benchmarks/runtime_baseline.py --quick --output benchmark-results.json
-          python benchmarks/persistence_scaling.py \
-            --sizes 10,100 \
-            --repetitions 1 \
-            --output persistence-scaling-smoke.json
+          python -m pytest -o addopts= benchmarks/pytest_benchmarks \
+            --benchmark-only --benchmark-json=pytest-benchmark-smoke.json
 
       - name: Upload benchmark smoke report
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-smoke-report
-          path: |
-            benchmark-results.json
-            persistence-scaling-smoke.json
+          path: pytest-benchmark-smoke.json
           if-no-files-found: error
           retention-days: 14
 
