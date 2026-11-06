@@ -1,47 +1,43 @@
 # SOSE benchmarks
 
-SOSE has two complementary benchmark layers:
+All executable performance benchmarks are pytest tests using
+[pytest-benchmark](https://pytest-benchmark.readthedocs.io/). There are no
+standalone timing scripts or parallel timing/reporting implementations.
 
-- `runtime_baseline.py` and `persistence_scaling.py` measure complete
-  scenarios and persistence scaling. They remain the end-to-end baseline.
-- `pytest-benchmark` measures selected runtime operations in isolation. The
-  diagnostics microbenchmarks vary scheduled-work cardinality, event-history
-  cardinality, and command-index cardinality as separate workloads.
+## Run locally
 
-## Run the microbenchmarks
-
-Install the development dependencies, then run:
+Install development dependencies and run the isolated benchmark suite:
 
 ```bash
 uv sync --group dev
-uv run pytest \
-  -o addopts= \
-  benchmarks/pytest_benchmarks \
-  --benchmark-only \
-  --benchmark-json=/tmp/sose-pytest-benchmark.json
+SOSE_BENCHMARK_MODE=quick uv run pytest -o addopts= benchmarks/pytest_benchmarks \
+  --benchmark-only --benchmark-json=/tmp/sose-benchmarks.json
 ```
 
-The explicit `-o addopts=` is important: the repository's normal pytest
-configuration loads `tests.support.pytest_auto_postgres`, which probes for a
-PostgreSQL server and may start a Docker container when none is available.
-These microbenchmarks use only `MemoryPersistence`; clearing the configured
-`addopts` keeps their execution independent of PostgreSQL and Docker.
+Omit `SOSE_BENCHMARK_MODE=quick` for the full cardinalities. The explicit
+`-o addopts=` disables the repository's automatic PostgreSQL fixture plugin:
+these benchmark workloads use in-memory and local-file adapters and must not
+start Docker or require a PostgreSQL service.
 
-The benchmark fixtures prepare each runtime before timing begins. The measured
-call is only `engine.diagnostics()`. The scheduled-work workload varies the
-number of scheduled jobs; the event-history workload holds scheduled work and
-commands fixed while adding events; the command-index workload holds scheduled
-work fixed while adding unreferenced commands. The latter two deliberately
-use the in-memory persistence state to construct isolated synthetic cardinality
-profiles; they are diagnostic microbenchmarks, not persistence API examples.
+## Workload boundaries
 
-The suite is outside pytest's configured `tests/` discovery tree, so it does
-not run as part of the default test suite or its coverage gate.
+- End-to-end runtime workloads include their full setup and teardown in each
+  measured invocation, matching the former runtime baseline.
+- Persistence scaling seeds durable entities once, closes and reopens the
+  adapter, then measures one-record transactions. Setup is excluded.
+- Command-existence benchmarks seed once and measure either the batch API or
+  the legacy per-ID fallback. The two paths are checked for equivalent results
+  before timing.
+- Diagnostics cardinality tests continue to vary scheduled work, event history,
+  and command-index size independently.
+
+Quick mode is used for pull requests and reduces workload sizes and rounds.
+Full mode is used for scheduled and manual runs. PostgreSQL is intentionally
+excluded from local durable-adapter comparisons because its network/service
+conditions require a separately controlled environment.
 
 ## Interpreting results
 
-Use the JSON output to compare runs made on equivalent machines and software
-environments. Treat each workload as an independent scaling observation;
-do not infer production adapter behavior from the in-memory results alone.
-Do not treat timings from shared GitHub-hosted runners as stable latency SLAs,
-and do not add hard pass/fail thresholds based on those runners.
+The JSON artifact is the single report format. Compare runs from equivalent
+machines and software environments; do not treat shared GitHub-hosted runner
+timings as latency SLAs or add brittle wall-clock pass/fail thresholds.
