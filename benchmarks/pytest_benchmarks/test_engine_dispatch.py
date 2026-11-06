@@ -43,7 +43,7 @@ class WorkflowChart(StateChart):
     queued = State()
     running = State()
     paused = State()
-    completed = State()
+    completed = State(final=True)
 
     enqueue = planned.to(queued)
     start = queued.to(running)
