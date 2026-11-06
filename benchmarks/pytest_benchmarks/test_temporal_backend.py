@@ -98,7 +98,10 @@ def test_temporal_backend_cancel(benchmark, queue_size):
     benchmark.pedantic(cancel_next, rounds=ROUNDS, iterations=1)
 
     assert all(cancelled)
-    assert len(backend._scheduled) == queue_size
+    # SimPyBackend uses cancellation tombstones; calls leave _scheduled only
+    # when their queue events are eventually consumed.
+    assert len(backend._cancelled) == ROUNDS
+    assert len(backend._scheduled) == queue_size + ROUNDS
     benchmark.extra_info["initial_queue_size"] = queue_size + ROUNDS
     benchmark.extra_info["cancelled_calls"] = ROUNDS
 
