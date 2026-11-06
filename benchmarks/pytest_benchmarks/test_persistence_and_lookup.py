@@ -31,7 +31,8 @@ def _entity(i):
 
 def _seed_entities(persistence, count):
     with persistence.transaction() as uow:
-        for i in range(count): uow.save_entity(_entity(i))
+        for i in range(count):
+            uow.save_entity(_entity(i))
 
 def _update_one(persistence, target, iteration):
     with persistence.transaction() as uow:
@@ -65,7 +66,8 @@ def test_persistence_single_record_update_scaling(benchmark, tmp_path, factory, 
     persistence = factory(path)
     _seed_entities(persistence, size)
     close = getattr(persistence, "close", None)
-    if callable(close): close()
+    if callable(close):
+        close()
     persistence = factory(path)  # reopen: exclude setup caches
     target = f"entity-{size // 2:06d}"
     iteration = 0
@@ -77,10 +79,13 @@ def test_persistence_single_record_update_scaling(benchmark, tmp_path, factory, 
         benchmark.pedantic(update, rounds=1 if QUICK else 5, iterations=1)
         benchmark.extra_info["storage_bytes"] = sum(
             p.stat().st_size for p in (path, Path(str(path) + "-wal"), Path(str(path) + "-shm")) if p.exists())
-        assert persistence.get_entity("scaling", target) is not None
+        updated = persistence.entity("scaling", target)
+        assert updated is not None
+        assert updated.attributes["updates"] > 0
     finally:
         close = getattr(persistence, "close", None)
-        if callable(close): close()
+        if callable(close):
+            close()
 
 @pytest.mark.parametrize("lookup_count", LOOKUPS)
 @pytest.mark.parametrize("operation", ["batch", "per_id"])
