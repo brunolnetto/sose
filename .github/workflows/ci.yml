@@ -2,7 +2,8 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches:
+      - main
   pull_request:
 
 permissions:
@@ -19,22 +20,29 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.12", "3.13", "3.14"]
+        python-version:
+          - "3.12"
+          - "3.13"
+          - "3.14"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
       - name: Set up Python ${{ matrix.python-version }}
         uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
+
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip check
+
       - name: Run pytest
         run: python -m pytest -q -m "not slow"
 
@@ -42,6 +50,7 @@ jobs:
     name: coverage
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
     services:
       postgres:
         image: postgres:18
@@ -49,12 +58,14 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: sose
-        ports: ["5432:5432"]
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d sose"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+
     env:
       SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
       SOSE_RUN_PROCESS_CHAOS: "1"
@@ -63,36 +74,59 @@ jobs:
       SOSE_FULL_CHAOS_CANONICALS: "1"
       SOSE_FULL_CHAOS_PHASES: "1"
       SOSE_FULL_PROCESS_CHAOS: "1"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
+
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip check
+
       - name: Run authoritative coverage suite
         run: |
           python -m pytest \
-            --cov=sose --cov-branch --cov-report=term-missing \
-            --cov-report=json:coverage.json --cov-report=xml:coverage.xml \
-            --cov-report=html:htmlcov --cov-fail-under=0 \
-            --json-report --json-report-file=pytest-report.json
+            --cov=sose \
+            --cov-branch \
+            --cov-report=term-missing \
+            --cov-report=json:coverage.json \
+            --cov-report=xml:coverage.xml \
+            --cov-report=html:htmlcov \
+            --cov-fail-under=0 \
+            --json-report \
+            --json-report-file=pytest-report.json
+
       - name: Analyze codebase quality
         run: |
-          codebase-stats coverage.json --report pytest-report.json --source-root src/sose \
-            --show all --threshold 100 --top 0 --show-lines | tee codebase-stats-report.txt
+          codebase-stats coverage.json \
+            --report pytest-report.json \
+            --source-root src/sose \
+            --show all \
+            --threshold 100 \
+            --top 0 \
+            --show-lines \
+            | tee codebase-stats-report.txt
+
       - name: Render coverage hotspots
-        run: python scripts/coverage_hotspots.py coverage.json --limit 40 --output coverage-hotspots.md
+        run: |
+          python scripts/coverage_hotspots.py coverage.json \
+            --limit 40 \
+            --output coverage-hotspots.md
+          cat coverage-hotspots.md
+
       - name: Enforce coverage floor
         run: coverage report --fail-under=95
+
       - name: Upload coverage reports
         if: always()
         uses: actions/upload-artifact@v7
@@ -111,18 +145,22 @@ jobs:
   distribution:
     name: distribution
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
+
       - name: Build wheel and source distribution
         run: |
           python -m pip install --upgrade pip build
           python -m build
+
       - name: Install built wheel in isolated venv
         run: |
           python -m venv /tmp/sose-wheel-smoke
@@ -134,11 +172,13 @@ jobs:
           import importlib.metadata
           import sose
           import sose.api
+
           assert importlib.metadata.version("sose") == sose.__version__
           assert "Engine" in sose.api.__all__
           print(f"validated installed sose {sose.__version__}")
           PY
           /tmp/sose-wheel-smoke/bin/sose --help >/dev/null
+
       - name: Upload distributions
         uses: actions/upload-artifact@v7
         with:
@@ -150,25 +190,30 @@ jobs:
   benchmark-smoke:
     name: benchmark smoke
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
+
       - name: Install benchmark dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip check
+
       - name: Execute reduced pytest-benchmark suite
         env:
           SOSE_BENCHMARK_MODE: quick
         run: |
           python -m pytest -o addopts= benchmarks/pytest_benchmarks \
             --benchmark-only --benchmark-json=pytest-benchmark-smoke.json
+
       - name: Upload benchmark smoke report
         uses: actions/upload-artifact@v7
         with:
@@ -177,29 +222,37 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
   chaos-test:
     name: chaos-test gate
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
       SOSE_FULL_CHAOS_CANONICALS: "1"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
+
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip check
+
       - name: Run deterministic chaos recovery gate
         run: |
-          python -m pytest -q tests/e2e/sose/core/test_chaos_gate.py \
-            tests/e2e/sose/domain/test_all_domains_warehouse_restart.py --junitxml=chaos-results.xml
+          python -m pytest -q \
+            tests/e2e/sose/core/test_chaos_gate.py \
+            tests/e2e/sose/domain/test_all_domains_warehouse_restart.py \
+            --junitxml=chaos-results.xml
+
       - name: Upload chaos gate report
         if: always()
         uses: actions/upload-artifact@v7
@@ -209,27 +262,56 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
   chaos-process-backend:
     name: chaos process/backend gate
     runs-on: ubuntu-latest
     timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sose
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sose"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SOSE_RUN_PROCESS_CHAOS: "1"
+      SOSE_FULL_CHAOS_CANONICALS: "1"
+      SOSE_FULL_CHAOS_PHASES: "1"
+      SOSE_FULL_PROCESS_CHAOS: "1"
+      SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
+
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip check
+
       - name: Run real process and backend chaos gate
         run: |
-          python -m pytest -q tests/e2e/sose/backends/test_process_backend_chaos.py \
+          python -m pytest -q \
+            tests/e2e/sose/backends/test_process_backend_chaos.py \
             --junitxml=chaos-process-backend-results.xml
+
       - name: Upload process/backend chaos report
         if: always()
         uses: actions/upload-artifact@v7
@@ -239,28 +321,55 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
+
   chaos-fencing-workers:
     name: chaos fencing/worker-death gate
     runs-on: ubuntu-latest
     timeout-minutes: 25
+
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: sose
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d sose"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      SOSE_RUN_FENCING_CHAOS: "1"
+      SOSE_FULL_CHAOS_CANONICALS: "1"
+      SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
+
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip check
+
       - name: Run worker-death and fencing chaos
         run: |
-          python -m pytest -q tests/e2e/sose/core/test_fencing_worker_chaos.py \
+          python -m pytest -q \
+            tests/e2e/sose/core/test_fencing_worker_chaos.py \
             --junitxml=chaos-fencing-workers.xml
-      - name: Upload fencing/worker report
+
+      - name: Upload fencing chaos report
         if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -273,6 +382,7 @@ jobs:
     name: chaos postgres infrastructure gate
     runs-on: ubuntu-latest
     timeout-minutes: 35
+
     services:
       postgres:
         image: postgres:18
@@ -280,51 +390,64 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: sose
-        ports: ["5432:5432"]
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d sose"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+
     env:
       SOSE_RUN_POSTGRES_INFRA_CHAOS: "1"
       SOSE_FULL_CHAOS_CANONICALS: "1"
       SOSE_FULL_CHAOS_PHASES: "1"
       SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
       SOSE_PC6_INFRA_CANONICAL_REPORT: pc6-infrastructure-canonical.json
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
+
       - name: Install chaos dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip check
+
       - name: Discover PostgreSQL service container
         run: |
           cid="$(docker ps --filter ancestor=postgres:18 --format '{{.ID}}' | head -n1)"
           test -n "$cid"
           echo "SOSE_POSTGRES_CONTAINER_ID=$cid" >> "$GITHUB_ENV"
+
       - name: Run PostgreSQL infrastructure chaos
         run: |
-          python -m pytest -q tests/e2e/sose/persistence/test_postgres_infrastructure_chaos.py \
+          python -m pytest -q \
+            tests/e2e/sose/persistence/test_postgres_infrastructure_chaos.py \
             tests/e2e/sose/persistence/test_postgres_pc6_uncertain_ack_commit.py \
             --junitxml=chaos-postgres-infrastructure.xml
+
       - name: Verify full PC6 PostgreSQL infrastructure equivalence
         run: |
           python - <<'PY'
           import json
           from hashlib import sha256
           from pathlib import Path
+
           evidence = json.loads(Path("pc6-infrastructure-canonical.json").read_text())
           cases = evidence["cases"]
-          expected = {f"{transport}_{phase}" for transport in ("proxy", "server")
-                      for phase in ("before_commit", "after_commit")}
+          expected = {
+              f"{transport}_{phase}"
+              for transport in ("proxy", "server")
+              for phase in ("before_commit", "after_commit")
+          }
           assert evidence["protocol"] == "pc6-postgres-infrastructure-canonical-v1"
           assert len(cases) == 4
           assert {case["fault"] for case in cases} == expected
@@ -332,7 +455,10 @@ jobs:
           for case in cases:
               assert case["equivalent"]
               assert case["reference_truth"] == case["recovered_truth"]
-              assert case["ack_outcome"] == ("rolled_back" if case["fault"].endswith("before_commit") else "committed")
+              assert case["ack_outcome"] == (
+                  "rolled_back" if case["fault"].endswith("before_commit")
+                  else "committed"
+              )
               for prefix in ("reference", "recovered"):
                   serialized = json.dumps(case[f"{prefix}_truth"], sort_keys=True)
                   assert sha256(serialized.encode()).hexdigest() == case[f"{prefix}_sha256"]
@@ -343,11 +469,14 @@ jobs:
                       item = observed["organizations"][org]
                       assert len(item["certificates"]) == 4
                       assert item["job_state"]["active_trigger_id"] is None
-                      assert set(item) >= {"semantic_digest", "typed_edges", "boundary_causal_edges",
-                          "messages", "ack_receipts", "entities", "events", "certificates",
-                          "binding", "scheduled", "resources", "stores", "containers",
-                          "sinks", "position", "job_state"}
+                      assert set(item) >= {
+                          "semantic_digest", "typed_edges", "boundary_causal_edges",
+                          "messages", "ack_receipts", "entities", "events",
+                          "certificates", "binding", "scheduled", "resources",
+                          "stores", "containers", "sinks", "position", "job_state",
+                      }
           PY
+
       - name: Upload PC6 PostgreSQL canonical infrastructure evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -356,6 +485,7 @@ jobs:
           path: pc6-infrastructure-canonical.json
           if-no-files-found: error
           retention-days: 14
+
       - name: Upload PostgreSQL infrastructure chaos report
         if: always()
         uses: actions/upload-artifact@v7
@@ -369,25 +499,32 @@ jobs:
     name: chaos storage-failure gate
     runs-on: ubuntu-latest
     timeout-minutes: 15
+
     env:
       SOSE_RUN_STORAGE_CHAOS: "1"
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
+
       - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip check
+
       - name: Run storage failure chaos
         run: |
-          python -m pytest -q tests/e2e/sose/core/test_storage_chaos.py \
+          python -m pytest -q \
+            tests/e2e/sose/core/test_storage_chaos.py \
             --junitxml=chaos-storage-results.xml
+
       - name: Upload storage chaos report
         if: always()
         uses: actions/upload-artifact@v7
@@ -400,6 +537,7 @@ jobs:
   postgres:
     name: postgres integration
     runs-on: ubuntu-latest
+
     services:
       postgres:
         image: postgres:18
@@ -407,12 +545,14 @@ jobs:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
           POSTGRES_DB: sose
-        ports: ["5432:5432"]
+        ports:
+          - 5432:5432
         options: >-
           --health-cmd "pg_isready -U postgres -d sose"
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
+
     env:
       SOSE_TEST_POSTGRES_DSN: postgresql://postgres:postgres@127.0.0.1:5432/sose
       SOSE_PC6_EQUIVALENCE_REPORT: pc6-causal-equivalence.json
@@ -422,21 +562,28 @@ jobs:
       SOSE_PC6_MULTIDOMAIN_OSKILL_REPORT: pc6-multidomain-oskill.json
       SOSE_PC6_REAL_MULTIDOMAIN_REPORT: pc6-real-multidomain.json
       SOSE_OD5A_477_BUNDLE_DIR: od5a-477-evidence
+
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
         with:
           python-version: "3.14"
           cache: pip
+
       - name: Install PostgreSQL test dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -e ".[dev]"
           python -m pip check
+
       - name: Run PostgreSQL batch command-existence integration test
-        run: python -m pytest -q tests/e2e/sose/persistence/test_postgres_batch_command_existence.py
+        run: |
+          python -m pytest -q \
+            tests/e2e/sose/persistence/test_postgres_batch_command_existence.py
+
       - name: Run PostgreSQL conformance, restart, and concurrency tests
         run: |
           python -m pytest -q \
@@ -477,8 +624,10 @@ jobs:
         run: |
           docker info >/dev/null
           python -m pytest -q -rs tests/e2e/sose/persistence/test_postgres_od5a_real_server_restart.py
+
       - name: Verify five-arm OD-5a PG non-confirmatory recovery bundle
         run: python scripts/verify_od5a_477_evidence.py od5a-477-evidence
+
       - name: Preserve audited five-arm PG recovery evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -487,8 +636,11 @@ jobs:
           path: od5a-477-evidence/
           retention-days: 30
           if-no-files-found: warn
+
       - name: Certify OD-5a PostgreSQL physical observation and causal reconciliation
         run: |
+          # Explicit live-database gate: the Python matrix skips these without
+          # SOSE_TEST_POSTGRES_DSN; a generic PostgreSQL check is not sufficient.
           python -m pytest -q \
             tests/integration/sose/organizational/test_od5a_observation_postgres.py \
             tests/integration/sose/organizational/test_od5a_reconciler_postgres.py \
@@ -508,26 +660,34 @@ jobs:
           cases = report["cases"]
           assert report["protocol"] == "pc6-real-multidomain-recurring-v3"
           assert report["canonical_truth_schema_version"] == 1
-          assert len(cases) == 23
+          assert len(cases) == 23, f"expected twenty-three real worker-death windows; got {len(cases)}"
           assert len({case["fault"] for case in cases}) == 23
           assert report["all_equivalent"]
-          required = {"semantic_digest", "typed_edges", "boundary_causal_edges", "messages",
-              "ack_receipts", "entities", "events", "certificates", "binding", "scheduled",
-              "resources", "stores", "containers", "sinks", "position", "job_state"}
+          required = {
+              "semantic_digest", "typed_edges", "boundary_causal_edges",
+              "messages", "ack_receipts", "entities", "events", "certificates",
+              "binding", "scheduled", "resources", "stores", "containers",
+              "sinks", "position", "job_state",
+          }
           for case in cases:
               assert case["equivalent"]
               assert case["certificates_per_organization"] == {"a": 4, "b": 4}
               reference, replay = case["reference_truth"], case["recovered_truth"]
-              assert reference == replay
+              assert reference == replay, case["fault"]
               assert set(reference) == {"organizations", "physical"}
               assert set(reference["organizations"]) == {"a", "b"}
-              assert "reservations" in reference["physical"] and "events" in reference["physical"]
+              assert "reservations" in reference["physical"]
+              assert "events" in reference["physical"]
               for organization in ("a", "b"):
                   truth = reference["organizations"][organization]
-                  assert required <= set(truth)
-                  assert isinstance(truth["position"], dict) and isinstance(truth["job_state"], dict)
+                  assert required <= set(truth), (case["fault"], organization)
+                  assert isinstance(truth["position"], dict)
+                  assert isinstance(truth["job_state"], dict)
                   assert len(truth["certificates"]) == 4
-              for label, payload in (("reference_sha256", reference), ("recovered_sha256", replay)):
+              for label, payload in (
+                  ("reference_sha256", reference),
+                  ("recovered_sha256", replay),
+              ):
                   encoded = json.dumps(payload, sort_keys=True)
                   assert case[label] == sha256(encoded.encode()).hexdigest()
           assert all(case["reference_sha256"] == case["recovered_sha256"] for case in cases)
@@ -540,6 +700,7 @@ jobs:
           path: pc6-real-multidomain.json
           if-no-files-found: error
           retention-days: 14
+
       - name: Upload PC6 real OS-kill multidomain boundary matrix
         if: always()
         uses: actions/upload-artifact@v7
@@ -548,6 +709,7 @@ jobs:
           path: pc6-multidomain-oskill.json
           if-no-files-found: error
           retention-days: 14
+
       - name: Upload PC6 federated multi-window OS-kill equivalence
         if: always()
         uses: actions/upload-artifact@v7
@@ -556,6 +718,7 @@ jobs:
           path: pc6-federated-fault-matrix.json
           if-no-files-found: error
           retention-days: 14
+
       - name: Upload PC6 federated restart equivalence evidence
         if: always()
         uses: actions/upload-artifact@v7
@@ -564,6 +727,7 @@ jobs:
           path: pc6-federated-recovery.json
           if-no-files-found: error
           retention-days: 14
+
       - name: Upload PC6 causal equivalence evidence
         if: always()
         uses: actions/upload-artifact@v7
