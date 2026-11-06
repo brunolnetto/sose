@@ -144,9 +144,12 @@ def test_engine_dispatch_scaling(
     assert len(persistence.events()) == ROUNDS
 
     benchmark.extra_info["total_entities"] = size
-    benchmark.extra_info["chart_states"] = len(expected_states) if chart_factory is WorkflowChart else 2
+    benchmark.extra_info["chart_states"] = (
+        5 if chart_factory is WorkflowChart else 2
+    )
     benchmark.extra_info["dispatches"] = ROUNDS
     benchmark.extra_info["events_emitted"] = ROUNDS
+    benchmark.extra_info["persistence_adapter"] = "memory"
 
 
 def test_engine_dispatch_scheduled_stale_callback(benchmark):
@@ -170,12 +173,14 @@ def test_engine_dispatch_scheduled_stale_callback(benchmark):
         owner_id=OWNER_ID,
     )
     item = DurableScheduledItem(work=work, command=command)
+    results = []
 
     def dispatch_stale():
-        assert engine.dispatch_scheduled(item) is False
+        results.append(engine.dispatch_scheduled(item))
 
     benchmark.pedantic(dispatch_stale, rounds=ROUNDS, iterations=1)
 
+    assert results == [False] * ROUNDS
     assert persistence.events() == ()
     assert persistence.scheduled_work() == ()
     benchmark.extra_info["stale_callbacks"] = ROUNDS
