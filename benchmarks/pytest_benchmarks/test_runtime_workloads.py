@@ -46,7 +46,8 @@ def _file_sink_scheduled_batch(count, factory, filename, prefix):
         backend.run_until(due)
         assert not persistence.scheduled_work()
         close = getattr(persistence, "close", None)
-        if callable(close): close()
+        if callable(close):
+            close()
 
 def _file_sink_reopen(count, factory, filename, prefix):
     with tempfile.TemporaryDirectory() as directory:
@@ -61,7 +62,8 @@ def _file_sink_reopen(count, factory, filename, prefix):
         for job in jobs:
             start_and_schedule_completion(persistence, engine, job_id=job.id, complete_at=due)
         close = getattr(persistence, "close", None)
-        if callable(close): close()
+        if callable(close):
+            close()
         reopened = factory(path)
         try:
             _, rebuilt = build_runtime(reopened, owner_id=owner, now=ORIGIN)
@@ -69,7 +71,8 @@ def _file_sink_reopen(count, factory, filename, prefix):
             assert len(reopened.scheduled_work()) == count
         finally:
             close = getattr(reopened, "close", None)
-            if callable(close): close()
+            if callable(close):
+                close()
 
 def _diagnostics_collection(count):
     persistence = MemoryPersistence()
