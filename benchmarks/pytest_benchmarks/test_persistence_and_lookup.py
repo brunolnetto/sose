@@ -116,4 +116,5 @@ def test_persistent_command_existence_lookup(benchmark, tmp_path, adapter, suffi
         assert fn(persistence, ids) == expected
     finally:
         close = getattr(persistence, "close", None)
-        if callable(close): close()
+        if callable(close):
+            close()
