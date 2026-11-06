@@ -1,4 +1,4 @@
-"""Persistence record projection, reconstruction and dirty encoding."""
+""""Persistence record projection, reconstruction and dirty encoding."""
 from __future__ import annotations
 
 from copy import deepcopy
@@ -95,9 +95,11 @@ def test_state_record_change_encoding_scaling(
     assert dirty_expected == expected
 
     if operation == "full_diff":
-        fn = lambda: diff_state_records(before, after)
+        def fn():
+            return diff_state_records(before, after)
     else:
-        fn = lambda: changes_for_dirty_records(before, after, dirty)
+        def fn():
+            return changes_for_dirty_records(before, after, dirty)
 
     benchmark.pedantic(fn, rounds=ROUNDS, iterations=1)
 
