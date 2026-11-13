@@ -9,7 +9,6 @@
   "max_cc:composition/calendar.py::verify_static_calendar_reference": 13,
   "max_cc:composition/effects.py::BusinessEffectService.complete": 29,
   "max_cc:composition/job_observation.py::observe_organization_jobs": 15,
-  "max_cc:composition/model.py::BoundaryDelivery.__post_init__": 21,
   "max_cc:composition/observation.py::observe_organization_events": 20,
   "max_cc:composition/organization.py::OrganizationDefinition.__post_init__": 21,
   "max_cc:composition/organization.py::validate_organization_admission": 26,
@@ -31,7 +30,6 @@
   "max_cc:core/engine.py::Engine._dispatch_scheduled_in_uow": 18,
   "max_cc:core/engine.py::Engine.dispatch": 13,
   "max_cc:core/resource_identity.py::ResourcePoolContract.validate_active": 13,
-  "max_cc:core/resource_reservations.py::TemporalReservation.__post_init__": 17,
   "max_cc:core/transition_authority.py::TransitionAuthority.seal": 27,
   "max_cc:core/transition_authority.py::TransitionAuthority.verify": 46,
   "max_cc:examples/cards_payments/observability.py::cards_payments_projection": 12,
@@ -53,7 +51,6 @@
   "max_cc:examples/warehouse_management/simulation.py::consume_external_reservation": 14,
   "max_cc:examples/warehouse_management/simulation.py::seed_reference": 16,
   "max_cc:examples/warehouse_management/simulation.py::shipment_kpis": 11,
-  "max_cc:jobs/model.py::SimulationJobState.__post_init__": 19,
   "max_cc:jobs/registration.py::_sqlite_job_guard": 11,
   "max_cc:organizational/acquisition_v2.py::GitHubEndpointCaptureV2.validate_pagination": 13,
   "max_cc:organizational/calibration.py::calibrate_observed_item_flow": 25,
@@ -158,8 +155,6 @@
   "max_cc:persistence/records.py::records_to_state": 16,
   "max_cc:persistence/sqlite_incremental.py::SQLiteIncrementalPersistence.claim_writer_and_register": 11,
   "max_cc:persistence/sqlite_incremental.py::SQLiteIncrementalPersistence.transaction": 11,
-  "max_cc:testing/analytical.py::_solve_linear_system": 12,
-  "max_cc:testing/analytical.py::jackson_visit_rates": 27,
   "max_cc:testing/restart.py::restart_reference_runtime": 11,
   "max_lines:backends/simpy.py": 783,
   "max_lines:cli.py": 693,
@@ -241,6 +236,5 @@
   "min_mi:persistence/memory.py": 0.0,
   "min_mi:persistence/postgres.py": 14.033114723509408,
   "min_mi:persistence/postgres_resource_ledger.py": 15.54461538442377,
-  "min_mi:persistence/sqlite_incremental.py": 16.011596013869354,
-  "min_mi:testing/analytical.py": 19.33799498482363
+  "min_mi:persistence/sqlite_incremental.py": 16.011596013869354
 }

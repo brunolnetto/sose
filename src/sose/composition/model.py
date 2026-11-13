@@ -174,28 +174,42 @@ class BoundaryDelivery:
             raise ValueError("contract_version must be positive")
         if self.attempts < 0 or self.claim_epoch < 0:
             raise ValueError("delivery counters must be non-negative")
-        if self.status is DeliveryStatus.PENDING:
-            if any(
-                value is not None
-                for value in (
-                    self.claim_owner_id,
-                    self.claimed_at,
-                    self.lease_expires_at,
-                    self.consumed_at,
-                    self.consumer_effect_id,
-                )
-            ):
-                raise ValueError("pending delivery cannot carry claim/consumption state")
-        elif self.status is DeliveryStatus.CLAIMED:
-            if not self.claim_owner_id or self.claimed_at is None or self.lease_expires_at is None:
-                raise ValueError("claimed delivery requires owner and lease")
-            if self.claim_epoch <= 0:
-                raise ValueError("claimed delivery requires positive fencing epoch")
-            if self.consumed_at is not None or self.consumer_effect_id is not None:
-                raise ValueError("claimed delivery cannot be consumed")
-        elif self.status is DeliveryStatus.CONSUMED:
-            if self.consumed_at is None or not self.consumer_effect_id:
-                raise ValueError("consumed delivery requires effect and timestamp")
+        # Other statuses carry no lifecycle invariant beyond the fields above.
+        validate = _DELIVERY_STATE_VALIDATORS.get(self.status)
+        if validate is not None:
+            validate(self)
+
+    def _validate_pending(self) -> None:
+        if any(
+            value is not None
+            for value in (
+                self.claim_owner_id,
+                self.claimed_at,
+                self.lease_expires_at,
+                self.consumed_at,
+                self.consumer_effect_id,
+            )
+        ):
+            raise ValueError("pending delivery cannot carry claim/consumption state")
+
+    def _validate_claimed(self) -> None:
+        if not self.claim_owner_id or self.claimed_at is None or self.lease_expires_at is None:
+            raise ValueError("claimed delivery requires owner and lease")
+        if self.claim_epoch <= 0:
+            raise ValueError("claimed delivery requires positive fencing epoch")
+        if self.consumed_at is not None or self.consumer_effect_id is not None:
+            raise ValueError("claimed delivery cannot be consumed")
+
+    def _validate_consumed(self) -> None:
+        if self.consumed_at is None or not self.consumer_effect_id:
+            raise ValueError("consumed delivery requires effect and timestamp")
+
+
+_DELIVERY_STATE_VALIDATORS = {
+    DeliveryStatus.PENDING: BoundaryDelivery._validate_pending,
+    DeliveryStatus.CLAIMED: BoundaryDelivery._validate_claimed,
+    DeliveryStatus.CONSUMED: BoundaryDelivery._validate_consumed,
+}
 
 
 @dataclass(frozen=True, slots=True)
