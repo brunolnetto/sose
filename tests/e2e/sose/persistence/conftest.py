@@ -9,12 +9,18 @@ endpoint is resolved again before post-restart SQL work.
 from __future__ import annotations
 
 from pathlib import Path
+import os
 import subprocess
 import time
 from uuid import uuid4
 
 import psycopg
 import pytest
+
+# Same PostgreSQL major as every CI PostgreSQL service and the OD-5a postmaster
+# restart test, so physical-restart evidence certifies the version under test.
+ISOLATED_POSTGRES_IMAGE = os.environ.get("SOSE_ISOLATED_POSTGRES_IMAGE", "postgres:18")
+_DIAGNOSTIC_LIMIT = 2000
 
 
 def _docker(*arguments: str, timeout: int = 30) -> subprocess.CompletedProcess[str]:
@@ -71,14 +77,57 @@ def _capture_postgres_evidence(name: str, directory: Path) -> None:
             )
 
 
+def _failure_diagnostics(name: str) -> str:
+    """Bounded Docker state and log tail for inclusion in a failure message.
+
+    The full record is also written to tmp_path, but CI does not upload it, so
+    the failure itself must carry enough evidence to classify a stuck startup.
+    """
+    parts = []
+    for label, args in (
+        ("state", ("inspect", "--format", "{{json .State}}", name)),
+        ("logs", ("logs", "--tail", "40", name)),
+    ):
+        try:
+            result = _docker(*args, timeout=15)
+            text = (result.stdout + result.stderr).strip()
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            text = f"unavailable: {exc}"
+        parts.append(f"--- docker {label} ({name}) ---\n{text[-_DIAGNOSTIC_LIMIT:]}")
+    return "\n".join(parts)
+
+
+def _ensure_image(image: str) -> None:
+    """Pull outside the container-start budget; fail closed if unavailable."""
+    try:
+        if _docker("image", "inspect", image, timeout=30).returncode == 0:
+            return
+        pulled = _docker("pull", image, timeout=600)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        pytest.fail(f"cannot obtain isolated PostgreSQL image {image}: {exc}")
+    if pulled.returncode != 0:
+        pytest.fail(
+            f"cannot pull isolated PostgreSQL image {image}: "
+            + pulled.stderr[-1500:]
+        )
+
+
+def _postmaster_start_time(dsn: str):
+    with psycopg.connect(dsn, connect_timeout=5) as connection:
+        return connection.execute("SELECT pg_postmaster_start_time()").fetchone()[0]
+
+
 def _remove_isolated_postgres(name: str, directory: Path, *, provisioned: bool) -> None:
     """Always attempt named-container removal, including after inspect failure.
 
     Inspection is best-effort discovery, never a prerequisite for cleanup. A
     successful docker rm -f is sufficient for a previously unknown container;
     any failed removal fails the test rather than leaking trust-auth PostgreSQL.
+    Removal is attempted even when inspection reported no container, because
+    the daemon may still materialize a create whose docker run reply was lost.
     """
     inspect_error = None
+    confirmed_absent = False
     try:
         _capture_postgres_evidence(name, directory)
     except (OSError, subprocess.TimeoutExpired) as exc:
@@ -91,8 +140,9 @@ def _remove_isolated_postgres(name: str, directory: Path, *, provisioned: bool) 
         inspect_error = f"container inspection failed: {exc}"
     else:
         if inspected.returncode != 0:
-            if "No such object" in inspected.stderr and not provisioned:
-                return
+            confirmed_absent = (
+                "no such object" in inspected.stderr.lower() and not provisioned
+            )
             inspect_error = (
                 "container inspection returned nonzero: " + inspected.stderr[-1500:]
             )
@@ -107,6 +157,9 @@ def _remove_isolated_postgres(name: str, directory: Path, *, provisioned: bool) 
             f"inspection: {inspect_error}"
         )
     if removed.returncode != 0:
+        if confirmed_absent and "no such container" in removed.stderr.lower():
+            # Never created: keep the original provisioning failure visible.
+            return
         pytest.fail(
             f"isolated PostgreSQL container removal failed ({name}): "
             + removed.stderr[-1500:]
@@ -141,6 +194,7 @@ class _IsolatedPostgresService:
             pytest.fail(
                 "isolated PostgreSQL container restart failed: "
                 + started.stderr[-1500:]
+                + "\n" + _failure_diagnostics(self.name)
             )
 
         deadline = time.monotonic() + 120.0
@@ -160,7 +214,7 @@ class _IsolatedPostgresService:
 
         pytest.fail(
             "isolated PostgreSQL did not become SQL-ready after restart: "
-            f"{last_error}"
+            f"{last_error}\n{_failure_diagnostics(self.name)}"
         )
 
 
@@ -182,6 +236,18 @@ def isolated_postgres_service(request, monkeypatch, tmp_path):
     diagnostics = tmp_path / "isolated-postgres"
     provisioned = False
 
+    # The suite-wide PostgreSQL must survive every destructive test: record its
+    # postmaster start time now and require it unchanged after the test.
+    shared_dsn = os.environ.get("SOSE_TEST_POSTGRES_DSN")
+    shared_started = None
+    if shared_dsn:
+        try:
+            shared_started = _postmaster_start_time(shared_dsn)
+        except psycopg.Error:
+            shared_started = None  # no reachable shared DB to protect
+
+    _ensure_image(ISOLATED_POSTGRES_IMAGE)
+
     # This try/finally includes docker run itself. Even a timeout or lost
     # container-ID reply must trigger discovery and cleanup by known name.
     try:
@@ -191,7 +257,7 @@ def isolated_postgres_service(request, monkeypatch, tmp_path):
                 "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
                 "-e", "POSTGRES_DB=postgres",
                 "-p", "127.0.0.1::5432",
-                "postgres:16-alpine", timeout=45,
+                ISOLATED_POSTGRES_IMAGE, timeout=45,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             pytest.fail(f"isolated PostgreSQL provisioning command failed: {exc}")
@@ -220,7 +286,10 @@ def isolated_postgres_service(request, monkeypatch, tmp_path):
                 last_error = error
                 time.sleep(0.25)
         else:
-            pytest.fail(f"isolated PostgreSQL never became ready: {last_error}")
+            pytest.fail(
+                f"isolated PostgreSQL never became ready: {last_error}\n"
+                + _failure_diagnostics(name)
+            )
 
         if _published_host_port(name) != port:
             pytest.fail(
@@ -251,5 +320,18 @@ def isolated_postgres_service(request, monkeypatch, tmp_path):
             )
         with psycopg.connect(service.dsn, connect_timeout=3) as connection:
             assert connection.execute("SELECT 1").fetchone() == (1,)
+
+        if shared_started is not None:
+            try:
+                shared_after = _postmaster_start_time(shared_dsn)
+            except psycopg.Error as exc:
+                pytest.fail(
+                    f"shared PostgreSQL unreachable after destructive test: {exc}"
+                )
+            if shared_after != shared_started:
+                pytest.fail(
+                    "destructive test restarted the shared PostgreSQL postmaster: "
+                    f"started {shared_started!r}, now {shared_after!r}"
+                )
     finally:
         _remove_isolated_postgres(name, diagnostics, provisioned=provisioned)
