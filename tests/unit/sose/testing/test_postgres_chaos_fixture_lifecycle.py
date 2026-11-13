@@ -24,6 +24,7 @@ def _no_shared_postgres(monkeypatch):
     """Keep these unit tests hermetic even when a shared test DSN is exported."""
     monkeypatch.delenv("SOSE_TEST_POSTGRES_DSN", raising=False)
     monkeypatch.delenv("SOSE_POSTGRES_CONTAINER_ID", raising=False)
+    monkeypatch.delenv("SOSE_ISOLATED_POSTGRES_IMAGE", raising=False)
 
 
 class _Connection:
@@ -206,8 +207,64 @@ def test_absent_inspect_does_not_excuse_other_removal_failures(monkeypatch, tmp_
         pg_chaos._remove_isolated_postgres("busy", tmp_path, provisioned=False)
 
 
-def test_isolated_postgres_uses_ci_major_version_by_default():
-    assert pg_chaos.ISOLATED_POSTGRES_IMAGE == "postgres:18"
+def test_isolated_postgres_uses_ci_major_version_by_default(monkeypatch):
+    monkeypatch.delenv("SOSE_ISOLATED_POSTGRES_IMAGE", raising=False)
+    assert pg_chaos.isolated_postgres_image() == "postgres:18"
+    monkeypatch.setenv("SOSE_ISOLATED_POSTGRES_IMAGE", "postgres:18.1")
+    assert pg_chaos.isolated_postgres_image() == "postgres:18.1"
+
+
+def test_unreachable_configured_shared_postgres_fails_closed(tmp_path: Path):
+    """The guard must not silently switch itself off (#598 fail-closed)."""
+    seen = []
+    attempts = []
+
+    def unreachable(dsn):
+        attempts.append(dsn)
+        raise pg_chaos.psycopg.OperationalError("too many clients already")
+
+    fixture_patch = pytest.MonkeyPatch()
+    with pytest.MonkeyPatch.context() as mocks:
+        mocks.setenv("SOSE_TEST_POSTGRES_DSN", "postgresql://shared/sose")
+        mocks.setattr(pg_chaos, "_docker", _healthy_docker(seen))
+        mocks.setattr(pg_chaos, "_postmaster_start_time", unreachable)
+        mocks.setattr(pg_chaos.time, "sleep", lambda seconds: None)
+        fixture = pg_chaos.isolated_postgres_service.__wrapped__(
+            _server_request(SimpleNamespace(DSN=None, CONTAINER_ID=None)),
+            fixture_patch, tmp_path,
+        )
+        with pytest.raises(pytest.fail.Exception, match="configured but unreachable"):
+            next(fixture)
+        fixture_patch.undo()
+    assert len(attempts) == 3
+    assert not any(args[0] == "run" for args in seen), "no container before the guard holds"
+
+
+def test_transient_shared_probe_failure_is_retried(tmp_path: Path):
+    seen = []
+    outcomes = iter(("error", "t0", "t0"))
+
+    def flaky(dsn):
+        value = next(outcomes)
+        if value == "error":
+            raise pg_chaos.psycopg.OperationalError("connection refused")
+        return value
+
+    fixture_patch = pytest.MonkeyPatch()
+    with pytest.MonkeyPatch.context() as mocks:
+        mocks.setenv("SOSE_TEST_POSTGRES_DSN", "postgresql://shared/sose")
+        mocks.setattr(pg_chaos, "_docker", _healthy_docker(seen))
+        mocks.setattr(pg_chaos.psycopg, "connect", lambda *a, **k: _Connection())
+        mocks.setattr(pg_chaos, "_postmaster_start_time", flaky)
+        mocks.setattr(pg_chaos.time, "sleep", lambda seconds: None)
+        fixture = pg_chaos.isolated_postgres_service.__wrapped__(
+            _server_request(SimpleNamespace(DSN=None, CONTAINER_ID=None)),
+            fixture_patch, tmp_path,
+        )
+        next(fixture)
+        with pytest.raises(StopIteration):
+            next(fixture)
+        fixture_patch.undo()
 
 
 def test_missing_image_is_pulled_outside_container_start_budget(monkeypatch):
@@ -302,9 +359,9 @@ def test_successful_lifecycle_restores_module_and_env_and_removes_container(tmp_
         assert os.environ["SOSE_POSTGRES_CONTAINER_ID"] == "shared-id"
         removals = [args for args in seen if args[:2] == ("rm", "-f")]
         assert len(removals) == 1 and removals[0][2].startswith("sose-pg-chaos-")
-        image_check = seen.index(("image", "inspect", pg_chaos.ISOLATED_POSTGRES_IMAGE))
+        image_check = seen.index(("image", "inspect", "postgres:18"))
         run = next(i for i, args in enumerate(seen) if args[0] == "run")
-        assert image_check < run and seen[run][-1] == pg_chaos.ISOLATED_POSTGRES_IMAGE
+        assert image_check < run and seen[run][-1] == "postgres:18"
     finally:
         patch.undo()
 

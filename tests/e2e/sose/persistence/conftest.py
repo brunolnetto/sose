@@ -19,7 +19,12 @@ import pytest
 
 # Same PostgreSQL major as every CI PostgreSQL service and the OD-5a postmaster
 # restart test, so physical-restart evidence certifies the version under test.
-ISOLATED_POSTGRES_IMAGE = os.environ.get("SOSE_ISOLATED_POSTGRES_IMAGE", "postgres:18")
+DEFAULT_ISOLATED_POSTGRES_IMAGE = "postgres:18"
+
+
+def isolated_postgres_image() -> str:
+    """Read at use time so an override never leaks across imports."""
+    return os.environ.get("SOSE_ISOLATED_POSTGRES_IMAGE", DEFAULT_ISOLATED_POSTGRES_IMAGE)
 _DIAGNOSTIC_LIMIT = 2000
 
 
@@ -241,12 +246,24 @@ def isolated_postgres_service(request, monkeypatch, tmp_path):
     shared_dsn = os.environ.get("SOSE_TEST_POSTGRES_DSN")
     shared_started = None
     if shared_dsn:
-        try:
-            shared_started = _postmaster_start_time(shared_dsn)
-        except psycopg.Error:
-            shared_started = None  # no reachable shared DB to protect
+        # A configured shared DB must be observable; never silently disable
+        # the guard because one probe failed.
+        probe_error: Exception | None = None
+        for _attempt in range(3):
+            try:
+                shared_started = _postmaster_start_time(shared_dsn)
+                break
+            except psycopg.Error as exc:
+                probe_error = exc
+                time.sleep(1.0)
+        else:
+            pytest.fail(
+                "shared PostgreSQL configured but unreachable before destructive "
+                f"test; cannot prove it survives: {probe_error}"
+            )
 
-    _ensure_image(ISOLATED_POSTGRES_IMAGE)
+    image = isolated_postgres_image()
+    _ensure_image(image)
 
     # This try/finally includes docker run itself. Even a timeout or lost
     # container-ID reply must trigger discovery and cleanup by known name.
@@ -257,7 +274,7 @@ def isolated_postgres_service(request, monkeypatch, tmp_path):
                 "-e", "POSTGRES_HOST_AUTH_METHOD=trust",
                 "-e", "POSTGRES_DB=postgres",
                 "-p", "127.0.0.1::5432",
-                ISOLATED_POSTGRES_IMAGE, timeout=45,
+                image, timeout=45,
             )
         except (OSError, subprocess.TimeoutExpired) as exc:
             pytest.fail(f"isolated PostgreSQL provisioning command failed: {exc}")
