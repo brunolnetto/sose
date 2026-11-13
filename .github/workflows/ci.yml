@@ -14,6 +14,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality:
+    name: quality gate (codebase-stats)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install quality tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip check
+
+      - name: Enforce complexity, size and maintainability ratchet (ADR-0010)
+        run: |
+          set -o pipefail
+          # Limits and baseline come from [tool.codebase-stats.gates] in
+          # pyproject.toml. --strict-baseline also fails on stale entries, so
+          # a fixed offender must be removed from the baseline (ratchet).
+          codebase-stats --root src/sose --only cc,size,mi --strict-baseline \
+            | tee quality-gate-report.txt
+
+      - name: Publish quality summary
+        if: always()
+        run: |
+          codebase-stats --root src/sose --only cc,size,mi --format summary-md \
+            >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload quality report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: quality-gate-report
+          path: quality-gate-report.txt
+          if-no-files-found: warn
+          retention-days: 14
+
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -108,10 +153,13 @@ jobs:
 
       - name: Analyze codebase quality
         run: |
-          codebase-stats coverage.json \
+          set -o pipefail
+          # Coverage gap x complexity ranking (ADR-0010). The same ratchet as
+          # the quality job applies here; the coverage floor stays below.
+          codebase-stats \
+            --coverage coverage.json \
             --report pytest-report.json \
-            --source-root src/sose \
-            --show all \
+            --root src/sose \
             --threshold 100 \
             --top 0 \
             --show-lines \
