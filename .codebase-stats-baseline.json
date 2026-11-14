@@ -51,7 +51,6 @@
   "max_cc:organizational/domain_reference.py::GroundTruthClaim.validate_and_freeze": 11,
   "max_cc:organizational/github_acquisition_v2.py::_correlate_workflow_runs_to_pr": 14,
   "max_cc:organizational/github_acquisition_v2.py::_workflow_run_matches_pr_candidate": 17,
-  "max_cc:organizational/github_observations.py::normalize_github_pr_trace": 30,
   "max_cc:organizational/ledger.py::ActorLedger._validate_fractional_capacity": 15,
   "max_cc:organizational/ledger.py::ActorLedger.validate_capacity": 13,
   "max_cc:organizational/manufacturing_official_run.py::execute_official": 16,
