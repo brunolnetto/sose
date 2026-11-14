@@ -40,8 +40,6 @@
   "max_cc:organizational/domain_experiment.py::_validate_agency_configurations": 11,
   "max_cc:organizational/domain_experiment.py::build_experiment_worlds": 13,
   "max_cc:organizational/domain_experiment_analysis.py::_build_effect": 11,
-  "max_cc:organizational/domain_experiment_conformance.py::_exogenous_binding": 19,
-  "max_cc:organizational/domain_experiment_conformance.py::_ground_truth_integrity": 18,
   "max_cc:organizational/domain_experiment_runtime.py::_assess_claim": 15,
   "max_cc:organizational/domain_experiment_runtime.py::run_domain_experiment": 12,
   "max_cc:organizational/domain_reference.py::AgencyCapabilitySpec.validate_and_freeze": 14,
