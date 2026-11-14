@@ -43,7 +43,7 @@ them would require invalidating an already-tested stronger contract.
 | `persistence/sqlite_incremental_schema.py:89` | Metadata singleton cannot disappear after transactional bootstrap |
 | `persistence/sqlite_incremental.py:195` | Record changes have a closed internal operation set |
 | `persistence/sqlite_incremental.py:230` | Writer metadata cannot disappear after a successful compare-and-swap update |
-| `core/stores.py:400` | Store-item consume helper is only called after caller-level presence checks |
+| `core/stores_queries.py:46` | Store-item consume helper is only called after caller-level presence checks |
 | `core/engine.py:105` | Engine construction requires a statechart factory |
 | `core/engine.py:159` | Engine construction requires a statechart factory |
 | `core/engine.py:276` | Engine construction requires a statechart factory |

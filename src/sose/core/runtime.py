@@ -133,5 +133,3 @@ class ResourceReleaseIntent:
     reservation_id: str
     resource_name: str
     requested_at: datetime
-
-
