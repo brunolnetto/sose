@@ -138,70 +138,7 @@ class QueueReferenceAdapter:
         world: SyntheticWorldSpec,
     ) -> tuple[GroundTruthClaim, ...]:
         if world.agency_level is AgencyLevel.A0:
-            reference = analytical_world_reference(world)
-            # The runner initializes the server clock after transition downtime.
-            # M/G/1 stationary mean is not eligible for that run.
-            stationary_eligible = (
-                reference.expected_mean_lead_time is not None
-                and world.intervention_transition_time == 0.0
-            )
-            equivalence_margin = next(
-                outcome.equivalence_margin
-                for outcome in build_reference_synthetic_experiment_v1().protocol.outcomes
-                if outcome.name == "lead_time"
-            )
-            regime = GroundTruthClaim(
-                claim_id="queue.regime",
-                kind=GroundTruthKind.MECHANISTIC,
-                target_kind=GroundTruthTargetKind.REGIME,
-                target_name="stability",
-                expected="stable" if reference.stable else "saturated",
-                comparison_rule=GroundTruthComparisonRule(
-                    kind=GroundTruthComparisonKind.EXACT,
-                ),
-                assumptions=(
-                    "Configured arrival, service, and rework mechanics are exogenous.",
-                ),
-                eligibility_rule="configured offered load determines regime",
-                eligible=True,
-                provenance=(
-                    "src/sose/organizational/synthetic_analysis.py:analytical_world_reference",
-                ),
-            )
-            lead = GroundTruthClaim(
-                claim_id="queue.mean_lead_time",
-                kind=GroundTruthKind.ANALYTICAL,
-                target_kind=GroundTruthTargetKind.METRIC,
-                target_name="mean_lead_time",
-                expected=(reference.expected_mean_lead_time if stationary_eligible else None),
-                comparison_rule=(
-                    GroundTruthComparisonRule(
-                        kind=GroundTruthComparisonKind.RELATIVE_TOLERANCE,
-                        tolerance=equivalence_margin,
-                    )
-                    if stationary_eligible
-                    else GroundTruthComparisonRule(
-                        kind=GroundTruthComparisonKind.EXACT,
-                    )
-                ),
-                assumptions=(
-                    "Stationary M/G/1 mean lead time is valid only for offered load below one.",
-                    "Service and rework moments follow the configured queue reference mechanics.",
-                ),
-                eligibility_rule="offered_load < 1 AND intervention_transition_time == 0",
-                eligible=stationary_eligible,
-                ineligibility_reason=(
-                    None if stationary_eligible else (
-                        "stationary recovery excludes intervention transition downtime"
-                        if world.intervention_transition_time != 0.0
-                        else "stationary mean lead time is undefined for saturated worlds"
-                    )
-                ),
-                provenance=(
-                    "src/sose/organizational/synthetic_analysis.py:analytical_world_reference",
-                ),
-            )
-            return (regime, lead)
+            return _a0_ground_truth(world)
 
         if world.agency_level is AgencyLevel.A1:
             _assert_supported_a1_batching(world)
@@ -280,3 +217,70 @@ class QueueReferenceAdapter:
             replication=result.replication,
             metrics=metrics,
         )
+
+
+def _a0_ground_truth(world: SyntheticWorldSpec) -> tuple[GroundTruthClaim, ...]:
+    reference = analytical_world_reference(world)
+    # The runner initializes the server clock after transition downtime.
+    # M/G/1 stationary mean is not eligible for that run.
+    stationary_eligible = (
+        reference.expected_mean_lead_time is not None
+        and world.intervention_transition_time == 0.0
+    )
+    equivalence_margin = next(
+        outcome.equivalence_margin
+        for outcome in build_reference_synthetic_experiment_v1().protocol.outcomes
+        if outcome.name == "lead_time"
+    )
+    regime = GroundTruthClaim(
+        claim_id="queue.regime",
+        kind=GroundTruthKind.MECHANISTIC,
+        target_kind=GroundTruthTargetKind.REGIME,
+        target_name="stability",
+        expected="stable" if reference.stable else "saturated",
+        comparison_rule=GroundTruthComparisonRule(
+            kind=GroundTruthComparisonKind.EXACT,
+        ),
+        assumptions=(
+            "Configured arrival, service, and rework mechanics are exogenous.",
+        ),
+        eligibility_rule="configured offered load determines regime",
+        eligible=True,
+        provenance=(
+            "src/sose/organizational/synthetic_analysis.py:analytical_world_reference",
+        ),
+    )
+    lead = GroundTruthClaim(
+        claim_id="queue.mean_lead_time",
+        kind=GroundTruthKind.ANALYTICAL,
+        target_kind=GroundTruthTargetKind.METRIC,
+        target_name="mean_lead_time",
+        expected=(reference.expected_mean_lead_time if stationary_eligible else None),
+        comparison_rule=(
+            GroundTruthComparisonRule(
+                kind=GroundTruthComparisonKind.RELATIVE_TOLERANCE,
+                tolerance=equivalence_margin,
+            )
+            if stationary_eligible
+            else GroundTruthComparisonRule(
+                kind=GroundTruthComparisonKind.EXACT,
+            )
+        ),
+        assumptions=(
+            "Stationary M/G/1 mean lead time is valid only for offered load below one.",
+            "Service and rework moments follow the configured queue reference mechanics.",
+        ),
+        eligibility_rule="offered_load < 1 AND intervention_transition_time == 0",
+        eligible=stationary_eligible,
+        ineligibility_reason=(
+            None if stationary_eligible else (
+                "stationary recovery excludes intervention transition downtime"
+                if world.intervention_transition_time != 0.0
+                else "stationary mean lead time is undefined for saturated worlds"
+            )
+        ),
+        provenance=(
+            "src/sose/organizational/synthetic_analysis.py:analytical_world_reference",
+        ),
+    )
+    return (regime, lead)
