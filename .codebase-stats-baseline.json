@@ -38,11 +38,6 @@
   "max_cc:organizational/od4_intake.py::_verify_decision_ledger": 68,
   "max_cc:organizational/od4_intake.py::intervene_work": 45,
   "max_cc:organizational/od5a_mechanisms.py::run_od5a_pilot": 40,
-  "max_cc:persistence/postgres_resource_ledger.py::PostgresTemporalResourceLedger._fits": 17,
-  "max_cc:persistence/postgres_resource_ledger.py::PostgresTemporalResourceLedger.audit": 39,
-  "max_cc:persistence/postgres_resource_ledger.py::PostgresTemporalResourceLedger.fail": 11,
-  "max_cc:persistence/postgres_resource_ledger.py::PostgresTemporalResourceLedger.reserve": 27,
-  "max_cc:persistence/postgres_resource_ledger.py::PostgresTemporalResourceLedger.suggest_next_start": 23,
   "max_lines:backends/simpy.py": 783,
   "max_lines:cli.py": 693,
   "max_lines:composition/boundary.py": 425,
@@ -86,7 +81,6 @@
   "max_lines:organizational/od4_intake.py": 433,
   "max_lines:organizational/od5a_durable.py": 468,
   "max_lines:organizational/prospective_stage1_fit_v2.py": 458,
-  "max_lines:persistence/postgres_resource_ledger.py": 735,
   "min_mi:backends/simpy.py": 12.264483822158764,
   "min_mi:composition/recovery.py": 6.127754233924797,
   "min_mi:composition/trading_company_customer.py": 0.0,
@@ -109,6 +103,5 @@
   "min_mi:jobs/runner.py": 6.217371042029867,
   "min_mi:organizational/domain_experiment_runtime.py": 10.872002970688813,
   "min_mi:organizational/ledger.py": 19.76193053380103,
-  "min_mi:organizational/od4_intake.py": 17.624204288926034,
-  "min_mi:persistence/postgres_resource_ledger.py": 15.54461538442377
+  "min_mi:organizational/od4_intake.py": 17.624204288926034
 }
