@@ -17,7 +17,6 @@
   "max_cc:examples/logistics/simulation.py::reconcile_pickup": 22,
   "max_cc:examples/logistics/simulation.py::reconcile_transfer": 15,
   "max_cc:examples/logistics/simulation.py::seed_reference": 12,
-  "max_cc:examples/organizational_pr_review.py::simulate_pull_request_flow": 11,
   "max_cc:examples/process_manifest.py::ProcessManifest.__post_init__": 39,
   "max_cc:examples/process_manifest.py::builtin_process_manifests": 12,
   "max_cc:examples/warehouse_fulfillment/simulation.py::allocate_composed_order": 15,
