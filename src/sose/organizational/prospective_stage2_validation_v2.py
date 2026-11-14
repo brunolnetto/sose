@@ -111,6 +111,38 @@ class ProspectiveStage2ValidationArtifactV2(BaseModel):
         return sha256(self.canonical_json().encode("utf-8")).hexdigest()
 
 
+def _validate_stage2_admission(
+    *,
+    state: ProspectiveEvidenceStateV2,
+    checkpoint: ProspectiveStage2CheckpointV2,
+    model_freeze: ProspectiveModelFreezeArtifactV2,
+) -> None:
+    """The one validation run is admitted only at exact 12/12 completion."""
+    expected_checkpoint = build_stage2_checkpoint_v2(
+        state=state,
+        model_freeze=model_freeze,
+    )
+    if checkpoint.checkpoint_hash != expected_checkpoint.checkpoint_hash:
+        raise ValueError("supplied checkpoint is not the exact Stage-2 checkpoint")
+    if checkpoint.model_freeze_hash != model_freeze.freeze_hash:
+        raise ValueError("supplied checkpoint is not bound to the exact frozen model")
+    if not _holdout_exactly_complete(checkpoint):
+        raise ValueError("prospective Stage-2 validation requires exact 12/12 holdout completion")
+    if state.cohort.status is not ProspectiveCohortStatus.COMPLETE:
+        raise ValueError("prospective Stage-2 cohort must be complete")
+    if state.cohort.post_holdout_keys:
+        raise ValueError("prospective validation cannot consume post-holdout evidence")
+
+
+def _holdout_exactly_complete(checkpoint: ProspectiveStage2CheckpointV2) -> bool:
+    return (
+        checkpoint.complete
+        and checkpoint.validation_allowed
+        and checkpoint.holdout_observed == checkpoint.holdout_target
+        and checkpoint.holdout_target == 12
+    )
+
+
 def validate_prospective_stage2_v2(
     *,
     state: ProspectiveEvidenceStateV2,
@@ -122,25 +154,7 @@ def validate_prospective_stage2_v2(
 
     _validate_fit_freeze_binding(stage1_fit=stage1_fit, model_freeze=model_freeze)
 
-    expected_checkpoint = build_stage2_checkpoint_v2(
-        state=state,
-        model_freeze=model_freeze,
-    )
-    if checkpoint.checkpoint_hash != expected_checkpoint.checkpoint_hash:
-        raise ValueError("supplied checkpoint is not the exact Stage-2 checkpoint")
-    if checkpoint.model_freeze_hash != model_freeze.freeze_hash:
-        raise ValueError("supplied checkpoint is not bound to the exact frozen model")
-    if (
-        not checkpoint.complete
-        or not checkpoint.validation_allowed
-        or checkpoint.holdout_observed != checkpoint.holdout_target
-        or checkpoint.holdout_target != 12
-    ):
-        raise ValueError("prospective Stage-2 validation requires exact 12/12 holdout completion")
-    if state.cohort.status is not ProspectiveCohortStatus.COMPLETE:
-        raise ValueError("prospective Stage-2 cohort must be complete")
-    if state.cohort.post_holdout_keys:
-        raise ValueError("prospective validation cannot consume post-holdout evidence")
+    _validate_stage2_admission(state=state, checkpoint=checkpoint, model_freeze=model_freeze)
 
     by_key = {
         (record.repository, record.pr_number): record

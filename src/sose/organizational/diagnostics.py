@@ -36,17 +36,7 @@ def diagnose_pr_review_validation(
     if snapshot.snapshot_hash != execution.result.snapshot_hash:
         raise ValueError("snapshot hash does not match frozen validation execution")
 
-    records = {(record.repository, record.pr_number): record for record in snapshot.records}
-    observed: list[tuple[tuple[str, int], float]] = []
-    for key in execution.result.holdout_keys:
-        record = records.get(key)
-        if record is None:
-            raise ValueError(f"holdout item missing from source snapshot: {key!r}")
-        observed.append((key, (record.merged_at - record.opened_at).total_seconds()))
-
-    if not observed:
-        raise ValueError("validation diagnostic requires a non-empty holdout")
-
+    observed = _observed_holdout_lead_times(snapshot, execution.result.holdout_keys)
     simulated = execution.result.prediction.simulated_lead_times_seconds
     if not simulated:
         raise ValueError("validation diagnostic requires simulated holdout lead times")
@@ -66,13 +56,31 @@ def diagnose_pr_review_validation(
         largest_observed_key=largest_key,
         largest_observed_lead_time_seconds=observed_max,
         observed_max_share_of_total_lead_time=(
-            observed_max / observed_total if observed_total > 0.0 else 0.0
+            _ratio(observed_max, observed_total)
         ),
         observed_max_to_median_ratio=(
-            observed_max / observed_median if observed_median > 0.0 else 0.0
+            _ratio(observed_max, observed_median)
         ),
         simulated_max_to_median_ratio=(
-            simulated_max / simulated_median if simulated_median > 0.0 else 0.0
+            _ratio(simulated_max, simulated_median)
         ),
         max_tail_gap_seconds=observed_max - simulated_max,
     )
+
+
+def _observed_holdout_lead_times(snapshot, holdout_keys) -> list[tuple[tuple[str, int], float]]:
+    records = {(record.repository, record.pr_number): record for record in snapshot.records}
+    observed: list[tuple[tuple[str, int], float]] = []
+    for key in holdout_keys:
+        record = records.get(key)
+        if record is None:
+            raise ValueError(f"holdout item missing from source snapshot: {key!r}")
+        observed.append((key, (record.merged_at - record.opened_at).total_seconds()))
+    if not observed:
+        raise ValueError("validation diagnostic requires a non-empty holdout")
+    return observed
+
+
+def _ratio(numerator: float, denominator: float) -> float:
+    """numerator / denominator, or 0.0 when the denominator is not positive."""
+    return numerator / denominator if denominator > 0.0 else 0.0

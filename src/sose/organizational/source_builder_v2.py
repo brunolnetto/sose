@@ -111,6 +111,34 @@ def _workflow_run_index(workflow_runs: Sequence[JsonMapping]) -> dict[int, tuple
     return result
 
 
+def _resolve_workflow_id(value, run_provenance: tuple[int, int] | None) -> int:
+    """Explicit workflow_id, else the associated run's; both must agree."""
+    if value is None:
+        if run_provenance is None:
+            raise ValueError(
+                "GitHub workflow job requires workflow_id or associated workflow run provenance"
+            )
+        return run_provenance[0]
+    workflow_id = _positive_int_value(value, field="workflow_id")
+    if run_provenance is not None and workflow_id != run_provenance[0]:
+        raise ValueError("workflow_id conflicts with associated workflow run")
+    return workflow_id
+
+
+def _resolve_run_attempt(value, run_provenance: tuple[int, int] | None) -> int:
+    """Explicit run_attempt, else the associated run's; never beyond the run."""
+    if value is None:
+        if run_provenance is None:
+            raise ValueError(
+                "GitHub workflow job requires run_attempt or associated workflow run provenance"
+            )
+        return run_provenance[1]
+    run_attempt = _positive_int_value(value, field="run_attempt")
+    if run_provenance is not None and run_attempt > run_provenance[1]:
+        raise ValueError("run_attempt exceeds associated workflow run attempt")
+    return run_attempt
+
+
 def _workflow_job_record(
     payload: JsonMapping,
     *,
@@ -121,27 +149,8 @@ def _workflow_job_record(
     run_attempt_value = payload.get("run_attempt")
     run_provenance = run_index.get(run_id)
 
-    if workflow_id_value is None:
-        if run_provenance is None:
-            raise ValueError(
-                "GitHub workflow job requires workflow_id or associated workflow run provenance"
-            )
-        workflow_id = run_provenance[0]
-    else:
-        workflow_id = _positive_int_value(workflow_id_value, field="workflow_id")
-        if run_provenance is not None and workflow_id != run_provenance[0]:
-            raise ValueError("workflow_id conflicts with associated workflow run")
-
-    if run_attempt_value is None:
-        if run_provenance is None:
-            raise ValueError(
-                "GitHub workflow job requires run_attempt or associated workflow run provenance"
-            )
-        run_attempt = run_provenance[1]
-    else:
-        run_attempt = _positive_int_value(run_attempt_value, field="run_attempt")
-        if run_provenance is not None and run_attempt > run_provenance[1]:
-            raise ValueError("run_attempt exceeds associated workflow run attempt")
+    workflow_id = _resolve_workflow_id(workflow_id_value, run_provenance)
+    run_attempt = _resolve_run_attempt(run_attempt_value, run_provenance)
 
     gate_evidence = payload.get("gate_evidence_url")
     return GitHubWorkflowJobSourceRecordV2(

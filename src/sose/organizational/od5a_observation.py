@@ -44,14 +44,7 @@ def _verify_receipt(
     message = uow.get_boundary_message(message_id)
     if message is None:
         raise ValueError("OD-5a certification lacks durable source boundary message")
-    if (
-        message.contract_key != _CONTRACT
-        or message.source_domain != _SOURCE
-        or message.destination_domain != _DESTINATION
-        or message.source_identity != message.correlation_id
-        or message.causation_kind != "event"
-        or not message.causation_id
-    ):
+    if _contract_or_cause_mismatch(message):
         raise ValueError("OD-5a certification requires registered physical contract and typed cause")
     canonical = BoundaryMessage.create(
         contract_name=message.contract_name,
@@ -71,41 +64,16 @@ def _verify_receipt(
     event, expected_payload = _physical_event(
         uow, job_id=message.correlation_id, event_id=message.causation_id,
     )
-    if (
-        message.occurrence_key != event.event_id
-        or message.produced_at != event.occurred_at
-        or message.payload() != expected_payload
-        or effect_id != deterministic_id("od5a-physical-command", message.message_id)
-    ):
+    if _event_identity_mismatch(message, event, expected_payload, effect_id):
         raise ValueError("OD-5a certified event identity or boundary payload mismatch")
 
     delivery_id = BoundaryDelivery.pending(message).delivery_id
     delivery = uow.get_boundary_delivery(delivery_id)
     consumption = uow.get_boundary_consumption(delivery_id)
     if (
-        delivery is None or delivery.status is not DeliveryStatus.CONSUMED
-        or delivery.message_id != message.message_id
-        or delivery.destination_domain != message.destination_domain
-        or delivery.contract_name != message.contract_name
-        or delivery.contract_version != message.contract_version
-        or not delivery.claim_owner_id
-        or delivery.claim_epoch <= 0
-        or delivery.attempts != delivery.claim_epoch
-        or delivery.consumer_effect_id != effect_id
-        or consumption is None
-        or consumption.delivery_id != delivery_id
-        or consumption.message_id != message.message_id
-        or consumption.consumer_effect_id != effect_id
-        or consumption.destination_domain != _DESTINATION
-        or consumption.contract_name != message.contract_name
-        or consumption.contract_version != message.contract_version
-        or delivery.consumed_at != consumption.consumed_at
-        or delivery.claimed_at is None
-        or delivery.claimed_at > consumption.consumed_at
-        or delivery.claimed_at < event.occurred_at
-        or delivery.lease_expires_at is None
-        or delivery.lease_expires_at <= consumption.consumed_at
-        or consumption.consumed_at < event.occurred_at
+        _delivery_mismatch(delivery, message, effect_id)
+        or _consumption_mismatch(consumption, delivery_id, message, effect_id)
+        or _ack_timing_mismatch(delivery, consumption, event)
         or consumption != BoundaryConsumption.create(
             delivery=delivery,
             consumer_effect_id=effect_id,
@@ -122,12 +90,7 @@ def _verified_intent(
     command = uow.get_command(effect_id)
     if command is None:
         raise ValueError("OD-5a physical effect lacks pending Command")
-    if (
-        command.name != _INTENT_NAME
-        or command.entity_type != _OBSERVATION_TYPE
-        or not command.causation_id
-        or not command.correlation_id
-    ):
+    if _staged_command_shape_mismatch(command):
         raise ValueError("OD-5a physical effect has incorrect staged Command")
     event, physical, job_id, ack_at = _verify_receipt(
         uow, message_id=command.causation_id, effect_id=effect_id,
@@ -138,13 +101,8 @@ def _verified_intent(
         "admission_identity": physical["admission_identity"],
         "config_epoch": physical["config_epoch"],
     }
-    if (
-        command.command_id != effect_id
-        or command.entity_id != event.event_id
-        or command.correlation_id != job_id
-        or command.due_at != event.occurred_at
-        or command.issued_at != event.occurred_at
-        or command.payload != expected_command_payload
+    if _staged_command_binding_mismatch(
+        command, effect_id, event, job_id, expected_command_payload,
     ):
         raise ValueError("OD-5a physical staged Command contradicts event or organization")
     attributes = {
@@ -162,18 +120,7 @@ def _verified_observation(
     ack_at: datetime,
 ) -> Entity:
     entity = uow.get_entity(_OBSERVATION_TYPE, event.event_id)
-    if (
-        entity is None
-        or entity.id != event.event_id
-        or entity.entity_type != _OBSERVATION_TYPE
-        or entity.state != _TERMINAL_STATE
-        or entity.version != 1
-        or entity.created_at != event.occurred_at
-        or entity.updated_at is None
-        or entity.updated_at < entity.created_at
-        or entity.updated_at < ack_at
-        or entity.attributes != attributes
-    ):
+    if _observation_mismatch(entity, event, attributes, ack_at):
         raise ValueError("OD-5a physical observation lacks exact terminal authoritative truth")
     return entity
 
@@ -292,3 +239,108 @@ __all__ = [
     "apply_od5a_physical_observation",
     "certify_od5a_physical_observation",
 ]
+
+
+# Each predicate below is one contiguous segment of the original `or` chain,
+# evaluated in the original order, so short-circuiting is unchanged: a None
+# delivery or consumption is rejected before any of its attributes is read.
+
+def _contract_or_cause_mismatch(message) -> bool:
+    return (
+        message.contract_key != _CONTRACT
+        or message.source_domain != _SOURCE
+        or message.destination_domain != _DESTINATION
+        or message.source_identity != message.correlation_id
+        or message.causation_kind != "event"
+        or not message.causation_id
+    )
+
+
+def _event_identity_mismatch(message, event, expected_payload, effect_id: str) -> bool:
+    return (
+        message.occurrence_key != event.event_id
+        or message.produced_at != event.occurred_at
+        or message.payload() != expected_payload
+        or effect_id != deterministic_id("od5a-physical-command", message.message_id)
+    )
+
+
+def _delivery_mismatch(delivery, message, effect_id: str) -> bool:
+    return (
+        delivery is None or delivery.status is not DeliveryStatus.CONSUMED
+        or delivery.message_id != message.message_id
+        or delivery.destination_domain != message.destination_domain
+        or delivery.contract_name != message.contract_name
+        or delivery.contract_version != message.contract_version
+        or not delivery.claim_owner_id
+        or delivery.claim_epoch <= 0
+        or delivery.attempts != delivery.claim_epoch
+        or delivery.consumer_effect_id != effect_id
+    )
+
+
+def _consumption_mismatch(consumption, delivery_id: str, message, effect_id: str) -> bool:
+    return (
+        consumption is None
+        or consumption.delivery_id != delivery_id
+        or consumption.message_id != message.message_id
+        or consumption.consumer_effect_id != effect_id
+        or consumption.destination_domain != _DESTINATION
+        or consumption.contract_name != message.contract_name
+        or consumption.contract_version != message.contract_version
+    )
+
+
+def _ack_timing_mismatch(delivery, consumption, event) -> bool:
+    return (
+        delivery.consumed_at != consumption.consumed_at
+        or delivery.claimed_at is None
+        or delivery.claimed_at > consumption.consumed_at
+        or delivery.claimed_at < event.occurred_at
+        or delivery.lease_expires_at is None
+        or delivery.lease_expires_at <= consumption.consumed_at
+        or consumption.consumed_at < event.occurred_at
+    )
+
+
+def _staged_command_shape_mismatch(command) -> bool:
+    return (
+        command.name != _INTENT_NAME
+        or command.entity_type != _OBSERVATION_TYPE
+        or not command.causation_id
+        or not command.correlation_id
+    )
+
+
+def _staged_command_binding_mismatch(
+    command, effect_id: str, event, job_id: str, expected_payload,
+) -> bool:
+    return (
+        command.command_id != effect_id
+        or command.entity_id != event.event_id
+        or command.correlation_id != job_id
+        or command.due_at != event.occurred_at
+        or command.issued_at != event.occurred_at
+        or command.payload != expected_payload
+    )
+
+
+def _observation_mismatch(entity, event, attributes, ack_at: datetime) -> bool:
+    return (
+        entity is None
+        or _observation_identity_mismatch(entity, event)
+        or entity.updated_at is None
+        or entity.updated_at < entity.created_at
+        or entity.updated_at < ack_at
+        or entity.attributes != attributes
+    )
+
+
+def _observation_identity_mismatch(entity, event) -> bool:
+    return (
+        entity.id != event.event_id
+        or entity.entity_type != _OBSERVATION_TYPE
+        or entity.state != _TERMINAL_STATE
+        or entity.version != 1
+        or entity.created_at != event.occurred_at
+    )
