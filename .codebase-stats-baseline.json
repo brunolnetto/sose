@@ -8,8 +8,6 @@
   "max_cc:composition/recovery.py::TradingCustomerRecoveryRunner.__post_init__": 33,
   "max_cc:composition/recovery.py::TradingCustomerRecoveryRunner._run_bounded": 99,
   "max_cc:composition/recovery.py::TradingCustomerRecoveryRunner.run_trigger": 30,
-  "max_cc:composition/resource_intents.py::IntentResourceCoordinator._admit": 23,
-  "max_cc:composition/resource_intents.py::IntentResourceCoordinator.reconcile_certified": 25,
   "max_cc:composition/trading_company_customer.py::_execute_intent": 126,
   "max_cc:composition/trading_company_customer.py::_materialize_fulfillment_from_request": 25,
   "max_cc:composition/trading_company_customer.py::pickup_resource_due_at": 12,
