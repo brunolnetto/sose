@@ -38,11 +38,6 @@
   "max_cc:organizational/od4_intake.py::_verify_decision_ledger": 68,
   "max_cc:organizational/od4_intake.py::intervene_work": 45,
   "max_cc:organizational/od5a_mechanisms.py::run_od5a_pilot": 40,
-  "max_cc:persistence/postgres.py::PostgresPersistence.__init__": 11,
-  "max_cc:persistence/postgres.py::PostgresPersistence._append_postgres_events": 16,
-  "max_cc:persistence/postgres.py::PostgresPersistence._apply_changes": 18,
-  "max_cc:persistence/postgres.py::PostgresPersistence._lock_and_validate_epoch": 11,
-  "max_cc:persistence/postgres.py::PostgresPersistence.claim_scoped_writer": 13,
   "max_cc:persistence/postgres_resource_ledger.py::PostgresTemporalResourceLedger._fits": 17,
   "max_cc:persistence/postgres_resource_ledger.py::PostgresTemporalResourceLedger.audit": 39,
   "max_cc:persistence/postgres_resource_ledger.py::PostgresTemporalResourceLedger.fail": 11,
@@ -94,7 +89,6 @@
   "max_lines:organizational/od5a_durable.py": 468,
   "max_lines:organizational/prospective_stage1_fit_v2.py": 458,
   "max_lines:persistence/memory.py": 1127,
-  "max_lines:persistence/postgres.py": 969,
   "max_lines:persistence/postgres_resource_ledger.py": 735,
   "max_lines:persistence/sqlite_incremental.py": 630,
   "min_mi:backends/simpy.py": 12.264483822158764,
@@ -121,7 +115,6 @@
   "min_mi:organizational/ledger.py": 19.76193053380103,
   "min_mi:organizational/od4_intake.py": 17.624204288926034,
   "min_mi:persistence/memory.py": 0.0,
-  "min_mi:persistence/postgres.py": 14.033114723509408,
   "min_mi:persistence/postgres_resource_ledger.py": 15.54461538442377,
   "min_mi:persistence/sqlite_incremental.py": 16.011596013869354
 }
