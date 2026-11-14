@@ -87,32 +87,52 @@ def has_source_paired_review(trace: ObservedPRTrace) -> bool:
     pending: dict[str, deque[datetime]] = defaultdict(deque)
     paired = False
     for event in trace.events:
-        kind = event.kind
-        if kind is ObservedEventKind.REVIEW_REQUESTED:
-            if not _REQUEST_ID.fullmatch(event.source_event_id):
-                raise ValueError("review request lacks a valid GitHub source identity")
-        elif kind is ObservedEventKind.REVIEW_REQUEST_REMOVED:
-            if not _REMOVED_ID.fullmatch(event.source_event_id):
-                raise ValueError("removed review request lacks GitHub source identity")
-        elif kind is ObservedEventKind.REVIEW_SUBMITTED:
-            if not _REVIEW_ID.fullmatch(event.source_event_id):
-                raise ValueError("submitted review lacks a valid GitHub source identity")
-        else:
+        if not _is_review_source_event(event):
             continue
-
         actor = event.actor_key
         if actor is None or actor.startswith("team:"):
             continue
-        if kind is ObservedEventKind.REVIEW_REQUESTED:
-            pending[actor].append(event.occurred_at)
-        elif kind is ObservedEventKind.REVIEW_REQUEST_REMOVED:
-            if pending[actor]:
-                pending[actor].popleft()
-        elif pending[actor]:
-            requested_at = pending[actor].popleft()
-            if event.occurred_at > requested_at:
-                paired = True
+        # No early return: later events must still pass source validation.
+        paired = _apply_review_event(pending[actor], event) or paired
     return paired
+
+
+_REVIEW_SOURCE_RULES = {
+    ObservedEventKind.REVIEW_REQUESTED: (
+        _REQUEST_ID, "review request lacks a valid GitHub source identity",
+    ),
+    ObservedEventKind.REVIEW_REQUEST_REMOVED: (
+        _REMOVED_ID, "removed review request lacks GitHub source identity",
+    ),
+    ObservedEventKind.REVIEW_SUBMITTED: (
+        _REVIEW_ID, "submitted review lacks a valid GitHub source identity",
+    ),
+}
+
+
+def _is_review_source_event(event) -> bool:
+    """True for review events (whose source ID must be GitHub-shaped)."""
+    rule = _REVIEW_SOURCE_RULES.get(event.kind)
+    if rule is None:
+        return False
+    pattern, message = rule
+    if not pattern.fullmatch(event.source_event_id):
+        raise ValueError(message)
+    return True
+
+
+def _apply_review_event(actor_pending: deque[datetime], event) -> bool:
+    """Update one actor's outstanding requests; True when a review pairs."""
+    if event.kind is ObservedEventKind.REVIEW_REQUESTED:
+        actor_pending.append(event.occurred_at)
+        return False
+    if event.kind is ObservedEventKind.REVIEW_REQUEST_REMOVED:
+        if actor_pending:
+            actor_pending.popleft()
+        return False
+    if actor_pending:
+        return event.occurred_at > actor_pending.popleft()
+    return False
 
 
 def evaluate_review_source_eligibility(
@@ -138,20 +158,7 @@ def evaluate_review_source_eligibility(
     # GitHub source event IDs are global observations, not new IDs per PR.
     # A repeated review/request identity in different PRs is corrupted
     # attribution even if the entire corrupted dataset was hash-pinned.
-    source_owners: dict[str, tuple[str, int]] = {}
-    review_kinds = {
-        ObservedEventKind.REVIEW_REQUESTED,
-        ObservedEventKind.REVIEW_REQUEST_REMOVED,
-        ObservedEventKind.REVIEW_SUBMITTED,
-    }
-    for trace in dataset.traces:
-        owner = (trace.repository, trace.pr_number)
-        for event in trace.events:
-            if event.kind not in review_kinds:
-                continue
-            previous = source_owners.setdefault(event.source_event_id, owner)
-            if previous != owner:
-                raise ValueError("review source identity reused across pull requests")
+    _assert_unique_review_sources(dataset)
 
     split = dataset.chronological_holdout(holdout_fraction=criteria.holdout_fraction)
     count = len(split.train.traces)
@@ -176,3 +183,15 @@ def evaluate_review_source_eligibility(
         failed_requirements=tuple(failed),
         source_observability_eligible=not failed,
     )
+
+
+def _assert_unique_review_sources(dataset: ObservedPRDataset) -> None:
+    source_owners: dict[str, tuple[str, int]] = {}
+    for trace in dataset.traces:
+        owner = (trace.repository, trace.pr_number)
+        for event in trace.events:
+            if event.kind not in _REVIEW_SOURCE_RULES:
+                continue
+            previous = source_owners.setdefault(event.source_event_id, owner)
+            if previous != owner:
+                raise ValueError("review source identity reused across pull requests")
