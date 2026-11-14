@@ -29,6 +29,36 @@ class ProspectiveStage1AcquisitionRunV2:
     advancement: object
 
 
+def _require_run_arguments(
+    previous_acquisition_path, previous_state_path,
+    captured_at: datetime, registration_merged_at: datetime,
+) -> None:
+    if (previous_acquisition_path is None) != (previous_state_path is None):
+        raise ValueError("previous acquisition and previous state must be supplied together")
+    for name, value in (
+        ("captured_at", captured_at),
+        ("registration_merged_at", registration_merged_at),
+    ):
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError(f"{name} must be timezone-aware")
+
+
+def _previous_stage1_pair(
+    previous_acquisition_path, previous_state_path, validate_previous,
+) -> tuple[Path | None, Path | None, ProspectiveEvidenceStateV2 | None]:
+    previous_acquisition = (
+        Path(previous_acquisition_path) if previous_acquisition_path is not None else None
+    )
+    previous_state = Path(previous_state_path) if previous_state_path is not None else None
+    for previous in (previous_acquisition, previous_state):
+        if previous is not None and not previous.is_file():
+            raise FileNotFoundError(f"previous Stage-1 artifact not found: {previous}")
+    if previous_acquisition is None or previous_state is None:
+        return previous_acquisition, previous_state, None
+    validator = _validate_previous_pair if validate_previous is None else validate_previous
+    return previous_acquisition, previous_state, validator(previous_acquisition, previous_state)
+
+
 def run_stage1_acquisition_v2(
     *,
     repository: str,
@@ -52,14 +82,9 @@ def run_stage1_acquisition_v2(
     authoritative for enrollment and readiness semantics.
     """
 
-    if (previous_acquisition_path is None) != (previous_state_path is None):
-        raise ValueError("previous acquisition and previous state must be supplied together")
-    for name, value in (
-        ("captured_at", captured_at),
-        ("registration_merged_at", registration_merged_at),
-    ):
-        if value.tzinfo is None or value.utcoffset() is None:
-            raise ValueError(f"{name} must be timezone-aware")
+    _require_run_arguments(
+        previous_acquisition_path, previous_state_path, captured_at, registration_merged_at,
+    )
 
     destination = Path(output_dir)
     bound_protocol_path = destination / "bound-protocol.json"
@@ -75,18 +100,9 @@ def run_stage1_acquisition_v2(
     if not protocol_document.is_file():
         raise FileNotFoundError(f"protocol document not found: {protocol_document}")
 
-    previous_acquisition = (
-        Path(previous_acquisition_path) if previous_acquisition_path is not None else None
+    previous_acquisition, previous_state, validated_previous_state = _previous_stage1_pair(
+        previous_acquisition_path, previous_state_path, validate_previous,
     )
-    previous_state = Path(previous_state_path) if previous_state_path is not None else None
-    for previous in (previous_acquisition, previous_state):
-        if previous is not None and not previous.is_file():
-            raise FileNotFoundError(f"previous Stage-1 artifact not found: {previous}")
-
-    validated_previous_state: ProspectiveEvidenceStateV2 | None = None
-    if previous_acquisition is not None and previous_state is not None:
-        validator = _validate_previous_pair if validate_previous is None else validate_previous
-        validated_previous_state = validator(previous_acquisition, previous_state)
 
     destination.mkdir(parents=True, exist_ok=True)
     bind_protocol(
