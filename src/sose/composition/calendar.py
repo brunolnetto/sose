@@ -59,47 +59,9 @@ _WINDOW_KEYS = {"weekday", "start", "end"}
 
 def parse_static_calendar_source(source_bytes: bytes) -> StaticCalendarSource:
     """Falsifiable closed schema, no arbitrary code or config evaluation."""
-    if not isinstance(source_bytes, bytes):
-        raise TypeError("calendar source must be exact immutable UTF-8 bytes")
-    try:
-        data = json.loads(source_bytes.decode("utf-8"), object_pairs_hook=_unique_pairs)
-    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-        raise ValueError("invalid calendar source bytes") from exc
-    if not isinstance(data, dict) or set(data) != _EXPECTED_KEYS:
-        raise ValueError("calendar fields must exactly match schema v1")
-    if type(data["schema_version"]) is not int or data["schema_version"] != 1:
-        raise ValueError("unsupported calendar schema_version")
-    if not isinstance(data["reference_id"], str) or not data["reference_id"].strip():
-        raise ValueError("invalid calendar reference_id")
-    if type(data["reference_version"]) is not int or data["reference_version"] != 1:
-        raise ValueError("unsupported calendar reference_version")
-    if type(data["config_epoch"]) is not int or data["config_epoch"] < 0:
-        raise ValueError("invalid calendar config_epoch")
-    if data["timezone"] != "UTC":
-        raise ValueError("static v1 calendar requires explicit UTC; no implicit time-zone policy")
-    raw_windows = data["windows"]
-    if not isinstance(raw_windows, list) or not raw_windows:
-        raise ValueError("calendar windows must be a nonempty array")
-    windows = []
-    for row in raw_windows:
-        if not isinstance(row, dict) or set(row) != _WINDOW_KEYS:
-            raise ValueError("invalid calendar window fields")
-        day, start, end = row["weekday"], row["start"], row["end"]
-        if type(day) is not int or not 0 <= day <= 6:
-            raise ValueError("calendar weekday must be Monday=0 through Sunday=6")
-        if (
-            not isinstance(start, str) or not isinstance(end, str)
-            or _CLOCK.fullmatch(start) is None or _CLOCK.fullmatch(end) is None
-        ):
-            raise ValueError("calendar time requires HH:MM (UTC) with exact minutes")
-        if start >= end:
-            raise ValueError("calendar window must have positive duration within a day")
-        windows.append(CalendarWindow(day, start, end))
-    if windows != sorted(windows, key=lambda w: (w.weekday, w.start, w.end)):
-        raise ValueError("calendar windows must be canonically ordered")
-    for previous, current in zip(windows, windows[1:]):
-        if previous.weekday == current.weekday and previous.end > current.start:
-            raise ValueError("calendar windows overlap")
+    data = _load_calendar_json(source_bytes)
+    _validate_calendar_header(data)
+    windows = _parse_calendar_windows(data["windows"])
     canonical = json.dumps(
         data, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
         allow_nan=False,
@@ -114,6 +76,60 @@ def parse_static_calendar_source(source_bytes: bytes) -> StaticCalendarSource:
         windows=tuple(windows),
         source_sha256=sha256(source_bytes).hexdigest(),
     )
+
+
+def _load_calendar_json(source_bytes: bytes) -> dict:
+    if not isinstance(source_bytes, bytes):
+        raise TypeError("calendar source must be exact immutable UTF-8 bytes")
+    try:
+        data = json.loads(source_bytes.decode("utf-8"), object_pairs_hook=_unique_pairs)
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ValueError("invalid calendar source bytes") from exc
+    if not isinstance(data, dict) or set(data) != _EXPECTED_KEYS:
+        raise ValueError("calendar fields must exactly match schema v1")
+    return data
+
+
+def _validate_calendar_header(data: dict) -> None:
+    if type(data["schema_version"]) is not int or data["schema_version"] != 1:
+        raise ValueError("unsupported calendar schema_version")
+    if not isinstance(data["reference_id"], str) or not data["reference_id"].strip():
+        raise ValueError("invalid calendar reference_id")
+    if type(data["reference_version"]) is not int or data["reference_version"] != 1:
+        raise ValueError("unsupported calendar reference_version")
+    if type(data["config_epoch"]) is not int or data["config_epoch"] < 0:
+        raise ValueError("invalid calendar config_epoch")
+    if data["timezone"] != "UTC":
+        raise ValueError("static v1 calendar requires explicit UTC; no implicit time-zone policy")
+
+
+def _parse_calendar_windows(raw_windows) -> list[CalendarWindow]:
+    if not isinstance(raw_windows, list) or not raw_windows:
+        raise ValueError("calendar windows must be a nonempty array")
+    windows = [_parse_calendar_window(row) for row in raw_windows]
+    if windows != sorted(windows, key=lambda w: (w.weekday, w.start, w.end)):
+        raise ValueError("calendar windows must be canonically ordered")
+    for previous, current in zip(windows, windows[1:]):
+        if previous.weekday == current.weekday and previous.end > current.start:
+            raise ValueError("calendar windows overlap")
+    return windows
+
+
+def _parse_calendar_window(row) -> CalendarWindow:
+    if not isinstance(row, dict) or set(row) != _WINDOW_KEYS:
+        raise ValueError("invalid calendar window fields")
+    day, start, end = row["weekday"], row["start"], row["end"]
+    if type(day) is not int or not 0 <= day <= 6:
+        raise ValueError("calendar weekday must be Monday=0 through Sunday=6")
+    if not (_is_clock(start) and _is_clock(end)):
+        raise ValueError("calendar time requires HH:MM (UTC) with exact minutes")
+    if start >= end:
+        raise ValueError("calendar window must have positive duration within a day")
+    return CalendarWindow(day, start, end)
+
+
+def _is_clock(value) -> bool:
+    return isinstance(value, str) and _CLOCK.fullmatch(value) is not None
 
 
 # This narrow static provenance root is reviewed/pinned within the shipped
@@ -150,6 +166,19 @@ def verify_static_calendar_reference(
     means only that its calendar *content* is known. It cannot grant
     availability, book capacity, authorize a job or change an epoch.
     """
+    _require_declared_calendar_reference(definition, reference)
+    if sha256(BUNDLED_UTC_CALENDAR_BYTES).hexdigest() != BUNDLED_UTC_CALENDAR_SHA256:
+        raise ValueError("shipped calendar provenance contradicts pinned source digest")
+    source = parse_static_calendar_source(BUNDLED_UTC_CALENDAR_BYTES)
+    if not _pinned_to_source(definition, reference, source):
+        raise ValueError("calendar reference/provenance is not pinned to reviewed source")
+    return source
+
+
+def _require_declared_calendar_reference(
+    definition: OrganizationDefinition,
+    reference: OperationalConfigReference,
+) -> None:
     if not isinstance(definition, OrganizationDefinition):
         raise TypeError("calendar reference requires OrganizationDefinition")
     if not isinstance(reference, OperationalConfigReference):
@@ -160,15 +189,17 @@ def verify_static_calendar_reference(
         raise ValueError("calendar reference is not declared by this organization")
     if reference.component_id not in {item.component_id for item in definition.components}:
         raise ValueError("calendar references another component")
-    if sha256(BUNDLED_UTC_CALENDAR_BYTES).hexdigest() != BUNDLED_UTC_CALENDAR_SHA256:
-        raise ValueError("shipped calendar provenance contradicts pinned source digest")
-    source = parse_static_calendar_source(BUNDLED_UTC_CALENDAR_BYTES)
-    if (
-        reference.reference_id != source.reference_id
-        or reference.reference_version != source.reference_version
-        or reference.config_epoch != source.config_epoch
-        or definition.config_epoch != source.config_epoch
-        or reference.source_sha256 != source.source_sha256
-    ):
-        raise ValueError("calendar reference/provenance is not pinned to reviewed source")
-    return source
+
+
+def _pinned_to_source(
+    definition: OrganizationDefinition,
+    reference: OperationalConfigReference,
+    source: StaticCalendarSource,
+) -> bool:
+    return (
+        reference.reference_id == source.reference_id
+        and reference.reference_version == source.reference_version
+        and reference.config_epoch == source.config_epoch
+        and definition.config_epoch == source.config_epoch
+        and reference.source_sha256 == source.source_sha256
+    )

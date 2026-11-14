@@ -103,19 +103,15 @@ def mro_kpis(
         parts_consumed=parts_consumed,
         remaining_spare_parts=projection.remaining_spare_parts,
         transition_count=len(events),
-        material_wait_count=sum(
-            event.payload.get("trigger") == "wait_for_material"
-            or event.payload.get("to_state") == "waiting_material"
-            for event in events
-        ),
-        resource_wait_count=sum(
-            event.payload.get("trigger") == "wait_for_resource"
-            or event.payload.get("to_state") == "waiting_resource"
-            for event in events
-        ),
-        interruption_count=sum(
-            event.payload.get("trigger") == "interrupt"
-            or event.payload.get("to_state") == "interrupted"
-            for event in events
-        ),
+        material_wait_count=_count_transitions(events, trigger="wait_for_material", to_state="waiting_material"),
+        resource_wait_count=_count_transitions(events, trigger="wait_for_resource", to_state="waiting_resource"),
+        interruption_count=_count_transitions(events, trigger="interrupt", to_state="interrupted"),
+    )
+
+
+def _count_transitions(events, *, trigger: str, to_state: str) -> int:
+    """Transitions fired by ``trigger`` or entering ``to_state``."""
+    return sum(
+        event.payload.get("trigger") == trigger or event.payload.get("to_state") == to_state
+        for event in events
     )

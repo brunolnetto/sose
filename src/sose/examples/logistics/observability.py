@@ -82,22 +82,11 @@ def logistics_kpis(
     """Return stable Logistics KPIs from correlated immutable event history."""
 
     projection = logistics_projection(persistence, entities=entities)
-    def belongs_to_shipment(event) -> bool:
-        if event.entity_type == "shipment":
-            return event.entity_id == entities.shipment_id
-        if event.entity_type != "delivery_attempt":
-            return False
-        attempt = persistence.entity("delivery_attempt", event.entity_id)
-        return (
-            attempt is not None
-            and attempt.attributes.get("shipment_id") == entities.shipment_id
-        )
-
     events = tuple(
         event
         for event in persistence.events()
         if event.name == "entity.state_transition"
-        and belongs_to_shipment(event)
+        and _belongs_to_shipment(persistence, entities.shipment_id, event)
     )
     attempts = {
         event.entity_id
@@ -108,21 +97,28 @@ def logistics_kpis(
     return LogisticsKpis(
         shipment_lead_time_seconds=projection.shipment_lead_time_seconds,
         transition_count=len(events),
-        delay_count=sum(
-            event.entity_type == "shipment"
-            and str(event.payload.get("to_state", "")).startswith("delayed_")
-            for event in events
-        ),
+        delay_count=sum(_is_shipment_delay(event) for event in events),
         delivery_attempt_count=len(attempts),
-        failed_attempt_count=sum(
-            event.entity_type == "delivery_attempt"
-            and event.payload.get("to_state") == "failed"
-            for event in events
-        ),
-        delivered_attempt_count=sum(
-            event.entity_type == "delivery_attempt"
-            and event.payload.get("to_state") == "delivered"
-            for event in events
-        ),
+        failed_attempt_count=sum(_attempt_reached(event, "failed") for event in events),
+        delivered_attempt_count=sum(_attempt_reached(event, "delivered") for event in events),
         delivered=projection.delivered,
     )
+
+
+def _belongs_to_shipment(persistence: Persistence, shipment_id: str, event) -> bool:
+    if event.entity_type == "shipment":
+        return event.entity_id == shipment_id
+    if event.entity_type != "delivery_attempt":
+        return False
+    attempt = persistence.entity("delivery_attempt", event.entity_id)
+    return attempt is not None and attempt.attributes.get("shipment_id") == shipment_id
+
+
+def _is_shipment_delay(event) -> bool:
+    return event.entity_type == "shipment" and str(
+        event.payload.get("to_state", "")
+    ).startswith("delayed_")
+
+
+def _attempt_reached(event, state: str) -> bool:
+    return event.entity_type == "delivery_attempt" and event.payload.get("to_state") == state
