@@ -73,27 +73,7 @@ def execute_official(*, root: Path, output_dir: Path) -> dict[str, object]:
     if result.manifest.world_count != 18 or result.manifest.run_count != 36:
         raise ValueError("official experiment cardinality deviates from preregistration")
 
-    raw_evidence = []
-    for record in result.evidence:
-        if not isinstance(record.evidence, BaseModel):
-            raise TypeError("Manufacturing raw evidence must be a typed model")
-        if evidence_hash(record.evidence) != record.evidence_hash:
-            raise ValueError("raw evidence payload does not match its recorded hash")
-        raw_evidence.append({
-            "world_hash": record.world_hash,
-            "replication": record.replication,
-            "evidence_hash": record.evidence_hash,
-            "payload": record.evidence.model_dump(mode="json"),
-        })
-    payloads = {
-        "evidence.json": raw_evidence,
-        "worlds.json": [item.canonical_payload() for item in result.worlds],
-        "runs.json": [item.canonical_payload() for item in result.runs],
-        "references.json": [item.canonical_payload() for item in result.references],
-        "assessments.json": [item.canonical_payload() for item in result.assessments],
-        "effects.json": [item.canonical_payload() for item in report.effects],
-        "result-manifest.json": result.manifest.canonical_payload(),
-    }
+    payloads = _evidence_payloads(result, report)
     # Stage complete evidence before publishing the immutable directory.
     staging = output_dir.with_name(output_dir.name + ".staging")
     if staging.exists():
@@ -120,6 +100,34 @@ def execute_official(*, root: Path, output_dir: Path) -> dict[str, object]:
         # Incomplete evidence is never promoted. Preserve staging for investigation.
         raise
     return manifest
+
+
+def _evidence_payloads(result, report) -> dict[str, object]:
+    return {
+        "evidence.json": _raw_evidence(result),
+        "worlds.json": [item.canonical_payload() for item in result.worlds],
+        "runs.json": [item.canonical_payload() for item in result.runs],
+        "references.json": [item.canonical_payload() for item in result.references],
+        "assessments.json": [item.canonical_payload() for item in result.assessments],
+        "effects.json": [item.canonical_payload() for item in report.effects],
+        "result-manifest.json": result.manifest.canonical_payload(),
+    }
+
+
+def _raw_evidence(result) -> list[dict[str, object]]:
+    raw_evidence = []
+    for record in result.evidence:
+        if not isinstance(record.evidence, BaseModel):
+            raise TypeError("Manufacturing raw evidence must be a typed model")
+        if evidence_hash(record.evidence) != record.evidence_hash:
+            raise ValueError("raw evidence payload does not match its recorded hash")
+        raw_evidence.append({
+            "world_hash": record.world_hash,
+            "replication": record.replication,
+            "evidence_hash": record.evidence_hash,
+            "payload": record.evidence.model_dump(mode="json"),
+        })
+    return raw_evidence
 
 
 def main() -> None:

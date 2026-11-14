@@ -642,19 +642,19 @@ def complete_unload(
     return _release_completed_resources(persistence, engine, entities=entities)
 
 
+def _iso_attribute(entity, key: str) -> datetime | None:
+    return datetime.fromisoformat(str(raw)) if (raw := entity.attributes.get(key)) else None
+
+
 def shipment_kpis(
     persistence: Persistence,
     *,
     entities: WarehouseManagementEntities,
 ) -> dict[str, object]:
     shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
-    departed_raw = shipment.attributes.get("departed_at")
-    completed_raw = shipment.attributes.get("completed_at")
-    planned_raw = shipment.attributes.get("planned_completion_at")
-
-    departed_at = datetime.fromisoformat(str(departed_raw)) if departed_raw else None
-    completed_at = datetime.fromisoformat(str(completed_raw)) if completed_raw else None
-    planned_at = datetime.fromisoformat(str(planned_raw)) if planned_raw else None
+    departed_at = _iso_attribute(shipment, "departed_at")
+    completed_at = _iso_attribute(shipment, "completed_at")
+    planned_at = _iso_attribute(shipment, "planned_completion_at")
     completed = shipment.state == "completed" and completed_at is not None
     lead_time = (
         (completed_at - departed_at).total_seconds()
