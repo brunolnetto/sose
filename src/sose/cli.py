@@ -1,426 +1,63 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import asdict
-import json
-from pathlib import Path
 import sys
-from datetime import datetime
 
-from sose.jobs.config import load_sose_config
-from sose.jobs.config_edit import (
+# Names that lived here before the split stay importable from ``sose.cli``.
+from dataclasses import asdict  # noqa: F401
+import json  # noqa: F401
+from pathlib import Path  # noqa: F401
+from datetime import datetime  # noqa: F401
+
+from sose.jobs.config import load_sose_config  # noqa: F401
+from sose.jobs.config_edit import (  # noqa: F401
     describe_domain_config,
     parse_cli_value,
     set_domain_parameter,
 )
-from sose.jobs.doctor import inspect_job_file_health
-from sose.jobs.factory import _domain_warehouse, build_job_from_file
-from sose.jobs.job_edit import describe_job_policy, set_job_policy
-from sose.jobs.plan import build_execution_plan_from_file
-from sose.jobs.storage import build_storage_plan
-from sose.jobs.storage_edit import (
+from sose.jobs.doctor import inspect_job_file_health  # noqa: F401
+from sose.jobs.factory import _domain_warehouse, build_job_from_file  # noqa: F401
+from sose.jobs.job_edit import describe_job_policy, set_job_policy  # noqa: F401
+from sose.jobs.plan import build_execution_plan_from_file  # noqa: F401
+from sose.jobs.storage import build_storage_plan  # noqa: F401
+from sose.jobs.storage_edit import (  # noqa: F401
     add_analytical_sink,
     parse_key_value_options,
     remove_analytical_sink,
     set_authoritative_storage,
 )
-from sose.persistence.registry import builtin_persistence_registry
-from sose.sinks.registry import builtin_sink_registry
-
-
-def _json(value: object) -> str:
-    return json.dumps(value, indent=2, sort_keys=True, default=str)
-
-
-def _close_persistence(persistence) -> None:
-    close = getattr(persistence, "close", None)
-    if callable(close):
-        close()
-
-
-def _validate_sqlite_domain_warehouse_options(options: dict[str, object]) -> None:
-    path_value = options.pop("path", "state/domain.sqlite3")
-    if not isinstance(path_value, str) or not path_value:
-        raise ValueError(
-            "sqlite DomainWarehouse path must be a non-empty string"
-        )
-
-
-def _validate_postgres_domain_warehouse_options(options: dict[str, object]) -> None:
-    for name in ("dsn", "dsn_env"):
-        value = options.pop(name, None)
-        if value is not None and (not isinstance(value, str) or not value):
-            raise ValueError(
-                f"postgres DomainWarehouse {name} must be a non-empty string"
-            )
-    namespace = options.pop("namespace", "sose_domain")
-    if not isinstance(namespace, str) or not namespace:
-        raise ValueError(
-            "postgres DomainWarehouse namespace must be a non-empty string"
-        )
-
-
-def _validate_domain_warehouse_section(section) -> None:
-    options = dict(section.options)
-    if section.adapter == "sqlite":
-        _validate_sqlite_domain_warehouse_options(options)
-    elif section.adapter == "postgres":
-        _validate_postgres_domain_warehouse_options(options)
-    else:
-        raise KeyError(f"unknown DomainWarehouse adapter: {section.adapter}")
-    if options:
-        raise ValueError(
-            f"unknown {section.adapter} DomainWarehouse options: {sorted(options)}"
-        )
-
-
-def _validate_config(path: str | Path) -> dict[str, object]:
-    from sose.examples.catalog import builtin_catalog
-
-    config, _ = load_sose_config(path)
-    domains = builtin_catalog()
-    definition = domains.get(config.domain.name)
-    resolved = definition.parse_config(config.domain.parameters)
-
-    persistence_registry = builtin_persistence_registry()
-    sink_registry = builtin_sink_registry()
-    storage_plan = build_storage_plan(
-        config,
-        persistence_registry=persistence_registry,
-        sink_registry=sink_registry,
-    )
-
-    if config.runtime.backend != "simpy":
-        raise KeyError(f"unknown runtime backend: {config.runtime.backend}")
-
-    # Validate the public DomainWarehouse section without opening a database.
-    if config.domain_warehouse is not None:
-        _validate_domain_warehouse_section(config.domain_warehouse)
-
-    return {
-        "job_id": config.job.id,
-        "domain": definition.name,
-        "domain_parameters": resolved.model_dump(mode="json"),
-        "storage": storage_plan.describe(),
-        "persistence": config.persistence.adapter,
-        "persistence_require": list(config.persistence.require),
-        "runtime_backend": config.runtime.backend,
-        "sinks": [
-            {"name": sink.name, "adapter": sink.adapter}
-            for sink in config.sinks
-        ],
-    }
-
-
-def _cmd_init(args: argparse.Namespace) -> int:
-    from sose.examples.catalog import builtin_catalog
-    from sose.jobs.scaffold import write_sose_toml
-
-    definition = builtin_catalog().get(args.domain)
-    output = write_sose_toml(
-        args.output,
-        definition,
-        job_id=args.job_id,
-        persistence_adapter=args.persistence,
-        persistence_path=args.persistence_path,
-        force=args.force,
-    )
-    description = definition.describe_config()
-    print(str(output))
-    print(
-        f'Initialized {len(description["defaults"])} editable domain defaults '
-        "in [domain.parameters]."
-    )
-    print("Edit them in sose.toml, then run: sose validate && sose apply")
-    return 0
-
-
-def _cmd_validate(args: argparse.Namespace) -> int:
-    validated = _validate_config(args.config)
-    print(_json(validated))
-    return 0
-
-
-def _cmd_config_show(args: argparse.Namespace) -> int:
-    print(_json(describe_domain_config(args.config)))
-    return 0
-
-
-def _cmd_config_set(args: argparse.Namespace) -> int:
-    result = set_domain_parameter(
-        args.config,
-        name=args.name,
-        value=parse_cli_value(args.value),
-    )
-    print(_json(result))
-    return 0
-
-
-def _cmd_apply(args: argparse.Namespace) -> int:
-    config, _ = load_sose_config(args.config)
-    job = build_job_from_file(args.config)
-    try:
-        before = job.state()
-        applied = job.apply_config(config.domain.parameters)
-        print(
-            _json(
-                {
-                    "job_id": applied.job_id,
-                    "domain": applied.domain_name,
-                    "config_revision": applied.config_revision,
-                    "changed": (
-                        before is None
-                        or applied.config_revision != before.config_revision
-                    ),
-                    "config": json.loads(applied.config_json),
-                }
-            )
-        )
-        return 0
-    finally:
-        job.close()
-
-
-def _cmd_run(args: argparse.Namespace) -> int:
-    job = build_job_from_file(args.config)
-    try:
-        result = job.run_tick(
-            trigger_id=args.trigger_id,
-            recover=args.recover,
-        )
-        print(_json(asdict(result)))
-        return 0
-    finally:
-        job.close()
-
-
-def _cmd_trigger(args: argparse.Namespace) -> int:
-    job = build_job_from_file(args.config)
-    try:
-        if args.scheduled_for is not None:
-            scheduled_for = datetime.fromisoformat(
-                args.scheduled_for.replace("Z", "+00:00")
-            )
-            result = job.run_scheduled_trigger(
-                scheduled_for=scheduled_for,
-                ticks=args.ticks,
-                recover=args.recover,
-            )
-        else:
-            result = job.run_trigger(
-                trigger_id=args.trigger_id,
-                ticks=args.ticks,
-                recover=args.recover,
-            )
-        print(_json(asdict(result)))
-        return 0
-    finally:
-        job.close()
-
-
-def _cmd_inspect(args: argparse.Namespace) -> int:
-    config, base_dir = load_sose_config(args.config)
-    registry = builtin_persistence_registry()
-    persistence = registry.create(
-        config.persistence.adapter,
-        config.persistence.options,
-        base_dir=base_dir,
-    )
-    try:
-        state = persistence.job_state(config.job.id)
-        position = persistence.simulation_position(owner_id=config.job.id)
-        diagnostics = None
-        if state is not None:
-            diagnostics = {
-                "job": asdict(state),
-                "position": (
-                    None if position is None else asdict(position)
-                ),
-                "config": json.loads(state.config_json),
-            }
-        else:
-            diagnostics = {
-                "job": None,
-                "position": (
-                    None if position is None else asdict(position)
-                ),
-            }
-        print(_json(diagnostics))
-        return 0
-    finally:
-        _close_persistence(persistence)
-
-
-def _cmd_doctor(args: argparse.Namespace) -> int:
-    report = inspect_job_file_health(args.config)
-    print(_json(report.to_dict()))
-    return 0 if report.healthy else 1
-
-
-def _cmd_domains(args: argparse.Namespace) -> int:
-    from sose.examples.catalog import builtin_catalog
-
-    catalog = builtin_catalog()
-    if args.name:
-        print(_json(catalog.get(args.name).describe_config()))
-        return 0
-
-    payload = [
-        {
-            "name": definition.name,
-            "description": definition.description,
-            "config_model": definition.config_model.__name__,
-        }
-        for definition in catalog.definitions()
-    ]
-    print(_json(payload))
-    return 0
-
-
-
-
-
-def _cmd_plan(args: argparse.Namespace) -> int:
-    print(_json(build_execution_plan_from_file(args.config)))
-    return 0
-
-
-def _cmd_job_show(args: argparse.Namespace) -> int:
-    print(_json(describe_job_policy(args.config)))
-    return 0
-
-
-def _cmd_job_set_policy(args: argparse.Namespace) -> int:
-    result = set_job_policy(
-        args.config,
-        ticks_per_trigger=args.ticks_per_trigger,
-        max_ticks_per_trigger=args.max_ticks_per_trigger,
-    )
-    print(_json(result))
-    return 0
-
-
-def _cmd_storage(args: argparse.Namespace) -> int:
-    config, _ = load_sose_config(args.config)
-    plan = build_storage_plan(
-        config,
-        persistence_registry=builtin_persistence_registry(),
-        sink_registry=builtin_sink_registry(),
-    )
-    print(_json(plan.describe()))
-    return 0 if plan.healthy else 1
-
-
-
-def _cmd_storage_set_authoritative(args: argparse.Namespace) -> int:
-    result = set_authoritative_storage(
-        args.config,
-        adapter=args.adapter,
-        options=parse_key_value_options(args.option),
-        require=tuple(args.require),
-    )
-    print(_json(result))
-    return 0
-
-
-def _cmd_storage_add_sink(args: argparse.Namespace) -> int:
-    result = add_analytical_sink(
-        args.config,
-        name=args.name,
-        adapter=args.adapter,
-        options=parse_key_value_options(args.option),
-    )
-    print(_json(result))
-    return 0
-
-
-def _cmd_storage_remove_sink(args: argparse.Namespace) -> int:
-    result = remove_analytical_sink(
-        args.config,
-        name=args.name,
-    )
-    print(_json(result))
-    return 0
-
-
-def _cmd_persistence(args: argparse.Namespace) -> int:
-    registry = builtin_persistence_registry()
-    print(
-        _json(
-            {
-                "adapters": [
-                    {
-                        "name": adapter.name,
-                        "optional_extra": adapter.optional_extra,
-                        "capabilities": list(adapter.capabilities.names()),
-                    }
-                    for adapter in registry.describe()
-                ]
-            }
-        )
-    )
-    return 0
-
-
-def _cmd_sinks(args: argparse.Namespace) -> int:
-    registry = builtin_sink_registry()
-    print(
-        _json(
-            {
-                "adapters": [
-                    {
-                        "name": adapter.name,
-                        "optional_extra": adapter.optional_extra,
-                    }
-                    for adapter in (
-                        registry.adapter(name)
-                        for name in registry.names()
-                    )
-                ]
-            }
-        )
-    )
-    return 0
-
-
-def _cmd_composition_recovery(args: argparse.Namespace) -> int:
-    """Invoke durable catch-up once (cron) or run as a polling worker."""
-    from datetime import timedelta, timezone
-    from time import sleep
-
-    from sose.composition.recovery import TradingCustomerRecoveryRunner
-    from sose.composition.scheduler import RecoverySchedule
-    from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
-
-    if args.serve and args.now is not None:
-        raise ValueError("--now is only supported for one-shot execution")
-    if args.serve and args.poll_seconds <= 0:
-        raise ValueError("--poll-seconds must be positive")
-    store = SQLiteIncrementalPersistence(args.sqlite)
-    try:
-        runner = TradingCustomerRecoveryRunner(
-            persistence=store,
-            owner_id=args.owner_id,
-            correlation_id=args.correlation_id,
-            organization_owners={args.correlation_id: args.organization_id},
-            max_actions=args.max_actions,
-        )
-        scheduler = RecoverySchedule(
-            runner=runner,
-            start_at=datetime.fromisoformat(args.start_at),
-            interval=timedelta(seconds=args.interval_seconds),
-            max_slots=args.max_slots,
-        )
-        while True:
-            now = datetime.fromisoformat(args.now) if args.now else datetime.now(timezone.utc)
-            for result in scheduler.run_due(now=now):
-                print(_json(asdict(result)), flush=True)
-            if not args.serve:
-                break
-            sleep(args.poll_seconds)
-    finally:
-        store.close()
-    return 0
+from sose.persistence.registry import builtin_persistence_registry  # noqa: F401
+from sose.sinks.registry import builtin_sink_registry  # noqa: F401
+from sose.cli_validation import (  # noqa: F401
+    _close_persistence,
+    _json,
+    _validate_config,
+    _validate_domain_warehouse_section,
+    _validate_postgres_domain_warehouse_options,
+    _validate_sqlite_domain_warehouse_options,
+)
+from sose.cli_commands import (
+    _cmd_apply,
+    _cmd_composition_recovery,
+    _cmd_config_set,
+    _cmd_config_show,
+    _cmd_doctor,
+    _cmd_domains,
+    _cmd_init,
+    _cmd_inspect,
+    _cmd_job_set_policy,
+    _cmd_job_show,
+    _cmd_persistence,
+    _cmd_plan,
+    _cmd_run,
+    _cmd_sinks,
+    _cmd_storage,
+    _cmd_storage_add_sink,
+    _cmd_storage_remove_sink,
+    _cmd_storage_set_authoritative,
+    _cmd_trigger,
+    _cmd_validate,
+)
 
 
 def build_parser() -> argparse.ArgumentParser:
