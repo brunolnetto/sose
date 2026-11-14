@@ -7,43 +7,47 @@ still require separate domain worker ownership.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, replace  # noqa: F401
 from datetime import datetime, timedelta
-import json
+import json  # noqa: F401
 from typing import Mapping
 
 from sose.core.resource_identity import ResourcePoolContract
-from sose.core.resource_reservations import TemporalReservation
+from sose.core.resource_reservations import TemporalReservation  # noqa: F401
 from sose.composition.resource_intents import IntentResourceCoordinator
 
-from sose.composition import trading_company_customer as customer
-from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
-from sose.composition.model import BoundaryMessage, DeliveryStatus
-from sose.examples.warehouse_fulfillment import simulation as fulfillment
-from sose.examples.logistics import simulation as logistics
-from sose.examples.order_to_cash import simulation as o2c
-from sose.examples.cards_payments import simulation as payments
-from sose.examples.record_to_report import simulation as r2r
-from sose.jobs.model import CompletedJobTrigger, SimulationJobState
+from sose.composition import trading_company_customer as customer  # noqa: F401
+from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService  # noqa: F401
+from sose.composition.model import BoundaryMessage, DeliveryStatus  # noqa: F401
+from sose.composition.recovery_boundary import (  # noqa: F401
+    _LOGISTICS_CONTRACT,
+    _O2C_CONTRACT,
+    _PAYMENTS_CONTRACT,
+    _R2R_CONTRACT,
+    _RECOVERABLE,
+    _WM_CONTRACT,
+    execute_pending,
+    pending_effects,
+    registry_for,
+)
+from sose.composition.recovery_pass import run_bounded_pass
+from sose.composition.recovery_trigger import (
+    activate_trigger,
+    check_job_identity,
+    claim_trigger_writer,
+    complete_trigger,
+    trigger_config_json,
+)
+from sose.composition.recovery_validation import validate_recovery_runner
+from sose.examples.warehouse_fulfillment import simulation as fulfillment  # noqa: F401
+from sose.examples.logistics import simulation as logistics  # noqa: F401
+from sose.examples.order_to_cash import simulation as o2c  # noqa: F401
+from sose.examples.cards_payments import simulation as payments  # noqa: F401
+from sose.examples.record_to_report import simulation as r2r  # noqa: F401
+from sose.jobs.model import CompletedJobTrigger, SimulationJobState  # noqa: F401
 from sose.jobs.registration import job_registration_guard
 from sose.persistence.base import Persistence
 from sose.persistence.ownership import FencedEnginePersistence
-
-
-_WM_CONTRACT = ("warehouse.inventory_consumption_requested", 1)
-_LOGISTICS_CONTRACT = ("warehouse.dispatch_ready", 1)
-_O2C_CONTRACT = ("logistics.delivery_completed", 1)
-_PAYMENTS_CONTRACT = ("o2c.payment_requested", 1)
-_R2R_CONTRACT = ("accounting.entry_requested", 1)
-_RECOVERABLE = frozenset({
-    "composition.accept_inventory_reservation",
-    "composition.consume_fulfillment_inventory",
-    "composition.deliver_shipment",
-    "composition.complete_external_fulfillment",
-    "composition.settle_customer_payment",
-    "composition.post_customer_journal",
-    "composition.post_replenishment_journal",
-})
 
 
 @dataclass(frozen=True, slots=True)
@@ -78,49 +82,7 @@ class TradingCustomerRecoveryRunner:
     scoped_writer: bool = False
 
     def __post_init__(self) -> None:
-        if not self.owner_id or not self.job_id:
-            raise ValueError("worker owner and job identity must be nonempty")
-        if self.max_actions < 1:
-            raise ValueError("max_actions must be >= 1")
-        if self.lease_duration <= timedelta(0):
-            raise ValueError("lease_duration must be positive")
-        if self.correlation_id is not None and not self.correlation_id:
-            raise ValueError("correlation_id cannot be empty")
-        if self.scoped_writer:
-            if self.correlation_id is None:
-                raise ValueError("scoped recovery requires one explicit correlation_id")
-            if not callable(getattr(self.persistence, "claim_scoped_writer", None)):
-                raise TypeError("scoped recovery requires PostgreSQL scoped fencing")
-        if self.resource_persistence is not None:
-            if self.resource_policies is None:
-                raise ValueError("shared resource persistence requires explicit policies")
-            if (not hasattr(self.persistence, "dsn")
-                or self.persistence.dsn != getattr(self.resource_persistence, "dsn", None)):
-                raise ValueError("domain and physical resource ledgers must share PostgreSQL")
-        if self.organization_owners is not None and any(
-            not isinstance(correlation, str) or not correlation.strip()
-            or not isinstance(organization, str) or not organization.strip()
-            for correlation, organization in self.organization_owners.items()
-        ):
-            raise ValueError("organization_owners must contain valid durable bindings")
-        if self.resource_policies is not None:
-            if self.resource_slot_duration <= timedelta(0) or self.resource_retry_delay <= timedelta(0):
-                raise ValueError("resource slot and retry delay must be positive")
-            if not self.resource_organizations or any(
-                not correlation or not organization
-                for correlation, organization in self.resource_organizations.items()
-            ):
-                raise ValueError(
-                    "resource policies require explicit correlation-to-organization bindings"
-                )
-        if self.resource_policies is not None and self.correlation_id is not None:
-            if self.correlation_id not in self.resource_organizations:
-                raise ValueError("resource mapping lacks the owned correlation_id")
-        if not self.scoped_writer and (
-            not callable(getattr(self.persistence, "writer_epoch", None))
-            or not callable(getattr(self.persistence, "claim_writer", None))
-        ):
-            raise TypeError("composition runner requires authoritative writer fencing")
+        validate_recovery_runner(self)
 
     def _egress_organization_owners(self) -> dict[str, str]:
         """Bind every known correlation to its stable operational owner."""
@@ -148,145 +110,14 @@ class TradingCustomerRecoveryRunner:
             )
         return organization_id
 
-    @staticmethod
-    def _pending_effects(store: Persistence) -> tuple[tuple[BoundaryMessage, str], ...]:
-        with store.transaction() as uow:
-            pending = []
-            for delivery in uow.boundary_deliveries():
-                if delivery.status is not DeliveryStatus.CONSUMED:
-                    continue
-                consumption = uow.get_boundary_consumption(delivery.delivery_id)
-                if consumption is None:
-                    raise RuntimeError("consumed boundary delivery lacks durable consumption")
-                intent = uow.get_command(consumption.consumer_effect_id)
-                if intent is None or intent.name not in _RECOVERABLE:
-                    continue
-                message = uow.get_boundary_message(delivery.message_id)
-                if message is None:
-                    raise RuntimeError("accepted boundary effect lacks source message")
-                pending.append((message, intent.command_id))
-        return tuple(sorted(pending, key=lambda pair: (pair[0].produced_at, pair[0].message_id)))
-
-    @staticmethod
-    def _execute_pending(
-        store: Persistence, source: BoundaryMessage, effect_id: str,
-        *, organization_id: str,
-        authoritative_pickup: TemporalReservation | None = None,
-        resource_persistence: Persistence | None = None,
-    ) -> None:
-        details = source.payload()
-        order_id = str(details.get("fulfillment_order_id", ""))
-        sales_order_id = str(details.get("order_id", ""))
-        payment_id = str(details.get("payment_id", ""))
-        journal_id = str(details.get("journal_id", ""))
-        with store.transaction() as uow:
-            journal = uow.get_entity("journal_entry", journal_id) if journal_id else None
-        period_id = str(journal.attributes["period_id"]) if journal is not None else ""
-        shipment_id = str(details.get("shipment_id", ""))
-        fixture = customer._CustomerFixtures(
-            o2c=o2c.O2CEntities(order_id=sales_order_id),
-            fulfillment=fulfillment.WarehouseEntities(order_id=order_id, lot_ids=()),
-            warehouse=None,
-            logistics=logistics.LogisticsEntities(shipment_id=shipment_id),
-            payments=payments.PaymentEntities(payment_id=payment_id),
-            r2r=r2r.R2REntities(
-                period_id=period_id, journal_id=journal_id,
-                reconciliation_id="", close_task_id="",
-            ),
-        )
-        kwargs = (
-            {"authoritative_pickup": authoritative_pickup}
-            if authoritative_pickup is not None else {}
-        )
-        if resource_persistence is not None and authoritative_pickup is not None:
-            kwargs["resource_persistence"] = resource_persistence
-        customer._execute_intent(
-            store,
-            effect_id=effect_id,
-            fixtures=fixture,
-            correlation_id=source.correlation_id,
-            organization_id=organization_id,
-            **kwargs,
-        )
-
-    @staticmethod
-    def _registry_for(message: BoundaryMessage, *, organization_id: str) -> BoundaryConsumerRegistry:
-        details = message.payload()
-        registry = BoundaryConsumerRegistry()
-        if message.contract_key == "warehouse.inventory_consumption_requested.v1":
-            registry.register(
-                destination_domain="warehouse_management",
-                contract_name=_WM_CONTRACT[0],
-                contract_version=_WM_CONTRACT[1],
-                handler=customer._intent_handler(
-                    intent_name="composition.consume_fulfillment_inventory",
-                    entity_type="warehouse_management_stock",
-                    entity_id=str(details["stock_id"]),
-                    owner_id=organization_id,
-                ),
-            )
-        elif message.contract_key == "warehouse.dispatch_ready.v1":
-            registry.register(
-                destination_domain="logistics",
-                contract_name=_LOGISTICS_CONTRACT[0],
-                contract_version=_LOGISTICS_CONTRACT[1],
-                handler=customer._intent_handler(
-                    intent_name="composition.deliver_shipment",
-                    entity_type="shipment",
-                    entity_id=str(details["shipment_id"]),
-                    owner_id=organization_id,
-                ),
-            )
-        elif message.contract_key == "logistics.delivery_completed.v1":
-            registry.register(
-                destination_domain="order_to_cash",
-                contract_name=_O2C_CONTRACT[0],
-                contract_version=_O2C_CONTRACT[1],
-                handler=customer._intent_handler(
-                    intent_name="composition.complete_external_fulfillment",
-                    entity_type="sales_order",
-                    entity_id=str(details["order_id"]),
-                    owner_id=organization_id,
-                ),
-            )
-        elif message.contract_key == "o2c.payment_requested.v1":
-            registry.register(
-                destination_domain="cards_payments",
-                contract_name=_PAYMENTS_CONTRACT[0],
-                contract_version=_PAYMENTS_CONTRACT[1],
-                handler=customer._intent_handler(
-                    intent_name="composition.settle_customer_payment",
-                    entity_type="card_payment",
-                    entity_id=str(details["payment_id"]),
-                    owner_id=organization_id,
-                ),
-            )
-        elif message.contract_key == "accounting.entry_requested.v1":
-            if message.source_domain == "cards_payments":
-                intent_name = "composition.post_customer_journal"
-            elif message.source_domain == "procure_to_pay":
-                intent_name = "composition.post_replenishment_journal"
-            else:
-                raise ValueError("unsupported accounting source domain for PC6 recovery")
-            registry.register(
-                destination_domain="record_to_report",
-                contract_name=_R2R_CONTRACT[0],
-                contract_version=_R2R_CONTRACT[1],
-                handler=customer._intent_handler(
-                    intent_name=intent_name,
-                    entity_type="journal_entry",
-                    entity_id=str(details["journal_id"]),
-                    owner_id=organization_id,
-                ),
-            )
-        else:
-            raise ValueError("recovery runner received unsupported boundary contract")
-        return registry
+    # Looked up through the runner at call time: tests and subclasses replace them.
+    _pending_effects = staticmethod(pending_effects)
+    _execute_pending = staticmethod(execute_pending)
+    _registry_for = staticmethod(registry_for)
 
     def _run_bounded(
         self, store: Persistence, *, now: datetime, logical_now: datetime | None = None,
     ) -> int:
-        actions = 0
         service = BoundaryService(store)
         resource_intents = (
             IntentResourceCoordinator(
@@ -303,362 +134,9 @@ class TradingCustomerRecoveryRunner:
             )
             if self.resource_policies is not None else None
         )
-        # Each admitted resource effect has a durable enrollment in the
-        # current scheduled occurrence. A crash after physical release but
-        # before the job checkpoint must not make that slot appear empty.
-        with store.transaction() as uow:
-            current_job = uow.get_job_state(self.job_id)
-            active_trigger = (
-                current_job.active_trigger_id if current_job is not None else None
-            )
-            # An accepted Command can commit its business certificate and then
-            # lose the worker *before* the recurring trigger checkpoint. Charge
-            # that certified non-resource effect to its original occurrence.
-            # Mapped effects are instead charged by the physical ledger below.
-            if current_job is not None:
-                # ACK+Command is one transaction, but is a separate bounded
-                # scheduling action from executing that Command. A worker
-                # killed after ACK must not apply the domain in the same slot.
-                for message_id in current_job.active_publication_message_ids:
-                    message = uow.get_boundary_message(message_id)
-                    deliveries = tuple(
-                        d for d in uow.boundary_deliveries()
-                        if d.message_id == message_id
-                    )
-                    if message is None or len(deliveries) != 1:
-                        raise RuntimeError(
-                            "enrolled recovery publication lacks durable message/delivery"
-                        )
-                    if (
-                        deliveries[0].contract_name != message.contract_name
-                        or deliveries[0].contract_version != message.contract_version
-                    ):
-                        raise RuntimeError(
-                            "enrolled recovery publication contradicts delivery contract"
-                        )
-                    actions += 1
-                for message_id in current_job.active_boundary_message_ids:
-                    matches = tuple(
-                        delivery for delivery in uow.boundary_deliveries()
-                        if delivery.message_id == message_id
-                    )
-                    if len(matches) != 1:
-                        raise RuntimeError(
-                            "enrolled recovery ACK lost its durable delivery"
-                        )
-                    delivery = matches[0]
-                    if delivery.status is DeliveryStatus.CONSUMED:
-                        receipt = uow.get_boundary_consumption(delivery.delivery_id)
-                        if (
-                            receipt is None
-                            or receipt.consumer_effect_id != delivery.consumer_effect_id
-                            or uow.get_boundary_message(message_id) is None
-                        ):
-                            raise RuntimeError(
-                                "enrolled recovery ACK lost its atomic Command receipt"
-                            )
-                        if (
-                            uow.get_command(receipt.consumer_effect_id) is None
-                            and uow.get_business_effect(receipt.consumer_effect_id) is None
-                        ):
-                            raise RuntimeError(
-                                "recovery ACK has neither pending Command nor certificate"
-                            )
-                        actions += 1
-                    elif uow.get_boundary_consumption(delivery.delivery_id) is not None:
-                        raise RuntimeError(
-                            "unconsumed enrolled delivery has a committed ACK"
-                        )
-                for effect_id in current_job.active_effect_ids:
-                    certificate = uow.get_business_effect(effect_id)
-                    command = uow.get_command(effect_id)
-                    if certificate is None:
-                        if command is None:
-                            raise RuntimeError(
-                                "enrolled recovery effect lacks Command and certificate"
-                            )
-                        continue
-                    if command is not None:
-                        raise RuntimeError(
-                            "enrolled recovery effect has certificate and pending Command"
-                        )
-                    if certificate.effect_id != effect_id:
-                        raise RuntimeError("recovery certificate changed effect identity")
-                    deliveries = tuple(
-                        d for d in uow.boundary_deliveries()
-                        if d.message_id == certificate.boundary_message_id
-                    )
-                    if len(deliveries) != 1:
-                        raise RuntimeError("certified recovery effect lost causal boundary")
-                    consumption = uow.get_boundary_consumption(deliveries[0].delivery_id)
-                    if (
-                        consumption is None
-                        or consumption.consumer_effect_id != effect_id
-                    ):
-                        raise RuntimeError("certified recovery effect lacks original ACK")
-                    actions += 1
-            if actions > self.max_actions:
-                raise RuntimeError("committed recovery actions exceed trigger budget")
-        # Reconcile a crash after immutable domain certification but before
-        # release of its authoritative temporal reservation.
-        if resource_intents is not None and actions < self.max_actions:
-            # A recovered release is a committed physical/causal action, not
-            # free extra work. Otherwise a resumed occurrence may emit the
-            # NEXT boundary effect one slot earlier than uninterrupted replay.
-            owned_organizations = self.resource_organizations
-            if self.correlation_id is not None:
-                owned_organizations = {
-                    self.correlation_id: self.resource_organizations[self.correlation_id],
-                }
-            actions += resource_intents.reconcile_certified(
-                store, owned_organizations,
-                max_completed=self.max_actions - actions,
-                trigger_id=active_trigger,
-            )
-            if actions >= self.max_actions:
-                return actions
-        if actions >= self.max_actions:
-            return actions
-        # A deferred effect stays durable, but must not monopolize this tick.
-        deferred_this_tick: set[str] = set()
-        for _ in range(self.max_actions):
-            if actions >= self.max_actions:
-                break
-            pending = [
-                pair for pair in self._pending_effects(store)
-                if pair[1] not in deferred_this_tick
-                and (self.correlation_id is None or pair[0].correlation_id == self.correlation_id)
-            ]
-            if pending:
-                source, effect_id = pending[0]
-                organization_id = self._organization_for(source.correlation_id)
-                command = store.command(effect_id)
-                if command is None:
-                    raise RuntimeError("accepted effect disappeared before execution")
-                if resource_intents is not None:
-                    demand_due = command.due_at
-                    if (
-                        command.name == "composition.deliver_shipment"
-                        and command.name in self.resource_policies
-                        and store.entity("shipment", command.entity_id) is not None
-                    ):
-                        demand_due = customer.pickup_resource_due_at(
-                            store, command,
-                            organization_id=self.resource_organizations[source.correlation_id],
-                        )
-                    admitted = resource_intents.admit(
-                        effect_id=effect_id,
-                        intent_name=command.name,
-                        organization_id=self.resource_organizations[source.correlation_id],
-                        causation_id=source.message_id,
-                        correlation_id=source.correlation_id,
-                        due_at=demand_due,
-                        now=logical_now if logical_now is not None else now,
-                        **({"trigger_id": active_trigger} if active_trigger is not None else {}),
-                    )
-                    if not admitted:
-                        deferred_this_tick.add(effect_id)
-                        continue
-                # Every non-physical business action is durably enrolled in
-                # the owning trigger BEFORE the real domain transition. On
-                # restart its immutable certificate consumes the same slot.
-                # Resource-mapped actions already have an authoritative
-                # admission-to-trigger link in the physical PostgreSQL ledger.
-                if (
-                    active_trigger is not None
-                    and (self.resource_policies is None
-                         or command.name not in self.resource_policies)
-                ):
-                    with store.transaction() as uow:
-                        job = uow.get_job_state(self.job_id)
-                        if job is None or job.active_trigger_id != active_trigger:
-                            raise RuntimeError("recovery effect lost its active trigger")
-                        if effect_id not in job.active_effect_ids:
-                            uow.save_job_state(replace(
-                                job,
-                                active_effect_ids=(*job.active_effect_ids, effect_id),
-                            ))
-                pickup = (
-                    resource_intents.booking_for(effect_id, command.name)
-                    if resource_intents is not None
-                    and command.name == "composition.deliver_shipment"
-                    and command.name in self.resource_policies
-                    else None
-                )
-                try:
-                    if pickup is not None:
-                        if self.resource_persistence is not None:
-                            self._execute_pending(
-                                store, source, effect_id, organization_id=organization_id,
-                                authoritative_pickup=pickup,
-                                resource_persistence=self.resource_persistence,
-                            )
-                        else:
-                            self._execute_pending(
-                                store, source, effect_id, organization_id=organization_id,
-                                authoritative_pickup=pickup,
-                            )
-                    else:
-                        self._execute_pending(
-                            store, source, effect_id, organization_id=organization_id,
-                        )
-                except customer.DurableResourceWait:
-                    # Physical capacity contention is waiting, not failure.
-                    # The immutable Command stays durable for another slot.
-                    deferred_this_tick.add(effect_id)
-                    continue
-                if resource_intents is not None:
-                    resource_intents.complete(effect_id)
-                actions += 1
-                continue
-
-            with store.transaction() as uow:
-                before_ids = {
-                    delivery.message_id for delivery in uow.boundary_deliveries()
-                }
-            reconstructed = customer.reconcile_shipped_fulfillment_egress(
-                store, organization_owners=self._egress_organization_owners(),
-                max_new_messages=self.max_actions - actions,
-                recovery_job_id=self.job_id if active_trigger is not None else None,
-                correlation_id=self.correlation_id,
-            )
-            emitted = sum(message.message_id not in before_ids for message in reconstructed)
-            if emitted:
-                actions += emitted
-                # Do not silently exceed the configured work budget.
-                if actions >= self.max_actions:
-                    break
-
-            with store.transaction() as uow:
-                intermediate_ids = {
-                    delivery.message_id for delivery in uow.boundary_deliveries()
-                }
-            reconstructed_logistics = customer.reconcile_completed_logistics_egress(
-                store, organization_owners=self._egress_organization_owners(),
-                max_new_messages=self.max_actions - actions,
-                recovery_job_id=self.job_id if active_trigger is not None else None,
-                correlation_id=self.correlation_id,
-            )
-            emitted_logistics = sum(
-                message.message_id not in intermediate_ids
-                for message in reconstructed_logistics
-            )
-            actions += emitted_logistics
-            if actions >= self.max_actions:
-                break
-
-            with store.transaction() as uow:
-                o2c_before_ids = {
-                    delivery.message_id for delivery in uow.boundary_deliveries()
-                }
-            reconstructed_o2c = customer.reconcile_invoiced_o2c_egress(
-                store, organization_owners=self._egress_organization_owners(),
-                max_new_messages=self.max_actions - actions,
-                recovery_job_id=self.job_id if active_trigger is not None else None,
-                correlation_id=self.correlation_id,
-            )
-            emitted_o2c = sum(
-                message.message_id not in o2c_before_ids
-                for message in reconstructed_o2c
-            )
-            actions += emitted_o2c
-            if actions >= self.max_actions:
-                break
-
-            with store.transaction() as uow:
-                payment_before_ids = {
-                    delivery.message_id for delivery in uow.boundary_deliveries()
-                }
-            reconstructed_payment = customer.reconcile_settled_payment_egress(
-                store, organization_owners=self._egress_organization_owners(),
-                max_new_messages=self.max_actions - actions,
-                recovery_job_id=self.job_id if active_trigger is not None else None,
-                correlation_id=self.correlation_id,
-            )
-            emitted_payment = sum(
-                message.message_id not in payment_before_ids
-                for message in reconstructed_payment
-            )
-            actions += emitted_payment
-            if actions >= self.max_actions:
-                break
-
-            lease = service.claim_next(
-                owner_id=self.owner_id,
-                now=now,
-                lease_duration=self.lease_duration,
-                destination_domain="warehouse_management",
-                accepted_contracts=frozenset({_WM_CONTRACT}),
-                    correlation_id=self.correlation_id,
-            )
-            if lease is None:
-                lease = service.claim_next(
-                    owner_id=self.owner_id,
-                    now=now,
-                    lease_duration=self.lease_duration,
-                    destination_domain="logistics",
-                    accepted_contracts=frozenset({_LOGISTICS_CONTRACT}),
-                    correlation_id=self.correlation_id,
-                )
-            if lease is None:
-                lease = service.claim_next(
-                    owner_id=self.owner_id,
-                    now=now,
-                    lease_duration=self.lease_duration,
-                    destination_domain="order_to_cash",
-                    accepted_contracts=frozenset({_O2C_CONTRACT}),
-                    correlation_id=self.correlation_id,
-                )
-            if lease is None:
-                lease = service.claim_next(
-                    owner_id=self.owner_id,
-                    now=now,
-                    lease_duration=self.lease_duration,
-                    destination_domain="cards_payments",
-                    accepted_contracts=frozenset({_PAYMENTS_CONTRACT}),
-                    correlation_id=self.correlation_id,
-                )
-            if lease is None:
-                lease = service.claim_next(
-                    owner_id=self.owner_id,
-                    now=now,
-                    lease_duration=self.lease_duration,
-                    destination_domain="record_to_report",
-                    accepted_contracts=frozenset({_R2R_CONTRACT}),
-                    correlation_id=self.correlation_id,
-                )
-            if lease is None:
-                if not emitted and not emitted_logistics and not emitted_o2c and not emitted_payment:
-                    break
-                continue
-
-            with store.transaction() as uow:
-                message = uow.get_boundary_message(lease.message_id)
-            if message is None:
-                raise RuntimeError("claimed WM boundary message disappeared")
-            # Enroll before the ACK transaction, not afterward: an actual
-            # OS-kill between COMMIT and the next Python statement must leave
-            # sufficient evidence to charge this exact scheduled occurrence.
-            # An uncommitted ACK is not charged and can be reclaimed safely.
-            if active_trigger is not None:
-                with store.transaction() as uow:
-                    job = uow.get_job_state(self.job_id)
-                    if job is None or job.active_trigger_id != active_trigger:
-                        raise RuntimeError("recovery ACK lost its active trigger")
-                    if lease.message_id not in job.active_boundary_message_ids:
-                        uow.save_job_state(replace(
-                            job,
-                            active_boundary_message_ids=(
-                                *job.active_boundary_message_ids, lease.message_id,
-                            ),
-                        ))
-            service.consume(
-                lease=lease, registry=self._registry_for(
-                    message, organization_id=self._organization_for(message.correlation_id),
-                ), now=now,
-            )
-            actions += 1
-        return actions
+        return run_bounded_pass(
+            self, store, service, resource_intents, now=now, logical_now=logical_now,
+        )
 
     def run_scheduled_trigger(
         self, *, scheduled_for: datetime, observed_at: datetime | None = None,
@@ -676,13 +154,7 @@ class TradingCustomerRecoveryRunner:
     ) -> RecoveryTriggerResult:
         if not trigger_id:
             raise ValueError("trigger_id must be nonempty")
-        config = {}
-        if self.scoped_writer:
-            config['correlation_id'] = self.correlation_id
-            # Persist the operational organization even without physical
-            # resource policies. A restarted job cannot silently rebind it.
-            config['organization_id'] = self._organization_for(self.correlation_id)
-        config_json = json.dumps(config, sort_keys=True, separators=(',', ':'))
+        config_json = trigger_config_json(self)
         # Enroll all creation paths behind one job-scoped identity fence.
         # Preflight BEFORE any scoped/global writer claim: a failed foreign
         # registration must not advance epochs or bind a correlation.
@@ -691,83 +163,14 @@ class TradingCustomerRecoveryRunner:
             # Do not open an unfenced transaction here: an existing global
             # writer epoch intentionally rejects such transactions.
             prior = self.persistence.job_state(self.job_id)
-            if prior is not None and prior.domain_name != "trading_company_composition":
-                raise ValueError("recovery job identity already belongs to another domain")
-            if prior is not None and prior.config_json != config_json:
-                raise ValueError("recovery job's durable organizational binding changed")
-            if prior is None:
-                # The writer epoch and the first durable domain identity must
-                # become visible in ONE OLTP commit. A real os._exit directly
-                # after the claim cannot leave an ownerless fenced namespace.
-                initial = SimulationJobState(
-                    job_id=self.job_id,
-                    domain_name="trading_company_composition",
-                    config_json=config_json,
-                    config_revision=1,
-                    status="ready",
-                    initialized=True,
-                    logical_time=now,
-                    next_tick=0,
-                )
-                if self.scoped_writer:
-                    atomic_claim = getattr(self.persistence, "claim_scoped_writer_and_register", None)
-                    if not callable(atomic_claim):
-                        raise TypeError("scoped recovery requires atomic claim+registration")
-                    lease = atomic_claim(
-                        self.job_id, self.owner_id,
-                        expected_epoch=self.persistence.scoped_writer_epoch(self.job_id),
-                        correlation_id=self.correlation_id, initial_job=initial,
-                    )
-                else:
-                    atomic_claim = getattr(self.persistence, "claim_writer_and_register", None)
-                    if not callable(atomic_claim):
-                        raise TypeError("recovery requires atomic claim+registration")
-                    lease = atomic_claim(
-                        self.owner_id,
-                        expected_epoch=self.persistence.writer_epoch(),
-                        initial_job=initial,
-                    )
-            elif self.scoped_writer:
-                lease = self.persistence.claim_scoped_writer(
-                    self.job_id, self.owner_id,
-                    expected_epoch=self.persistence.scoped_writer_epoch(self.job_id),
-                    correlation_id=self.correlation_id,
-                )
-            else:
-                lease = self.persistence.claim_writer(
-                    self.owner_id, expected_epoch=self.persistence.writer_epoch(),
-                )
+            check_job_identity(prior, config_json)
+            lease = claim_trigger_writer(self, prior, config_json=config_json, now=now)
             store = FencedEnginePersistence(self.persistence, lease)
             with store.transaction() as uow:
-                current = uow.get_job_state(self.job_id)
-                if current is not None and current.domain_name != "trading_company_composition":
-                    raise ValueError("recovery job identity already belongs to another domain")
-                if current is not None and current.config_json != config_json:
-                    raise ValueError('recovery job\'s durable organizational binding changed')
-                if current is None:
-                    raise RuntimeError("recovery writer claim lacks atomic durable job identity")
-                if current.last_completed_trigger_id == trigger_id or any(
-                    record.trigger_id == trigger_id
-                    for record in current.completed_batch_triggers
+                if not activate_trigger(
+                    self, uow, trigger_id=trigger_id, config_json=config_json, now=now,
                 ):
                     return RecoveryTriggerResult(self.job_id, trigger_id, 0)
-                if now < current.logical_time:
-                    raise ValueError("composition trigger cannot rewind durable logical time")
-                if current.active_trigger_id not in (None, trigger_id):
-                    raise RuntimeError("another recovery occurrence is still active")
-                if current.active_trigger_id is None and (
-                    current.active_effect_ids or current.active_boundary_message_ids
-                    or current.active_publication_message_ids
-                ):
-                    raise RuntimeError("completed recovery job has orphaned work enrollment")
-                uow.save_job_state(replace(
-                    current,
-                    status="running",
-                    phase="reconcile",
-                    active_trigger_id=trigger_id,
-                    logical_time=now,
-                    last_triggered_at=now,
-                ))
 
         lease_clock = observed_at if observed_at is not None else now
         if self.resource_policies is None:
@@ -776,33 +179,5 @@ class TradingCustomerRecoveryRunner:
             actions = self._run_bounded(store, now=lease_clock)
         else:
             actions = self._run_bounded(store, now=lease_clock, logical_now=now)
-        with store.transaction() as uow:
-            current = uow.get_job_state(self.job_id)
-            if current is None or current.active_trigger_id != trigger_id:
-                raise RuntimeError("composition recovery trigger ownership lost")
-            completed_record = CompletedJobTrigger(
-                trigger_id=trigger_id,
-                requested_ticks=1,
-                start_tick=current.next_tick,
-                end_tick=current.next_tick + 1,
-                config_revision=current.config_revision,
-                logical_time=now,
-                run_count=current.run_count + 1,
-            )
-            uow.save_job_state(replace(
-                current,
-                status="ready",
-                phase="idle",
-                active_trigger_id=None,
-                active_effect_ids=(),
-                active_boundary_message_ids=(),
-                active_publication_message_ids=(),
-                last_completed_trigger_id=trigger_id,
-                completed_batch_triggers=(
-                    *current.completed_batch_triggers, completed_record,
-                ),
-                next_tick=current.next_tick + 1,
-                run_count=current.run_count + 1,
-                last_error=None,
-            ))
+        complete_trigger(self, store, trigger_id=trigger_id, now=now)
         return RecoveryTriggerResult(self.job_id, trigger_id, actions)

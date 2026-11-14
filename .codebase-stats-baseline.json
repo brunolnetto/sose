@@ -1,7 +1,4 @@
 {
-  "max_cc:composition/recovery.py::TradingCustomerRecoveryRunner.__post_init__": 33,
-  "max_cc:composition/recovery.py::TradingCustomerRecoveryRunner._run_bounded": 99,
-  "max_cc:composition/recovery.py::TradingCustomerRecoveryRunner.run_trigger": 30,
   "max_cc:core/engine.py::Engine._dispatch_scheduled_in_uow": 18,
   "max_cc:core/engine.py::Engine.dispatch": 13,
   "max_cc:core/transition_authority.py::TransitionAuthority.seal": 27,
@@ -33,7 +30,6 @@
   "max_lines:backends/simpy.py": 783,
   "max_lines:cli.py": 693,
   "max_lines:composition/boundary.py": 425,
-  "max_lines:composition/recovery.py": 808,
   "max_lines:composition/trading_company_customer.py": 509,
   "max_lines:core/preemption.py": 643,
   "max_lines:core/stores.py": 616,
@@ -73,7 +69,6 @@
   "max_lines:organizational/od5a_durable.py": 468,
   "max_lines:organizational/prospective_stage1_fit_v2.py": 458,
   "min_mi:backends/simpy.py": 12.264483822158764,
-  "min_mi:composition/recovery.py": 6.127754233924797,
   "min_mi:core/preemption.py": 11.912140208065287,
   "min_mi:core/runtime.py": 10.299823889245058,
   "min_mi:core/stores.py": 17.77809474490524,
