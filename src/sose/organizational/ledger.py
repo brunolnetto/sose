@@ -176,22 +176,7 @@ class ActorLedger(BaseModel):
         # Fractionally allocated actor intervals may nest: comparing only
         # adjacent sorted intervals misses long-lived allocations spanning
         # multiple configuration revisions.
-        committed_epochs: dict[int, str] = {}
-        for index, current in enumerate(ordered):
-            if current.config_epoch is None:
-                continue  # Older historical actor ledgers have no epoch evidence.
-            previous_hash = committed_epochs.setdefault(
-                current.config_epoch, current.model_spec_hash,
-            )
-            if previous_hash != current.model_spec_hash:
-                raise ValueError("same actor config_epoch cannot change ModelSpec identity")
-            for previous in ordered[:index]:
-                if previous.config_epoch is None:
-                    continue
-                if current.start < previous.end and current.config_epoch != previous.config_epoch:
-                    raise ValueError("actor capacity spans conflicting config epochs")
-                if current.start >= previous.end and current.config_epoch < previous.config_epoch:
-                    raise ValueError("actor config_epoch cannot regress")
+        _check_config_epochs(ordered)
         if self.fractional_multitasking:
             self._validate_fractional_capacity()
         else:
@@ -217,21 +202,18 @@ class ActorLedger(BaseModel):
     def allocated_actor_time(self) -> float:
         return sum(interval.actor_time for interval in self.intervals)
 
-    @property
-    def unavailable_time(self) -> float:
+    def _wall_time(self, category: ActorCategory) -> float:
         return sum(
-            interval.duration
-            for interval in self.intervals
-            if interval.category is ActorCategory.UNAVAILABLE
+            interval.duration for interval in self.intervals if interval.category is category
         )
 
     @property
+    def unavailable_time(self) -> float:
+        return self._wall_time(ActorCategory.UNAVAILABLE)
+
+    @property
     def idle_time(self) -> float:
-        return sum(
-            interval.duration
-            for interval in self.intervals
-            if interval.category is ActorCategory.IDLE
-        )
+        return self._wall_time(ActorCategory.IDLE)
 
     @property
     def available_time(self) -> float:
@@ -296,6 +278,25 @@ def _time_equal(left: float, right: float) -> bool:
 def _require_finite(value: float, name: str) -> None:
     if not isfinite(value):
         raise ValueError(f"{name} must be finite")
+
+
+def _check_config_epochs(ordered: tuple[ActorLedgerInterval, ...]) -> None:
+    committed_epochs: dict[int, str] = {}
+    for index, current in enumerate(ordered):
+        if current.config_epoch is None:
+            continue  # Older historical actor ledgers have no epoch evidence.
+        previous_hash = committed_epochs.setdefault(
+            current.config_epoch, current.model_spec_hash,
+        )
+        if previous_hash != current.model_spec_hash:
+            raise ValueError("same actor config_epoch cannot change ModelSpec identity")
+        for previous in ordered[:index]:
+            if previous.config_epoch is None:
+                continue
+            if current.start < previous.end and current.config_epoch != previous.config_epoch:
+                raise ValueError("actor capacity spans conflicting config epochs")
+            if current.start >= previous.end and current.config_epoch < previous.config_epoch:
+                raise ValueError("actor config_epoch cannot regress")
 
 
 def _check_segment_capacity(active: list[ActorLedgerInterval]) -> None:
