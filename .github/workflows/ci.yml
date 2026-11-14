@@ -153,9 +153,13 @@ jobs:
 
       - name: Analyze codebase quality
         run: |
-          set -o pipefail
-          # Coverage gap x complexity ranking (ADR-0010). The same ratchet as
-          # the quality job applies here; the coverage floor stays below.
+          # Coverage gap x complexity ranking (ADR-0010), informational only:
+          # the quality job owns the ratchet, and the coverage floor is
+          # enforced below. With --coverage, codebase-stats 0.1.0 resolves a
+          # file without functions (persistence/engine.py) to another file of
+          # the same basename (core/engine.py) and reports phantom violations,
+          # so this step must not gate on its exit status (no pipefail: tee's
+          # status is the step's).
           codebase-stats \
             --coverage coverage.json \
             --report pytest-report.json \
