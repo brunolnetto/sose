@@ -43,7 +43,6 @@
   "max_cc:organizational/od4_intake.py::intervene_work": 45,
   "max_cc:organizational/od5a_mechanisms.py::run_od5a_pilot": 40,
   "max_cc:organizational/prospective_stage1_fit_v2.py::fit_stage1_pr_review_v2": 13,
-  "max_cc:organizational/prospective_stage2_acquisition_runner_v2.py::run_stage2_acquisition_v2": 11,
   "max_cc:organizational/queue_reference_adapter.py::QueueReferenceAdapter.ground_truth": 11,
   "max_cc:persistence/postgres.py::PostgresPersistence.__init__": 11,
   "max_cc:persistence/postgres.py::PostgresPersistence._append_postgres_events": 16,
