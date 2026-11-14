@@ -95,87 +95,86 @@ class CustomerDemandPathResult:
     effect_ids: tuple[str, ...]
 
 
-def _register_intent(
-    registry: BoundaryConsumerRegistry, *, destination_domain: str, contract_name: str,
-    source_domain: str, contract_version: int, intent_name: str, entity_type: str,
-    entity_id: str, owner_id: str,
-) -> None:
+def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumerRegistry:
+    registry = BoundaryConsumerRegistry()
     registry.register(
-        destination_domain=destination_domain,
-        contract_name=contract_name,
-        source_domain=source_domain,
-        contract_version=contract_version,
+        destination_domain="warehouse_fulfillment", contract_name="o2c.fulfillment_requested",
+        source_domain="order_to_cash", contract_version=1,
         handler=_intent_handler(
-            intent_name=intent_name,
-            entity_type=entity_type,
-            entity_id=entity_id,
+            intent_name="composition.request_fulfillment_inventory",
+            entity_type="warehouse_fulfillment_order", entity_id=fixtures.fulfillment.order_id,
             owner_id=owner_id,
         ),
     )
-
-
-def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumerRegistry:
-    registry = BoundaryConsumerRegistry()
-    _register_intent(
-        registry, destination_domain="warehouse_fulfillment",
-        contract_name="o2c.fulfillment_requested", source_domain="order_to_cash",
-        contract_version=1, intent_name="composition.request_fulfillment_inventory",
-        entity_type="warehouse_fulfillment_order", entity_id=fixtures.fulfillment.order_id,
-        owner_id=owner_id,
+    registry.register(
+        destination_domain="warehouse_fulfillment", contract_name="o2c.fulfillment_requested",
+        source_domain="order_to_cash", contract_version=2,
+        handler=_intent_handler(
+            intent_name="composition.request_fulfillment_inventory",
+            entity_type="warehouse_fulfillment_order", entity_id=fixtures.fulfillment.order_id,
+            owner_id=owner_id,
+        ),
     )
-    _register_intent(
-        registry, destination_domain="warehouse_fulfillment",
-        contract_name="o2c.fulfillment_requested", source_domain="order_to_cash",
-        contract_version=2, intent_name="composition.request_fulfillment_inventory",
-        entity_type="warehouse_fulfillment_order", entity_id=fixtures.fulfillment.order_id,
-        owner_id=owner_id,
-    )
-    _register_intent(
-        registry, destination_domain="warehouse_management",
+    registry.register(
+        destination_domain="warehouse_management",
         contract_name="warehouse.inventory_reservation_requested",
         source_domain="warehouse_fulfillment", contract_version=1,
-        intent_name="composition.reserve_fulfillment_inventory",
-        entity_type="warehouse_management_stock", entity_id=fixtures.warehouse.origin_stock_id,
-        owner_id=owner_id,
+        handler=_intent_handler(
+            intent_name="composition.reserve_fulfillment_inventory",
+            entity_type="warehouse_management_stock", entity_id=fixtures.warehouse.origin_stock_id,
+            owner_id=owner_id,
+        ),
     )
-    _register_intent(
-        registry, destination_domain="warehouse_fulfillment",
-        contract_name="warehouse.inventory_reserved", source_domain="warehouse_management",
-        contract_version=1, intent_name="composition.accept_inventory_reservation",
-        entity_type="warehouse_fulfillment_order", entity_id=fixtures.fulfillment.order_id,
-        owner_id=owner_id,
+    registry.register(
+        destination_domain="warehouse_fulfillment", contract_name="warehouse.inventory_reserved",
+        source_domain="warehouse_management", contract_version=1,
+        handler=_intent_handler(
+            intent_name="composition.accept_inventory_reservation",
+            entity_type="warehouse_fulfillment_order", entity_id=fixtures.fulfillment.order_id,
+            owner_id=owner_id,
+        ),
     )
-    _register_intent(
-        registry, destination_domain="warehouse_management",
+    registry.register(
+        destination_domain="warehouse_management",
         contract_name="warehouse.inventory_consumption_requested",
         source_domain="warehouse_fulfillment", contract_version=1,
-        intent_name="composition.consume_fulfillment_inventory",
-        entity_type="warehouse_management_stock", entity_id=fixtures.warehouse.origin_stock_id,
-        owner_id=owner_id,
+        handler=_intent_handler(
+            intent_name="composition.consume_fulfillment_inventory",
+            entity_type="warehouse_management_stock", entity_id=fixtures.warehouse.origin_stock_id,
+            owner_id=owner_id,
+        ),
     )
-    _register_intent(
-        registry, destination_domain="logistics", contract_name="warehouse.dispatch_ready",
+    registry.register(
+        destination_domain="logistics", contract_name="warehouse.dispatch_ready",
         source_domain="warehouse_fulfillment", contract_version=1,
-        intent_name="composition.deliver_shipment", entity_type="shipment",
-        entity_id=fixtures.logistics.shipment_id, owner_id=owner_id,
+        handler=_intent_handler(
+            intent_name="composition.deliver_shipment", entity_type="shipment",
+            entity_id=fixtures.logistics.shipment_id, owner_id=owner_id,
+        ),
     )
-    _register_intent(
-        registry, destination_domain="order_to_cash", contract_name="logistics.delivery_completed",
+    registry.register(
+        destination_domain="order_to_cash", contract_name="logistics.delivery_completed",
         source_domain="logistics", contract_version=1,
-        intent_name="composition.complete_external_fulfillment", entity_type="sales_order",
-        entity_id=fixtures.o2c.order_id, owner_id=owner_id,
+        handler=_intent_handler(
+            intent_name="composition.complete_external_fulfillment", entity_type="sales_order",
+            entity_id=fixtures.o2c.order_id, owner_id=owner_id,
+        ),
     )
-    _register_intent(
-        registry, destination_domain="cards_payments", contract_name="o2c.payment_requested",
+    registry.register(
+        destination_domain="cards_payments", contract_name="o2c.payment_requested",
         source_domain="order_to_cash", contract_version=1,
-        intent_name="composition.settle_customer_payment", entity_type="card_payment",
-        entity_id=fixtures.payments.payment_id, owner_id=owner_id,
+        handler=_intent_handler(
+            intent_name="composition.settle_customer_payment", entity_type="card_payment",
+            entity_id=fixtures.payments.payment_id, owner_id=owner_id,
+        ),
     )
-    _register_intent(
-        registry, destination_domain="record_to_report", contract_name="accounting.entry_requested",
+    registry.register(
+        destination_domain="record_to_report", contract_name="accounting.entry_requested",
         source_domain="cards_payments", contract_version=1,
-        intent_name="composition.post_customer_journal", entity_type="journal_entry",
-        entity_id=fixtures.r2r.journal_id, owner_id=owner_id,
+        handler=_intent_handler(
+            intent_name="composition.post_customer_journal", entity_type="journal_entry",
+            entity_id=fixtures.r2r.journal_id, owner_id=owner_id,
+        ),
     )
     return registry
 
