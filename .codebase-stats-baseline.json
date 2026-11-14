@@ -87,7 +87,6 @@
   "max_cc:organizational/queue_reference_adapter.py::QueueReferenceAdapter.ground_truth": 11,
   "max_cc:organizational/synthetic_a1.py::run_a1_reference_world": 29,
   "max_cc:organizational/synthetic_a1_experiment.py::run_a0_a1_experiment": 27,
-  "max_cc:organizational/synthetic_a1_report.py::build_a1_scientific_report_v1": 33,
   "max_cc:organizational/synthetic_runner.py::_run_reference_world": 17,
   "max_cc:organizational/synthetic_runner.py::run_reference_synthetic_experiment": 15,
   "max_cc:organizational/synthetic_study.py::generate_synthetic_worlds": 18,
