@@ -145,15 +145,21 @@ def _edges(model: ModelSpec) -> tuple[tuple[str, str], ...]:
         raise ValueError("baseline must define a nonempty dependency_edges graph")
     edges = []
     for edge in raw:
-        if (not isinstance(edge, tuple) or len(edge) != 2
-                or not all(isinstance(part, str) and part.strip() for part in edge)
-                or edge[0] == edge[1]):
+        if not _is_distinct_id_pair(edge):
             raise ValueError("dependency_edges require pairs of distinct actor/station IDs")
         edges.append(tuple(edge))
     if len(set(edges)) != len(edges):
         raise ValueError("dependency_edges may not contain duplicate edges")
     _assert_dag(tuple(edges))
     return tuple(edges)
+
+
+def _is_distinct_id_pair(edge) -> bool:
+    return (
+        isinstance(edge, tuple) and len(edge) == 2
+        and all(isinstance(part, str) and part.strip() for part in edge)
+        and edge[0] != edge[1]
+    )
 
 
 def _assert_dag(edges: tuple[tuple[str, str], ...]) -> None:
@@ -205,6 +211,29 @@ def compile_od5a_arms(
     differ. No simulation outcomes, realized queues, or service measurements
     are inputs to this function.
     """
+    original_capacity, original_latency, original_edges = _baseline_levers(baseline)
+    _validate_treatment_levels(
+        expanded_capacity, reduced_coordination_latency,
+        original_capacity=original_capacity, original_latency=original_latency,
+    )
+    remaining = _remaining_edges(removed_dependency_edges, original_edges)
+    _validate_matched_costs(declared_costs, budget_tolerance_fraction)
+    mutations = _treatment_mutations(expanded_capacity, remaining, reduced_coordination_latency)
+
+    result = [OD5aCompiledArm(
+        "baseline", baseline, None, None,
+        _compiler_token=_COMPILER_ATTESTATION,
+    )]
+    initial = baseline.canonical_payload()
+    for arm in TREATMENT_ARMS:
+        result.append(_compile_treatment(
+            arm, baseline, initial, mutations[arm], declared_costs[arm],
+        ))
+    return tuple(result)
+
+
+def _baseline_levers(baseline: ModelSpec) -> tuple[float, float, tuple[tuple[str, str], ...]]:
+    """Capacity, coordination latency and dependency edges the arms may change."""
     original_capacity = _parameter(baseline, "execution_slots", strictly_positive=True)
     if not original_capacity.is_integer():
         raise ValueError("execution_slots must represent an integer number of physical slots")
@@ -212,8 +241,13 @@ def compile_od5a_arms(
         baseline, "coordination_latency", strictly_positive=True,
     )
     _parameter(baseline, "arrival_rate", strictly_positive=True)
-    original_edges = _edges(baseline)
+    return original_capacity, original_latency, _edges(baseline)
 
+
+def _validate_treatment_levels(
+    expanded_capacity, reduced_coordination_latency, *,
+    original_capacity: float, original_latency: float,
+) -> None:
     if (isinstance(expanded_capacity, bool)
             or not isinstance(expanded_capacity, int)
             or expanded_capacity <= original_capacity):
@@ -224,6 +258,8 @@ def compile_od5a_arms(
             or not 0 <= reduced_coordination_latency < original_latency):
         raise ValueError("coordination intervention must strictly reduce latency")
 
+
+def _remaining_edges(removed_dependency_edges, original_edges) -> tuple[tuple[str, str], ...]:
     removed = tuple(removed_dependency_edges)
     if len(removed) != len(set(removed)) or not removed:
         raise ValueError("removed_dependency_edges must be nonempty and unique")
@@ -233,7 +269,12 @@ def compile_od5a_arms(
     if not remaining:
         raise ValueError("structural arm cannot eliminate all dependency edges")
     _assert_dag(remaining)
+    return remaining
 
+
+def _validate_matched_costs(
+    declared_costs: Mapping[str, OD5aChargedCost], budget_tolerance_fraction: float,
+) -> None:
     if set(declared_costs) != set(TREATMENT_ARMS):
         raise ValueError("exactly four treated arm cost ledgers are required")
     if (not isfinite(budget_tolerance_fraction)
@@ -249,7 +290,10 @@ def compile_od5a_arms(
         if abs(cost.total - reference_total) / reference_total > budget_tolerance_fraction:
             raise ValueError(f"{arm} treatment breaches matched lifecycle cost budget")
 
-    mutations = {
+
+def _treatment_mutations(expanded_capacity, remaining, reduced_coordination_latency) -> dict:
+    """Arm -> (intervention class, JSON-pointer edits, mechanisms changed)."""
+    return {
         "capacity_only": (
             InterventionClass.CAPACITY,
             {"/parameters/execution_slots": expanded_capacity},
@@ -275,36 +319,30 @@ def compile_od5a_arms(
         ),
     }
 
-    result = [OD5aCompiledArm(
-        "baseline", baseline, None, None,
+
+def _compile_treatment(arm: str, baseline: ModelSpec, initial, mutation, cost) -> OD5aCompiledArm:
+    intervention_class, edits, mechanisms = mutation
+    intervention = ModelIntervention(
+        intervention_id=arm,
+        intervention_class=intervention_class,
+        set_values=edits,
+        mechanisms_changed=list(mechanisms),
+        # We don't repurpose ModelIntervention.operating_cost as a rate:
+        # the fully charged lifecycle cost lives in OD5aChargedCost.
+        operating_cost=cost.operating_cost_at_horizon,
+        transition_cost=cost.transition_cost,
+        transition_time=cost.transition_time,
+    )
+    model, _ = intervention.apply(baseline)
+    expected = json.loads(json.dumps(initial))
+    for key, value in edits.items():
+        section, name = key.lstrip("/").split("/")
+        expected[section][name] = value
+    if model.canonical_payload() != expected:
+        raise ValueError(f"{arm} changed a mechanism outside its registered treatment")
+    if model.model_spec_hash == baseline.model_spec_hash:
+        raise ValueError(f"{arm} is a no-op intervention")
+    return OD5aCompiledArm(
+        arm, model, cost, intervention,
         _compiler_token=_COMPILER_ATTESTATION,
-    )]
-    initial = baseline.canonical_payload()
-    for arm in TREATMENT_ARMS:
-        intervention_class, edits, mechanisms = mutations[arm]
-        cost = declared_costs[arm]
-        intervention = ModelIntervention(
-            intervention_id=arm,
-            intervention_class=intervention_class,
-            set_values=edits,
-            mechanisms_changed=list(mechanisms),
-            # We don't repurpose ModelIntervention.operating_cost as a rate:
-            # the fully charged lifecycle cost lives in OD5aChargedCost.
-            operating_cost=cost.operating_cost_at_horizon,
-            transition_cost=cost.transition_cost,
-            transition_time=cost.transition_time,
-        )
-        model, _ = intervention.apply(baseline)
-        expected = json.loads(json.dumps(initial))
-        for key, value in edits.items():
-            section, name = key.lstrip("/").split("/")
-            expected[section][name] = value
-        if model.canonical_payload() != expected:
-            raise ValueError(f"{arm} changed a mechanism outside its registered treatment")
-        if model.model_spec_hash == baseline.model_spec_hash:
-            raise ValueError(f"{arm} is a no-op intervention")
-        result.append(OD5aCompiledArm(
-            arm, model, cost, intervention,
-            _compiler_token=_COMPILER_ATTESTATION,
-        ))
-    return tuple(result)
+    )
