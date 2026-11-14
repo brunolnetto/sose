@@ -14,30 +14,34 @@ No SimPy Environment, Process, Event or callback is persisted.
 """
 from __future__ import annotations
 
-from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import replace
 from datetime import datetime, timedelta
-from contextlib import nullcontext
 from json import dumps
-from typing import Callable, Literal
+from typing import Callable
 
-from sose.backends.simpy import SimPyBackend
-from sose.core.identity import deterministic_id
-from sose.core.resource_reservations import (
-    ResourceCapacityError,
-)
 from sose.domain.entity import Entity
 from sose.jobs.model import SimulationJobState
 from sose.jobs.registration import job_registration_guard
 from sose.persistence.base import Persistence, UnitOfWork
 
 from .od5a_admission import OD5aCompiledArm
-from .od5a_durable import (
-    _KIND, _ORIGIN, _time, _advance_od5a_in_uow, _transition,
-    initialize_od5a_durable,
-)
+from .od5a_durable import _KIND, _time, initialize_od5a_durable
 from .od5a_mechanisms import OD5aWorkItem
-from .od5a_native_arbiter import _PhysicalStepPreview, _RecurringNativePhysicalArbiter
+from .od5a_recurring_execution import OD5aRecurringStep, execute_od5a_claimed_tick
+from .od5a_recurring_fence import (
+    _DOMAIN,
+    _LEASE_KIND,
+    OD5aRunnerClaim,
+    StaleOD5aRunnerClaimError,
+    _assert_completed_released_lease,
+    _config,
+    _job_transaction,
+    _read_job,
+    _require_wall_clock,
+    _trigger_claimable,
+    _trusted_now,
+    _validated_prior_lease,
+)
 from .od5a_shared_authority import (
     SharedPhysicalGrantAuthority,
     SharedPhysicalPoolBinding,
@@ -46,43 +50,30 @@ from .od5a_shared_authority import (
 from .od5a_shared_wait import (
     SharedPhysicalAlignedWaitAdvice,
     SharedPhysicalWaitSlotAdvice,
-    _aligned_physical_start,  # noqa: F401 - re-exported
-    _require_shared_wait_marker,
-    _source_wait_digest,
-    _validate_shared_wait_record,
     suggest_od5a_aligned_wait_start,
     suggest_od5a_shared_wait_slots,
 )
-from .od5a_recurring_fence import (
-    _SHARED_WAIT_KIND,
-    _job_transaction,
-    _DOMAIN,
-    _LEASE_KIND,
-    OD5aRunnerClaim,
-    StaleOD5aRunnerClaimError,
-    _assert_active_claimed_lease,  # noqa: F401 - re-exported
-    _assert_claim,
-    _assert_completed_released_lease,
-    _config,
-    _lease_expiry,  # noqa: F401 - re-exported
-    _next_trigger_id,  # noqa: F401 - re-exported
-    _read_job,
-    _require_wall_clock,
-    _trigger_claimable,
-    _trusted_now,
-    _validated_prior_lease,
+
+# Former module-level internals, kept importable from their historical home
+# after the split (tests and sibling modules reference several of them).
+from .od5a_durable import _ORIGIN, _advance_od5a_in_uow, _transition  # noqa: F401,E402
+from .od5a_native_arbiter import (  # noqa: F401,E402
+    _PhysicalStepPreview,
+    _RecurringNativePhysicalArbiter,
 )
-
-
-@dataclass(frozen=True, slots=True)
-class OD5aRecurringStep:
-    organization_id: str
-    trigger_id: str
-    action: Literal["advanced", "complete", "replayed", "waiting"]
-    epoch: int
-    logical_time: datetime
-    logical_tick: int
-
+from .od5a_recurring_fence import (  # noqa: F401,E402
+    _SHARED_WAIT_KIND,
+    _assert_active_claimed_lease,
+    _assert_claim,
+    _lease_expiry,
+    _next_trigger_id,
+)
+from .od5a_shared_wait import (  # noqa: F401,E402
+    _aligned_physical_start,
+    _require_shared_wait_marker,
+    _source_wait_digest,
+    _validate_shared_wait_record,
+)
 
 def initialize_od5a_recurring_job(
     store: Persistence, *, job_id: str, arm: OD5aCompiledArm,
@@ -270,276 +261,6 @@ def _claimed_lease_attributes(
             "physical_wait_id": pending_physical_wait_id,
         } if pending_physical_wait_id is not None else {}),
     }
-
-
-def execute_od5a_claimed_tick(
-    store: Persistence, *, claim: OD5aRunnerClaim, now: datetime,
-    _wall_clock: Callable[[], datetime] | None = None,
-    shared_pool_binding: SharedPhysicalPoolBinding | None = None,
-) -> OD5aRecurringStep:
-    """Use a fresh ephemeral SimPy dispatch to commit exactly one source step.
-
-    A kill after claim or inside callback leaves the uncommitted action
-    retriable with a higher epoch; a kill after COMMIT leaves the checkpoint
-    and the physical event inseparable.
-    """
-    _require_wall_clock(now)
-    authority = (
-        SharedPhysicalGrantAuthority(store, shared_pool_binding, claim.organization_id)
-        if shared_pool_binding is not None else None
-    )
-    with _job_transaction(store, claim.organization_id) as uow:
-        source, _, _ = _assert_claim(
-            uow, claim, _trusted_now(store, _wall_clock),
-        )
-        _assert_shared_binding(source, shared_pool_binding)
-        actions = source.attributes["actions"]
-        due = (
-            min(actions, key=lambda x: (x["at"], x["seq"]))["at"]
-            if actions else source.attributes["clock"]
-        )
-        # Capture the COMPLETE committed action, not just at/seq/kind.
-        # Otherwise a changed arrival item or completion resource can cross
-        # the read-side preflight -> ephemeral SimPy dispatch boundary.
-        next_action = (
-            dict(min(actions, key=lambda x: (x["at"], x["seq"])))
-            if actions else None
-        )
-    dispatched: list[OD5aRecurringStep] = []
-    backend = SimPyBackend(origin=_ORIGIN)
-    # A preflight hook or another worker may commit while SimPy advances
-    # to the due boundary. Never hold a database write transaction during
-    # this disposable, externally interceptable scheduling step.
-    backend.run_until(_time(due))
-    # Plan the reducer's upcoming leases using only a disposable ledger.
-    # No SimPy callbacks execute while reading the transactional snapshot.
-    with _job_transaction(store, claim.organization_id) as uow:
-        source, _, _ = _assert_claim(
-            uow, claim, _trusted_now(store, _wall_clock),
-        )
-        _assert_shared_binding(source, shared_pool_binding)
-        actions = source.attributes["actions"]
-        actual = min(actions, key=lambda x: (x["at"], x["seq"])) if actions else None
-        if actual != next_action:
-            raise StaleOD5aRunnerClaimError(
-                "OD-5a scheduled step changed before SimPy dispatch"
-            )
-        preflight_state = deepcopy(source.attributes)
-        # Compare only this organization's physical addresses. An independent
-        # owner can legitimately commit disjoint reservations between preflight
-        # and this worker's fenced commit; no namespace-wide serialization.
-        owned_names = {
-            f"{claim.organization_id}/{slot}"
-            for slot in preflight_state["resources"]
-        }
-        preflight_reservations = tuple(
-            item for item in uow.resource_reservations()
-            if item.resource_name in owned_names
-        )
-        preview = _PhysicalStepPreview(preflight_reservations)
-        planned_state = deepcopy(preflight_state)
-        _transition(
-            preview, planned_state,
-            claim.organization_id,
-        )
-        native = _RecurringNativePhysicalArbiter(
-            backend, definitions=uow.resource_definitions(),
-            reservations=preflight_reservations,
-            resources=preflight_state["resources"],
-            job_id=claim.organization_id, due=due,
-        )
-
-    # Native acquisitions and their potentially adversarial callbacks are
-    # processed with NO SQLite BEGIN IMMEDIATE or PostgreSQL owner guard held.
-    native.prepare(
-        releases=tuple(preview.releases), grants=tuple(preview.grants), at=due,
-    )
-
-    # A rejected shared PostgreSQL booking is not a failed business event.
-    # Record exact source/physical request identity without advancing the
-    # source clock or pretending that an ephemeral SimPy permit was granted.
-    wait_id = deterministic_id(
-        "od5a-shared-capacity-wait", claim.organization_id, claim.trigger_id,
-    )
-    wait_requests = sorted((
-        {
-            "resource_name": grant.resource_name,
-            "reservation_id": grant.reservation_id,
-            "request_id": grant.request_id,
-            "instance_id": slot[1],
-        }
-        for grant in preview.grants
-        if authority is not None
-        and (slot := authority._slot(grant.resource_name)) is not None
-    ), key=lambda request: request["reservation_id"])
-    wait_attributes = (
-        {
-            "trigger_id": claim.trigger_id,
-            "binding_fingerprint": shared_pool_binding.fingerprint(),
-            "source_action": next_action,
-            "due_at": _time(due).isoformat(),
-            "requests": wait_requests,
-            "wait_schema_version": 2,
-            "source_digest": _source_wait_digest(preflight_state),
-        }
-        if authority is not None else None
-    )
-
-    def validate_wait(wait: Entity, *, epoch: int) -> None:
-        _validate_shared_wait_record(
-            wait, expected=wait_attributes, epoch=epoch,
-        )
-
-    def commit_source_step() -> None:
-        with _job_transaction(store, claim.organization_id) as uow:
-            # Re-read the trusted clock AFTER the lock. Neither invocation
-            # time nor the worker host's clock can extend/stale the fence.
-            commit_at = _trusted_now(store, _wall_clock)
-            source, job, lease = _assert_claim(uow, claim, commit_at)
-            _assert_shared_binding(source, shared_pool_binding)
-            actions = source.attributes["actions"]
-            actual = min(actions, key=lambda x: (x["at"], x["seq"])) if actions else None
-            if actual != next_action or source.attributes != preflight_state:
-                raise StaleOD5aRunnerClaimError(
-                    "OD-5a source changed across native physical acquisition"
-                )
-            current_owned = tuple(
-                item for item in uow.resource_reservations()
-                if item.resource_name in owned_names
-            )
-            if current_owned != preflight_reservations:
-                raise StaleOD5aRunnerClaimError(
-                    "OD-5a own physical ledger changed before native commit"
-                )
-            # Reconstruct the durable wait/lease cross-reference BEFORE
-            # attempting any real physical grant, even when an entity was
-            # removed by an independent corrupted writer.
-            wait = uow.get_entity(_SHARED_WAIT_KIND, wait_id) if authority else None
-            if authority is not None:
-                _require_shared_wait_marker(
-                    lease, wait_id=wait_id, wait_exists=wait is not None,
-                )
-                if wait is not None:
-                    validate_wait(wait, epoch=claim.epoch)
-            # The per-pool guard and source UoW share one PostgreSQL
-            # transaction. The guard is scoped to THIS physical pool only.
-            # A collision must roll back physical booking AND source/job.
-            with (authority.guarded_pool() if authority else nullcontext()):
-                advanced = _advance_od5a_in_uow(
-                    uow, job_id=claim.organization_id, native=native,
-                )
-                native.verify_committed_step()
-                committed = uow.get_entity(_KIND, claim.organization_id)
-                assert committed is not None
-                if committed.attributes != planned_state:
-                    raise RuntimeError(
-                        "native source truth differs from deterministic planned grant"
-                    )
-                if authority is not None:
-                    authority.apply(
-                        before=preflight_reservations,
-                        releases=tuple(preview.releases),
-                        grants=tuple(preview.grants),
-                        after_state=committed.attributes,
-                        at=due, uow=uow,
-                    )
-                    # The same physical/source SQL COMMIT resolves any
-                    # previously registered wait; a worker dying after COMMIT
-                    # must never leave an apparently pending request.
-                    if wait is not None:
-                        wait.state = "satisfied"
-                        wait.attributes = {
-                            **wait.attributes, "last_claim_epoch": claim.epoch,
-                        }
-                        wait.touch(commit_at)
-                        uow.save_entity(wait)
-            job = replace(
-                job, status="ready", phase="idle", active_trigger_id=None,
-                last_completed_trigger_id=claim.trigger_id,
-                logical_time=_time(committed.attributes["clock"]),
-                next_tick=committed.attributes["step"],
-                run_count=job.run_count + 1,
-                last_error=None,
-            )
-            uow.save_job_state(job)
-            lease.state = "released"
-            lease.attributes = {
-                **{k: v for k, v in lease.attributes.items()
-                   if k != "physical_wait_id"},
-                "owner_id": None,
-            }
-            lease.touch(commit_at)
-            uow.save_entity(lease)
-            dispatched.append(OD5aRecurringStep(
-                claim.organization_id, claim.trigger_id,
-                "advanced" if advanced else "complete",
-                claim.epoch, job.logical_time, job.next_tick,
-            ))
-
-    backend.schedule_at(
-        _time(due), commit_source_step,
-        key=("od5a-recurring", claim.organization_id, claim.trigger_id, claim.epoch),
-    )
-    try:
-        backend.run_until(_time(due))
-    except ResourceCapacityError:
-        if authority is None or not wait_requests or wait_attributes is None:
-            raise
-        # The source+physical transaction has rolled back. Only the exact
-        # still-owned trigger can durably acknowledge backpressure in a NEW
-        # fenced transaction. Another org/pool never waits on this job lock.
-        with _job_transaction(store, claim.organization_id) as uow:
-            source, job, lease = _assert_claim(
-                uow, claim, _trusted_now(store, _wall_clock),
-            )
-            _assert_shared_binding(source, shared_pool_binding)
-            current_owned = tuple(
-                item for item in uow.resource_reservations()
-                if item.resource_name in owned_names
-            )
-            if source.attributes != preflight_state or current_owned != preflight_reservations:
-                raise StaleOD5aRunnerClaimError(
-                    "OD-5a source/physical state changed before durable wait"
-                )
-            wait = uow.get_entity(_SHARED_WAIT_KIND, wait_id)
-            _require_shared_wait_marker(
-                lease, wait_id=wait_id, wait_exists=wait is not None,
-            )
-            if wait is not None:
-                validate_wait(wait, epoch=claim.epoch)
-            # Fencing must use the timestamp of THIS durable write, not the
-            # previous snapshot's clock; a claim can expire between the two.
-            stamp = _trusted_now(store, _wall_clock)
-            _assert_claim(uow, claim, stamp)
-            if wait is None:
-                wait = Entity(
-                    id=wait_id, entity_type=_SHARED_WAIT_KIND, state="waiting",
-                    attributes={
-                        **deepcopy(wait_attributes),
-                        "origin_epoch": claim.epoch,
-                        "last_claim_epoch": claim.epoch,
-                    },
-                )
-                wait.touch(stamp)
-                uow.save_entity(wait)
-                lease.attributes = {
-                    **lease.attributes, "physical_wait_id": wait_id,
-                }
-                lease.touch(stamp)
-                uow.save_entity(lease)
-            elif wait.attributes["last_claim_epoch"] != claim.epoch:
-                wait.attributes = {
-                    **wait.attributes, "last_claim_epoch": claim.epoch,
-                }
-                wait.touch(stamp)
-                uow.save_entity(wait)
-            return OD5aRecurringStep(
-                claim.organization_id, claim.trigger_id, "waiting",
-                claim.epoch, job.logical_time, job.next_tick,
-            )
-    if len(dispatched) != 1:
-        raise RuntimeError("native SimPy did not dispatch one authoritative OD-5a source action")
-    return dispatched[0]
 
 
 def run_od5a_recurring_tick(
