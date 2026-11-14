@@ -2,8 +2,7 @@ from __future__ import annotations
 
 from hashlib import sha256
 import json
-from math import ceil, cos, exp, log, pi, sqrt
-from statistics import fmean, median
+from math import log
 from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, StringConstraints
@@ -11,6 +10,13 @@ from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from sose.core.randomness import CounterRandomSource, scoped_seed
 
 from .experiment import ExperimentProtocol
+from .synthetic_mechanics import (
+    _draw_service,
+    _lead_statistics,
+    _lognormal_with_mean_cv,  # noqa: F401 - historical import location
+    _standard_normal,  # noqa: F401 - historical import location
+    _throughput_and_wip,
+)
 from .synthetic_study import SyntheticWorldSpec
 
 
@@ -105,36 +111,8 @@ def run_reference_synthetic_experiment(
     experiments, not an empirical claim about all organizations.
     """
 
-    count = (
-        protocol.replication_plan.min_replications
-        if replications is None
-        else replications
-    )
-    if not (
-        protocol.replication_plan.min_replications
-        <= count
-        <= protocol.replication_plan.max_replications
-    ):
-        raise ValueError("replications must remain inside the preregistered replication bounds")
-
-    if any(world.agency_level.value != "A0" for world in worlds):
-        raise ValueError(
-            "reference synthetic runner currently implements A0 mechanics only"
-        )
-    expected_identities = {
-        (design_index, arm_id, level.value)
-        for design_index in range(protocol.sample_size)
-        for arm_id in ("baseline", *protocol.intervention_ids)
-        for level in protocol.agency_levels
-    }
-    identities = {
-        (world.design_index, world.arm_id, world.agency_level.value)
-        for world in worlds
-    }
-    if identities != expected_identities or len(worlds) != len(expected_identities):
-        raise ValueError("complete synthetic world design is required")
-    if any(world.protocol_hash != protocol.protocol_hash for world in worlds):
-        raise ValueError("synthetic world protocol hash mismatch")
+    count = _replication_count(protocol, replications)
+    _require_complete_a0_design(protocol, worlds)
 
     runs: list[SyntheticRunResult] = []
     for world in worlds:
@@ -208,36 +186,14 @@ def _run_reference_world(
         if arrival_at > protocol.horizon:
             break
 
-        service_z = _standard_normal(
-            rng,
-            stream="synthetic_service",
-            entity_id=item_index,
-            mechanism="primary",
+        draw = _draw_service(
+            rng, item_index,
+            service_capacity=service_capacity,
+            service_cv=service_cv,
+            rework_probability=rework_probability,
         )
-        processing_time = _lognormal_with_mean_cv(
-            mean=1.0 / service_capacity,
-            cv=service_cv,
-            standard_normal=service_z,
-        )
-        rework_latent = rng.uniform(
-            stream="synthetic_rework",
-            entity_id=item_index,
-            mechanism="occurs",
-        )
-        reworked = rework_latent < rework_probability
-        rework_time = 0.0
-        if reworked:
-            rework_z = _standard_normal(
-                rng,
-                stream="synthetic_service",
-                entity_id=item_index,
-                mechanism="rework",
-            )
-            rework_time = _lognormal_with_mean_cv(
-                mean=1.0 / service_capacity,
-                cv=service_cv,
-                standard_normal=rework_z,
-            )
+        processing_time = draw.primary
+        rework_time = draw.rework
 
         service_start = max(arrival_at, server_available_at)
         queue_time = service_start - arrival_at
@@ -255,9 +211,9 @@ def _run_reference_world(
                 processing_time=processing_time,
                 rework_time=rework_time,
                 lead_time=lead_time,
-                reworked=reworked,
-                service_latent_normal=service_z,
-                rework_latent_uniform=rework_latent,
+                reworked=draw.reworked,
+                service_latent_normal=draw.service_z,
+                rework_latent_uniform=draw.rework_latent,
             )
         )
         item_index += 1
@@ -265,55 +221,12 @@ def _run_reference_world(
     measurement_start = protocol.warmup
     measurement_end = protocol.horizon
     measurement_duration = measurement_end - measurement_start
-    lead_time_cohort = tuple(
-        item
-        for item in items
-        if item.arrival_at >= measurement_start and item.completed_at <= measurement_end
-    )
-    measurement_departures = tuple(
-        item
-        for item in items
-        if measurement_start < item.completed_at <= measurement_end
-    )
-    leads = tuple(item.lead_time for item in lead_time_cohort)
     completed_items = sum(item.completed_at <= measurement_end for item in items)
-    throughput = len(measurement_departures) / measurement_duration
-    mean_wip = sum(
-        max(
-            0.0,
-            min(item.completed_at, measurement_end)
-            - max(item.arrival_at, measurement_start),
-        )
-        for item in items
-    ) / measurement_duration
-
-    if leads:
-        ordered = tuple(sorted(leads))
-        mean_lead = fmean(ordered)
-        median_lead = median(ordered)
-        p90_lead = ordered[max(1, ceil(0.90 * len(ordered))) - 1]
-        rework_fraction = (
-            sum(item.reworked for item in lead_time_cohort) / len(lead_time_cohort)
-        )
-    else:
-        mean_lead = median_lead = p90_lead = rework_fraction = 0.0
-
-    base_cost_rate = _cost_rate(world)
-    transition_parameter = (
-        None
-        if protocol.cost_analysis is None
-        else protocol.cost_analysis.transition_cost_parameter
+    throughput, mean_wip = _throughput_and_wip(items, measurement_start, measurement_end)
+    mean_lead, median_lead, p90_lead, rework_fraction = _lead_statistics(
+        items, measurement_start, measurement_end,
     )
-    uncertain_transition_cost = (
-        float(world.exogenous_parameters.get(transition_parameter, 0.0))
-        if world.arm_id != "baseline" and transition_parameter is not None
-        else 0.0
-    )
-    total_cost = (
-        (base_cost_rate + world.intervention_operating_cost) * measurement_duration
-        + world.intervention_transition_cost
-        + uncertain_transition_cost
-    )
+    total_cost = _a0_total_cost(protocol, world, measurement_duration)
 
     return SyntheticRunResult(
         world_hash=world.world_hash,
@@ -337,41 +250,69 @@ def _run_reference_world(
     )
 
 
-def _standard_normal(
-    rng: CounterRandomSource,
-    *,
-    stream: str,
-    entity_id: object,
-    mechanism: str,
-) -> float:
-    u1 = max(
-        rng.uniform(
-            stream=stream,
-            entity_id=entity_id,
-            mechanism=f"{mechanism}:u1",
-        ),
-        1e-15,
+def _replication_count(protocol: ExperimentProtocol, replications: int | None) -> int:
+    count = (
+        protocol.replication_plan.min_replications
+        if replications is None
+        else replications
     )
-    u2 = rng.uniform(
-        stream=stream,
-        entity_id=entity_id,
-        mechanism=f"{mechanism}:u2",
-    )
-    return sqrt(-2.0 * log(u1)) * cos(2.0 * pi * u2)
+    if not (
+        protocol.replication_plan.min_replications
+        <= count
+        <= protocol.replication_plan.max_replications
+    ):
+        raise ValueError("replications must remain inside the preregistered replication bounds")
+    return count
 
 
-def _lognormal_with_mean_cv(
-    *,
-    mean: float,
-    cv: float,
-    standard_normal: float,
+def _require_complete_a0_design(
+    protocol: ExperimentProtocol, worlds: tuple[SyntheticWorldSpec, ...],
+) -> None:
+    if any(world.agency_level.value != "A0" for world in worlds):
+        raise ValueError(
+            "reference synthetic runner currently implements A0 mechanics only"
+        )
+    if not _design_complete(protocol, worlds):
+        raise ValueError("complete synthetic world design is required")
+    if any(world.protocol_hash != protocol.protocol_hash for world in worlds):
+        raise ValueError("synthetic world protocol hash mismatch")
+
+
+def _design_complete(
+    protocol: ExperimentProtocol, worlds: tuple[SyntheticWorldSpec, ...],
+) -> bool:
+    expected_identities = {
+        (design_index, arm_id, level.value)
+        for design_index in range(protocol.sample_size)
+        for arm_id in ("baseline", *protocol.intervention_ids)
+        for level in protocol.agency_levels
+    }
+    identities = {
+        (world.design_index, world.arm_id, world.agency_level.value)
+        for world in worlds
+    }
+    return identities == expected_identities and len(worlds) == len(expected_identities)
+
+
+def _a0_total_cost(
+    protocol: ExperimentProtocol, world: SyntheticWorldSpec, measurement_duration: float,
 ) -> float:
-    if cv == 0.0:
-        return mean
-    sigma2 = log(1.0 + cv * cv)
-    sigma = sqrt(sigma2)
-    mu = log(mean) - sigma2 / 2.0
-    return exp(mu + sigma * standard_normal)
+    base_cost_rate = _cost_rate(world)
+    transition_parameter = (
+        None
+        if protocol.cost_analysis is None
+        else protocol.cost_analysis.transition_cost_parameter
+    )
+    uncertain_transition_cost = (
+        float(world.exogenous_parameters.get(transition_parameter, 0.0))
+        if world.arm_id != "baseline" and transition_parameter is not None
+        else 0.0
+    )
+    return (
+        (base_cost_rate + world.intervention_operating_cost) * measurement_duration
+        + world.intervention_transition_cost
+        + uncertain_transition_cost
+    )
 
 
 def _positive_parameter(parameters: object, name: str) -> float:

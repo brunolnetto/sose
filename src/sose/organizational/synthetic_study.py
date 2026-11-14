@@ -92,39 +92,10 @@ def generate_synthetic_worlds(
     out of the regime-vector inputs by construction.
     """
 
-    if baseline.model_spec_hash != protocol.baseline_model_spec_hash:
-        raise ValueError("baseline ModelSpec hash does not match experiment protocol")
-
-    declared_parameters = set(baseline.parameters)
-    axis_names = set(protocol.parameter_ranges)
-    unbound_axes = sorted(axis_names - declared_parameters)
-    if unbound_axes:
-        raise ValueError(
-            "exogenous DOE axes must bind to declared ModelSpec parameters; unbound: "
-            + ", ".join(unbound_axes)
-        )
-
-    intervention_by_id = {item.intervention_id: item for item in interventions}
-    if "baseline" in intervention_by_id:
-        raise ValueError("baseline is a reserved synthetic arm identifier")
-    if len(intervention_by_id) != len(interventions):
-        raise ValueError("duplicate intervention ids are not allowed")
-    if set(intervention_by_id) != set(protocol.intervention_ids):
-        raise ValueError("intervention ids must exactly match the preregistered protocol")
-
-    missing_agency = [
-        level.value for level in protocol.agency_levels if level not in agency_specs
-    ]
-    if missing_agency:
-        raise ValueError(
-            "missing agency template for preregistered level(s): "
-            + ", ".join(missing_agency)
-        )
-    for level in protocol.agency_levels:
-        if agency_specs[level].level is not level:
-            raise ValueError(
-                f"agency template for {level.value} declares {agency_specs[level].level.value}"
-            )
+    intervention_by_id = _validated_study_inputs(
+        protocol=protocol, baseline=baseline,
+        interventions=interventions, agency_specs=agency_specs,
+    )
 
     points = sample_parameter_space(
         parameter_ranges=protocol.parameter_ranges,
@@ -149,23 +120,10 @@ def generate_synthetic_worlds(
             agency_point_spec = _with_agency(point_spec, agency_spec)
             crn_group = f"design:{design_index}:agency:{level.value}"
             for arm_id, intervention in arms:
-                if intervention is None:
-                    model_spec = agency_point_spec
-                    intervention_class = None
-                    operating_cost = 0.0
-                    transition_cost = 0.0
-                    transition_time = 0.0
-                else:
-                    model_spec, _ = intervention.apply(agency_point_spec)
-                    if model_spec.agency.level is not level:
-                        raise ValueError(
-                            "intervention cannot rewrite the selected synthetic agency level"
-                        )
-                    intervention_class = intervention.intervention_class
-                    operating_cost = intervention.operating_cost
-                    transition_cost = intervention.transition_cost
-                    transition_time = intervention.transition_time
-
+                (
+                    model_spec, intervention_class, operating_cost,
+                    transition_cost, transition_time,
+                ) = _arm_model(agency_point_spec, intervention, level)
                 worlds.append(
                     SyntheticWorldSpec(
                         design_index=design_index,
@@ -185,6 +143,75 @@ def generate_synthetic_worlds(
                 )
 
     return tuple(worlds)
+
+
+def _validated_study_inputs(
+    *,
+    protocol: ExperimentProtocol,
+    baseline: ModelSpec,
+    interventions: tuple[ModelIntervention, ...],
+    agency_specs: Mapping[AgencyLevel, AgencySpec],
+) -> dict[str, ModelIntervention]:
+    if baseline.model_spec_hash != protocol.baseline_model_spec_hash:
+        raise ValueError("baseline ModelSpec hash does not match experiment protocol")
+
+    declared_parameters = set(baseline.parameters)
+    axis_names = set(protocol.parameter_ranges)
+    unbound_axes = sorted(axis_names - declared_parameters)
+    if unbound_axes:
+        raise ValueError(
+            "exogenous DOE axes must bind to declared ModelSpec parameters; unbound: "
+            + ", ".join(unbound_axes)
+        )
+
+    intervention_by_id = {item.intervention_id: item for item in interventions}
+    if "baseline" in intervention_by_id:
+        raise ValueError("baseline is a reserved synthetic arm identifier")
+    if len(intervention_by_id) != len(interventions):
+        raise ValueError("duplicate intervention ids are not allowed")
+    if set(intervention_by_id) != set(protocol.intervention_ids):
+        raise ValueError("intervention ids must exactly match the preregistered protocol")
+    _require_agency_templates(protocol, agency_specs)
+    return intervention_by_id
+
+
+def _require_agency_templates(
+    protocol: ExperimentProtocol, agency_specs: Mapping[AgencyLevel, AgencySpec],
+) -> None:
+    missing_agency = [
+        level.value for level in protocol.agency_levels if level not in agency_specs
+    ]
+    if missing_agency:
+        raise ValueError(
+            "missing agency template for preregistered level(s): "
+            + ", ".join(missing_agency)
+        )
+    for level in protocol.agency_levels:
+        if agency_specs[level].level is not level:
+            raise ValueError(
+                f"agency template for {level.value} declares {agency_specs[level].level.value}"
+            )
+
+
+def _arm_model(
+    agency_point_spec: ModelSpec,
+    intervention: ModelIntervention | None,
+    level: AgencyLevel,
+) -> tuple[ModelSpec, object, float, float, float]:
+    if intervention is None:
+        return agency_point_spec, None, 0.0, 0.0, 0.0
+    model_spec, _ = intervention.apply(agency_point_spec)
+    if model_spec.agency.level is not level:
+        raise ValueError(
+            "intervention cannot rewrite the selected synthetic agency level"
+        )
+    return (
+        model_spec,
+        intervention.intervention_class,
+        intervention.operating_cost,
+        intervention.transition_cost,
+        intervention.transition_time,
+    )
 
 
 def _with_exogenous_parameters(
