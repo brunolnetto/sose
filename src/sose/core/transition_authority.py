@@ -126,6 +126,81 @@ class TransitionAuthority:
             payload={**claims, "signature": signature},
         )
 
+    def validate_prestate(
+        self, *, uow, before: Entity, chart, owner_id: str,
+    ) -> None:
+        """Require a complete issuer-authenticated transition chain before send.
+
+        Checking just the latest signed transition is insufficient: an older
+        unauthorized UoW write might skip versions 1-2 and obtain a genuine
+        signature over the later version 3. This guard is opt-in for Engine;
+        deployment key isolation and PostgreSQL owner fencing remain separate.
+        """
+        if type(before.version) is not int or before.version < 0:
+            raise ValueError("unauthenticated prestate: invalid entity version")
+        initial = {
+            str(state.id)
+            for state in chart.states
+            if getattr(state, "initial", False)
+        }
+        if len(initial) != 1:
+            raise ValueError("unauthenticated prestate: ambiguous chart initial state")
+
+        history = tuple(
+            event for event in uow.events()
+            if event.entity_type == before.entity_type
+            and event.entity_id == before.id
+            and event.name == "entity.state_transition"
+        )
+        if before.version == 0:
+            if before.state not in initial or history:
+                raise ValueError(
+                    "unauthenticated prestate: version-zero entity must have "
+                    "its initial chart state and no transition history"
+                )
+            return
+
+        if len(history) != before.version:
+            raise ValueError(
+                "trusted predecessor history incomplete or duplicated"
+            )
+
+        authenticated = {}
+        for event in history:
+            if event.owner_id != owner_id:
+                raise ValueError("trusted predecessor has foreign owner")
+            receipt = self.verify(uow=uow, event=event)
+            version = receipt.payload["to_version"]
+            if version in authenticated:
+                raise ValueError("trusted predecessor version replayed")
+            authenticated[version] = (event, receipt.payload)
+
+        prior_state = next(iter(initial))
+        prior_time = None
+        for version in range(1, before.version + 1):
+            if version not in authenticated:
+                raise ValueError("trusted predecessor chain has missing version")
+            event, claims = authenticated[version]
+            if (
+                claims["from_version"] != version - 1
+                or claims["from_state"] != prior_state
+                or event.owner_id != owner_id
+                or (prior_time is not None and event.occurred_at < prior_time)
+            ):
+                raise ValueError(
+                    "trusted predecessor chain has invalid order or owner"
+                )
+            prior_state = claims["to_state"]
+            prior_time = event.occurred_at
+
+        if (
+            prior_state != before.state
+            or before.updated_at != prior_time
+        ):
+            raise ValueError(
+                "trusted predecessor chain contradicts committed projection"
+            )
+
     def verify(self, *, uow, event: DomainEvent) -> DomainEvent:
         """Verify bound issuer, source event and MAC; fail closed on replay."""
         source_matches = [x for x in uow.events() if x.event_id == event.event_id]

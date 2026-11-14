@@ -24,7 +24,8 @@ from sose.core.transition_authority import ATTESTATION_EVENT, TransitionAuthorit
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.examples.warehouse_fulfillment.entities import FulfillmentOrder
 from sose.examples.warehouse_fulfillment.statecharts import FulfillmentOrderChart
-from sose.persistence.postgres import PostgresPersistence
+from sose.persistence.ownership import FencedEnginePersistence
+from sose.persistence.postgres import PostgresPersistence, StaleWriterError
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
@@ -169,3 +170,127 @@ def test_pg_signed_warehouse_ship_is_replayable_but_public_forgery_is_not():
     assert bad_root[0] == "rejected" and "signature invalid" in bad_root[1]
     forged_result = _fresh_verifier(DSN, namespace, forged.event_id, SECRET)
     assert forged_result[0] == "rejected" and "receipt missing" in forged_result[1]
+
+
+@pytest.mark.parametrize("forged_version", (0, 3))
+def test_pg_native_ship_rejects_untrusted_prestate_even_with_valid_issuer(
+    forged_version,
+):
+    """#545: a real issuer cannot sign a successor of public-UoW forgery.
+
+    Version zero at the wrong initial state and a plausible packed/version-3
+    projection without native transition history must both fail BEFORE the
+    actual Engine signs source and attestation into PostgreSQL.
+    """
+    assert DSN is not None
+    namespace = "trusted_prestate_" + uuid4().hex[:12]
+    authority = TransitionAuthority(ISSUER, KEY_ID, SECRET)
+    order = FulfillmentOrder(
+        id="order:public-prestate", state="requested",
+        created_at=NOW, updated_at=NOW,
+    )
+    with PostgresPersistence(DSN, namespace=namespace) as store:
+        with store.transaction(owner_id=OWNER) as uow:
+            uow.save_entity(order)
+        with store.transaction(owner_id=OWNER) as uow:
+            tampered = uow.get_entity(order.entity_type, order.id)
+            tampered.state = "packed"
+            tampered.version = forged_version
+            tampered.updated_at = NOW
+            uow.save_entity(tampered)
+        prior_events = tuple(store.events())
+
+        with pytest.raises(
+            ValueError, match="unauthenticated prestate|trusted predecessor"
+        ):
+            _runtime(store, authority).dispatch(Command(
+                command_id=f"command:forged-prestate:{forged_version}",
+                name="ship", entity_type=order.entity_type,
+                entity_id=order.id, owner_id=OWNER,
+                due_at=NOW, issued_at=NOW,
+                correlation_id="flow:forged-prestate",
+            ))
+
+        assert tuple(store.events()) == prior_events
+        assert store.entity(order.entity_type, order.id).state == "packed"
+        assert store.entity(order.entity_type, order.id).version == forged_version
+
+    with PostgresPersistence(DSN, namespace=namespace) as recovered:
+        assert recovered.entity(order.entity_type, order.id).state == "packed"
+        assert recovered.entity(order.entity_type, order.id).version == forged_version
+        assert not any(
+            event.name == ATTESTATION_EVENT for event in recovered.events()
+        )
+
+
+def test_postgres_fenced_native_statechart_rejects_stale_issuer_after_takeover():
+    """#545: stale issuer holding the correct HMAC key cannot durably sign.
+
+    Two independent PostgreSQL connections share one namespace and owner.
+    The DB-authoritative epoch, not self-declared event or issuer metadata,
+    fences the displaced runtime before the StateChart/receipt can commit.
+    A later lease legitimately continues the signed predecessor chain.
+    This bounded case is not independent OS-worker/key-service certification.
+    """
+    assert DSN is not None
+    namespace = "trusted_fence_" + uuid4().hex[:12]
+    authority = TransitionAuthority(ISSUER, KEY_ID, SECRET)
+    order = FulfillmentOrder(
+        id="order:fenced-epoch", state="requested",
+        created_at=NOW, updated_at=NOW,
+    )
+    with (
+        PostgresPersistence(DSN, namespace=namespace) as older,
+        PostgresPersistence(DSN, namespace=namespace) as newer,
+    ):
+        with older.transaction(owner_id=OWNER) as uow:
+            uow.save_entity(order)
+        first = older.claim_writer(OWNER, expected_epoch=older.writer_epoch())
+        assert first.epoch == 1
+        old_runtime = _runtime(FencedEnginePersistence(older, first), authority)
+        old_runtime.dispatch(Command(
+            command_id="command:fenced-initial-allocate", name="allocate",
+            entity_type=order.entity_type, entity_id=order.id, owner_id=OWNER,
+            due_at=NOW, issued_at=NOW, correlation_id="flow:fenced-epoch",
+        ))
+        before_takeover = tuple(newer.events())
+        assert len(before_takeover) == 2
+        assert sum(e.name == ATTESTATION_EVENT for e in before_takeover) == 1
+
+        second = newer.claim_writer(OWNER, expected_epoch=newer.writer_epoch())
+        assert second.epoch == first.epoch + 1
+        with pytest.raises(StaleWriterError, match="stale writer epoch"):
+            old_runtime.dispatch(Command(
+                command_id="command:stale-issuer-start-pick", name="start_pick",
+                entity_type=order.entity_type, entity_id=order.id, owner_id=OWNER,
+                due_at=NOW, issued_at=NOW, correlation_id="flow:fenced-epoch",
+            ))
+        assert tuple(newer.events()) == before_takeover
+        assert newer.entity(order.entity_type, order.id).state == "allocated"
+
+        # Public UoW without an epoch has no authority after writer activation.
+        with pytest.raises(StaleWriterError, match="owner_epoch is required"):
+            with older.transaction(owner_id=OWNER) as uow:
+                uow.get_entity(order.entity_type, order.id)
+
+        promoted = FencedEnginePersistence(newer, second)
+        _runtime(promoted, authority).dispatch(Command(
+            command_id="command:new-issuer-start-pick", name="start_pick",
+            entity_type=order.entity_type, entity_id=order.id, owner_id=OWNER,
+            due_at=NOW, issued_at=NOW, correlation_id="flow:fenced-epoch",
+        ))
+        assert newer.entity(order.entity_type, order.id).state == "picking"
+        events = tuple(newer.events())
+        assert len(events) == 4
+        assert sum(e.name == ATTESTATION_EVENT for e in events) == 2
+
+    # Reopen a third DB connection and verify both immutable source receipts
+    # under the active epoch. The old runtime's failed command is absent.
+    with PostgresPersistence(DSN, namespace=namespace) as recovered:
+        restored = FencedEnginePersistence(recovered, second)
+        with restored.transaction(owner_id=OWNER) as uow:
+            signed = [e for e in uow.events() if e.name == "entity.state_transition"]
+            assert [e.payload["trigger"] for e in signed] == ["allocate", "start_pick"]
+            for event in signed:
+                assert authority.verify(uow=uow, event=event).name == ATTESTATION_EVENT
+        assert recovered.entity(order.entity_type, order.id).state == "picking"
