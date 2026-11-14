@@ -59,16 +59,8 @@ class ObservedPRDataset(BaseModel):
         holdout_traces = self.traces[split_index:]
         holdout_start = holdout_traces[0].opened_at
 
-        candidate_train = self.traces[:split_index]
-        train_traces = tuple(
-            trace
-            for trace in candidate_train
-            if trace.terminal_at is not None and trace.terminal_at <= holdout_start
-        )
-        purged_keys = tuple(
-            (trace.repository, trace.pr_number)
-            for trace in candidate_train
-            if trace.terminal_at is None or trace.terminal_at > holdout_start
+        train_traces, purged_keys = _purge_overlapping_training(
+            self.traces[:split_index], holdout_start,
         )
         if not train_traces:
             raise ValueError("purging leaves no training traces")
@@ -117,13 +109,33 @@ class ObservedPRSplit(BaseModel):
             raise ValueError("purged pull requests must not appear in train or holdout")
         if len(purged_keys) != len(self.purged_keys):
             raise ValueError("purged pull request identities must be unique")
+        self._validate_chronology()
+        return self
+
+    def _validate_chronology(self) -> None:
         if any(trace.terminal_at is None for trace in self.holdout.traces):
             raise ValueError("holdout traces must be terminal")
-        if self.train.traces[-1].opened_at > self.holdout.traces[0].opened_at:
+        holdout_start = self.holdout.traces[0].opened_at
+        if self.train.traces[-1].opened_at > holdout_start:
             raise ValueError("chronological holdout must not precede training data")
-        if any(
-            trace.terminal_at is None or trace.terminal_at > self.holdout.traces[0].opened_at
-            for trace in self.train.traces
-        ):
+        if not all(_known_by(trace, holdout_start) for trace in self.train.traces):
             raise ValueError("training outcomes must be known before holdout begins")
-        return self
+
+
+def _known_by(trace, instant) -> bool:
+    """The trace's terminal outcome is known at ``instant``."""
+    return trace.terminal_at is not None and trace.terminal_at <= instant
+
+
+def _purge_overlapping_training(candidates, holdout_start):
+    """Keep training traces whose outcome is known before the holdout starts.
+
+    The others are purged; their (repository, pr_number) keys are returned.
+    """
+    train = tuple(trace for trace in candidates if _known_by(trace, holdout_start))
+    purged = tuple(
+        (trace.repository, trace.pr_number)
+        for trace in candidates
+        if not _known_by(trace, holdout_start)
+    )
+    return train, purged

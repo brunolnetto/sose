@@ -52,12 +52,16 @@ class OD5aWorkItem:
         for station, duration in self.service_by_station:
             if not station or station in names:
                 raise ValueError("station IDs must be nonempty and distinct")
-            if isinstance(duration, bool) or not isinstance(duration, (int, float)):
-                raise ValueError("service demand must be numeric")
-            if not isfinite(duration) or duration <= 0:
-                raise ValueError("service demand must be finite and positive")
-            _require_microsecond_time(duration, name="service demand")
+            _validate_service_demand(duration)
             names.add(station)
+
+
+def _validate_service_demand(duration) -> None:
+    if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+        raise ValueError("service demand must be numeric")
+    if not isfinite(duration) or duration <= 0:
+        raise ValueError("service demand must be finite and positive")
+    _require_microsecond_time(duration, name="service demand")
 
 
 @dataclass(frozen=True, slots=True)
