@@ -80,6 +80,8 @@ The exclusion inventory and its remaining test debt are maintained in [coverage-
 
 The authoritative coverage job also runs `codebase-stats` against the generated
 `coverage.json` and pytest JSON report, with `src/sose` as the analysis root.
+This analysis is informational; the `quality` job is the only enforcement
+point of the ADR-0010 ratchet.
 
 Coverage gaps are prioritized together with:
 
@@ -98,3 +100,27 @@ complex, and low-MI may need decomposition before more tests are added.
 The generated `codebase-stats-report.txt`, `coverage.json`, and
 `pytest-report.json` are retained as CI artifacts so coverage convergence can
 be audited against code-quality trends rather than against a single percentage.
+
+## Structural quality ratchet
+
+[ADR-0010](../architecture/decisions/adr-0010-codebase-quality-ratchet.md) makes
+the structural metrics a merge gate. The limits are CC ≤ 10 per function,
+≤ 400 lines per module and MI ≥ 20 per module, configured in
+`[tool.codebase-stats.gates]`. Known violations are frozen in
+`.codebase-stats-baseline.json`, which may only shrink. The `quality` CI job
+fails on:
+
+- a new violation;
+- a baselined violation that gets worse;
+- a stale baseline entry (`--strict-baseline`).
+
+To check locally:
+
+```bash
+codebase-stats --root src/sose --only cc,size,mi --strict-baseline
+```
+
+After fixing an offender, remove its entry. Either edit the JSON, or run
+`codebase-stats --root src/sose --update-baseline` and confirm that the diff only
+deletes or lowers entries. Never use `--update-baseline` to accept a new or worse
+violation.
