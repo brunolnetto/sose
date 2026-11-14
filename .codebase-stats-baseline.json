@@ -93,7 +93,6 @@
   "max_lines:organizational/od4_intake.py": 433,
   "max_lines:organizational/od5a_durable.py": 468,
   "max_lines:organizational/prospective_stage1_fit_v2.py": 458,
-  "max_lines:persistence/memory.py": 1127,
   "max_lines:persistence/postgres.py": 969,
   "max_lines:persistence/postgres_resource_ledger.py": 735,
   "max_lines:persistence/sqlite_incremental.py": 630,
@@ -120,7 +119,6 @@
   "min_mi:organizational/domain_experiment_runtime.py": 10.872002970688813,
   "min_mi:organizational/ledger.py": 19.76193053380103,
   "min_mi:organizational/od4_intake.py": 17.624204288926034,
-  "min_mi:persistence/memory.py": 0.0,
   "min_mi:persistence/postgres.py": 14.033114723509408,
   "min_mi:persistence/postgres_resource_ledger.py": 15.54461538442377,
   "min_mi:persistence/sqlite_incremental.py": 16.011596013869354
