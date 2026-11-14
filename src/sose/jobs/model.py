@@ -9,6 +9,19 @@ def _require_non_negative(value: int, *, label: str) -> None:
         raise ValueError(f"{label} must be >= 0")
 
 
+def _require_unique_identities(identities: tuple[str, ...], message: str) -> None:
+    # Type check first: set() of an unhashable element must not raise TypeError.
+    if (
+        any(not isinstance(identity, str) or not identity for identity in identities)
+        or len(identities) != len(set(identities))
+    ):
+        raise ValueError(message)
+
+
+_JOB_STATUSES = frozenset({"ready", "running", "paused", "failed"})
+_JOB_PHASES = frozenset({"idle", "advance", "reconcile"})
+
+
 @dataclass(frozen=True, slots=True)
 class CompletedJobTrigger:
     trigger_id: str
@@ -65,12 +78,34 @@ class SimulationJobState:
     active_publication_message_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
+        self._validate_identity()
+        self._validate_counters()
+        _require_unique_identities(
+            self.active_effect_ids,
+            "active recovery effects require unique nonempty identities",
+        )
+        _require_unique_identities(
+            self.active_boundary_message_ids,
+            "active recovery boundary messages require unique nonempty identities",
+        )
+        _require_unique_identities(
+            self.active_publication_message_ids,
+            "active recovery publications require unique nonempty identities",
+        )
+        if self.status not in _JOB_STATUSES:
+            raise ValueError(f"unsupported job status: {self.status}")
+        if self.phase not in _JOB_PHASES:
+            raise ValueError(f"unsupported job phase: {self.phase}")
+
+    def _validate_identity(self) -> None:
         if not self.job_id:
             raise ValueError("job_id cannot be empty")
         if not self.domain_name:
             raise ValueError("domain_name cannot be empty")
         if self.config_revision < 1:
             raise ValueError("config_revision must be >= 1")
+
+    def _validate_counters(self) -> None:
         _require_non_negative(self.next_tick, label="next_tick")
         _require_non_negative(self.run_count, label="run_count")
         _require_non_negative(
@@ -89,29 +124,3 @@ class SimulationJobState:
             self.last_completed_batch_ticks,
             label="last_completed_batch_ticks",
         )
-        if (
-            any(not isinstance(effect_id, str) or not effect_id
-                for effect_id in self.active_effect_ids)
-            or len(self.active_effect_ids) != len(set(self.active_effect_ids))
-        ):
-            raise ValueError("active recovery effects require unique nonempty identities")
-        if (
-            any(not isinstance(message_id, str) or not message_id
-                for message_id in self.active_boundary_message_ids)
-            or len(self.active_boundary_message_ids) != len(
-                set(self.active_boundary_message_ids)
-            )
-        ):
-            raise ValueError("active recovery boundary messages require unique nonempty identities")
-        if (
-            any(not isinstance(message_id, str) or not message_id
-                for message_id in self.active_publication_message_ids)
-            or len(self.active_publication_message_ids) != len(
-                set(self.active_publication_message_ids)
-            )
-        ):
-            raise ValueError("active recovery publications require unique nonempty identities")
-        if self.status not in {"ready", "running", "paused", "failed"}:
-            raise ValueError(f"unsupported job status: {self.status}")
-        if self.phase not in {"idle", "advance", "reconcile"}:
-            raise ValueError(f"unsupported job phase: {self.phase}")

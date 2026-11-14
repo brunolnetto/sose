@@ -11,6 +11,10 @@ from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
 from sose.persistence.base import Persistence
+from sose.examples.warehouse_management.reservations import (
+    matching_reservation,
+    validated_consumption_request,
+)
 
 from .entities import Dock, Forklift, Shipment, StockPosition, Truck, WarehouseSite
 from .statecharts import DockChart, ForkliftChart, ShipmentChart, TruckChart, WarehouseSiteChart
@@ -362,18 +366,12 @@ def consume_external_reservation(
 ) -> bool:
     """Idempotently consume a previously reserved foreign-process quantity."""
 
-    if quantity <= 0:
-        raise ValueError("consumption quantity must be positive")
-    normalized_quantity = round(float(quantity), 6)
-    if normalized_quantity <= 0:
-        raise ValueError("consumption quantity is below supported precision")
-    if not sku:
-        raise ValueError("consumption sku cannot be empty")
-    if not reservation_reference:
-        raise ValueError("reservation_reference cannot be empty")
-    if not consumption_reference:
-        raise ValueError("consumption_reference cannot be empty")
-
+    normalized_quantity = validated_consumption_request(
+        quantity,
+        sku=sku,
+        reservation_reference=reservation_reference,
+        consumption_reference=consumption_reference,
+    )
     stock = _entity(persistence, "warehouse_management_stock", stock_id)
     stock_sku = str(stock.attributes.get("sku", ""))
     if stock_sku != sku:
@@ -382,19 +380,9 @@ def consume_external_reservation(
         )
 
     reservations = dict(stock.attributes.get("external_reservations", {}))
-    existing = reservations.get(reservation_reference)
-    if existing is None:
-        raise ValueError(f"unknown external reservation: {reservation_reference}")
-
-    record = dict(existing)
-    if (
-        str(record.get("sku")) != sku
-        or float(record.get("quantity", 0.0)) != normalized_quantity
-    ):
-        raise ValueError(
-            f"reservation consumption conflict: {reservation_reference}"
-        )
-
+    record = matching_reservation(
+        reservations, reservation_reference, sku=sku, quantity=normalized_quantity,
+    )
     if bool(record.get("consumed", False)):
         if record.get("consumption_reference") != consumption_reference:
             raise ValueError(

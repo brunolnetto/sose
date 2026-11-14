@@ -125,22 +125,29 @@ class ResourcePoolContract:
             if claim.claim_id in seen_claims:
                 raise ValueError("duplicate resource claim_id")
             seen_claims.add(claim.claim_id)
-            address = claim.address
-            if (
-                address.resource_type != pool_address.resource_type
-                or address.pool_id != pool_address.pool_id
-                or address.scope != pool_address.scope
-                or address.organization_id != pool_address.organization_id
-            ):
+            if not _same_scoped_pool(claim.address, pool_address):
                 raise ValueError("resource claim is for a different scoped pool")
-            if self.instance_ids:
-                if address.instance_id not in self.instance_ids:
-                    raise ValueError("instance allocation must name a member of the pool")
-                if address.instance_id in used_instances:
-                    raise ValueError("exclusive instance is allocated twice")
-                used_instances.add(address.instance_id)
-            elif address.instance_id is not None:
-                raise ValueError("fungible capacity cannot claim an instance")
+            self._bind_instance(claim.address, used_instances)
             used_units += claim.units
             if used_units > self.capacity:
                 raise ValueError("finite resource capacity exceeded")
+
+    def _bind_instance(self, address: ResourceAddress, used_instances: set[str]) -> None:
+        """Exclusive pools allocate distinct members; fungible pools name none."""
+        if self.instance_ids:
+            if address.instance_id not in self.instance_ids:
+                raise ValueError("instance allocation must name a member of the pool")
+            if address.instance_id in used_instances:
+                raise ValueError("exclusive instance is allocated twice")
+            used_instances.add(address.instance_id)
+        elif address.instance_id is not None:
+            raise ValueError("fungible capacity cannot claim an instance")
+
+
+def _same_scoped_pool(address: ResourceAddress, pool: ResourceAddress) -> bool:
+    return (
+        address.resource_type == pool.resource_type
+        and address.pool_id == pool.pool_id
+        and address.scope == pool.scope
+        and address.organization_id == pool.organization_id
+    )
