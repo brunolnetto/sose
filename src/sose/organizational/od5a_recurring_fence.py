@@ -6,6 +6,7 @@ part of the fencing contract and are unchanged.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from json import dumps
@@ -22,6 +23,27 @@ from .od5a_durable import _KIND, _time
 
 _LEASE_KIND = "od5a_runner_lease"
 _DOMAIN = "od5a"
+_SHARED_WAIT_KIND = "od5a_shared_capacity_wait"
+
+
+
+@contextmanager
+def _job_transaction(store: Persistence, job_id: str):
+    """Serialize same-job PostgreSQL OLTP writes, not unrelated organizations.
+
+    PostgresPersistence has last-writer-wins record updates. Its native
+    business_resource_guard acquires an exclusive session advisory lock on
+    precisely this organization's identity and releases it after the UoW.
+    SQLite retains its own BEGIN IMMEDIATE transaction semantics.
+    """
+    guard = getattr(store, "business_resource_guard", None)
+    if callable(guard):
+        with guard("od5a:recurring:" + job_id):
+            with store.transaction() as uow:
+                yield uow
+    else:
+        with store.transaction() as uow:
+            yield uow
 
 
 class StaleOD5aRunnerClaimError(RuntimeError):
