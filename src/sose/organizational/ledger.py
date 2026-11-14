@@ -34,6 +34,10 @@ class ActorCategory(StrEnum):
     GOVERNANCE = "governance"
 
 
+# Actor time that consumes no capacity and admits no concurrent use.
+_NON_CAPACITY = frozenset({ActorCategory.UNAVAILABLE, ActorCategory.IDLE})
+
+
 class ItemLedgerInterval(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -138,7 +142,7 @@ class ActorLedgerInterval(BaseModel):
             raise ValueError("ledger interval end must be greater than start")
         if self.config_epoch is not None and not self.model_spec_hash:
             raise ValueError("config_epoch requires model_spec_hash provenance")
-        if self.category in {ActorCategory.UNAVAILABLE, ActorCategory.IDLE} and not isclose(
+        if self.category in _NON_CAPACITY and not isclose(
             self.allocation,
             1.0,
             rel_tol=0.0,
@@ -153,7 +157,7 @@ class ActorLedgerInterval(BaseModel):
 
     @property
     def actor_time(self) -> float:
-        if self.category in {ActorCategory.UNAVAILABLE, ActorCategory.IDLE}:
+        if self.category in _NON_CAPACITY:
             return 0.0
         return self.duration * self.allocation
 
@@ -203,25 +207,11 @@ class ActorLedger(BaseModel):
         for start, end in zip(boundaries, boundaries[1:], strict=False):
             if start == end:
                 continue
-            active = [
+            _check_segment_capacity([
                 interval
                 for interval in self.intervals
                 if interval.start < end and interval.end > start
-            ]
-            if not active:
-                continue
-            if any(
-                interval.category in {ActorCategory.UNAVAILABLE, ActorCategory.IDLE}
-                for interval in active
-            ) and len(active) > 1:
-                raise ValueError("idle or unavailable time cannot overlap actor capacity use")
-            allocation = sum(
-                interval.allocation
-                for interval in active
-                if interval.category not in {ActorCategory.UNAVAILABLE, ActorCategory.IDLE}
-            )
-            if allocation > 1.0 + _CAPACITY_ABS_TOL:
-                raise ValueError("fractional allocation exceeds actor capacity")
+            ])
 
     @property
     def allocated_actor_time(self) -> float:
@@ -306,3 +296,21 @@ def _time_equal(left: float, right: float) -> bool:
 def _require_finite(value: float, name: str) -> None:
     if not isfinite(value):
         raise ValueError(f"{name} must be finite")
+
+
+def _check_segment_capacity(active: list[ActorLedgerInterval]) -> None:
+    """One elementary segment: idle/unavailable time is exclusive, use sums to <= 1."""
+    if not active:
+        return
+    if any(
+        interval.category in _NON_CAPACITY
+        for interval in active
+    ) and len(active) > 1:
+        raise ValueError("idle or unavailable time cannot overlap actor capacity use")
+    allocation = sum(
+        interval.allocation
+        for interval in active
+        if interval.category not in _NON_CAPACITY
+    )
+    if allocation > 1.0 + _CAPACITY_ABS_TOL:
+        raise ValueError("fractional allocation exceeds actor capacity")
