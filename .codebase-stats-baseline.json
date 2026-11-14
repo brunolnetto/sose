@@ -28,7 +28,6 @@
   "max_cc:examples/warehouse_management/simulation.py::seed_reference": 16,
   "max_cc:examples/warehouse_management/simulation.py::shipment_kpis": 11,
   "max_cc:organizational/domain_experiment_runtime.py::run_domain_experiment": 11,
-  "max_cc:organizational/manufacturing_official_run.py::execute_official": 16,
   "max_cc:organizational/manufacturing_reference.py::ManufacturingReferenceDomain.execute": 17,
   "max_cc:organizational/mro_reference.py::MROReferenceDomain.execute": 20,
   "max_cc:organizational/o2c_reference.py::O2CReferenceDomain.execute": 20,
