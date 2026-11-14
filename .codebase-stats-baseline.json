@@ -26,7 +26,6 @@
   "max_cc:organizational/od4_intake.py::_check_admission": 19,
   "max_cc:organizational/od4_intake.py::_verify_decision_ledger": 68,
   "max_cc:organizational/od4_intake.py::intervene_work": 45,
-  "max_cc:organizational/od5a_mechanisms.py::run_od5a_pilot": 40,
   "max_lines:backends/simpy.py": 783,
   "max_lines:cli.py": 693,
   "max_lines:composition/boundary.py": 425,
