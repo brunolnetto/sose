@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
+from sose.core.identity import deterministic_id
 from sose.organizational.od2_actor import (
     ACTOR_KIND, ACTOR_STATES, ActorAvailabilityCalendar, ActorAvailabilityInterval, seed_actor, transition_actor,
 )
@@ -21,10 +22,11 @@ OWNER = "org:research-A"
 MODEL = "bounded-actor-model-hash"
 
 
-def _seed(store, *, owner=OWNER, key="actor-1"):
+def _seed(store, *, owner=OWNER, key="actor-1", tracked_time=False):
     return seed_actor(
         store, owner_id=owner, actor_key=key,
         model_spec_hash=MODEL, config_epoch=1, at=T0,
+        tracked_time=tracked_time,
     )
 
 
@@ -529,3 +531,112 @@ def test_od2_nested_uow_cannot_claim_predecessor_replacement(adapter, tmp_path):
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+@pytest.mark.parametrize("mutation", [
+    "reclassify_elapsed", "inflate_elapsed", "paid_cost",
+    "last_at", "assigned_work", "drop_causal_index",
+    "admission_rewind", "nonwork_cost_forgery", "paid_to_zero",
+])
+def test_actor_time_guard_rejects_forged_projection_before_next_transition(
+    adapter, mutation, tmp_path,
+):
+    """#462: each source interval and charged decision must reconcile on read.
+
+    Even a state-bucket transfer preserving TOTAL elapsed cannot be accepted
+    from mutable Entity attributes in place of original Command/events.
+    """
+    path = tmp_path / ("actor-conservation-" + mutation + ".sqlite")
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = _seed(store, tracked_time=True)
+        # The paid-to-zero mutant must start with a genuinely charged
+        # non-work transition, not an already zero-cost activate.
+        initial_cost = 9 if mutation == "paid_to_zero" else 0
+        _transition(store, actor_id, "activate", 1, cost_us=initial_cost)
+        _transition(store, actor_id, "assign", 2, work_id="work:guard", cost_us=7)
+        with store.transaction(owner_id=OWNER) as uow:
+            actor = uow.get_entity(ACTOR_KIND, actor_id)
+            attrs = actor.attributes
+            if mutation == "reclassify_elapsed":
+                attrs["time_us"]["eligible"] -= 1
+                attrs["time_us"]["active"] += 1
+            elif mutation == "inflate_elapsed":
+                attrs["time_us"]["active"] += 100
+            elif mutation == "paid_cost":
+                attrs["paid_transition_us"] = 0
+            elif mutation == "last_at":
+                attrs["last_at"] = (T0 + timedelta(hours=2, seconds=1)).isoformat()
+            elif mutation == "assigned_work":
+                attrs["assigned_work_id"] = "work:forged"
+            elif mutation == "drop_causal_index":
+                attrs["applied_causes"].pop("observation:activate:1")
+            elif mutation == "admission_rewind":
+                actor.created_at = T0 - timedelta(seconds=1)
+                attrs["time_us"]["admitted"] += 1000000
+            elif mutation in ("nonwork_cost_forgery", "paid_to_zero"):
+                from dataclasses import replace as dc_replace
+                command_id = deterministic_id(
+                    "od2-actor-command", OWNER, actor_id, "observation:activate:1",
+                )
+                command = uow.get_command(command_id)
+                assert command is not None
+                assert command.payload["cost_us"] == initial_cost
+                # Coordinated rewriting of *both* persisted Command and
+                # mutable projection cannot override the original cost event.
+                forged_cost = 0 if mutation == "paid_to_zero" else 37
+                uow.save_command(dc_replace(
+                    command,
+                    payload={**command.payload, "cost_us": forged_cost},
+                ))
+                attrs["applied_causes"]["observation:activate:1"][3] = forged_cost
+                attrs["paid_transition_us"] += forged_cost - initial_cost
+            uow.save_entity(actor)
+        before_events = tuple(store.events())
+        before_entity = store.entity(ACTOR_KIND, actor_id)
+        before_commands = tuple(
+            (event.causation_id, store.command(event.causation_id))
+            for event in before_events if event.name == "entity.state_transition"
+        )
+        with pytest.raises(ValueError, match="OD-2 actor-time"):
+            _transition(
+                store, actor_id, "complete", 3, work_id="work:guard",
+            )
+        assert tuple(store.events()) == before_events
+        assert store.entity(ACTOR_KIND, actor_id) == before_entity
+        assert all(store.command(key) == command for key, command in before_commands)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+def test_actor_time_guard_keeps_legal_paid_state_conservation_and_restart(
+    adapter, tmp_path,
+):
+    """Positive control: compensated work, development and clean restart."""
+    path = tmp_path / "actor-time-positive.sqlite"
+    store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
+    try:
+        actor_id = _seed(store, key="conserved", tracked_time=True)
+        _transition(store, actor_id, "activate", 1, cost_us=3)
+        _transition(store, actor_id, "assign", 2, work_id="work:legal", cost_us=7)
+        _transition(store, actor_id, "complete", 3, work_id="work:legal", cost_us=5)
+        _transition(store, actor_id, "begin_development", 4, cost_us=11)
+        _transition(store, actor_id, "finish_development", 6, cost_us=2)
+        result = _transition(store, actor_id, "exit", 7, cost_us=1)
+        assert result.state == "exited"
+        assert result.attributes["paid_transition_us"] == 29
+        assert sum(result.attributes["time_us"].values()) == 7 * 3600 * 1000000
+        assert result.attributes["time_us"]["development"] == 2 * 3600 * 1000000
+        assert result.attributes["assigned_work_id"] is None
+        assert len([e for e in store.events() if e.name == "entity.state_transition"
+                    and e.entity_id == actor_id]) == 6
+        assert _transition(store, actor_id, "exit", 7, cost_us=1) == result
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(path) as reopened:
+            assert _transition(reopened, actor_id, "exit", 7, cost_us=1) == result
