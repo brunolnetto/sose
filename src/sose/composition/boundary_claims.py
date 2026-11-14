@@ -89,3 +89,39 @@ def _require_terminal_proof(proof, predecessor, consumption, uow) -> None:
         or entity.state != proof.terminal_state
     ):
         raise RuntimeError("typed causal predecessor certificate lacks durable terminal state")
+
+
+def charge_recovery_publication(uow, recovery_job_id: str, message) -> None:
+    """Charge a new publication to its active recurring trigger in the same UoW.
+
+    A process dying right after the publishing transaction cannot turn a
+    published message into unaccounted free work.
+    """
+    from dataclasses import replace
+    job = uow.get_job_state(recovery_job_id)
+    if job is None or job.active_trigger_id is None:
+        raise RuntimeError(
+            "recovery publication lost its active recurring trigger"
+        )
+    if message.message_id in job.active_publication_message_ids:
+        raise RuntimeError(
+            "enrolled recovery publication is missing its message"
+        )
+    uow.save_job_state(replace(
+        job,
+        active_publication_message_ids=(
+            *job.active_publication_message_ids, message.message_id,
+        ),
+    ))
+
+
+def require_same_delivery(existing: BoundaryDelivery, message, delivery_id: str) -> None:
+    if (
+        existing.message_id != message.message_id
+        or existing.destination_domain != message.destination_domain
+        or existing.contract_name != message.contract_name
+        or existing.contract_version != message.contract_version
+    ):
+        raise ValueError(
+            f"boundary delivery identity conflict: {delivery_id}"
+        )

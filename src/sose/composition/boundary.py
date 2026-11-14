@@ -7,7 +7,9 @@ from typing import TYPE_CHECKING, Callable
 from sose.persistence.base import Persistence
 
 from .boundary_claims import (
+    charge_recovery_publication,
     delivery_claimable,
+    require_same_delivery,
     typed_predecessor_certified,
     validate_claim_request,
 )
@@ -144,35 +146,12 @@ class BoundaryService:
                 # together. A process dying immediately after this transaction
                 # cannot turn a published message into unaccounted free work.
                 if recovery_job_id is not None:
-                    from dataclasses import replace
-                    job = uow.get_job_state(recovery_job_id)
-                    if job is None or job.active_trigger_id is None:
-                        raise RuntimeError(
-                            "recovery publication lost its active recurring trigger"
-                        )
-                    if message.message_id in job.active_publication_message_ids:
-                        raise RuntimeError(
-                            "enrolled recovery publication is missing its message"
-                        )
-                    uow.save_job_state(replace(
-                        job,
-                        active_publication_message_ids=(
-                            *job.active_publication_message_ids, message.message_id,
-                        ),
-                    ))
+                    charge_recovery_publication(uow, recovery_job_id, message)
                 uow.save_boundary_message(message)
 
             existing_delivery = uow.get_boundary_delivery(delivery.delivery_id)
             if existing_delivery is not None:
-                if (
-                    existing_delivery.message_id != message.message_id
-                    or existing_delivery.destination_domain != message.destination_domain
-                    or existing_delivery.contract_name != message.contract_name
-                    or existing_delivery.contract_version != message.contract_version
-                ):
-                    raise ValueError(
-                        f"boundary delivery identity conflict: {delivery.delivery_id}"
-                    )
+                require_same_delivery(existing_delivery, message, delivery.delivery_id)
                 return existing_delivery
             uow.save_boundary_delivery(delivery)
             return delivery
@@ -278,41 +257,47 @@ class BoundaryService:
                 raise RuntimeError(
                     f"boundary delivery missing message: {current.delivery_id}"
                 )
+            return self._apply_claimed(uow, current, message, existing, registry, now)
 
-            # A predecessor may have been published after this claim was
-            # acquired. Validate inside the ACK transaction as well, closing
-            # the claim/consume time-of-check vs time-of-use window.
-            if not self._causal_predecessor_applied(message, uow):
-                raise StaleBoundaryClaimError(
-                    f"causal predecessor not applied: {current.delivery_id}"
-                )
+    def _apply_claimed(
+        self, uow: "UnitOfWork", current: BoundaryDelivery, message: BoundaryMessage,
+        existing: BoundaryConsumption | None, registry: BoundaryConsumerRegistry,
+        now: datetime,
+    ) -> BoundaryConsumption:
+        # A predecessor may have been published after this claim was
+        # acquired. Validate inside the ACK transaction as well, closing
+        # the claim/consume time-of-check vs time-of-use window.
+        if not self._causal_predecessor_applied(message, uow):
+            raise StaleBoundaryClaimError(
+                f"causal predecessor not applied: {current.delivery_id}"
+            )
 
-            handler = registry.resolve(message)
-            effect_id = handler(message, uow)
-            if not isinstance(effect_id, str) or not effect_id.strip():
-                raise ValueError("boundary consumer effect identity must be a nonblank string")
+        handler = registry.resolve(message)
+        effect_id = handler(message, uow)
+        if not isinstance(effect_id, str) or not effect_id.strip():
+            raise ValueError("boundary consumer effect identity must be a nonblank string")
 
-            consumption = BoundaryConsumption.create(
-                delivery=current,
-                consumer_effect_id=effect_id,
+        consumption = BoundaryConsumption.create(
+            delivery=current,
+            consumer_effect_id=effect_id,
+            consumed_at=now,
+        )
+        if existing is not None and existing != consumption:
+            raise ValueError(
+                f"boundary consumption identity conflict: {current.delivery_id}"
+            )
+        if existing is None:
+            uow.save_boundary_consumption(consumption)
+
+        uow.save_boundary_delivery(
+            replace(
+                current,
+                status=DeliveryStatus.CONSUMED,
                 consumed_at=now,
+                consumer_effect_id=effect_id,
             )
-            if existing is not None and existing != consumption:
-                raise ValueError(
-                    f"boundary consumption identity conflict: {current.delivery_id}"
-                )
-            if existing is None:
-                uow.save_boundary_consumption(consumption)
-
-            uow.save_boundary_delivery(
-                replace(
-                    current,
-                    status=DeliveryStatus.CONSUMED,
-                    consumed_at=now,
-                    consumer_effect_id=effect_id,
-                )
-            )
-            return consumption
+        )
+        return consumption
 
     @staticmethod
     def _validate_causation(message: BoundaryMessage, uow: "UnitOfWork") -> None:

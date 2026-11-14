@@ -1,6 +1,4 @@
 {
-  "max_cc:composition/boundary.py::BoundaryService.consume": 11,
-  "max_cc:composition/boundary.py::BoundaryService.publish": 13,
   "max_cc:composition/recovery.py::TradingCustomerRecoveryRunner.__post_init__": 33,
   "max_cc:composition/recovery.py::TradingCustomerRecoveryRunner._run_bounded": 99,
   "max_cc:composition/recovery.py::TradingCustomerRecoveryRunner.run_trigger": 30,
@@ -63,7 +61,7 @@
   "max_cc:persistence/sqlite_incremental.py::SQLiteIncrementalPersistence.transaction": 11,
   "max_lines:backends/simpy.py": 783,
   "max_lines:cli.py": 693,
-  "max_lines:composition/boundary.py": 440,
+  "max_lines:composition/boundary.py": 425,
   "max_lines:composition/recovery.py": 808,
   "max_lines:composition/trading_company_customer.py": 1906,
   "max_lines:composition/trading_company_replenishment.py": 550,
