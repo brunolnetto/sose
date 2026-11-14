@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from math import ceil, cos, exp, log, pi, sqrt
-from statistics import fmean, median
+from math import log
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -11,6 +10,15 @@ from .agency import A1Policy, A1PolicyName, AgencyLevel
 from .experiment import ExperimentProtocol
 from .ledger import ActorCategory, ActorLedger, ActorLedgerInterval
 from .synthetic_runner import SyntheticItemRecord
+from .synthetic_a1_support import (
+    _ActorTrack,
+    _draw_service,
+    _lead_statistics,
+    _lognormal_with_mean_cv,  # noqa: F401 - historical import location
+    _measured_time,
+    _standard_normal,  # noqa: F401 - historical import location
+    _throughput_and_wip,
+)
 from .synthetic_study import SyntheticWorldSpec
 
 
@@ -84,15 +92,7 @@ def run_a1_reference_world(
     nominal capacity, routing, demand process, and intervention remain unchanged.
     """
 
-    if world.protocol_hash != protocol.protocol_hash:
-        raise ValueError("synthetic world protocol hash mismatch")
-    if world.agency_level is not AgencyLevel.A1:
-        raise ValueError("A1 reference runner requires an A1 world")
-    agency = world.model_spec.agency
-    if agency.level is not AgencyLevel.A1 or agency.a1_policy is None:
-        raise ValueError("A1 world must carry an A1 policy")
-    policy = A1AdaptivePolicyParameters.from_policy(agency.a1_policy)
-
+    policy = _a1_policy(protocol, world)
     parameters = world.model_spec.parameters
     arrival_rate = _positive(parameters, "arrival_rate")
     service_capacity = _positive(parameters, "service_capacity")
@@ -105,21 +105,13 @@ def run_a1_reference_world(
     arrival_at = 0.0
     server_available_at = world.intervention_transition_time
     items: list[SyntheticItemRecord] = []
-    actor_intervals: list[ActorLedgerInterval] = []
-    actor_cursor = 0.0
+    track = _ActorTrack(world.model_spec_hash)
     if world.intervention_transition_time > 0.0:
-        actor_intervals.append(
-            ActorLedgerInterval(
-                start=0.0,
-                end=world.intervention_transition_time,
-                category=ActorCategory.UNAVAILABLE,
-                secondary_labels=("intervention_transition",),
-                model_spec_hash=world.model_spec_hash,
-            )
+        track.add(
+            0.0, world.intervention_transition_time, ActorCategory.UNAVAILABLE,
+            secondary_labels=("intervention_transition",),
         )
-        actor_cursor = world.intervention_transition_time
     adaptation_count = 0
-    adaptation_actor_time = 0.0
     item_index = 0
 
     while True:
@@ -132,119 +124,49 @@ def run_a1_reference_world(
         if arrival_at > protocol.horizon:
             break
 
-        service_z = _standard_normal(
-            rng,
-            stream="synthetic_service",
-            entity_id=item_index,
-            mechanism="primary",
+        draw = _draw_service(
+            rng, item_index,
+            service_capacity=service_capacity,
+            service_cv=service_cv,
+            rework_probability=rework_probability,
         )
-        primary = _lognormal_with_mean_cv(
-            mean=1.0 / service_capacity,
-            cv=service_cv,
-            standard_normal=service_z,
-        )
-        rework_latent = rng.uniform(
-            stream="synthetic_rework",
-            entity_id=item_index,
-            mechanism="occurs",
-        )
-        reworked = rework_latent < rework_probability
-        rework = 0.0
-        if reworked:
-            rework_z = _standard_normal(
-                rng,
-                stream="synthetic_service",
-                entity_id=item_index,
-                mechanism="rework",
-            )
-            rework = _lognormal_with_mean_cv(
-                mean=1.0 / service_capacity,
-                cv=service_cv,
-                standard_normal=rework_z,
-            )
-
         backlog_pressure = max(0.0, server_available_at - arrival_at)
         adapting = backlog_pressure >= policy.backlog_trigger
         service_multiplier = policy.service_multiplier if adapting else 1.0
-        processing_time = primary * service_multiplier
-        rework_time = rework * service_multiplier
+        processing_time = draw.primary * service_multiplier
+        rework_time = draw.rework * service_multiplier
 
-        capacity_start = max(arrival_at, server_available_at)
-        if actor_cursor < capacity_start:
-            actor_intervals.append(
-                ActorLedgerInterval(
-                    start=actor_cursor,
-                    end=capacity_start,
-                    category=ActorCategory.IDLE,
-                    model_spec_hash=world.model_spec_hash,
-                )
-            )
-            actor_cursor = capacity_start
-
-        if adapting and policy.adaptation_time > 0.0:
-            adaptation_end = actor_cursor + policy.adaptation_time
-            actor_intervals.append(
-                ActorLedgerInterval(
-                    start=actor_cursor,
-                    end=adaptation_end,
-                    category=ActorCategory.ADAPTATION,
-                    work_item_id=f"item-{item_index}",
-                    secondary_labels=("a1_batching",),
-                    model_spec_hash=world.model_spec_hash,
-                )
-            )
-            actor_cursor = adaptation_end
-            adaptation_actor_time += policy.adaptation_time
+        track.idle_until(max(arrival_at, server_available_at))
         if adapting:
+            track.adapt(policy.adaptation_time, f"item-{item_index}")
             adaptation_count += 1
 
-        service_start = actor_cursor
-        execution_time = processing_time + rework_time
-        completed_at = actor_cursor + execution_time
-        if execution_time > 0.0:
-            actor_intervals.append(
-                ActorLedgerInterval(
-                    start=actor_cursor,
-                    end=completed_at,
-                    category=ActorCategory.EXECUTION,
-                    work_item_id=f"item-{item_index}",
-                    secondary_labels=("adapted",) if adapting else (),
-                    model_spec_hash=world.model_spec_hash,
-                )
-            )
-        actor_cursor = completed_at
+        service_start = track.cursor
+        completed_at = track.execute(
+            processing_time + rework_time, f"item-{item_index}", adapted=adapting,
+        )
         server_available_at = completed_at
 
-        queue_time = service_start - arrival_at
-        lead_time = completed_at - arrival_at
         items.append(
             SyntheticItemRecord(
                 item_id=f"item-{item_index}",
                 arrival_at=arrival_at,
                 service_start=service_start,
                 completed_at=completed_at,
-                queue_time=queue_time,
+                queue_time=service_start - arrival_at,
                 processing_time=processing_time,
                 rework_time=rework_time,
-                lead_time=lead_time,
-                reworked=reworked,
-                service_latent_normal=service_z,
-                rework_latent_uniform=rework_latent,
+                lead_time=completed_at - arrival_at,
+                reworked=draw.reworked,
+                service_latent_normal=draw.service_z,
+                rework_latent_uniform=draw.rework_latent,
             )
         )
         item_index += 1
 
-    actor_observed_until = max(protocol.horizon, actor_cursor)
-    if actor_cursor < actor_observed_until:
-        actor_intervals.append(
-            ActorLedgerInterval(
-                start=actor_cursor,
-                end=actor_observed_until,
-                category=ActorCategory.IDLE,
-                model_spec_hash=world.model_spec_hash,
-            )
-        )
-
+    actor_observed_until = max(protocol.horizon, track.cursor)
+    track.idle_until(actor_observed_until)
+    actor_intervals = track.intervals
     actor_ledger = ActorLedger(
         actor_id="synthetic-actor-0",
         intervals=tuple(actor_intervals),
@@ -258,46 +180,12 @@ def run_a1_reference_world(
     measurement_start = protocol.warmup
     measurement_end = protocol.horizon
     measurement_duration = measurement_end - measurement_start
-    lead_time_cohort = tuple(
-        item
-        for item in items
-        if item.arrival_at >= measurement_start and item.completed_at <= measurement_end
+    throughput, mean_wip = _throughput_and_wip(items, measurement_start, measurement_end)
+    mean_lead, median_lead, p90_lead, rework_fraction = _lead_statistics(
+        items, measurement_start, measurement_end,
     )
-    measurement_departures = tuple(
-        item
-        for item in items
-        if measurement_start < item.completed_at <= measurement_end
-    )
-    leads = tuple(item.lead_time for item in lead_time_cohort)
-    throughput = len(measurement_departures) / measurement_duration
-    mean_wip = sum(
-        max(
-            0.0,
-            min(item.completed_at, measurement_end)
-            - max(item.arrival_at, measurement_start),
-        )
-        for item in items
-    ) / measurement_duration
-
-    if leads:
-        ordered = tuple(sorted(leads))
-        mean_lead = fmean(ordered)
-        median_lead = median(ordered)
-        p90_lead = ordered[max(1, ceil(0.90 * len(ordered))) - 1]
-        rework_fraction = (
-            sum(item.reworked for item in lead_time_cohort) / len(lead_time_cohort)
-        )
-    else:
-        mean_lead = median_lead = p90_lead = rework_fraction = 0.0
-
-    adaptation_actor_time_measurement = sum(
-        max(
-            0.0,
-            min(interval.end, measurement_end)
-            - max(interval.start, measurement_start),
-        )
-        for interval in actor_intervals
-        if interval.category is ActorCategory.ADAPTATION
+    adaptation_actor_time_measurement = _measured_time(
+        actor_intervals, ActorCategory.ADAPTATION, measurement_start, measurement_end,
     )
     adaptation_cost = (
         adaptation_actor_time_measurement * policy.adaptation_cost_rate
@@ -336,41 +224,17 @@ def run_a1_reference_world(
     )
 
 
-def _standard_normal(
-    rng: CounterRandomSource,
-    *,
-    stream: str,
-    entity_id: object,
-    mechanism: str,
-) -> float:
-    u1 = max(
-        rng.uniform(
-            stream=stream,
-            entity_id=entity_id,
-            mechanism=f"{mechanism}:u1",
-        ),
-        1e-15,
-    )
-    u2 = rng.uniform(
-        stream=stream,
-        entity_id=entity_id,
-        mechanism=f"{mechanism}:u2",
-    )
-    return sqrt(-2.0 * log(u1)) * cos(2.0 * pi * u2)
-
-
-def _lognormal_with_mean_cv(
-    *,
-    mean: float,
-    cv: float,
-    standard_normal: float,
-) -> float:
-    if cv == 0.0:
-        return mean
-    sigma2 = log(1.0 + cv * cv)
-    sigma = sqrt(sigma2)
-    mu = log(mean) - sigma2 / 2.0
-    return exp(mu + sigma * standard_normal)
+def _a1_policy(
+    protocol: ExperimentProtocol, world: SyntheticWorldSpec,
+) -> A1AdaptivePolicyParameters:
+    if world.protocol_hash != protocol.protocol_hash:
+        raise ValueError("synthetic world protocol hash mismatch")
+    if world.agency_level is not AgencyLevel.A1:
+        raise ValueError("A1 reference runner requires an A1 world")
+    agency = world.model_spec.agency
+    if agency.level is not AgencyLevel.A1 or agency.a1_policy is None:
+        raise ValueError("A1 world must carry an A1 policy")
+    return A1AdaptivePolicyParameters.from_policy(agency.a1_policy)
 
 
 def _positive(parameters: object, name: str) -> float:

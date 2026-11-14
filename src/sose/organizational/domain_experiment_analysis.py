@@ -1,10 +1,9 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from functools import lru_cache
 from hashlib import sha256
 import json
-from math import exp, lgamma, log, log1p, sqrt
+from math import sqrt
 from statistics import fmean, stdev
 from typing import Annotated, Protocol
 
@@ -19,6 +18,12 @@ from .domain_experiment_runtime import (
 )
 from .domain_reference import DomainReferenceDescriptor
 from .experiment import MetricDirection
+from .student_t import (  # noqa: F401 - re-exported for callers and tests
+    _beta_continued_fraction,
+    _regularized_incomplete_beta,
+    _student_t_cdf,
+    _student_t_critical,
+)
 
 
 NonBlankString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
@@ -176,30 +181,59 @@ def analyze_domain_experiment(
     """
 
     protocol = result.plan.protocol
-    if result.manifest.plan_hash != result.plan.plan_hash:
-        raise ValueError("experiment result plan binding is inconsistent")
-    if result.manifest.protocol_hash != protocol.protocol_hash:
-        raise ValueError("experiment result protocol binding is inconsistent")
-    if result.manifest.world_count != len(result.worlds):
-        raise ValueError("experiment result world-count binding is inconsistent")
-    if result.manifest.run_count != len(result.runs):
-        raise ValueError("experiment result run-count binding is inconsistent")
-    recomputed_result_hash = recompute_domain_experiment_result_hash(result)
-    if result.manifest.result_hash != recomputed_result_hash:
-        raise ValueError("experiment result hash does not match supplied payload")
-    if result.manifest.domain_reference_hash != reference.descriptor.descriptor_hash:
-        raise ValueError("experiment result domain reference binding is inconsistent")
-
+    _require_result_bindings(reference=reference, result=result)
     replications = protocol.replication_plan.min_replications
     if replications != protocol.replication_plan.max_replications:
         raise ValueError("Gate-A analysis requires fixed replication evidence")
 
     worlds_by_key = _worlds_by_key(result.worlds)
-    runs_by_world = _runs_by_world(
-        worlds=result.worlds,
-        runs=result.runs,
-        replications=replications,
+    pair = _EffectPairing(
+        protocol=protocol,
+        runs_by_world=_runs_by_world(
+            worlds=result.worlds,
+            runs=result.runs,
+            replications=replications,
+        ),
+        regimes=_regimes_by_world(result),
+        reference=reference,
     )
+    effects: list[ExperimentEffect] = []
+    for design_index in range(protocol.sample_size):
+        for agency_level in protocol.agency_levels:
+            baseline = worlds_by_key[(design_index, "baseline", agency_level)]
+            for arm_id in protocol.intervention_ids:
+                treatment = worlds_by_key[(design_index, arm_id, agency_level)]
+                effects.extend(pair.effects(ComparisonKind.INTERVENTION, baseline, treatment))
+        if AgencyLevel.A0 in protocol.agency_levels:
+            effects.extend(_agency_effects(pair, worlds_by_key, design_index))
+
+    return DomainExperimentReport(
+        result_hash=result.result_hash,
+        protocol_hash=protocol.protocol_hash,
+        domain_reference_hash=reference.descriptor.descriptor_hash,
+        effects=tuple(effects),
+    )
+
+
+def _require_result_bindings(
+    *, reference: _ComparisonDomainReference, result: DomainExperimentResult
+) -> None:
+    manifest = result.manifest
+    if manifest.plan_hash != result.plan.plan_hash:
+        raise ValueError("experiment result plan binding is inconsistent")
+    if manifest.protocol_hash != result.plan.protocol.protocol_hash:
+        raise ValueError("experiment result protocol binding is inconsistent")
+    if manifest.world_count != len(result.worlds):
+        raise ValueError("experiment result world-count binding is inconsistent")
+    if manifest.run_count != len(result.runs):
+        raise ValueError("experiment result run-count binding is inconsistent")
+    if manifest.result_hash != recompute_domain_experiment_result_hash(result):
+        raise ValueError("experiment result hash does not match supplied payload")
+    if manifest.domain_reference_hash != reference.descriptor.descriptor_hash:
+        raise ValueError("experiment result domain reference binding is inconsistent")
+
+
+def _regimes_by_world(result: DomainExperimentResult) -> dict[str, RegimeReference]:
     expected_world_hashes = {world.world_hash for world in result.worlds}
     reference_world_hashes = [record.world_hash for record in result.references]
     if (
@@ -208,72 +242,58 @@ def analyze_domain_experiment(
         or set(reference_world_hashes) != expected_world_hashes
     ):
         raise ValueError("every world requires exactly one regime reference")
-    regimes = {
-        record.world_hash: record.regime
-        for record in result.references
-    }
+    return {record.world_hash: record.regime for record in result.references}
 
+
+class _EffectPairing:
+    """Builds every protocol outcome effect for one control/treatment world pair."""
+
+    def __init__(self, *, protocol, runs_by_world, regimes, reference) -> None:
+        self.protocol = protocol
+        self.runs_by_world = runs_by_world
+        self.regimes = regimes
+        self.reference = reference
+
+    def effects(
+        self, kind: ComparisonKind, control: ExperimentWorld, treatment: ExperimentWorld
+    ) -> list[ExperimentEffect]:
+        return [
+            _build_effect(
+                kind=kind,
+                metric_name=outcome.name,
+                direction=outcome.direction,
+                equivalence_margin=outcome.equivalence_margin,
+                confidence_level=self.protocol.statistical_plan.confidence_level,
+                control=control,
+                treatment=treatment,
+                control_runs=self.runs_by_world[control.world_hash],
+                treatment_runs=self.runs_by_world[treatment.world_hash],
+                control_regime=self.regimes[control.world_hash],
+                treatment_regime=self.regimes[treatment.world_hash],
+                reference=self.reference,
+            )
+            for outcome in self.protocol.outcomes
+        ]
+
+
+def _agency_effects(
+    pair: _EffectPairing,
+    worlds_by_key: dict[tuple[int, str, AgencyLevel], ExperimentWorld],
+    design_index: int,
+) -> list[ExperimentEffect]:
     effects: list[ExperimentEffect] = []
-    arm_ids = ("baseline", *protocol.intervention_ids)
-
-    for design_index in range(protocol.sample_size):
-        for agency_level in protocol.agency_levels:
-            baseline = worlds_by_key[(design_index, "baseline", agency_level)]
-            for arm_id in protocol.intervention_ids:
-                treatment = worlds_by_key[(design_index, arm_id, agency_level)]
-                for outcome in protocol.outcomes:
-                    effects.append(
-                        _build_effect(
-                            kind=ComparisonKind.INTERVENTION,
-                            metric_name=outcome.name,
-                            direction=outcome.direction,
-                            equivalence_margin=outcome.equivalence_margin,
-                            confidence_level=protocol.statistical_plan.confidence_level,
-                            control=baseline,
-                            treatment=treatment,
-                            control_runs=runs_by_world[baseline.world_hash],
-                            treatment_runs=runs_by_world[treatment.world_hash],
-                            control_regime=regimes[baseline.world_hash],
-                            treatment_regime=regimes[treatment.world_hash],
-                            reference=reference,
-                        )
-                    )
-
-        if AgencyLevel.A0 in protocol.agency_levels:
-            for treatment_level in protocol.agency_levels:
-                if treatment_level is AgencyLevel.A0:
-                    continue
-                for arm_id in arm_ids:
-                    control = worlds_by_key[(design_index, arm_id, AgencyLevel.A0)]
-                    treatment = worlds_by_key[(design_index, arm_id, treatment_level)]
-                    if control.structural_configuration_hash != treatment.structural_configuration_hash:
-                        raise ValueError(
-                            "agency comparison worlds must share structural configuration"
-                        )
-                    for outcome in protocol.outcomes:
-                        effects.append(
-                            _build_effect(
-                                kind=ComparisonKind.AGENCY,
-                                metric_name=outcome.name,
-                                direction=outcome.direction,
-                                equivalence_margin=outcome.equivalence_margin,
-                                confidence_level=protocol.statistical_plan.confidence_level,
-                                control=control,
-                                treatment=treatment,
-                                control_runs=runs_by_world[control.world_hash],
-                                treatment_runs=runs_by_world[treatment.world_hash],
-                                control_regime=regimes[control.world_hash],
-                                treatment_regime=regimes[treatment.world_hash],
-                                reference=reference,
-                            )
-                        )
-
-    return DomainExperimentReport(
-        result_hash=result.result_hash,
-        protocol_hash=protocol.protocol_hash,
-        domain_reference_hash=reference.descriptor.descriptor_hash,
-        effects=tuple(effects),
-    )
+    for treatment_level in pair.protocol.agency_levels:
+        if treatment_level is AgencyLevel.A0:
+            continue
+        for arm_id in ("baseline", *pair.protocol.intervention_ids):
+            control = worlds_by_key[(design_index, arm_id, AgencyLevel.A0)]
+            treatment = worlds_by_key[(design_index, arm_id, treatment_level)]
+            if control.structural_configuration_hash != treatment.structural_configuration_hash:
+                raise ValueError(
+                    "agency comparison worlds must share structural configuration"
+                )
+            effects.extend(pair.effects(ComparisonKind.AGENCY, control, treatment))
+    return effects
 
 
 def _worlds_by_key(
@@ -435,119 +455,6 @@ def recompute_domain_experiment_result_hash(
             ],
         }
     )
-
-
-@lru_cache(maxsize=128)
-def _student_t_critical(
-    *,
-    confidence_level: float,
-    degrees_freedom: int,
-) -> float:
-    """Two-sided Student-t critical value for finite paired samples."""
-
-    if not 0.0 < confidence_level < 1.0:
-        raise ValueError("confidence_level must be between zero and one")
-    if degrees_freedom < 1:
-        raise ValueError("degrees_freedom must be positive")
-
-    target = 0.5 + confidence_level / 2.0
-    low = 0.0
-    high = 1.0
-    while _student_t_cdf(high, degrees_freedom) < target:
-        high *= 2.0
-
-    for _ in range(80):
-        middle = (low + high) / 2.0
-        if _student_t_cdf(middle, degrees_freedom) < target:
-            low = middle
-        else:
-            high = middle
-    return (low + high) / 2.0
-
-
-def _student_t_cdf(value: float, degrees_freedom: int) -> float:
-    if value == 0.0:
-        return 0.5
-    if value < 0.0:
-        return 1.0 - _student_t_cdf(-value, degrees_freedom)
-
-    df = float(degrees_freedom)
-    x = df / (df + value * value)
-    tail = 0.5 * _regularized_incomplete_beta(x, df / 2.0, 0.5)
-    return 1.0 - tail
-
-
-def _regularized_incomplete_beta(x: float, a: float, b: float) -> float:
-    if x <= 0.0:
-        return 0.0
-    if x >= 1.0:
-        return 1.0
-
-    log_beta_term = (
-        lgamma(a + b)
-        - lgamma(a)
-        - lgamma(b)
-        + a * log(x)
-        + b * log1p(-x)
-    )
-    beta_term = exp(log_beta_term)
-    threshold = (a + 1.0) / (a + b + 2.0)
-    if x < threshold:
-        return beta_term * _beta_continued_fraction(a, b, x) / a
-    return 1.0 - beta_term * _beta_continued_fraction(b, a, 1.0 - x) / b
-
-
-def _beta_continued_fraction(a: float, b: float, x: float) -> float:
-    max_iterations = 200
-    epsilon = 3.0e-14
-    floor = 1.0e-300
-
-    qab = a + b
-    qap = a + 1.0
-    qam = a - 1.0
-    c = 1.0
-    d = 1.0 - qab * x / qap
-    if abs(d) < floor:
-        d = floor
-    d = 1.0 / d
-    h = d
-
-    for iteration in range(1, max_iterations + 1):
-        doubled = 2 * iteration
-        numerator = (
-            iteration
-            * (b - iteration)
-            * x
-            / ((qam + doubled) * (a + doubled))
-        )
-        d = 1.0 + numerator * d
-        if abs(d) < floor:
-            d = floor
-        c = 1.0 + numerator / c
-        if abs(c) < floor:
-            c = floor
-        d = 1.0 / d
-        h *= d * c
-
-        numerator = -(
-            (a + iteration)
-            * (qab + iteration)
-            * x
-            / ((a + doubled) * (qap + doubled))
-        )
-        d = 1.0 + numerator * d
-        if abs(d) < floor:
-            d = floor
-        c = 1.0 + numerator / c
-        if abs(c) < floor:
-            c = floor
-        d = 1.0 / d
-        delta = d * c
-        h *= delta
-        if abs(delta - 1.0) < epsilon:
-            return h
-
-    raise ValueError("Student-t beta continued fraction did not converge")
 
 
 def _canonical_hash(payload: object) -> str:

@@ -54,31 +54,11 @@ def calibrate_observed_item_flow(dataset: ObservedPRDataset) -> ObservedItemFlow
         (later - earlier).total_seconds()
         for earlier, later in zip(opened, opened[1:])
     )
-
-    arrival_span = (max(opened) - min(opened)).total_seconds()
-    arrival_rate = None
-    if len(opened) > 1 and arrival_span > 0.0:
-        arrival_rate = (len(opened) - 1) / arrival_span
-
-    review_latencies = tuple(
-        latency
-        for trace in dataset.traces
-        for latency in trace.review_response_latencies_seconds()
-    )
+    arrival_rate = _arrival_rate(opened)
+    review_latencies = _review_latencies(dataset.traces)
     ci_intervals_by_trace = tuple(_ci_intervals(trace) for trace in dataset.traces)
-    ci_durations = tuple(
-        (completed - started).total_seconds()
-        for intervals in ci_intervals_by_trace
-        for started, completed, _ in intervals
-    )
-    ci_gate_durations = tuple(
-        (
-            max(completed for _, completed, _ in gate_intervals)
-            - min(started for started, _, _ in gate_intervals)
-        ).total_seconds()
-        for intervals in ci_intervals_by_trace
-        if (gate_intervals := tuple(interval for interval in intervals if interval[2]))
-    )
+    ci_durations = _ci_durations(ci_intervals_by_trace)
+    ci_gate_durations = _ci_gate_durations(ci_intervals_by_trace)
 
     peak_wip = _peak_wip(dataset.traces)
     observation_seconds = (observation_end - observation_start).total_seconds()
@@ -90,30 +70,57 @@ def calibrate_observed_item_flow(dataset: ObservedPRDataset) -> ObservedItemFlow
         item_count=len(dataset.traces),
         observation_start=observation_start,
         observation_end=observation_end,
-        interarrival_seconds=(
-            summarize_distribution(interarrivals, unit="seconds")
-            if interarrivals
-            else None
-        ),
+        interarrival_seconds=_optional_summary(interarrivals),
         arrival_rate_per_second=arrival_rate,
         lead_time_seconds=summarize_distribution(lead_times, unit="seconds"),
-        review_response_latency_seconds=(
-            summarize_distribution(review_latencies, unit="seconds")
-            if review_latencies
-            else None
-        ),
-        ci_duration_seconds=(
-            summarize_distribution(ci_durations, unit="seconds")
-            if ci_durations
-            else None
-        ),
-        ci_gate_duration_seconds=(
-            summarize_distribution(ci_gate_durations, unit="seconds")
-            if ci_gate_durations
-            else None
-        ),
+        review_response_latency_seconds=_optional_summary(review_latencies),
+        ci_duration_seconds=_optional_summary(ci_durations),
+        ci_gate_duration_seconds=_optional_summary(ci_gate_durations),
         peak_wip=peak_wip,
         mean_wip=mean_wip,
+    )
+
+
+_Interval = tuple[datetime, datetime, bool]
+
+
+def _optional_summary(values: tuple[float, ...]) -> DistributionSummary | None:
+    return summarize_distribution(values, unit="seconds") if values else None
+
+
+def _arrival_rate(opened: tuple[datetime, ...]) -> float | None:
+    arrival_span = (max(opened) - min(opened)).total_seconds()
+    if len(opened) > 1 and arrival_span > 0.0:
+        return (len(opened) - 1) / arrival_span
+    return None
+
+
+def _review_latencies(traces: tuple[ObservedPRTrace, ...]) -> tuple[float, ...]:
+    return tuple(
+        latency
+        for trace in traces
+        for latency in trace.review_response_latencies_seconds()
+    )
+
+
+def _ci_durations(intervals_by_trace: tuple[tuple[_Interval, ...], ...]) -> tuple[float, ...]:
+    return tuple(
+        (completed - started).total_seconds()
+        for intervals in intervals_by_trace
+        for started, completed, _ in intervals
+    )
+
+
+def _ci_gate_durations(
+    intervals_by_trace: tuple[tuple[_Interval, ...], ...],
+) -> tuple[float, ...]:
+    return tuple(
+        (
+            max(completed for _, completed, _ in gate_intervals)
+            - min(started for started, _, _ in gate_intervals)
+        ).total_seconds()
+        for intervals in intervals_by_trace
+        if (gate_intervals := tuple(interval for interval in intervals if interval[2]))
     )
 
 
