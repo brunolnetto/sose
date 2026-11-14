@@ -4,7 +4,10 @@ Split out of composition.organization, which re-exports these names.
 """
 from __future__ import annotations
 
-from .organization import BoundaryBinding, OrganizationDefinition, ProcessComponent
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from .organization import BoundaryBinding, OrganizationDefinition, ProcessComponent
 
 
 def _reject_unadmitted_cycles(boundaries: tuple[BoundaryBinding, ...]) -> None:
@@ -52,6 +55,10 @@ def validate_organization_admission(
     registry is never treated as "accept any contract".
     """
     from sose.examples.process_manifest import ProcessEvidence
+
+    # Lazy: composition.organization re-exports this module's names, so a
+    # top-level import here would make importing this module first fail.
+    from .organization import OrganizationDefinition
 
     if not isinstance(definition, OrganizationDefinition):
         raise TypeError("organization admission requires OrganizationDefinition")

@@ -97,28 +97,37 @@ def has_source_paired_review(trace: ObservedPRTrace) -> bool:
     return paired
 
 
-_REVIEW_SOURCE_RULES = {
-    ObservedEventKind.REVIEW_REQUESTED: (
+_REVIEW_SOURCE_RULES = (
+    (
+        ObservedEventKind.REVIEW_REQUESTED,
         _REQUEST_ID, "review request lacks a valid GitHub source identity",
     ),
-    ObservedEventKind.REVIEW_REQUEST_REMOVED: (
+    (
+        ObservedEventKind.REVIEW_REQUEST_REMOVED,
         _REMOVED_ID, "removed review request lacks GitHub source identity",
     ),
-    ObservedEventKind.REVIEW_SUBMITTED: (
+    (
+        ObservedEventKind.REVIEW_SUBMITTED,
         _REVIEW_ID, "submitted review lacks a valid GitHub source identity",
     ),
-}
+)
+
+# Set membership (hash/equality), as the uniqueness check always used.
+_REVIEW_KINDS = frozenset(kind for kind, _, _ in _REVIEW_SOURCE_RULES)
 
 
 def _is_review_source_event(event) -> bool:
-    """True for review events (whose source ID must be GitHub-shaped)."""
-    rule = _REVIEW_SOURCE_RULES.get(event.kind)
-    if rule is None:
-        return False
-    pattern, message = rule
-    if not pattern.fullmatch(event.source_event_id):
-        raise ValueError(message)
-    return True
+    """True for review events (whose source ID must be GitHub-shaped).
+
+    Kinds are matched by identity, so a raw string equal to a member's value
+    is not a review event.
+    """
+    for kind, pattern, message in _REVIEW_SOURCE_RULES:
+        if event.kind is kind:
+            if not pattern.fullmatch(event.source_event_id):
+                raise ValueError(message)
+            return True
+    return False
 
 
 def _apply_review_event(actor_pending: deque[datetime], event) -> bool:
@@ -190,7 +199,7 @@ def _assert_unique_review_sources(dataset: ObservedPRDataset) -> None:
     for trace in dataset.traces:
         owner = (trace.repository, trace.pr_number)
         for event in trace.events:
-            if event.kind not in _REVIEW_SOURCE_RULES:
+            if event.kind not in _REVIEW_KINDS:
                 continue
             previous = source_owners.setdefault(event.source_event_id, owner)
             if previous != owner:

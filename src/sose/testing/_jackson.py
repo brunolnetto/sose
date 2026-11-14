@@ -85,14 +85,16 @@ def _solve_linear_system(
     *,
     tolerance: float,
 ) -> list[float]:
+    # The system size is the vector's length, as it always was: a matrix/vector
+    # length mismatch must keep failing instead of solving a truncated system.
+    size = len(vector)
     augmented = [row[:] + [vector[index]] for index, row in enumerate(matrix)]
-    _forward_eliminate(augmented, tolerance=tolerance)
-    return _back_substitute(augmented, tolerance=tolerance)
+    _forward_eliminate(augmented, size, tolerance=tolerance)
+    return _back_substitute(augmented, size, tolerance=tolerance)
 
 
-def _forward_eliminate(augmented: list[list[float]], *, tolerance: float) -> None:
+def _forward_eliminate(augmented: list[list[float]], size: int, *, tolerance: float) -> None:
     """Gaussian elimination with partial pivoting, in place."""
-    size = len(augmented)
     for column in range(size):
         pivot_row = max(range(column, size), key=lambda row: abs(augmented[row][column]))
         pivot = augmented[pivot_row][column]
@@ -101,11 +103,10 @@ def _forward_eliminate(augmented: list[list[float]], *, tolerance: float) -> Non
             raise ValueError("Jackson traffic equations are singular or ill-conditioned")
         if pivot_row != column:
             augmented[column], augmented[pivot_row] = augmented[pivot_row], augmented[column]
-        _eliminate_below(augmented, column)
+        _eliminate_below(augmented, column, size)
 
 
-def _eliminate_below(augmented: list[list[float]], column: int) -> None:
-    size = len(augmented)
+def _eliminate_below(augmented: list[list[float]], column: int, size: int) -> None:
     pivot = augmented[column][column]
     for row in range(column + 1, size):
         factor = augmented[row][column] / pivot
@@ -115,8 +116,9 @@ def _eliminate_below(augmented: list[list[float]], column: int) -> None:
             augmented[row][index] -= factor * augmented[column][index]
 
 
-def _back_substitute(augmented: list[list[float]], *, tolerance: float) -> list[float]:
-    size = len(augmented)
+def _back_substitute(
+    augmented: list[list[float]], size: int, *, tolerance: float,
+) -> list[float]:
     result = [0.0] * size
     for row in range(size - 1, -1, -1):
         rhs = augmented[row][size] - sum(
