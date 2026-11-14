@@ -1,4 +1,4 @@
-"""Entity, event, command, scheduled-work and per-owner cursor methods of the in-memory unit of work.
+"""Entity, event, command, scheduled-work and owner-cursor methods of the in-memory unit of work.
 
 Split from ``memory.py`` (``MemoryUnitOfWork``).
 """
