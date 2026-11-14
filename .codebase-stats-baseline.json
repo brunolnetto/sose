@@ -69,7 +69,6 @@
   "max_cc:organizational/queue_reference_adapter.py::QueueReferenceAdapter.ground_truth": 11,
   "max_cc:organizational/synthetic_runner.py::_run_reference_world": 17,
   "max_cc:organizational/synthetic_runner.py::run_reference_synthetic_experiment": 15,
-  "max_cc:organizational/synthetic_study.py::generate_synthetic_worlds": 18,
   "max_cc:persistence/postgres.py::PostgresPersistence.__init__": 11,
   "max_cc:persistence/postgres.py::PostgresPersistence._append_postgres_events": 16,
   "max_cc:persistence/postgres.py::PostgresPersistence._apply_changes": 18,
