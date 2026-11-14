@@ -56,6 +56,11 @@ class AccountingEvent(BaseModel):
             raise ValueError("accounting event requires finite start < end")
         if not isfinite(self.allocation) or not 0.0 < self.allocation <= 1.0:
             raise ValueError("accounting event allocation must satisfy 0 < allocation <= 1")
+        self._validate_provenance()
+        self._validate_category_kind()
+        return self
+
+    def _validate_provenance(self) -> None:
         if self.config_epoch is not None:
             if isinstance(self.config_epoch, bool) or not isinstance(self.config_epoch, int) or self.config_epoch < 0:
                 raise ValueError("config_epoch must be a nonnegative integer")
@@ -63,15 +68,15 @@ class AccountingEvent(BaseModel):
                 raise ValueError("config_epoch requires model_spec_hash provenance")
         if self.cause is not None and not self.cause:
             raise ValueError("accounting cause must be nonempty when supplied")
+
+    def _validate_category_kind(self) -> None:
         if self.kind == "item":
             if self.item_category is None or self.actor_category is not None:
                 raise ValueError("item event requires only item_category")
             if self.work_item_id != self.target_id:
                 raise ValueError("item event work_item_id must equal target_id")
-        else:
-            if self.actor_category is None or self.item_category is not None:
-                raise ValueError("actor event requires only actor_category")
-        return self
+        elif self.actor_category is None or self.item_category is not None:
+            raise ValueError("actor event requires only actor_category")
 
     @classmethod
     def item(
@@ -133,6 +138,43 @@ class AccountingEvent(BaseModel):
         )
 
 
+def _overlapping(events: list, start: float, end: float) -> list:
+    return [event for event in events if event.start < end and event.end > start]
+
+
+def _single_value(values: set, message: str):
+    """The one value present (or None); more than one is an overlap conflict."""
+    if len(values) > 1:
+        raise ValueError(message)
+    return next(iter(values), None)
+
+
+def _item_interval(start: float, end: float, active: list) -> "ItemLedgerInterval":
+    category = resolve_item_primary(*(_require_item_category(event) for event in active))
+    model_spec_hash = _single_value(
+        {event.model_spec_hash for event in active if event.model_spec_hash is not None},
+        "overlapping item events span multiple model configurations",
+    )
+    config_epoch = _single_value(
+        {event.config_epoch for event in active if event.config_epoch is not None},
+        "overlapping item events span multiple config epochs",
+    )
+    cause = _single_value(
+        {event.cause for event in active if event.item_category is category},
+        "ambiguous causal provenance for winning item category",
+    )
+    labels = tuple(sorted({label for event in active for label in event.secondary_labels}))
+    return ItemLedgerInterval(
+        start=start,
+        end=end,
+        primary=category,
+        cause=cause,
+        secondary_labels=labels,
+        config_epoch=config_epoch,
+        model_spec_hash=model_spec_hash,
+    )
+
+
 class LedgerProjector:
     def __init__(self) -> None:
         self._events: dict[str, AccountingEvent] = {}
@@ -154,32 +196,9 @@ class LedgerProjector:
         boundaries = sorted({point for event in events for point in (event.start, event.end)})
         intervals: list[ItemLedgerInterval] = []
         for start, end in zip(boundaries, boundaries[1:], strict=False):
-            active = [event for event in events if event.start < end and event.end > start]
-            if not active:
-                continue
-            category = resolve_item_primary(*(_require_item_category(event) for event in active))
-            hashes = {event.model_spec_hash for event in active if event.model_spec_hash is not None}
-            if len(hashes) > 1:
-                raise ValueError("overlapping item events span multiple model configurations")
-            epochs = {event.config_epoch for event in active if event.config_epoch is not None}
-            if len(epochs) > 1:
-                raise ValueError("overlapping item events span multiple config epochs")
-            winners = [event for event in active if event.item_category is category]
-            causes = {event.cause for event in winners}
-            if len(causes) > 1:
-                raise ValueError("ambiguous causal provenance for winning item category")
-            labels = tuple(sorted({label for event in active for label in event.secondary_labels}))
-            intervals.append(
-                ItemLedgerInterval(
-                    start=start,
-                    end=end,
-                    primary=category,
-                    cause=next(iter(causes), None),
-                    secondary_labels=labels,
-                    config_epoch=next(iter(epochs), None),
-                    model_spec_hash=next(iter(hashes), None),
-                )
-            )
+            active = _overlapping(events, start, end)
+            if active:
+                intervals.append(_item_interval(start, end, active))
         return ItemLedger(work_item_id=work_item_id, intervals=intervals)
 
     def actor_ledger(self, actor_id: str, *, fractional_multitasking: bool = False) -> ActorLedger:
