@@ -617,3 +617,78 @@ def test_policy_rejects_invalid_external_requests_before_transaction():
             policy=None, observed_at=NOW,
         )
     assert not store.events()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("tamper", (
+    "paid_cost", "last_action", "fake_observation", "rank",
+))
+def test_durable_od3_policy_refuses_forged_cost_or_observation_history(
+    adapter, tamper, tmp_path,
+):
+    """#463: a public projection cannot mint paid policy time or new rank."""
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key=KEY,
+            items=(work("slow", 15, 70), work("fast", 8, 1)), at=NOW,
+        )
+        apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY,
+            observation_id="first", policy=policy("cherry_picking"), observed_at=NOW,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            queue = uow.get_entity(QUEUE_KIND, queue_id)
+            if tamper == "paid_cost":
+                queue.attributes["paid_policy_us"] += 5
+            elif tamper == "last_action":
+                queue.attributes["last_action_at"] = (
+                    NOW + timedelta(microseconds=1)
+                ).isoformat()
+            elif tamper == "fake_observation":
+                queue.attributes["applied_observations"]["ghost"] = {
+                    "request_id": "forged", "effect_event_id": "forged",
+                }
+            else:
+                queue.attributes["items"].reverse()
+            uow.save_entity(queue)
+        old = snapshot(store, queue_id)
+        with pytest.raises(ValueError, match="OD-3 charged queue"):
+            apply_od3_queue_policy(
+                store, owner_id=OWNER, queue_key=KEY,
+                observation_id="next", policy=policy("cherry_picking"),
+                observed_at=NOW + timedelta(microseconds=21),
+            )
+        assert snapshot(store, queue_id) == old
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_reconciled_od3_policy_cost_accumulates_after_restart(adapter, tmp_path):
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key=KEY,
+            items=(work("slow", 15, 70), work("fast", 8, 1)), at=NOW,
+        )
+        p = policy("cherry_picking")
+        apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY,
+            observation_id="one", policy=p, observed_at=NOW,
+        )
+        apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY,
+            observation_id="two", policy=p,
+            observed_at=NOW + timedelta(microseconds=21),
+        )
+        attrs, version, _ = snapshot(store, queue_id)
+        assert version == 2
+        assert attrs["paid_policy_us"] in (3, 6)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(tmp_path / "sqlite.sqlite") as reopened:
+            assert snapshot(reopened, queue_id)[0] == attrs
