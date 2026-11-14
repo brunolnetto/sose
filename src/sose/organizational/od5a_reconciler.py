@@ -106,114 +106,144 @@ def _plan_one(
             ),
         )
         for candidate in candidates:
-            event, physical = _physical_event(
-                uow, job_id=job_id, event_id=candidate.event_id,
-            )
-            if event != candidate:
-                raise ValueError("OD-5a committed physical candidate changed during reconciliation")
-            expected = _expected_message(event, physical, job_id)
-            message = uow.get_boundary_message(expected.message_id)
-            if message is None:
-                return _Plan("published", event.event_id, expected.message_id)
-            if message != expected:
-                raise ValueError("OD-5a boundary record contradicts canonical physical cause")
-
-            delivery_id = BoundaryDelivery.pending(expected).delivery_id
-            delivery = uow.get_boundary_delivery(delivery_id)
-            if delivery is None:
-                raise RuntimeError("published OD-5a physical event lacks durable delivery")
-            if (
-                delivery.delivery_id != delivery_id
-                or delivery.message_id != expected.message_id
-                or delivery.destination_domain != _DESTINATION
-                or delivery.contract_name != _CONTRACT
-                or delivery.contract_version != _VERSION
-            ):
-                raise ValueError("OD-5a delivery is inconsistent with physical source")
-            effect_id = deterministic_id("od5a-physical-command", message.message_id)
-            base = {
-                "event_id": event.event_id,
-                "message_id": message.message_id,
-                "effect_id": effect_id,
-            }
-            if delivery.status is DeliveryStatus.PENDING:
-                if delivery.attempts != delivery.claim_epoch:
-                    raise ValueError("OD-5a pending delivery has inconsistent fencing counters")
-                if (
-                    uow.get_boundary_consumption(delivery_id) is not None
-                    or uow.get_command(effect_id) is not None
-                    or uow.get_business_effect(effect_id) is not None
-                ):
-                    raise ValueError("OD-5a pending delivery has impossible downstream truth")
-                if now < event.occurred_at:
-                    return _Plan("blocked", **base, retry_at=event.occurred_at)
-                return _Plan("claimed", **base)
-            if delivery.status is DeliveryStatus.CLAIMED:
-                if (
-                    not delivery.claim_owner_id
-                    or delivery.claim_epoch <= 0
-                    or delivery.attempts != delivery.claim_epoch
-                    or delivery.claimed_at is None
-                    or delivery.lease_expires_at is None
-                    or delivery.claimed_at < event.occurred_at
-                    or delivery.lease_expires_at <= delivery.claimed_at
-                    or uow.get_boundary_consumption(delivery_id) is not None
-                    or uow.get_command(effect_id) is not None
-                    or uow.get_business_effect(effect_id) is not None
-                ):
-                    raise ValueError("OD-5a claimed delivery has invalid durable fence")
-                if now < delivery.claimed_at:
-                    return _Plan("blocked", **base, retry_at=delivery.claimed_at)
-                if delivery.lease_expires_at <= now:
-                    return _Plan("claimed", **base)
-                if delivery.claim_owner_id != owner_id:
-                    return _Plan(
-                        "blocked", **base, retry_at=delivery.lease_expires_at,
-                    )
-                return _Plan(
-                    "acknowledged", **base,
-                    lease=BoundaryLease(
-                        delivery_id=delivery.delivery_id,
-                        message_id=delivery.message_id,
-                        owner_id=delivery.claim_owner_id,
-                        epoch=delivery.claim_epoch,
-                        lease_expires_at=delivery.lease_expires_at,
-                    ),
-                )
-            if delivery.status is not DeliveryStatus.CONSUMED:
-                raise ValueError("unsupported OD-5a physical delivery state")
-
-            # A durable ACK must be a real consumed and fenced delivery, not
-            # an arbitrary stored transition or a newly fabricated event.
-            _verify_receipt(
-                uow, message_id=message.message_id, effect_id=effect_id,
-            )
-            cmd = uow.get_command(effect_id)
-            proof = uow.get_business_effect(effect_id)
-            if cmd is not None and proof is not None:
-                raise ValueError("OD-5a physical effect has Command and certificate simultaneously")
-            if cmd is None and proof is None:
-                raise ValueError("OD-5a consumed physical delivery lost its Command/certificate")
-            if proof is not None:
-                _verified_prior_certificate(
-                    uow, effect_id=effect_id, prior=proof,
-                )
-                continue
-            _command, physical_event, _data, attrs, ack_at = _verified_intent(
-                uow, effect_id=effect_id,
-            )
-            if now < ack_at:
-                return _Plan("blocked", **base, retry_at=ack_at)
-            entity = uow.get_entity("od5a_physical_observation", physical_event.event_id)
-            if entity is None:
-                return _Plan("materialized", **base)
-            _verified_observation(
-                uow, event=physical_event, attributes=attrs, ack_at=ack_at,
-            )
-            if now < entity.updated_at:
-                return _Plan("blocked", **base, retry_at=entity.updated_at)
-            return _Plan("certified", **base)
+            plan = _plan_candidate(uow, candidate, job_id=job_id, owner_id=owner_id, now=now)
+            if plan is not None:
+                return plan
         return _Plan("complete" if source.attributes["done"] else "idle")
+
+
+def _plan_candidate(uow, candidate, *, job_id: str, owner_id: str, now: datetime) -> "_Plan | None":
+    """The next action for one committed physical event; None when certified."""
+    event, physical = _physical_event(
+        uow, job_id=job_id, event_id=candidate.event_id,
+    )
+    if event != candidate:
+        raise ValueError("OD-5a committed physical candidate changed during reconciliation")
+    expected = _expected_message(event, physical, job_id)
+    message = uow.get_boundary_message(expected.message_id)
+    if message is None:
+        return _Plan("published", event.event_id, expected.message_id)
+    if message != expected:
+        raise ValueError("OD-5a boundary record contradicts canonical physical cause")
+
+    delivery_id = BoundaryDelivery.pending(expected).delivery_id
+    delivery = uow.get_boundary_delivery(delivery_id)
+    if delivery is None:
+        raise RuntimeError("published OD-5a physical event lacks durable delivery")
+    if _delivery_identity_mismatch(delivery, delivery_id, expected):
+        raise ValueError("OD-5a delivery is inconsistent with physical source")
+    effect_id = deterministic_id("od5a-physical-command", message.message_id)
+    base = {
+        "event_id": event.event_id,
+        "message_id": message.message_id,
+        "effect_id": effect_id,
+    }
+    if delivery.status is DeliveryStatus.PENDING:
+        return _plan_pending(uow, delivery, delivery_id, effect_id, event, now, base)
+    if delivery.status is DeliveryStatus.CLAIMED:
+        return _plan_claimed(uow, delivery, delivery_id, effect_id, event, owner_id, now, base)
+    if delivery.status is not DeliveryStatus.CONSUMED:
+        raise ValueError("unsupported OD-5a physical delivery state")
+    return _plan_consumed(uow, message, effect_id, now, base)
+
+
+def _delivery_identity_mismatch(delivery, delivery_id: str, expected) -> bool:
+    return (
+        delivery.delivery_id != delivery_id
+        or delivery.message_id != expected.message_id
+        or delivery.destination_domain != _DESTINATION
+        or delivery.contract_name != _CONTRACT
+        or delivery.contract_version != _VERSION
+    )
+
+
+def _has_downstream_truth(uow, delivery_id: str, effect_id: str) -> bool:
+    """ACK receipt, Command or certificate, read in this order."""
+    return (
+        uow.get_boundary_consumption(delivery_id) is not None
+        or uow.get_command(effect_id) is not None
+        or uow.get_business_effect(effect_id) is not None
+    )
+
+
+def _plan_pending(uow, delivery, delivery_id, effect_id, event, now, base) -> "_Plan":
+    if delivery.attempts != delivery.claim_epoch:
+        raise ValueError("OD-5a pending delivery has inconsistent fencing counters")
+    if _has_downstream_truth(uow, delivery_id, effect_id):
+        raise ValueError("OD-5a pending delivery has impossible downstream truth")
+    if now < event.occurred_at:
+        return _Plan("blocked", **base, retry_at=event.occurred_at)
+    return _Plan("claimed", **base)
+
+
+def _claim_fence_invalid(delivery, event) -> bool:
+    return (
+        not delivery.claim_owner_id
+        or delivery.claim_epoch <= 0
+        or delivery.attempts != delivery.claim_epoch
+        or delivery.claimed_at is None
+        or delivery.lease_expires_at is None
+        or delivery.claimed_at < event.occurred_at
+        or delivery.lease_expires_at <= delivery.claimed_at
+    )
+
+
+def _plan_claimed(uow, delivery, delivery_id, effect_id, event, owner_id, now, base) -> "_Plan":
+    # The downstream reads stay last in the original `or` chain: they run
+    # only when every attribute fence check has passed.
+    if _claim_fence_invalid(delivery, event) or _has_downstream_truth(uow, delivery_id, effect_id):
+        raise ValueError("OD-5a claimed delivery has invalid durable fence")
+    if now < delivery.claimed_at:
+        return _Plan("blocked", **base, retry_at=delivery.claimed_at)
+    if delivery.lease_expires_at <= now:
+        return _Plan("claimed", **base)
+    if delivery.claim_owner_id != owner_id:
+        return _Plan(
+            "blocked", **base, retry_at=delivery.lease_expires_at,
+        )
+    return _Plan(
+        "acknowledged", **base,
+        lease=BoundaryLease(
+            delivery_id=delivery.delivery_id,
+            message_id=delivery.message_id,
+            owner_id=delivery.claim_owner_id,
+            epoch=delivery.claim_epoch,
+            lease_expires_at=delivery.lease_expires_at,
+        ),
+    )
+
+
+def _plan_consumed(uow, message, effect_id, now, base) -> "_Plan | None":
+    # A durable ACK must be a real consumed and fenced delivery, not
+    # an arbitrary stored transition or a newly fabricated event.
+    _verify_receipt(
+        uow, message_id=message.message_id, effect_id=effect_id,
+    )
+    cmd = uow.get_command(effect_id)
+    proof = uow.get_business_effect(effect_id)
+    if cmd is not None and proof is not None:
+        raise ValueError("OD-5a physical effect has Command and certificate simultaneously")
+    if cmd is None and proof is None:
+        raise ValueError("OD-5a consumed physical delivery lost its Command/certificate")
+    if proof is not None:
+        _verified_prior_certificate(
+            uow, effect_id=effect_id, prior=proof,
+        )
+        return None
+    _command, physical_event, _data, attrs, ack_at = _verified_intent(
+        uow, effect_id=effect_id,
+    )
+    if now < ack_at:
+        return _Plan("blocked", **base, retry_at=ack_at)
+    entity = uow.get_entity("od5a_physical_observation", physical_event.event_id)
+    if entity is None:
+        return _Plan("materialized", **base)
+    _verified_observation(
+        uow, event=physical_event, attributes=attrs, ack_at=ack_at,
+    )
+    if now < entity.updated_at:
+        return _Plan("blocked", **base, retry_at=entity.updated_at)
+    return _Plan("certified", **base)
 
 
 def reconcile_od5a_boundary_step(
@@ -227,75 +257,114 @@ def reconcile_od5a_boundary_step(
     publication, fenced claim, consumed ACK, materialization and certificate
     are independently durable and idempotently recoverable.
     """
-    if not job_id or not owner_id:
-        raise ValueError("reconciliation requires job and owner identities")
-    if now.tzinfo is None or now.utcoffset() is None:
-        raise ValueError("OD-5a reconciliation requires timezone-aware worker time")
-    if lease_duration <= timedelta(0):
-        raise ValueError("reconciliation requires positive delivery lease")
+    _validate_step_inputs(job_id, owner_id, now, lease_duration)
     plan = _plan_one(store, job_id=job_id, owner_id=owner_id, now=now)
     if plan.action in {"blocked", "idle", "complete"}:
         return OD5aReconcileStep(
             job_id, plan.action, plan.event_id, plan.message_id,
             plan.effect_id, plan.retry_at,
         )
-    if plan.action == "published":
-        receipt = publish_od5a_physical_completion(
-            store, job_id=job_id, event_id=plan.event_id,
-        )
-        if receipt.message_id != plan.message_id:
-            raise RuntimeError("OD-5a publication did not preserve expected causal identity")
-    elif plan.action == "claimed":
-        lease = BoundaryService(store).claim_next(
-            owner_id=owner_id,
-            now=now,
-            lease_duration=lease_duration,
-            destination_domain=_DESTINATION,
-            accepted_contracts=frozenset({(_CONTRACT, _VERSION)}),
-            message_id=plan.message_id,
-            correlation_id=job_id,
-        )
-        if lease is None:
-            return OD5aReconcileStep(
-                job_id, "blocked", plan.event_id, plan.message_id,
-                plan.effect_id,
-            )
-        if lease.message_id != plan.message_id:
-            raise RuntimeError("OD-5a claim crossed organization or event identity")
-    elif plan.action == "acknowledged":
-        try:
-            consumption = consume_od5a_physical_completion(
-                store, lease=plan.lease, now=now,
-            )
-        except StaleBoundaryClaimError:
-            return OD5aReconcileStep(
-                job_id, "blocked", plan.event_id, plan.message_id, plan.effect_id,
-            )
-        if (
-            consumption.message_id != plan.message_id
-            or consumption.consumer_effect_id != plan.effect_id
-        ):
-            raise RuntimeError("OD-5a ACK staged an unexpected downstream Command")
-    elif plan.action == "materialized":
-        observation = apply_od5a_physical_observation(
-            store, effect_id=plan.effect_id, applied_at=now,
-        )
-        if observation.id != plan.event_id:
-            raise RuntimeError("OD-5a observation changed physical event identity")
-    elif plan.action == "certified":
-        certificate = certify_od5a_physical_observation(
-            store, effect_id=plan.effect_id, completed_at=now,
-        )
-        if (
-            certificate.entity_id != plan.event_id
-            or certificate.effect_id != plan.effect_id
-        ):
-            raise RuntimeError("OD-5a certification changed physical event identity")
-    else:
+    execute = _ACTIONS.get(plan.action)
+    if execute is None:
         raise RuntimeError(f"unknown OD-5a reconciliation action: {plan.action}")
+    blocked = execute(
+        store, plan, job_id=job_id, owner_id=owner_id, now=now,
+        lease_duration=lease_duration,
+    )
+    if blocked is not None:
+        return blocked
     return OD5aReconcileStep(
         job_id, plan.action, plan.event_id, plan.message_id, plan.effect_id,
     )
+
+
+def _validate_step_inputs(job_id: str, owner_id: str, now: datetime, lease_duration: timedelta) -> None:
+    if not job_id or not owner_id:
+        raise ValueError("reconciliation requires job and owner identities")
+    if now.tzinfo is None or now.utcoffset() is None:
+        raise ValueError("OD-5a reconciliation requires timezone-aware worker time")
+    if lease_duration <= timedelta(0):
+        raise ValueError("reconciliation requires positive delivery lease")
+
+
+def _blocked_step(job_id: str, plan) -> OD5aReconcileStep:
+    return OD5aReconcileStep(
+        job_id, "blocked", plan.event_id, plan.message_id, plan.effect_id,
+    )
+
+
+# Each action executes one durable phase. It returns a blocked step when it
+# cannot proceed, or None when the phase completed.
+
+def _execute_published(store, plan, *, job_id, owner_id, now, lease_duration):
+    receipt = publish_od5a_physical_completion(
+        store, job_id=job_id, event_id=plan.event_id,
+    )
+    if receipt.message_id != plan.message_id:
+        raise RuntimeError("OD-5a publication did not preserve expected causal identity")
+    return None
+
+
+def _execute_claimed(store, plan, *, job_id, owner_id, now, lease_duration):
+    lease = BoundaryService(store).claim_next(
+        owner_id=owner_id,
+        now=now,
+        lease_duration=lease_duration,
+        destination_domain=_DESTINATION,
+        accepted_contracts=frozenset({(_CONTRACT, _VERSION)}),
+        message_id=plan.message_id,
+        correlation_id=job_id,
+    )
+    if lease is None:
+        return _blocked_step(job_id, plan)
+    if lease.message_id != plan.message_id:
+        raise RuntimeError("OD-5a claim crossed organization or event identity")
+    return None
+
+
+def _execute_acknowledged(store, plan, *, job_id, owner_id, now, lease_duration):
+    try:
+        consumption = consume_od5a_physical_completion(
+            store, lease=plan.lease, now=now,
+        )
+    except StaleBoundaryClaimError:
+        return _blocked_step(job_id, plan)
+    if (
+        consumption.message_id != plan.message_id
+        or consumption.consumer_effect_id != plan.effect_id
+    ):
+        raise RuntimeError("OD-5a ACK staged an unexpected downstream Command")
+    return None
+
+
+def _execute_materialized(store, plan, *, job_id, owner_id, now, lease_duration):
+    observation = apply_od5a_physical_observation(
+        store, effect_id=plan.effect_id, applied_at=now,
+    )
+    if observation.id != plan.event_id:
+        raise RuntimeError("OD-5a observation changed physical event identity")
+    return None
+
+
+def _execute_certified(store, plan, *, job_id, owner_id, now, lease_duration):
+    certificate = certify_od5a_physical_observation(
+        store, effect_id=plan.effect_id, completed_at=now,
+    )
+    if (
+        certificate.entity_id != plan.event_id
+        or certificate.effect_id != plan.effect_id
+    ):
+        raise RuntimeError("OD-5a certification changed physical event identity")
+    return None
+
+
+_ACTIONS = {
+    "published": _execute_published,
+    "claimed": _execute_claimed,
+    "acknowledged": _execute_acknowledged,
+    "materialized": _execute_materialized,
+    "certified": _execute_certified,
+}
 
 
 __all__ = ["OD5aReconcileStep", "reconcile_od5a_boundary_step"]

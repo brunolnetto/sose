@@ -43,18 +43,64 @@ def _physical_event(
         raise ValueError("OD-5a physical publication requires committed domain event")
     payload = event.payload
     if (
+        _event_scope_mismatch(event, job_id)
+        or _payload_identity_mismatch(event, payload, entity)
+    ):
+        raise ValueError("OD-5a physical event fails causal or model identity checks")
+    start_us, end_us = _physical_interval_us(event, payload)
+    # A durable row alone cannot attest that the scheduler performed work.
+    # Require the deterministic _emit identity and its committed stage witness.
+    state = entity.attributes
+    item_id, source, target = (
+        payload.get("item_id"), payload.get("source"), payload.get("target")
+    )
+    _validate_stage_witness(event, payload, state, job_id, item_id, source, target)
+    _validate_authoritative_trail(
+        event, payload["kind"], state, item_id, source, target, end_us - start_us,
+    )
+    _validate_causal_parents(uow, event, payload.get("causes"), job_id)
+    return event, {
+        "event_id": event.event_id,
+        "model_spec_hash": entity.attributes["model_spec_hash"],
+        "admission_identity": entity.attributes["identity"],
+        "config_epoch": 0,
+        "kind": payload["kind"],
+        "item_id": payload["item_id"],
+        "source": payload["source"],
+        "target": payload["target"],
+        "resource": payload["resource"],
+        "start_us": int(start_us),
+        "end_us": int(end_us),
+        "tick": event.tick,
+        "causes": list(payload["causes"]),
+    }
+
+
+# The identity predicates below are contiguous segments of one original `or`
+# chain, evaluated in order: payload["kind"] is read only after
+# payload.get("kind") was proven to be a physical kind.
+
+def _event_scope_mismatch(event: DomainEvent, job_id: str) -> bool:
+    return (
         event.entity_type != _KIND
         or event.entity_id != job_id
         or event.correlation_id != job_id
         or event.name not in {f"od5a.{k}.v1" for k in _PHYSICAL_KINDS}
-        or payload.get("kind") not in _PHYSICAL_KINDS
+    )
+
+
+def _payload_identity_mismatch(event: DomainEvent, payload, entity) -> bool:
+    return (
+        payload.get("kind") not in _PHYSICAL_KINDS
         or event.name != f"od5a.{payload['kind']}.v1"
         or payload.get("model_spec_hash") != entity.attributes["model_spec_hash"]
         or payload.get("config_epoch") != 0
         or payload.get("resource") not in entity.attributes["resources"]
         or event.tick is None
-    ):
-        raise ValueError("OD-5a physical event fails causal or model identity checks")
+    )
+
+
+def _physical_interval_us(event: DomainEvent, payload) -> tuple[Decimal, Decimal]:
     resource = payload["resource"]
     expected_prefix = (
         "execution:" if payload["kind"] == "execution" else "coordination:"
@@ -73,12 +119,10 @@ def _physical_event(
         or event.occurred_at != _ORIGIN + timedelta(microseconds=int(end_us))
     ):
         raise ValueError("OD-5a physical event time contradicts durable clock")
-    # A durable row alone cannot attest that the scheduler performed work.
-    # Require the deterministic _emit identity and its committed stage witness.
-    state = entity.attributes
-    item_id, source, target = (
-        payload.get("item_id"), payload.get("source"), payload.get("target")
-    )
+    return start_us, end_us
+
+
+def _validate_stage_witness(event, payload, state, job_id, item_id, source, target) -> None:
     if (
         not all(isinstance(x, str) and x for x in (item_id, source, target))
         or item_id not in state["services"]
@@ -90,66 +134,69 @@ def _physical_event(
         job_id, payload["kind"], item_id, source, target,
     ):
         raise ValueError("OD-5a physical event canonical identity mismatch")
-    if (
+    if not _within_scheduler_clock(event, state):
+        raise ValueError("OD-5a physical event exceeds durable scheduler clock")
+
+
+def _within_scheduler_clock(event, state) -> bool:
+    return not (
         isinstance(event.tick, bool)
         or not isinstance(event.tick, int)
         or not (0 < event.tick <= state["step"])
         or event.occurred_at > _ORIGIN + timedelta(
             microseconds=_time_us(state["clock"], "durable clock"),
         )
-    ):
-        raise ValueError("OD-5a physical event exceeds durable scheduler clock")
-    if payload["kind"] == "execution":
+    )
+
+
+def _validate_authoritative_trail(event, kind, state, item_id, source, target, duration_us) -> None:
+    if kind == "execution":
         if (
             source != target
             or _key(item_id, target) not in state["finished"]
-            or end_us - start_us != _time_us(
+            or duration_us != _time_us(
                 state["services"][item_id][target], "service duration",
             )
         ):
             raise ValueError("OD-5a execution event has no authoritative finished trail")
-    else:
-        incoming = state["incoming"][target]
-        received = state["received"].get(_key(item_id, target), {})
-        if (
-            source == target or source not in incoming
-            or received.get(source) != event.event_id
-            or end_us - start_us != _time_us(
-                state["coordination_latency"], "coordination latency",
-            )
-        ):
-            raise ValueError("OD-5a coordination event has no authoritative received trail")
-    causes = payload.get("causes")
-    if not isinstance(causes, list) or not all(
-        isinstance(parent, str) and parent for parent in causes
-    ) or len(causes) != len(set(causes)):
+        return
+    incoming = state["incoming"][target]
+    received = state["received"].get(_key(item_id, target), {})
+    if (
+        source == target or source not in incoming
+        or received.get(source) != event.event_id
+        or duration_us != _time_us(
+            state["coordination_latency"], "coordination latency",
+        )
+    ):
+        raise ValueError("OD-5a coordination event has no authoritative received trail")
+
+
+def _validate_causal_parents(uow, event, causes, job_id: str) -> None:
+    if not _is_unique_parent_list(causes):
         raise ValueError("OD-5a physical event has invalid causal parent trail")
     if event.causation_id != (sorted(causes)[-1] if causes else None):
         raise ValueError("OD-5a physical event causal parent identity mismatch")
     for parent_id in causes:
-        parent = uow.get_event(parent_id)
-        if (
-            parent is None or parent.entity_type != _KIND
-            or parent.entity_id != job_id or parent.correlation_id != job_id
-            or parent.occurred_at > event.occurred_at
-            or parent.tick is None or parent.tick >= event.tick
-        ):
+        if not _is_prior_same_job_event(uow.get_event(parent_id), event, job_id):
             raise ValueError("OD-5a physical event has missing or future causal parent")
-    return event, {
-        "event_id": event.event_id,
-        "model_spec_hash": entity.attributes["model_spec_hash"],
-        "admission_identity": entity.attributes["identity"],
-        "config_epoch": 0,
-        "kind": payload["kind"],
-        "item_id": payload["item_id"],
-        "source": payload["source"],
-        "target": payload["target"],
-        "resource": payload["resource"],
-        "start_us": int(start_us),
-        "end_us": int(end_us),
-        "tick": event.tick,
-        "causes": list(payload["causes"]),
-    }
+
+
+def _is_unique_parent_list(causes) -> bool:
+    return (
+        isinstance(causes, list)
+        and all(isinstance(parent, str) and parent for parent in causes)
+        and len(causes) == len(set(causes))
+    )
+
+
+def _is_prior_same_job_event(parent, event, job_id: str) -> bool:
+    return not (
+        parent is None or parent.entity_type != _KIND
+        or parent.entity_id != job_id or parent.correlation_id != job_id
+        or parent.occurred_at > event.occurred_at
+        or parent.tick is None or parent.tick >= event.tick
+    )
 
 
 def publish_od5a_physical_completion(

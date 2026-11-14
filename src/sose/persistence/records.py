@@ -71,54 +71,61 @@ def records_to_state(records: Iterable[StateRecord]) -> _State:
     grouped: dict[str, list[StateRecord]] = {}
     for record in records:
         grouped.setdefault(record.collection, []).append(record)
+    _reject_unknown_collections(grouped)
 
     template = _State()
-    known = {field.name for field in fields(_State)}
-    legacy = {"simulation_position", "scenario_state", "committed_tick"}
-    unknown = set(grouped) - known
-    if unknown:
-        if unknown & legacy:
-            raise ValueError(
-                "unsupported legacy unowned runtime records: "
-                + ", ".join(sorted(unknown & legacy))
-            )
-        raise ValueError(
-            "unknown durable record collections: " + ", ".join(sorted(unknown))
-        )
     values: dict[str, object] = {}
-
     for field in fields(_State):
         name = field.name
-        default_value = getattr(template, name)
         current = sorted(
             grouped.get(name, ()),
             key=lambda record: (record.position, record.key),
         )
-
-        if isinstance(default_value, dict):
-            restored: dict[object, object] = {}
-            for record in current:
-                decoded_key = loads(record.key)
-                if name in {"simulation_positions", "scenario_states", "committed_ticks"}:
-                    if not isinstance(decoded_key, str) or not decoded_key.strip():
-                        raise ValueError(f"unowned durable temporal record in {name}")
-                restored[decoded_key] = loads(record.payload)
-            values[name] = restored
-            continue
-
-        if isinstance(default_value, list):
-            values[name] = [loads(record.payload) for record in current]
-            continue
-
-        scalar = next(
-            (record for record in current if record.key == "__scalar__"),
-            None,
-        )
-        values[name] = (
-            default_value if scalar is None else loads(scalar.payload)
-        )
-
+        values[name] = _restore_field(name, getattr(template, name), current)
     return _State(**values)
+
+
+_LEGACY_UNOWNED_COLLECTIONS = frozenset({"simulation_position", "scenario_state", "committed_tick"})
+_OWNED_TEMPORAL_COLLECTIONS = frozenset({"simulation_positions", "scenario_states", "committed_ticks"})
+
+
+def _reject_unknown_collections(grouped: dict[str, list[StateRecord]]) -> None:
+    known = {field.name for field in fields(_State)}
+    unknown = set(grouped) - known
+    if not unknown:
+        return
+    if unknown & _LEGACY_UNOWNED_COLLECTIONS:
+        raise ValueError(
+            "unsupported legacy unowned runtime records: "
+            + ", ".join(sorted(unknown & _LEGACY_UNOWNED_COLLECTIONS))
+        )
+    raise ValueError(
+        "unknown durable record collections: " + ", ".join(sorted(unknown))
+    )
+
+
+def _restore_field(name: str, default_value: object, current: list[StateRecord]) -> object:
+    """Decode one _State field from its position-ordered records."""
+    if isinstance(default_value, dict):
+        return _restore_mapping(name, current)
+    if isinstance(default_value, list):
+        return [loads(record.payload) for record in current]
+    scalar = next(
+        (record for record in current if record.key == "__scalar__"),
+        None,
+    )
+    return default_value if scalar is None else loads(scalar.payload)
+
+
+def _restore_mapping(name: str, current: list[StateRecord]) -> dict[object, object]:
+    owner_keyed = name in _OWNED_TEMPORAL_COLLECTIONS
+    restored: dict[object, object] = {}
+    for record in current:
+        decoded_key = loads(record.key)
+        if owner_keyed and (not isinstance(decoded_key, str) or not decoded_key.strip()):
+            raise ValueError(f"unowned durable temporal record in {name}")
+        restored[decoded_key] = loads(record.payload)
+    return restored
 
 
 def diff_state_records(
