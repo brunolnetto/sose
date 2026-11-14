@@ -3,7 +3,6 @@
   "max_cc:composition/boundary.py::BoundaryService.claim_next": 32,
   "max_cc:composition/boundary.py::BoundaryService.consume": 11,
   "max_cc:composition/boundary.py::BoundaryService.publish": 13,
-  "max_cc:composition/effects.py::BusinessEffectService.complete": 29,
   "max_cc:composition/organization.py::OrganizationDefinition.__post_init__": 21,
   "max_cc:composition/organization.py::validate_organization_admission": 26,
   "max_cc:composition/recovery.py::TradingCustomerRecoveryRunner.__post_init__": 33,
