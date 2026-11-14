@@ -51,7 +51,9 @@ criterion that blocks regressions immediately and can be tightened over time.
    coverage-gap × complexity ranking in the coverage job, to decide which refactors need
    tests first.
 6. **Enforcement point.** A dedicated `quality` CI job (no test run, fast feedback) runs
-   the strict gate. The coverage job's analysis step applies the same limits and baseline.
+   the strict gate; it is the only enforcement point. The coverage job's analysis step is
+   informational: with `--coverage`, codebase-stats 0.1.0 resolves a file without
+   functions to another file of the same basename and reports phantom violations.
    While hosted Actions are unavailable (#586), the same job is reproduced locally from
    `ci.yml`.
 
