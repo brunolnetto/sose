@@ -48,7 +48,7 @@ them would require invalidating an already-tested stronger contract.
 | `core/engine.py:159` | Engine construction requires a statechart factory |
 | `core/engine.py:276` | Engine construction requires a statechart factory |
 | `core/durable.py:87` | Attached durable scheduler requires its due callback |
-| `core/durable.py:222` | Recovery participants are validated for `rebuild_backend()` before reconstruction |
+| `core/durable.py:218` | Recovery participants are validated for `rebuild_backend()` before reconstruction |
 | `persistence/duckdb.py:144` | Record changes have a closed internal operation set |
 | `jobs/config.py:22` | Namespace construction normalizes to a lowercase SQL-safe stem, prefixes digit/empty starts, truncates length, and appends an 8-hex digest; the final regex rejection cannot be reached through any `job_id` input |
 
