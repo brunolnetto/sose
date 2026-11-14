@@ -175,9 +175,10 @@ class BoundaryDelivery:
         if self.attempts < 0 or self.claim_epoch < 0:
             raise ValueError("delivery counters must be non-negative")
         # Other statuses carry no lifecycle invariant beyond the fields above.
-        validate = _DELIVERY_STATE_VALIDATORS.get(self.status)
-        if validate is not None:
-            validate(self)
+        # Identity dispatch: a non-member status (even an unhashable one) is ignored.
+        for status, validate in _DELIVERY_STATE_VALIDATORS:
+            if self.status is status:
+                validate(self)
 
     def _validate_pending(self) -> None:
         if any(
@@ -205,11 +206,11 @@ class BoundaryDelivery:
             raise ValueError("consumed delivery requires effect and timestamp")
 
 
-_DELIVERY_STATE_VALIDATORS = {
-    DeliveryStatus.PENDING: BoundaryDelivery._validate_pending,
-    DeliveryStatus.CLAIMED: BoundaryDelivery._validate_claimed,
-    DeliveryStatus.CONSUMED: BoundaryDelivery._validate_consumed,
-}
+_DELIVERY_STATE_VALIDATORS = (
+    (DeliveryStatus.PENDING, BoundaryDelivery._validate_pending),
+    (DeliveryStatus.CLAIMED, BoundaryDelivery._validate_claimed),
+    (DeliveryStatus.CONSUMED, BoundaryDelivery._validate_consumed),
+)
 
 
 @dataclass(frozen=True, slots=True)

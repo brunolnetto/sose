@@ -313,9 +313,12 @@ class _ClaimedTick:
         claim = self.claim
         with _job_transaction(self.store, self.job_id) as uow:
             source, job, lease = self._fenced(uow)
+            # Always read the owned reservations, even when the source already
+            # differs: a failing read must surface as itself, as it always did.
+            current_owned = self._owned(uow)
             if (
                 source.attributes != self.preflight_state
-                or self._owned(uow) != self.preflight_reservations
+                or current_owned != self.preflight_reservations
             ):
                 raise StaleOD5aRunnerClaimError(
                     "OD-5a source/physical state changed before durable wait"
