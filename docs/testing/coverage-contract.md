@@ -80,6 +80,8 @@ The exclusion inventory and its remaining test debt are maintained in [coverage-
 
 The authoritative coverage job also runs `codebase-stats` against the generated
 `coverage.json` and pytest JSON report, with `src/sose` as the analysis root.
+This analysis is informational; the `quality` job is the only enforcement
+point of the ADR-0010 ratchet.
 
 Coverage gaps are prioritized together with:
 
