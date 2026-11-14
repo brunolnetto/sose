@@ -10,10 +10,8 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from copy import deepcopy
-from decimal import Decimal
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
-from math import isfinite
 import json
 from typing import Any, Callable, Protocol
 
@@ -23,7 +21,8 @@ from sose.core.runtime import ResourceDefinition, ResourceReservation
 from sose.domain.entity import Entity
 from sose.persistence.base import Persistence
 
-from .od5a_admission import OD5aCompiledArm, ALL_ARMS
+from .od5a_admission import OD5aCompiledArm
+from .od5a_durable_inputs import _precise_time, _time_us, validated_od5a_pilot
 from .od5a_mechanisms import OD5aWorkItem
 
 
@@ -37,23 +36,6 @@ class _NativePhysicalArbiter(Protocol):
     def acquire(self, *, resource_name: str, request_id: str, at: float) -> bool: ...
     def release(self, *, resource_name: str, reservation_id: str) -> None: ...
 
-
-
-def _time_us(value: float | int, label: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not isfinite(value):
-        raise ValueError(f"{label} requires a finite numeric time")
-    ticks = Decimal(str(value)) * 1_000_000
-    if ticks != ticks.to_integral_value():
-        raise ValueError(f"{label} must have exact microsecond resolution")
-    # A float second offset cannot uniquely represent every microsecond beyond
-    # this bound; reject rather than alias two distinct semantic timestamps.
-    if abs(ticks) > 2**53:
-        raise ValueError(f"{label} exceeds lossless microsecond offset range")
-    return int(ticks)
-
-
-def _precise_time(value: float | int, label: str) -> None:
-    _time_us(value, label)
 
 
 def _add_exact_seconds(start: float, duration: float) -> float:
@@ -233,12 +215,7 @@ def _transition(
     native: _NativePhysicalArbiter | None = None,
 ) -> bool:
     if not state["actions"]:
-        if not state["active"] and not state["pending_execution"] and not state["pending_coordination"]:
-            if len(state["completed"]) != len(state["services"]):
-                raise RuntimeError("durable dependency graph stopped without completing every item")
-            state["done"] = True
-            return False
-        raise RuntimeError("pending physical allocations but no future completion action")
+        return _finish_idle(state)
     action = min(state["actions"], key=lambda x: (x["at"], x["seq"]))
     state["actions"].remove(action)
     now = action["at"]
@@ -247,68 +224,108 @@ def _transition(
     state["clock"] = now
     state["step"] += 1
     kind = action["kind"]
-
     if kind == "arrival":
-        item = action["item"]
-        cause = _emit(
-            uow, state, job_id=job_id, kind="arrival", item_id=item, at=now,
-        )
-        for root in state["stations"]:
-            if not state["incoming"][root]:
-                _queue_stage(state, item_id=item, target=root, causes=[cause])
+        _on_arrival(uow, state, job_id, action["item"], now)
     elif kind in {"execution_done", "coordination_done"}:
-        resource = action["resource"]
-        allocation = state["active"].pop(resource, None)
-        if allocation is None or allocation["kind"] + "_done" != kind:
-            raise RuntimeError("durable resource action has no matching lease")
-        reservation_id = allocation["reservation_id"]
-        if state["resources"][resource] != reservation_id:
-            raise RuntimeError("physical resource truth differs from active allocation")
-        if uow.get_resource_reservation(reservation_id) is None:
-            raise RuntimeError("physical lease disappeared before completion")
-        if native is not None:
-            native.release(
-                resource_name=f"{job_id}/{resource}",
-                reservation_id=reservation_id,
-            )
-        uow.delete_resource_reservation(reservation_id)
-        state["resources"][resource] = None
-        item = allocation["item"]
-        source, target = allocation["source"], allocation["target"]
-        category = "execution" if kind == "execution_done" else "coordination"
-        emitted = _emit(
-            uow, state, job_id=job_id, kind=category, item_id=item, at=now,
-            source=source, target=target, start=allocation["start"],
-            resource=resource, causes=allocation["causes"],
-        )
-        if kind == "execution_done":
-            state["finished"].append(_key(item, target))
-            if all(_key(item, node) in state["finished"] for node in state["stations"]):
-                state["completed"][item] = now
-            for downstream in sorted(state["outgoing"][target]):
-                _request(state, "coordination", {
-                    "item": item, "source": target,
-                    "target": downstream, "causes": [emitted],
-                })
-        else:
-            satisfied = state["received"].setdefault(_key(item, target), {})
-            if source in satisfied:
-                raise RuntimeError("duplicate delivered dependency")
-            satisfied[source] = emitted
-            if set(satisfied) == set(state["incoming"][target]):
-                _queue_stage(
-                    state, item_id=item, target=target,
-                    causes=list(satisfied.values()),
-                )
+        _on_lease_done(uow, state, job_id, kind, action["resource"], now, native)
     else:
         raise RuntimeError(f"unknown scheduled durable action: {kind}")
     _dispatch(uow, state, job_id=job_id, at=now, native=native)
     if not state["actions"] and len(state["completed"]) == len(state["services"]):
-        if state["active"] or state["pending_execution"] or state["pending_coordination"]:
+        if _has_physical_work(state):
             raise RuntimeError("completed world retains unresolved physical work")
         state["done"] = True
     return True
 
+
+def _has_physical_work(state: dict[str, Any]) -> bool:
+    return bool(state["active"] or state["pending_execution"] or state["pending_coordination"])
+
+
+def _finish_idle(state: dict[str, Any]) -> bool:
+    if _has_physical_work(state):
+        raise RuntimeError("pending physical allocations but no future completion action")
+    if len(state["completed"]) != len(state["services"]):
+        raise RuntimeError("durable dependency graph stopped without completing every item")
+    state["done"] = True
+    return False
+
+
+def _on_arrival(uow: Any, state: dict[str, Any], job_id: str, item: str, now: float) -> None:
+    cause = _emit(
+        uow, state, job_id=job_id, kind="arrival", item_id=item, at=now,
+    )
+    for root in state["stations"]:
+        if not state["incoming"][root]:
+            _queue_stage(state, item_id=item, target=root, causes=[cause])
+
+
+def _release_lease(
+    uow: Any, state: dict[str, Any], job_id: str, kind: str, resource: str,
+    native: _NativePhysicalArbiter | None,
+) -> dict[str, Any]:
+    allocation = state["active"].pop(resource, None)
+    if allocation is None or allocation["kind"] + "_done" != kind:
+        raise RuntimeError("durable resource action has no matching lease")
+    reservation_id = allocation["reservation_id"]
+    if state["resources"][resource] != reservation_id:
+        raise RuntimeError("physical resource truth differs from active allocation")
+    if uow.get_resource_reservation(reservation_id) is None:
+        raise RuntimeError("physical lease disappeared before completion")
+    if native is not None:
+        native.release(
+            resource_name=f"{job_id}/{resource}",
+            reservation_id=reservation_id,
+        )
+    uow.delete_resource_reservation(reservation_id)
+    state["resources"][resource] = None
+    return allocation
+
+
+def _on_lease_done(
+    uow: Any, state: dict[str, Any], job_id: str, kind: str, resource: str,
+    now: float, native: _NativePhysicalArbiter | None,
+) -> None:
+    allocation = _release_lease(uow, state, job_id, kind, resource, native)
+    item = allocation["item"]
+    source, target = allocation["source"], allocation["target"]
+    category = "execution" if kind == "execution_done" else "coordination"
+    emitted = _emit(
+        uow, state, job_id=job_id, kind=category, item_id=item, at=now,
+        source=source, target=target, start=allocation["start"],
+        resource=resource, causes=allocation["causes"],
+    )
+    if kind == "execution_done":
+        _on_stage_executed(state, item, target, emitted, now)
+    else:
+        _on_dependency_delivered(state, item, source, target, emitted)
+
+
+def _on_stage_executed(
+    state: dict[str, Any], item: str, target: str, emitted: str, now: float,
+) -> None:
+    state["finished"].append(_key(item, target))
+    if all(_key(item, node) in state["finished"] for node in state["stations"]):
+        state["completed"][item] = now
+    for downstream in sorted(state["outgoing"][target]):
+        _request(state, "coordination", {
+            "item": item, "source": target,
+            "target": downstream, "causes": [emitted],
+        })
+
+
+def _on_dependency_delivered(
+    state: dict[str, Any], item: str, source: str, target: str, emitted: str,
+) -> None:
+    satisfied = state["received"].setdefault(_key(item, target), {})
+    if source in satisfied:
+        raise RuntimeError("duplicate delivered dependency")
+    satisfied[source] = emitted
+    if set(satisfied) == set(state["incoming"][target]):
+        _queue_stage(
+            state, item_id=item, target=target,
+            causes=list(satisfied.values()),
+        )
 
 
 @contextmanager
@@ -341,59 +358,11 @@ def initialize_od5a_durable(
     The recurring adapter uses this private binder to atomically enroll its
     SimulationJobState. Standalone reference sources have no owner binder.
     """
-    if not job_id or arm.arm_id not in ALL_ARMS or not items:
-        raise ValueError("registered arm, job ID and nonempty workload required")
-    # The arm label alone is not scientific admission. Treating hand-made arm
-    # objects as compiled would permit unpaid treatment or mislabeled baseline.
-    if not arm.compiler_admitted:
-        raise ValueError("OD-5a arm lacks compiler admission or mutated admission hash")
-    if arm.arm_id == "baseline":
-        if arm.charged_cost is not None or arm.intervention is not None:
-            raise ValueError("compiled baseline cannot carry an intervention or cost")
-    elif (
-        arm.charged_cost is None or arm.intervention is None
-        or arm.intervention.intervention_id != arm.arm_id
-    ):
-        raise ValueError("compiled treatment must carry matching intervention and cost")
-    stations = tuple(sorted(arm.model.stations))
-    if not stations:
-        raise ValueError("at least one physical station required")
-    if len({x.item_id for x in items}) != len(items):
-        raise ValueError("duplicate work items")
-    if any({station for station, _ in x.service_by_station} != set(stations)
-           or len(x.service_by_station) != len(stations) for x in items):
-        raise ValueError("each item must provide each station's exogenous service demand")
-    edges = tuple(tuple(edge) for edge in arm.model.routing["dependency_edges"])
-    incoming = {s: [] for s in stations}
-    outgoing = {s: [] for s in stations}
-    for source, target in edges:
-        if source not in outgoing or target not in incoming or source == target:
-            raise ValueError("unknown dependency edge station")
-        outgoing[source].append(target)
-        incoming[target].append(source)
-    raw_slots = arm.model.parameters["execution_slots"]
-    if isinstance(raw_slots, bool) or not isinstance(raw_slots, int) or raw_slots < 1:
-        raise ValueError("physical slots must be positive integers")
-    coordination_latency = float(arm.model.parameters["coordination_latency"])
-    transition = 0.0 if arm.charged_cost is None else arm.charged_cost.transition_time
-    if coordination_latency < 0 or transition < 0:
-        raise ValueError("pilot coordination and transition intervals must be nonnegative")
-    _precise_time(coordination_latency, "coordination latency")
-    _precise_time(transition, "transition time")
-    for item in items:
-        _precise_time(item.arrival_at, "arrival time")
-        for _, duration in item.service_by_station:
-            _precise_time(duration, "service duration")
-    workload = [
-        {"item": item.item_id, "at": item.arrival_at,
-         "service": [list(pair) for pair in item.service_by_station]}
-        for item in items
-    ]
-    identity = _canonical_hash({
-        "admission_hash": arm.admission_hash,
-        "workload": workload,
-        "pilot_version": 1,
-    })
+    pilot = validated_od5a_pilot(job_id=job_id, arm=arm, items=items)
+    stations, incoming, outgoing = pilot.stations, pilot.incoming, pilot.outgoing
+    raw_slots, coordination_latency = pilot.execution_slots, pilot.coordination_latency
+    transition = pilot.transition
+    identity = _pilot_identity(arm, items)
     resources = {f"execution:{i}": None for i in range(raw_slots)}
     resources["coordination:0"] = None
     with _source_transaction(store, job_id) as uow:
@@ -431,6 +400,18 @@ def initialize_od5a_durable(
         ))
         if _bind_uow is not None:
             _bind_uow(uow)
+
+
+def _pilot_identity(arm: OD5aCompiledArm, items: tuple[OD5aWorkItem, ...]) -> str:
+    return _canonical_hash({
+        "admission_hash": arm.admission_hash,
+        "workload": [
+            {"item": item.item_id, "at": item.arrival_at,
+             "service": [list(pair) for pair in item.service_by_station]}
+            for item in items
+        ],
+        "pilot_version": 1,
+    })
 
 
 def _advance_od5a_in_uow(
