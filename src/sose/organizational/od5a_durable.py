@@ -22,7 +22,7 @@ from sose.domain.entity import Entity
 from sose.persistence.base import Persistence
 
 from .od5a_admission import OD5aCompiledArm
-from .od5a_durable_inputs import _precise_time, _time_us, validated_od5a_pilot
+from .od5a_durable_inputs import _precise_time, _time_us, validated_od5a_pilot  # noqa: F401
 from .od5a_mechanisms import OD5aWorkItem
 
 
