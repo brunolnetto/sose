@@ -80,6 +80,22 @@ def _text(value: object, name: str) -> None:
 
 def validate_od5a_execution_freeze(payload: Mapping[str, Any]) -> str:
     """Return canonical SHA-256 iff a *complete* pre-outcome manifest is admitted."""
+    _validate_freeze_header(payload)
+    _validate_freeze_hashes(payload)
+    _validate_nonload_bounds(payload)
+    _validate_coordinate_mapping(payload)
+    _validate_design_geometry(payload)
+    _validate_horizon_and_rules(payload)
+    _validate_cost_schedule(payload)
+    _validate_crn_streams(payload)
+    canonical = json.dumps(
+        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+        allow_nan=False,
+    ).encode("utf-8")
+    return sha256(canonical).hexdigest()
+
+
+def _validate_freeze_header(payload: Mapping[str, Any]) -> None:
     _check_unset(payload)
     if set(payload) != REQUIRED:
         raise ValueError(
@@ -90,6 +106,9 @@ def validate_od5a_execution_freeze(payload: Mapping[str, Any]) -> str:
         raise ValueError("stage must be execution_freeze, never design_preregistration")
     if payload["protocol_id"] != "od5a-structure-capacity-v2":
         raise ValueError("OD-5a protocol ID conflicts with frozen design")
+
+
+def _validate_freeze_hashes(payload: Mapping[str, Any]) -> None:
     _hash(payload["source_tree_oid"], "source_tree_oid", git=True)
     for field in HASH_FIELDS:
         _hash(payload[field], field)
@@ -100,6 +119,8 @@ def validate_od5a_execution_freeze(payload: Mapping[str, Any]) -> str:
         for arm, value in hashes.items():
             _hash(value, f"{field}.{arm}")
 
+
+def _validate_nonload_bounds(payload: Mapping[str, Any]) -> None:
     bounds = payload["nonload_bounds"]
     if not isinstance(bounds, Mapping) or set(bounds) != COORDINATES:
         raise ValueError("freeze requires exactly six non-load exogenous coordinates")
@@ -111,6 +132,8 @@ def validate_od5a_execution_freeze(payload: Mapping[str, Any]) -> str:
         if low >= high:
             raise ValueError(f"non-load bounds must be increasing for {name}")
 
+
+def _validate_coordinate_mapping(payload: Mapping[str, Any]) -> None:
     mapping = payload["coordinate_mapping"]
     if not isinstance(mapping, Mapping) or set(mapping) != COORDINATES:
         raise ValueError("coordinate mapping must cover the six registered dimensions")
@@ -120,22 +143,40 @@ def validate_od5a_execution_freeze(payload: Mapping[str, Any]) -> str:
         for label, value in definition.items():
             _text(value, f"{coordinate}.{label}")
 
+
+def _validate_design_geometry(payload: Mapping[str, Any]) -> None:
     for seed_name in ("design_seed", "root_seed"):
         seed = payload[seed_name]
         if isinstance(seed, bool) or not isinstance(seed, int) or seed < 0:
             raise ValueError(f"{seed_name} must be a nonnegative integer seed")
-    if payload["n_strata"] != 32 or isinstance(payload["n_strata"], bool):
-        raise ValueError("registered Sobol geometry requires 32 non-load strata")
+    _validate_fixed_counts(payload)
+
+
+def _require_exact_count(payload: Mapping[str, Any], field: str, expected: int, message: str) -> None:
+    # bool is an int subclass: True must not pass for 1.
+    if payload[field] != expected or isinstance(payload[field], bool):
+        raise ValueError(message)
+
+
+def _validate_fixed_counts(payload: Mapping[str, Any]) -> None:
+    _require_exact_count(
+        payload, "n_strata", 32, "registered Sobol geometry requires 32 non-load strata",
+    )
     if (not isinstance(payload["load_grid"], list)
             or payload["load_grid"] != list(LOAD_GRID)
             or any(isinstance(x, bool) for x in payload["load_grid"])):
         raise ValueError("load grid must equal the seven registered nominal loads")
-    if payload["replications"] != 16 or isinstance(payload["replications"], bool):
-        raise ValueError("registered design requires exactly 16 replications")
+    _require_exact_count(
+        payload, "replications", 16, "registered design requires exactly 16 replications",
+    )
     if payload["arms"] != list(ARMS):
         raise ValueError("registered design requires five fixed arms")
-    if payload["run_count"] != 17920 or isinstance(payload["run_count"], bool):
-        raise ValueError("registered geometry requires exactly 17,920 executions")
+    _require_exact_count(
+        payload, "run_count", 17920, "registered geometry requires exactly 17,920 executions",
+    )
+
+
+def _validate_horizon_and_rules(payload: Mapping[str, Any]) -> None:
     horizon = _finite(payload["horizon"], "horizon", positive=True)
     warmup = _finite(payload["warmup"], "warmup")
     if not 0 <= warmup < horizon:
@@ -147,48 +188,67 @@ def validate_od5a_execution_freeze(payload: Mapping[str, Any]) -> str:
     ):
         _text(payload[field], field)
 
+
+_NUMERIC_COST_FIELDS = frozenset({
+    "operating_cost_at_horizon", "transition_cost",
+    "transition_time", "shadow_price_per_transition_time",
+})
+_JUSTIFICATION_FIELD = "zero_transition_cost_justification"
+
+
+def _validate_cost_schedule(payload: Mapping[str, Any]) -> None:
     costs = payload["cost_schedule"]
     if not isinstance(costs, Mapping) or set(costs) != set(ARMS[1:]):
         raise ValueError("matched costs must cover exactly four treatment arms")
     totals: dict[str, float] = {}
-    numeric_cost_fields = {
-        "operating_cost_at_horizon", "transition_cost",
-        "transition_time", "shadow_price_per_transition_time",
-    }
-    justification_field = "zero_transition_cost_justification"
     for arm, cost in costs.items():
-        if not isinstance(cost, Mapping) or not (
-            set(cost) == numeric_cost_fields
-            or set(cost) == numeric_cost_fields | {justification_field}
-        ):
-            raise ValueError(f"incomplete lifecycle cost schedule: {arm}")
-        values = {
-            key: _finite(cost[key], f"{arm}.{key}")
-            for key in numeric_cost_fields
-        }
-        if any(value < 0 for value in values.values()):
-            raise ValueError("lifecycle costs cannot be negative")
-        if values["transition_cost"] == 0:
-            reason = cost.get(justification_field)
-            if not isinstance(reason, str) or len(reason.strip()) < 20:
-                raise ValueError(
-                    f"zero transition cost requires prospective substantive justification: {arm}"
-                )
-        elif justification_field in cost:
-            raise ValueError(f"zero-cost justification is invalid for a charged treatment: {arm}")
-        if values["transition_time"] > 0 and values["shadow_price_per_transition_time"] <= 0:
-            raise ValueError("transition time must be priced explicitly")
-        total = (
-            values["operating_cost_at_horizon"] + values["transition_cost"]
-            + values["transition_time"] * values["shadow_price_per_transition_time"]
-        )
-        if not isfinite(total) or total <= 0:
-            raise ValueError("matched-cost budget must be finite and positive")
-        totals[arm] = total
+        totals[arm] = _arm_lifecycle_total(arm, cost)
     reference = totals["capacity_only"]
     if any(abs(value - reference) / reference > 0.01 for value in totals.values()):
         raise ValueError("treatment budget mismatch exceeds 1%")
 
+
+def _arm_lifecycle_total(arm: str, cost: Any) -> float:
+    """Validate one treatment's lifecycle cost ledger and return its total."""
+    if not _is_complete_cost_ledger(cost):
+        raise ValueError(f"incomplete lifecycle cost schedule: {arm}")
+    values = {
+        key: _finite(cost[key], f"{arm}.{key}")
+        for key in _NUMERIC_COST_FIELDS
+    }
+    if any(value < 0 for value in values.values()):
+        raise ValueError("lifecycle costs cannot be negative")
+    _validate_zero_cost_justification(arm, cost, values["transition_cost"])
+    if values["transition_time"] > 0 and values["shadow_price_per_transition_time"] <= 0:
+        raise ValueError("transition time must be priced explicitly")
+    total = (
+        values["operating_cost_at_horizon"] + values["transition_cost"]
+        + values["transition_time"] * values["shadow_price_per_transition_time"]
+    )
+    if not isfinite(total) or total <= 0:
+        raise ValueError("matched-cost budget must be finite and positive")
+    return total
+
+
+def _is_complete_cost_ledger(cost: Any) -> bool:
+    return isinstance(cost, Mapping) and (
+        set(cost) == _NUMERIC_COST_FIELDS
+        or set(cost) == _NUMERIC_COST_FIELDS | {_JUSTIFICATION_FIELD}
+    )
+
+
+def _validate_zero_cost_justification(arm: str, cost: Mapping[str, Any], transition_cost: float) -> None:
+    if transition_cost == 0:
+        reason = cost.get(_JUSTIFICATION_FIELD)
+        if not isinstance(reason, str) or len(reason.strip()) < 20:
+            raise ValueError(
+                f"zero transition cost requires prospective substantive justification: {arm}"
+            )
+    elif _JUSTIFICATION_FIELD in cost:
+        raise ValueError(f"zero-cost justification is invalid for a charged treatment: {arm}")
+
+
+def _validate_crn_streams(payload: Mapping[str, Any]) -> None:
     crn = payload["crn_streams"]
     if not isinstance(crn, Mapping) or set(crn) != {
         "arrival", "service", "coordination", "entity_identity", "draw_index",
@@ -198,12 +258,6 @@ def validate_od5a_execution_freeze(payload: Mapping[str, Any]) -> str:
         _text(value, f"crn.{key}")
     if len({crn[name] for name in ("arrival", "service", "coordination")}) != 3:
         raise ValueError("mechanism counter-CRN streams must have unique identities")
-
-    canonical = json.dumps(
-        payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
-    return sha256(canonical).hexdigest()
 
 
 def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:

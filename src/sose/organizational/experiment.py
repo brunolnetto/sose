@@ -184,37 +184,9 @@ class ExperimentProtocol(BaseModel):
 
     @model_validator(mode="after")
     def validate_protocol(self) -> "ExperimentProtocol":
-        if len(self.baseline_model_spec_hash) != 64 or any(
-            character not in "0123456789abcdef" for character in self.baseline_model_spec_hash
-        ):
-            raise ValueError("baseline_model_spec_hash must be a lowercase SHA-256 hex digest")
-        if len(set(self.intervention_ids)) != len(self.intervention_ids):
-            raise ValueError("duplicate intervention ids are not allowed")
-        if len(set(self.agency_levels)) != len(self.agency_levels):
-            raise ValueError("duplicate agency levels are not allowed")
-        if AgencyLevel.A3 in self.agency_levels:
-            raise ValueError("A3 is outside the organizational simulation model")
-        if not self.parameter_ranges:
-            raise ValueError("at least one parameter range is required")
-        if not self.outcomes:
-            raise ValueError("at least one outcome is required")
-        outcome_names = [outcome.name for outcome in self.outcomes]
-        if len(set(outcome_names)) != len(outcome_names):
-            raise ValueError("duplicate outcome names are not allowed")
-        if self.falsification.primary_metric not in outcome_names:
-            raise ValueError("primary falsification metric must be a preregistered outcome")
-        if self.protocol_version == "1":
-            if self.cost_analysis is not None or self.surrogate_analysis is not None:
-                raise ValueError("protocol version 1 does not accept version 2 analysis plans")
-        else:
-            if self.cost_analysis is None:
-                raise ValueError("protocol version 2 requires cost analysis")
-            if self.surrogate_analysis is None:
-                raise ValueError("protocol version 2 requires surrogate analysis")
-            if self.cost_analysis.operating_cost_metric not in outcome_names:
-                raise ValueError("operating cost metric must be a preregistered outcome")
-            if self.cost_analysis.transition_cost_parameter not in self.parameter_ranges:
-                raise ValueError("transition cost parameter must be a preregistered parameter range")
+        self._validate_design_identity()
+        outcome_names = self._validated_outcome_names()
+        self._validate_analysis_plans(outcome_names)
         if self.warmup >= self.horizon:
             raise ValueError("warmup must be smaller than horizon")
         if not self.crn_enabled:
@@ -227,6 +199,44 @@ class ExperimentProtocol(BaseModel):
             MappingProxyType(dict(self.parameter_ranges)),
         )
         return self
+
+    def _validate_design_identity(self) -> None:
+        if len(self.baseline_model_spec_hash) != 64 or any(
+            character not in "0123456789abcdef" for character in self.baseline_model_spec_hash
+        ):
+            raise ValueError("baseline_model_spec_hash must be a lowercase SHA-256 hex digest")
+        if len(set(self.intervention_ids)) != len(self.intervention_ids):
+            raise ValueError("duplicate intervention ids are not allowed")
+        if len(set(self.agency_levels)) != len(self.agency_levels):
+            raise ValueError("duplicate agency levels are not allowed")
+        if AgencyLevel.A3 in self.agency_levels:
+            raise ValueError("A3 is outside the organizational simulation model")
+        if not self.parameter_ranges:
+            raise ValueError("at least one parameter range is required")
+
+    def _validated_outcome_names(self) -> list[str]:
+        if not self.outcomes:
+            raise ValueError("at least one outcome is required")
+        outcome_names = [outcome.name for outcome in self.outcomes]
+        if len(set(outcome_names)) != len(outcome_names):
+            raise ValueError("duplicate outcome names are not allowed")
+        if self.falsification.primary_metric not in outcome_names:
+            raise ValueError("primary falsification metric must be a preregistered outcome")
+        return outcome_names
+
+    def _validate_analysis_plans(self, outcome_names: list[str]) -> None:
+        if self.protocol_version == "1":
+            if self.cost_analysis is not None or self.surrogate_analysis is not None:
+                raise ValueError("protocol version 1 does not accept version 2 analysis plans")
+            return
+        if self.cost_analysis is None:
+            raise ValueError("protocol version 2 requires cost analysis")
+        if self.surrogate_analysis is None:
+            raise ValueError("protocol version 2 requires surrogate analysis")
+        if self.cost_analysis.operating_cost_metric not in outcome_names:
+            raise ValueError("operating cost metric must be a preregistered outcome")
+        if self.cost_analysis.transition_cost_parameter not in self.parameter_ranges:
+            raise ValueError("transition cost parameter must be a preregistered parameter range")
 
     def canonical_payload(self) -> dict[str, object]:
         payload: dict[str, object] = {
