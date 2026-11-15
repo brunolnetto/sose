@@ -236,29 +236,34 @@ def _check_tracked_source_bytes(root: Path) -> None:
     for record in records.split(b"\x00"):
         if not record:
             continue
-        meta, relative = record.split(b"\t", 1)
-        mode, kind, expected_oid = meta.split(b" ", 2)
-        if kind != b"blob" or mode not in (b"100644", b"100755", b"120000"):
-            raise ValueError("frozen source tree has unsupported Git entry")
-        path = root / os.fsdecode(relative)
-        try:
-            disk = path.lstat()
-        except FileNotFoundError as exc:
-            raise ValueError("dirty or missing tracked source file") from exc
-        if mode == b"120000" or stat.S_ISLNK(disk.st_mode):
-            # Link text is frozen, but external target bytes are not. Disallow
-            # links completely until independently frozen target provenance exists.
-            raise ValueError("source symlinks are not admitted by OD-5a execution freeze")
-        if not stat.S_ISREG(disk.st_mode):
-            raise ValueError("tracked source file type mismatch")
-        if bool(disk.st_mode & 0o111) != (mode == b"100755"):
-            raise ValueError("tracked source file mode mismatch")
-        contents = path.read_bytes()
-        actual_oid = sha1(
-            b"blob " + str(len(contents)).encode("ascii") + b"\x00" + contents
-        ).hexdigest().encode("ascii")
-        if actual_oid != expected_oid:
-            raise ValueError("dirty tracked source byte mismatch with frozen Git blob")
+        _check_tracked_record(root, record)
+
+
+def _check_tracked_record(root: Path, record: bytes) -> None:
+    """One `git ls-tree -z` entry: type, mode and actual bytes must match HEAD."""
+    meta, relative = record.split(b"\t", 1)
+    mode, kind, expected_oid = meta.split(b" ", 2)
+    if kind != b"blob" or mode not in (b"100644", b"100755", b"120000"):
+        raise ValueError("frozen source tree has unsupported Git entry")
+    path = root / os.fsdecode(relative)
+    try:
+        disk = path.lstat()
+    except FileNotFoundError as exc:
+        raise ValueError("dirty or missing tracked source file") from exc
+    if mode == b"120000" or stat.S_ISLNK(disk.st_mode):
+        # Link text is frozen, but external target bytes are not. Disallow
+        # links completely until independently frozen target provenance exists.
+        raise ValueError("source symlinks are not admitted by OD-5a execution freeze")
+    if not stat.S_ISREG(disk.st_mode):
+        raise ValueError("tracked source file type mismatch")
+    if bool(disk.st_mode & 0o111) != (mode == b"100755"):
+        raise ValueError("tracked source file mode mismatch")
+    contents = path.read_bytes()
+    actual_oid = sha1(
+        b"blob " + str(len(contents)).encode("ascii") + b"\x00" + contents
+    ).hexdigest().encode("ascii")
+    if actual_oid != expected_oid:
+        raise ValueError("dirty tracked source byte mismatch with frozen Git blob")
 
 
 def verify_od5a_checkout_identity(payload: Mapping[str, Any], root: str | Path) -> str:
