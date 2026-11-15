@@ -115,58 +115,21 @@ class BusinessEffectService:
                 return prior
             if pending is None:
                 raise ValueError("business effect lacks pending Command and certificate")
-            expected = _CERTIFIED_TERMINALS.get(pending.name)
-            if expected is None:
-                raise ValueError(f"business effect has no certified terminal: {pending.name}")
             (
-                expected_type, expected_state, expected_contract,
+                _, expected_state, expected_contract,
                 expected_source, expected_destination, payload_id_field,
-            ) = expected
-            if pending.entity_type != expected_type:
-                raise ValueError("business effect target entity type conflicts with command")
-            if not pending.causation_id or not pending.correlation_id:
-                raise ValueError("business effect lacks causal Command identity")
+            ) = _certified_terminal(pending)
 
-            matching = []
-            for delivery in uow.boundary_deliveries():
-                if delivery.message_id != pending.causation_id:
-                    continue
-                consumed = uow.get_boundary_consumption(delivery.delivery_id)
-                if (
-                    consumed is not None
-                    and consumed.consumer_effect_id == effect_id
-                    and delivery.consumer_effect_id == effect_id
-                    and delivery.status.value == "consumed"
-                ):
-                    matching.append(delivery)
-            if len(matching) != 1:
-                raise ValueError("business effect lacks unique accepted boundary receipt")
-
-            message = uow.get_boundary_message(pending.causation_id)
-            if message is None or message.correlation_id != pending.correlation_id:
-                raise ValueError("business effect causation contradicts durable source message")
-            if (
-                message.contract_key != expected_contract
-                or message.source_domain != expected_source
-                or message.destination_domain != expected_destination
-                or str(message.payload().get(payload_id_field, "")) != pending.entity_id
-            ):
-                raise ValueError("business effect target/contract contradicts causal boundary payload")
+            _require_unique_consumed_receipt(uow, pending, effect_id)
+            message = _require_causal_message(
+                uow, pending, expected_contract, expected_source,
+                expected_destination, payload_id_field,
+            )
             entity = uow.get_entity(pending.entity_type, pending.entity_id)
             if entity is None or entity.state != expected_state:
                 raise ValueError(f"business effect lacks terminal state {expected_state}")
-
             if pending.name == "composition.complete_external_fulfillment":
-                # Invoicing alone is not a collectable payment request.
-                from sose.examples.order_to_cash.simulation import receivable_id
-                receivable = uow.get_entity("receivable", receivable_id(pending.entity_id))
-                if (
-                    receivable is None or receivable.state != "open"
-                    or receivable.attributes.get("order_id") != pending.entity_id
-                    or receivable.attributes.get("amount") != entity.attributes.get("amount")
-                    or receivable.attributes.get("currency") != entity.attributes.get("currency")
-                ):
-                    raise ValueError("invoiced effect lacks consistent open receivable")
+                _require_open_receivable(uow, pending, entity)
 
             certificate = BusinessEffectApplied.from_applied(
                 effect_id=effect_id,
@@ -181,6 +144,63 @@ class BusinessEffectService:
             uow.save_business_effect(certificate)
             uow.delete_command(effect_id)
             return certificate
+
+
+def _certified_terminal(pending) -> tuple[str, str, str, str, str, str]:
+    expected = _CERTIFIED_TERMINALS.get(pending.name)
+    if expected is None:
+        raise ValueError(f"business effect has no certified terminal: {pending.name}")
+    if pending.entity_type != expected[0]:
+        raise ValueError("business effect target entity type conflicts with command")
+    if not pending.causation_id or not pending.correlation_id:
+        raise ValueError("business effect lacks causal Command identity")
+    return expected
+
+
+def _require_unique_consumed_receipt(uow, pending, effect_id: str) -> None:
+    matching = []
+    for delivery in uow.boundary_deliveries():
+        if delivery.message_id != pending.causation_id:
+            continue
+        consumed = uow.get_boundary_consumption(delivery.delivery_id)
+        if (
+            consumed is not None
+            and consumed.consumer_effect_id == effect_id
+            and delivery.consumer_effect_id == effect_id
+            and delivery.status.value == "consumed"
+        ):
+            matching.append(delivery)
+    if len(matching) != 1:
+        raise ValueError("business effect lacks unique accepted boundary receipt")
+
+
+def _require_causal_message(
+    uow, pending, expected_contract, expected_source, expected_destination, payload_id_field,
+):
+    message = uow.get_boundary_message(pending.causation_id)
+    if message is None or message.correlation_id != pending.correlation_id:
+        raise ValueError("business effect causation contradicts durable source message")
+    if (
+        message.contract_key != expected_contract
+        or message.source_domain != expected_source
+        or message.destination_domain != expected_destination
+        or str(message.payload().get(payload_id_field, "")) != pending.entity_id
+    ):
+        raise ValueError("business effect target/contract contradicts causal boundary payload")
+    return message
+
+
+def _require_open_receivable(uow, pending, entity) -> None:
+    # Invoicing alone is not a collectable payment request.
+    from sose.examples.order_to_cash.simulation import receivable_id
+    receivable = uow.get_entity("receivable", receivable_id(pending.entity_id))
+    if (
+        receivable is None or receivable.state != "open"
+        or receivable.attributes.get("order_id") != pending.entity_id
+        or receivable.attributes.get("amount") != entity.attributes.get("amount")
+        or receivable.attributes.get("currency") != entity.attributes.get("currency")
+    ):
+        raise ValueError("invoiced effect lacks consistent open receivable")
 
 
 CERTIFIED_INTENTS = frozenset(_CERTIFIED_TERMINALS)

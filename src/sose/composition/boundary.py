@@ -6,6 +6,13 @@ from typing import TYPE_CHECKING, Callable
 
 from sose.persistence.base import Persistence
 
+from .boundary_claims import (
+    charge_recovery_publication,
+    delivery_claimable,
+    require_same_delivery,
+    typed_predecessor_certified,
+    validate_claim_request,
+)
 from .model import (
     BoundaryConsumption,
     BoundaryDelivery,
@@ -139,35 +146,12 @@ class BoundaryService:
                 # together. A process dying immediately after this transaction
                 # cannot turn a published message into unaccounted free work.
                 if recovery_job_id is not None:
-                    from dataclasses import replace
-                    job = uow.get_job_state(recovery_job_id)
-                    if job is None or job.active_trigger_id is None:
-                        raise RuntimeError(
-                            "recovery publication lost its active recurring trigger"
-                        )
-                    if message.message_id in job.active_publication_message_ids:
-                        raise RuntimeError(
-                            "enrolled recovery publication is missing its message"
-                        )
-                    uow.save_job_state(replace(
-                        job,
-                        active_publication_message_ids=(
-                            *job.active_publication_message_ids, message.message_id,
-                        ),
-                    ))
+                    charge_recovery_publication(uow, recovery_job_id, message)
                 uow.save_boundary_message(message)
 
             existing_delivery = uow.get_boundary_delivery(delivery.delivery_id)
             if existing_delivery is not None:
-                if (
-                    existing_delivery.message_id != message.message_id
-                    or existing_delivery.destination_domain != message.destination_domain
-                    or existing_delivery.contract_name != message.contract_name
-                    or existing_delivery.contract_version != message.contract_version
-                ):
-                    raise ValueError(
-                        f"boundary delivery identity conflict: {delivery.delivery_id}"
-                    )
+                require_same_delivery(existing_delivery, message, delivery.delivery_id)
                 return existing_delivery
             uow.save_boundary_delivery(delivery)
             return delivery
@@ -196,42 +180,19 @@ class BoundaryService:
         The default None preserves the existing global deterministic claim
         order for old single-worker composition references.
         """
-        if not isinstance(owner_id, str) or not owner_id.strip():
-            raise ValueError("owner_id must be a nonblank string")
-        if destination_domain is not None and not destination_domain:
-            raise ValueError("destination_domain must be nonempty when specified")
-        if message_id is not None and not message_id:
-            raise ValueError("message_id must be nonempty when specified")
-        if correlation_id is not None and not correlation_id:
-            raise ValueError("correlation_id must be nonempty when specified")
-        if lease_duration <= timedelta(0):
-            raise ValueError("lease_duration must be positive")
-        if accepted_contracts is not None and any(
-            not isinstance(name, str) or not name or not isinstance(version, int)
-            or version <= 0
-            for name, version in accepted_contracts
-        ):
-            raise ValueError("accepted_contracts requires nonempty names and positive versions")
+        validate_claim_request(
+            owner_id=owner_id, destination_domain=destination_domain,
+            message_id=message_id, correlation_id=correlation_id,
+            lease_duration=lease_duration, accepted_contracts=accepted_contracts,
+        )
 
         with self._transaction() as uow:
             candidates: list[tuple[datetime, str, BoundaryDelivery]] = []
             for delivery in uow.boundary_deliveries():
-                if message_id is not None and delivery.message_id != message_id:
-                    continue
-                if destination_domain is not None and (
-                    delivery.destination_domain != destination_domain
-                ):
-                    continue
-                if accepted_contracts is not None and (
-                    delivery.contract_name, delivery.contract_version
-                ) not in accepted_contracts:
-                    continue
-                if delivery.status is DeliveryStatus.CONSUMED:
-                    continue
-                if (
-                    delivery.status is DeliveryStatus.CLAIMED
-                    and delivery.lease_expires_at is not None
-                    and delivery.lease_expires_at > now
+                if not delivery_claimable(
+                    delivery, now=now, message_id=message_id,
+                    destination_domain=destination_domain,
+                    accepted_contracts=accepted_contracts,
                 ):
                     continue
                 message = uow.get_boundary_message(delivery.message_id)
@@ -296,41 +257,47 @@ class BoundaryService:
                 raise RuntimeError(
                     f"boundary delivery missing message: {current.delivery_id}"
                 )
+            return self._apply_claimed(uow, current, message, existing, registry, now)
 
-            # A predecessor may have been published after this claim was
-            # acquired. Validate inside the ACK transaction as well, closing
-            # the claim/consume time-of-check vs time-of-use window.
-            if not self._causal_predecessor_applied(message, uow):
-                raise StaleBoundaryClaimError(
-                    f"causal predecessor not applied: {current.delivery_id}"
-                )
+    def _apply_claimed(
+        self, uow: "UnitOfWork", current: BoundaryDelivery, message: BoundaryMessage,
+        existing: BoundaryConsumption | None, registry: BoundaryConsumerRegistry,
+        now: datetime,
+    ) -> BoundaryConsumption:
+        # A predecessor may have been published after this claim was
+        # acquired. Validate inside the ACK transaction as well, closing
+        # the claim/consume time-of-check vs time-of-use window.
+        if not self._causal_predecessor_applied(message, uow):
+            raise StaleBoundaryClaimError(
+                f"causal predecessor not applied: {current.delivery_id}"
+            )
 
-            handler = registry.resolve(message)
-            effect_id = handler(message, uow)
-            if not isinstance(effect_id, str) or not effect_id.strip():
-                raise ValueError("boundary consumer effect identity must be a nonblank string")
+        handler = registry.resolve(message)
+        effect_id = handler(message, uow)
+        if not isinstance(effect_id, str) or not effect_id.strip():
+            raise ValueError("boundary consumer effect identity must be a nonblank string")
 
-            consumption = BoundaryConsumption.create(
-                delivery=current,
-                consumer_effect_id=effect_id,
+        consumption = BoundaryConsumption.create(
+            delivery=current,
+            consumer_effect_id=effect_id,
+            consumed_at=now,
+        )
+        if existing is not None and existing != consumption:
+            raise ValueError(
+                f"boundary consumption identity conflict: {current.delivery_id}"
+            )
+        if existing is None:
+            uow.save_boundary_consumption(consumption)
+
+        uow.save_boundary_delivery(
+            replace(
+                current,
+                status=DeliveryStatus.CONSUMED,
                 consumed_at=now,
+                consumer_effect_id=effect_id,
             )
-            if existing is not None and existing != consumption:
-                raise ValueError(
-                    f"boundary consumption identity conflict: {current.delivery_id}"
-                )
-            if existing is None:
-                uow.save_boundary_consumption(consumption)
-
-            uow.save_boundary_delivery(
-                replace(
-                    current,
-                    status=DeliveryStatus.CONSUMED,
-                    consumed_at=now,
-                    consumer_effect_id=effect_id,
-                )
-            )
-            return consumption
+        )
+        return consumption
 
     @staticmethod
     def _validate_causation(message: BoundaryMessage, uow: "UnitOfWork") -> None:
@@ -411,30 +378,7 @@ class BoundaryService:
             )
         if uow.get_command(consumption.consumer_effect_id) is not None:
             return False
-        # Opt-in causal contract upgrade: for typed PC6 links, a missing
-        # pending Command is not evidence that business application committed.
-        # Legacy untyped v1 links preserve their original completion semantics.
-        from .effects import _CERTIFIED_TERMINALS
-        if message.causation_kind == "boundary" and predecessor.contract_key in {
-            expected[2] for expected in _CERTIFIED_TERMINALS.values()
-        }:
-            proof = uow.get_business_effect(consumption.consumer_effect_id)
-            if proof is None:
-                return False
-            if (
-                proof.effect_id != consumption.consumer_effect_id
-                or proof.boundary_message_id != predecessor.message_id
-                or proof.correlation_id != predecessor.correlation_id
-            ):
-                raise RuntimeError("typed causal predecessor certificate contradicts ACK")
-            entity = uow.get_entity(proof.entity_type, proof.entity_id)
-            if (
-                entity is None
-                or entity.version < proof.entity_version
-                or entity.state != proof.terminal_state
-            ):
-                raise RuntimeError("typed causal predecessor certificate lacks durable terminal state")
-        return True
+        return typed_predecessor_certified(message, predecessor, consumption, uow)
 
     @staticmethod
     def _assert_current_claim(
