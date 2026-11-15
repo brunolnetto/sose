@@ -14,7 +14,7 @@ from typing import Mapping
 from psycopg import sql
 
 from sose.core.resource_identity import ResourcePoolContract
-from sose.composition.effects import CERTIFIED_INTENTS
+from sose.composition.resource_intent_validation import validate_coordinator_arguments
 from sose.core.resource_reservations import (
     ResourceCapacityError, ResourceConflictError, TemporalReservation, _aware,
     authoritative_effect_reservation_id,
@@ -50,27 +50,20 @@ class IntentResourceCoordinator:
         fencing_persistence=None,
         effect_scope: str | None = None,
     ) -> None:
-        if slot_duration <= timedelta(0) or retry_delay <= timedelta(0):
-            raise ValueError("resource slot and retry duration must be positive")
-        if not policies:
-            raise ValueError("resource policy cannot be empty")
-        if not hasattr(persistence, "temporal_resources") or not hasattr(persistence, "_connection"):
-            raise TypeError("authoritative intent coordination requires PostgreSQL")
+        validate_coordinator_arguments(
+            persistence, policies,
+            slot_duration=slot_duration, retry_delay=retry_delay,
+            owner_epoch=owner_epoch, writer_scope=writer_scope,
+        )
         self._store = persistence
         # A federated organization's writer epoch belongs to its domain store,
         # not to the separately owned shared physical resource ledger.
         self._fencing_persistence = fencing_persistence or persistence
         self._owner_epoch = owner_epoch
         self._writer_scope = writer_scope
-        if writer_scope is not None and (not writer_scope or owner_epoch is None):
-            raise ValueError('scoped resource admission requires a valid writer epoch')
         self._effect_scope = effect_scope
         self._db = persistence._connection
         self._policies = dict(policies)
-        if any(not k or not isinstance(v, ResourcePoolContract) for k,v in self._policies.items()):
-            raise ValueError("invalid named domain resource policy")
-        if not set(self._policies).issubset(CERTIFIED_INTENTS):
-            raise ValueError("resource-mapped intents require immutable business certification")
         self._slot = slot_duration
         self._retry = retry_delay
         self._waiting = sql.Identifier(f"{persistence.namespace}_resource_intent_wait")

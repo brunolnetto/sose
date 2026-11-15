@@ -174,31 +174,27 @@ class DurableScheduler:
         # consistent snapshot, so reuse that read scope without starting BEGIN.
         connection = getattr(self._persistence, "_connection", None)
         if isinstance(connection, sqlite3.Connection) and connection.in_transaction:
-            items: list[DurableScheduledItem] = []
-            for work in self._persistence.scheduled_work():
-                if work.owner_id != self._owner_id:
-                    continue
-                command = self._persistence.command(work.command_id)
-                if command is None:
-                    raise RuntimeError(
-                        f"scheduled work references missing command: {work.work_id}/{work.command_id}"
-                    )
-                items.append(DurableScheduledItem(work=work, command=command))
-            return tuple(item for item in items if item.work.owner_id == self._owner_id)
+            return self._owned_items(
+                self._persistence.scheduled_work(), self._persistence.command,
+            )
 
         # PostgreSQL and non-nested adapters read the pair in a single UoW.
         with self._persistence.transaction(owner_id=self._owner_id) as uow:
-            items: list[DurableScheduledItem] = []
-            for work in uow.scheduled_work():
-                if work.owner_id != self._owner_id:
-                    continue
-                command = uow.get_command(work.command_id)
-                if command is None:
-                    raise RuntimeError(
-                        f"scheduled work references missing command: {work.work_id}/{work.command_id}"
-                    )
-                items.append(DurableScheduledItem(work=work, command=command))
-            return tuple(item for item in items if item.work.owner_id == self._owner_id)
+            return self._owned_items(uow.scheduled_work(), uow.get_command)
+
+    def _owned_items(self, scheduled_work, get_command) -> tuple[DurableScheduledItem, ...]:
+        """Pair this owner's scheduled work with its commands, failing on orphans."""
+        items: list[DurableScheduledItem] = []
+        for work in scheduled_work:
+            if work.owner_id != self._owner_id:
+                continue
+            command = get_command(work.command_id)
+            if command is None:
+                raise RuntimeError(
+                    f"scheduled work references missing command: {work.work_id}/{work.command_id}"
+                )
+            items.append(DurableScheduledItem(work=work, command=command))
+        return tuple(items)
 
 @dataclass(frozen=True, slots=True)
 class RecoveryParticipant:

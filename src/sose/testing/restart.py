@@ -61,21 +61,9 @@ def restart_reference_runtime(
     if not isinstance(owner_id, str) or not owner_id.strip():
         raise ValueError("owner_id must not be empty")
     position = persistence.simulation_position(owner_id=owner_id)
-    if backend_before is not None:
-        restarted_at = backend_before.now
-    elif position is not None:
-        restarted_at = position.logical_time
-    else:
-        raise ValueError(
-            "restart requires backend_before or a persisted simulation position"
-        )
-
+    restarted_at = _recovery_boundary(backend_before, position)
     if tick is None:
-        tick = (
-            position.logical_tick
-            if position is not None and position.logical_time == restarted_at
-            else 0
-        )
+        tick = _boundary_tick(position, restarted_at)
 
     kwargs = dict(runtime_kwargs or {})
     if "owner_id" in kwargs:
@@ -99,6 +87,23 @@ def restart_reference_runtime(
         restarted_at=restarted_at,
         logical_tick=tick,
     )
+
+
+def _recovery_boundary(backend_before, position):
+    """backend_before.now wins; otherwise the persisted SimulationPosition."""
+    if backend_before is not None:
+        return backend_before.now
+    if position is not None:
+        return position.logical_time
+    raise ValueError(
+        "restart requires backend_before or a persisted simulation position"
+    )
+
+
+def _boundary_tick(position, restarted_at) -> int:
+    if position is not None and position.logical_time == restarted_at:
+        return position.logical_tick
+    return 0
 
 
 def restart_reference_runtime_repeated(
