@@ -230,31 +230,7 @@ def fit_stage1_pr_review_v2(
 ) -> Stage1PRReviewFitV2:
     """Fit only the persisted Stage-1 training partition; ignore interstitial items."""
 
-    if state.cohort.status is not ProspectiveCohortStatus.AWAITING_MODEL_FREEZE:
-        raise ValueError("Stage-1 model fitting requires a complete pre-freeze training cohort")
-    if len(state.cohort.training_keys) != state.cohort.training_count:
-        raise ValueError("Stage-1 training cohort is incomplete")
-    if state.cohort.holdout_keys or state.cohort.post_holdout_keys:
-        raise ValueError("Stage-1 fitting cannot consume holdout evidence")
-
-    by_key = {
-        (record.repository, record.pr_number): record
-        for record in state.snapshot.records
-    }
-    training_records = tuple(by_key[key] for key in state.cohort.training_keys)
-    analogs = tuple(_analog(record) for record in training_records)
-    human_analogs = tuple(
-        analog
-        for record, analog in zip(training_records, analogs, strict=True)
-        if not record.author_is_bot
-    )
-    bot_analogs = tuple(
-        analog
-        for record, analog in zip(training_records, analogs, strict=True)
-        if record.author_is_bot
-    )
-    if not human_analogs:
-        raise ValueError("prospective v2 requires at least one non-bot training item")
+    training_records, human_analogs, bot_analogs = _training_analogs(state)
 
     model = PRReviewV2TailModel(
         source_snapshot_hash=state.snapshot_hash,
@@ -307,6 +283,25 @@ def fit_stage1_pr_review_v2(
             "service time or capacity is inferred."
         ),
     )
+
+
+def _training_analogs(state: ProspectiveEvidenceStateV2) -> tuple[tuple, tuple, tuple]:
+    """(training records, human analogs, bot analogs) of a complete pre-freeze cohort."""
+    if state.cohort.status is not ProspectiveCohortStatus.AWAITING_MODEL_FREEZE:
+        raise ValueError("Stage-1 model fitting requires a complete pre-freeze training cohort")
+    if len(state.cohort.training_keys) != state.cohort.training_count:
+        raise ValueError("Stage-1 training cohort is incomplete")
+    if state.cohort.holdout_keys or state.cohort.post_holdout_keys:
+        raise ValueError("Stage-1 fitting cannot consume holdout evidence")
+    by_key = {(record.repository, record.pr_number): record for record in state.snapshot.records}
+    training_records = tuple(by_key[key] for key in state.cohort.training_keys)
+    human_analogs: list = []
+    bot_analogs: list = []
+    for record in training_records:
+        (bot_analogs if record.author_is_bot else human_analogs).append(_analog(record))
+    if not human_analogs:
+        raise ValueError("prospective v2 requires at least one non-bot training item")
+    return training_records, tuple(human_analogs), tuple(bot_analogs)
 
 
 def predict_pr_review_v2(
