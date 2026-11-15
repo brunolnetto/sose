@@ -211,3 +211,10 @@ def _is_finite_number(value: object) -> bool:
         and not isinstance(value, bool)
         and isfinite(float(value))
     )
+
+
+# Enum class paths feed deterministic_id/scoped_seed (core/encoding.py) and the codec;
+# keep them at their pre-split public home, which still re-exports them.
+for _moved in (GroundTruthKind, GroundTruthTargetKind, GroundTruthComparisonKind,):
+    _moved.__module__ = "sose.organizational.domain_reference"
+del _moved

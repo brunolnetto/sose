@@ -165,3 +165,10 @@ def _canonical_hash(payload: object) -> str:
             allow_nan=False,
         ).encode("utf-8")
     ).hexdigest()
+
+
+# Enum class paths feed deterministic_id/scoped_seed (core/encoding.py) and the codec;
+# keep them at their pre-split public home, which still re-exports them.
+for _moved in (ComparisonKind, ComparisonEligibility,):
+    _moved.__module__ = "sose.organizational.domain_experiment_analysis"
+del _moved

@@ -99,3 +99,10 @@ def _check_segment_capacity(active: list[ActorLedgerInterval]) -> None:
     )
     if allocation > 1.0 + _CAPACITY_ABS_TOL:
         raise ValueError("fractional allocation exceeds actor capacity")
+
+
+# Enum class paths feed deterministic_id/scoped_seed (core/encoding.py) and the codec;
+# keep them at their pre-split public home, which still re-exports them.
+for _moved in (ItemCategory, ActorCategory,):
+    _moved.__module__ = "sose.organizational.ledger"
+del _moved
