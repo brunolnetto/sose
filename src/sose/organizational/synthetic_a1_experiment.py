@@ -186,10 +186,39 @@ def run_a0_a1_experiment(
 ) -> A0A1ReferenceExperimentResultV1:
     """Run a paired design using exactly the replication plan embedded in it."""
 
+    replications = _require_complete_design(design)
+    by_key: dict[tuple[int, str], dict[AgencyLevel, SyntheticWorldSpec]] = {}
+    for world in design.worlds:
+        by_key.setdefault((world.design_index, world.arm_id), {})[
+            world.agency_level
+        ] = world
+
+    pairs: list[A0A1RunPair] = []
+    regime_by_key: dict[tuple[int, str], A1RegimeReference] = {}
+    a0_stable_by_key: dict[tuple[int, str], bool] = {}
+
+    for key in sorted(by_key):
+        a0_world, a1_world = _agency_pair(by_key[key])
+        a0_stable = analytical_world_reference(a0_world).stable
+        a1_regime = classify_a1_regime(a1_world)
+        a0_stable_by_key[key] = a0_stable
+        regime_by_key[key] = a1_regime
+        for replication in range(replications):
+            pairs.append(
+                _run_pair(design, key, replication, a0_world, a1_world, a0_stable, a1_regime)
+            )
+
+    return A0A1ReferenceExperimentResultV1(
+        design=design,
+        pairs=tuple(pairs),
+        summary=_experiment_summary(pairs, a0_stable_by_key, regime_by_key),
+    )
+
+
+def _require_complete_design(design: ReferenceSyntheticExperimentDesignV1) -> int:
     replication_plan = design.protocol.replication_plan
     if replication_plan.min_replications != replication_plan.max_replications:
         raise ValueError("reference v1 requires a fixed replication count")
-    replications = replication_plan.min_replications
     expected_identities = {
         (design_index, arm_id, level)
         for design_index in range(design.protocol.sample_size)
@@ -202,108 +231,110 @@ def run_a0_a1_experiment(
     ]
     if set(identities) != expected_identities or len(identities) != len(expected_identities):
         raise ValueError("complete A0/A1 world design with no duplicates is required")
+    return replication_plan.min_replications
 
-    by_key: dict[tuple[int, str], dict[AgencyLevel, SyntheticWorldSpec]] = {}
-    for world in design.worlds:
-        by_key.setdefault((world.design_index, world.arm_id), {})[
-            world.agency_level
-        ] = world
 
-    pairs: list[A0A1RunPair] = []
-    regime_by_key: dict[tuple[int, str], A1RegimeReference] = {}
-    a0_stable_by_key: dict[tuple[int, str], bool] = {}
+def _agency_pair(
+    worlds: dict[AgencyLevel, SyntheticWorldSpec],
+) -> tuple[SyntheticWorldSpec, SyntheticWorldSpec]:
+    if set(worlds) != {AgencyLevel.A0, AgencyLevel.A1}:
+        raise ValueError("each design/arm requires exactly one A0 and one A1 world")
+    a0_world = worlds[AgencyLevel.A0]
+    a1_world = worlds[AgencyLevel.A1]
+    if a0_world.exogenous_parameters != a1_world.exogenous_parameters:
+        raise ValueError("A0/A1 pairs must share identical exogenous parameters")
+    if a0_world.crn_group != a1_world.crn_group:
+        raise ValueError("A0/A1 pairs must share one CRN group")
+    if _non_agency_pair_payload(a0_world) != _non_agency_pair_payload(a1_world):
+        raise ValueError("A0/A1 paired worlds must differ only by agency")
+    return a0_world, a1_world
 
-    for key in sorted(by_key):
-        worlds = by_key[key]
-        if set(worlds) != {AgencyLevel.A0, AgencyLevel.A1}:
-            raise ValueError("each design/arm requires exactly one A0 and one A1 world")
-        a0_world = worlds[AgencyLevel.A0]
-        a1_world = worlds[AgencyLevel.A1]
-        if a0_world.exogenous_parameters != a1_world.exogenous_parameters:
-            raise ValueError("A0/A1 pairs must share identical exogenous parameters")
-        if a0_world.crn_group != a1_world.crn_group:
-            raise ValueError("A0/A1 pairs must share one CRN group")
-        if _non_agency_pair_payload(a0_world) != _non_agency_pair_payload(a1_world):
-            raise ValueError("A0/A1 paired worlds must differ only by agency")
 
-        a0_stable = analytical_world_reference(a0_world).stable
-        a1_regime = classify_a1_regime(a1_world)
-        a0_stable_by_key[key] = a0_stable
-        regime_by_key[key] = a1_regime
-
-        for replication in range(replications):
-            a0_run = run_a0_reference_world(
-                protocol=design.protocol,
-                world=a0_world,
-                root_seed=design.root_seed,
-                replication=replication,
-            )
-            a1_run = run_a1_reference_world(
-                protocol=design.protocol,
-                world=a1_world,
-                root_seed=design.root_seed,
-                replication=replication,
-            )
-            pairs.append(
-                A0A1RunPair(
-                    design_index=key[0],
-                    arm_id=key[1],
-                    replication=replication,
-                    a0_run=a0_run,
-                    a1_run=a1_run,
-                    a0_stable=a0_stable,
-                    a1_regime=a1_regime.kind,
-                    delta_mean_lead_time=a1_run.mean_lead_time - a0_run.mean_lead_time,
-                    delta_throughput=a1_run.throughput - a0_run.throughput,
-                    delta_operating_cost=(
-                        a1_run.total_operating_cost - a0_run.total_operating_cost
-                    ),
-                )
-            )
-
-    references = tuple(regime_by_key.values())
-    a0_stable_count = sum(a0_stable_by_key.values())
-    a0_saturated_count = len(a0_stable_by_key) - a0_stable_count
-    rescued = sum(
-        (not a0_stable_by_key[key]) and regime_by_key[key].stable
-        for key in regime_by_key
+def _run_pair(
+    design: ReferenceSyntheticExperimentDesignV1,
+    key: tuple[int, str],
+    replication: int,
+    a0_world: SyntheticWorldSpec,
+    a1_world: SyntheticWorldSpec,
+    a0_stable: bool,
+    a1_regime: A1RegimeReference,
+) -> A0A1RunPair:
+    a0_run = run_a0_reference_world(
+        protocol=design.protocol,
+        world=a0_world,
+        root_seed=design.root_seed,
+        replication=replication,
     )
-    worsened = sum(
-        a0_stable_by_key[key] and not regime_by_key[key].stable
-        for key in regime_by_key
+    a1_run = run_a1_reference_world(
+        protocol=design.protocol,
+        world=a1_world,
+        root_seed=design.root_seed,
+        replication=replication,
     )
-
-    return A0A1ReferenceExperimentResultV1(
-        design=design,
-        pairs=tuple(pairs),
-        summary=A0A1ExperimentSummary(
-            a0_stable_worlds=a0_stable_count,
-            a0_saturated_worlds=a0_saturated_count,
-            a1_nominal_stable_worlds=sum(
-                ref.kind is A1RegimeKind.NOMINAL_STABLE for ref in references
-            ),
-            a1_adaptation_stabilized_worlds=sum(
-                ref.kind is A1RegimeKind.ADAPTATION_STABILIZED for ref in references
-            ),
-            a1_saturated_worlds=sum(
-                ref.kind is A1RegimeKind.SATURATED for ref in references
-            ),
-            saturated_to_stable_worlds=rescued,
-            stable_to_saturated_worlds=worsened,
-            mean_delta_lead_time=fmean(pair.delta_mean_lead_time for pair in pairs),
-            mean_delta_throughput=fmean(pair.delta_throughput for pair in pairs),
-            mean_delta_operating_cost=fmean(
-                pair.delta_operating_cost for pair in pairs
-            ),
-            mean_adaptation_actor_time=fmean(
-                pair.a1_run.adaptation_actor_time_measurement for pair in pairs
-            ),
-            mean_adaptation_cost=fmean(
-                pair.a1_run.adaptation_cost for pair in pairs
-            ),
+    return A0A1RunPair(
+        design_index=key[0],
+        arm_id=key[1],
+        replication=replication,
+        a0_run=a0_run,
+        a1_run=a1_run,
+        a0_stable=a0_stable,
+        a1_regime=a1_regime.kind,
+        delta_mean_lead_time=a1_run.mean_lead_time - a0_run.mean_lead_time,
+        delta_throughput=a1_run.throughput - a0_run.throughput,
+        delta_operating_cost=(
+            a1_run.total_operating_cost - a0_run.total_operating_cost
         ),
     )
 
+
+def _experiment_summary(
+    pairs: list[A0A1RunPair],
+    a0_stable_by_key: dict[tuple[int, str], bool],
+    regime_by_key: dict[tuple[int, str], A1RegimeReference],
+) -> A0A1ExperimentSummary:
+    return A0A1ExperimentSummary(
+        **_regime_counts(a0_stable_by_key, regime_by_key),
+        mean_delta_lead_time=fmean(pair.delta_mean_lead_time for pair in pairs),
+        mean_delta_throughput=fmean(pair.delta_throughput for pair in pairs),
+        mean_delta_operating_cost=fmean(
+            pair.delta_operating_cost for pair in pairs
+        ),
+        mean_adaptation_actor_time=fmean(
+            pair.a1_run.adaptation_actor_time_measurement for pair in pairs
+        ),
+        mean_adaptation_cost=fmean(
+            pair.a1_run.adaptation_cost for pair in pairs
+        ),
+    )
+
+
+def _regime_counts(
+    a0_stable_by_key: dict[tuple[int, str], bool],
+    regime_by_key: dict[tuple[int, str], A1RegimeReference],
+) -> dict[str, int]:
+    references = tuple(regime_by_key.values())
+    a0_stable_count = sum(a0_stable_by_key.values())
+    return {
+        "a0_stable_worlds": a0_stable_count,
+        "a0_saturated_worlds": len(a0_stable_by_key) - a0_stable_count,
+        "a1_nominal_stable_worlds": sum(
+            ref.kind is A1RegimeKind.NOMINAL_STABLE for ref in references
+        ),
+        "a1_adaptation_stabilized_worlds": sum(
+            ref.kind is A1RegimeKind.ADAPTATION_STABILIZED for ref in references
+        ),
+        "a1_saturated_worlds": sum(
+            ref.kind is A1RegimeKind.SATURATED for ref in references
+        ),
+        "saturated_to_stable_worlds": sum(
+            (not a0_stable_by_key[key]) and regime_by_key[key].stable
+            for key in regime_by_key
+        ),
+        "stable_to_saturated_worlds": sum(
+            a0_stable_by_key[key] and not regime_by_key[key].stable
+            for key in regime_by_key
+        ),
+    }
 
 
 def _non_agency_pair_payload(world: SyntheticWorldSpec) -> dict[str, object]:
