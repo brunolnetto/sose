@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta  # noqa: F401
 from collections.abc import Mapping
 from math import isfinite  # noqa: F401
-from time import monotonic, sleep
+from time import monotonic, sleep  # noqa: F401 - resolved via this module
 
 from sose.backends.simpy import SimPyBackend  # noqa: F401
 from sose.core.events import Command
@@ -20,7 +20,7 @@ from sose.examples.cards_payments import simulation as payments  # noqa: F401
 from sose.examples.record_to_report import simulation as r2r  # noqa: F401
 from sose.examples.warehouse_management import simulation as wm  # noqa: F401
 
-from .boundary import BoundaryConsumerRegistry, BoundaryService
+from .boundary import BoundaryConsumerRegistry, BoundaryService  # noqa: F401
 from .effects import BusinessEffectService, CERTIFIED_INTENTS  # noqa: F401
 from .bindings import CustomerSettlementBinding, SettlementBindingService
 from .model import BoundaryMessage, DeliveryStatus  # noqa: F401
@@ -36,6 +36,7 @@ from .trading_company_customer_stages import (
     _reservation_requested_stage,
     _seed_customer_fixtures,
 )
+from .trading_company_customer_run import _DemandPathRun
 from .trading_company_customer_support import (  # noqa: F401 - historical import location
     DurableResourceWait,
     _CausalCommandFactory,
@@ -97,111 +98,82 @@ class CustomerDemandPathResult:
 def _registry(fixtures: _CustomerFixtures, *, owner_id: str) -> BoundaryConsumerRegistry:
     registry = BoundaryConsumerRegistry()
     registry.register(
-        destination_domain="warehouse_fulfillment",
-        contract_name="o2c.fulfillment_requested",
-        source_domain="order_to_cash",
-        contract_version=1,
+        destination_domain="warehouse_fulfillment", contract_name="o2c.fulfillment_requested",
+        source_domain="order_to_cash", contract_version=1,
         handler=_intent_handler(
             intent_name="composition.request_fulfillment_inventory",
-            entity_type="warehouse_fulfillment_order",
-            entity_id=fixtures.fulfillment.order_id,
+            entity_type="warehouse_fulfillment_order", entity_id=fixtures.fulfillment.order_id,
             owner_id=owner_id,
         ),
     )
     registry.register(
-        destination_domain="warehouse_fulfillment",
-        contract_name="o2c.fulfillment_requested",
-        source_domain="order_to_cash",
-        contract_version=2,
+        destination_domain="warehouse_fulfillment", contract_name="o2c.fulfillment_requested",
+        source_domain="order_to_cash", contract_version=2,
         handler=_intent_handler(
             intent_name="composition.request_fulfillment_inventory",
-            entity_type="warehouse_fulfillment_order",
-            entity_id=fixtures.fulfillment.order_id,
+            entity_type="warehouse_fulfillment_order", entity_id=fixtures.fulfillment.order_id,
             owner_id=owner_id,
         ),
     )
     registry.register(
         destination_domain="warehouse_management",
         contract_name="warehouse.inventory_reservation_requested",
-        source_domain="warehouse_fulfillment",
-        contract_version=1,
+        source_domain="warehouse_fulfillment", contract_version=1,
         handler=_intent_handler(
             intent_name="composition.reserve_fulfillment_inventory",
-            entity_type="warehouse_management_stock",
-            entity_id=fixtures.warehouse.origin_stock_id,
+            entity_type="warehouse_management_stock", entity_id=fixtures.warehouse.origin_stock_id,
             owner_id=owner_id,
         ),
     )
     registry.register(
-        destination_domain="warehouse_fulfillment",
-        contract_name="warehouse.inventory_reserved",
-        source_domain="warehouse_management",
-        contract_version=1,
+        destination_domain="warehouse_fulfillment", contract_name="warehouse.inventory_reserved",
+        source_domain="warehouse_management", contract_version=1,
         handler=_intent_handler(
             intent_name="composition.accept_inventory_reservation",
-            entity_type="warehouse_fulfillment_order",
-            entity_id=fixtures.fulfillment.order_id,
+            entity_type="warehouse_fulfillment_order", entity_id=fixtures.fulfillment.order_id,
             owner_id=owner_id,
         ),
     )
     registry.register(
         destination_domain="warehouse_management",
         contract_name="warehouse.inventory_consumption_requested",
-        source_domain="warehouse_fulfillment",
-        contract_version=1,
+        source_domain="warehouse_fulfillment", contract_version=1,
         handler=_intent_handler(
             intent_name="composition.consume_fulfillment_inventory",
-            entity_type="warehouse_management_stock",
-            entity_id=fixtures.warehouse.origin_stock_id,
+            entity_type="warehouse_management_stock", entity_id=fixtures.warehouse.origin_stock_id,
             owner_id=owner_id,
         ),
     )
     registry.register(
-        destination_domain="logistics",
-        contract_name="warehouse.dispatch_ready",
-        source_domain="warehouse_fulfillment",
-        contract_version=1,
+        destination_domain="logistics", contract_name="warehouse.dispatch_ready",
+        source_domain="warehouse_fulfillment", contract_version=1,
         handler=_intent_handler(
-            intent_name="composition.deliver_shipment",
-            entity_type="shipment",
-            entity_id=fixtures.logistics.shipment_id,
-            owner_id=owner_id,
+            intent_name="composition.deliver_shipment", entity_type="shipment",
+            entity_id=fixtures.logistics.shipment_id, owner_id=owner_id,
         ),
     )
     registry.register(
-        destination_domain="order_to_cash",
-        contract_name="logistics.delivery_completed",
-        source_domain="logistics",
-        contract_version=1,
+        destination_domain="order_to_cash", contract_name="logistics.delivery_completed",
+        source_domain="logistics", contract_version=1,
         handler=_intent_handler(
-            intent_name="composition.complete_external_fulfillment",
-            entity_type="sales_order",
-            entity_id=fixtures.o2c.order_id,
-            owner_id=owner_id,
+            intent_name="composition.complete_external_fulfillment", entity_type="sales_order",
+            entity_id=fixtures.o2c.order_id, owner_id=owner_id,
         ),
     )
     registry.register(
-        destination_domain="cards_payments",
-        contract_name="o2c.payment_requested",
-        source_domain="order_to_cash",
-        contract_version=1,
+        destination_domain="cards_payments", contract_name="o2c.payment_requested",
+        source_domain="order_to_cash", contract_version=1,
         handler=_intent_handler(
-            intent_name="composition.settle_customer_payment",
-            entity_type="card_payment",
-            entity_id=fixtures.payments.payment_id,
-            owner_id=owner_id,
+            intent_name="composition.settle_customer_payment", entity_type="card_payment",
+            entity_id=fixtures.payments.payment_id, owner_id=owner_id,
         ),
     )
     registry.register(
-        destination_domain="record_to_report",
-        contract_name="accounting.entry_requested",
-        source_domain="cards_payments",
-        contract_version=1,
+        destination_domain="record_to_report", contract_name="accounting.entry_requested",
+        source_domain="cards_payments", contract_version=1,
         handler=_intent_handler(
-            intent_name="composition.post_customer_journal",
-            entity_type="journal_entry",
-            entity_id=fixtures.r2r.journal_id,
-            owner_id=owner_id,
+            intent_name="composition.post_customer_journal", entity_type="journal_entry",
+            entity_id=fixtures.r2r.journal_id, owner_id=owner_id,
         ),
     )
     return registry
@@ -298,94 +270,6 @@ def reconcile_shipped_fulfillment_egress(
         # Resolved at each publish so a `_publish` replaced on this module is honoured.
         publish=lambda *args, **kwargs: _publish(*args, **kwargs),
     )
-
-
-class _DemandPathRun:
-    """Boundary progress of one synchronous `run_customer_demand_path` call."""
-
-    def __init__(
-        self,
-        persistence: MemoryPersistence,
-        *,
-        fixtures: _CustomerFixtures,
-        correlation_id: str,
-        organization_id: str,
-        origin: datetime,
-    ) -> None:
-        self.persistence = persistence
-        self.fixtures = fixtures
-        self.correlation_id = correlation_id
-        self.organization_id = organization_id
-        self.origin = origin
-        self.service = BoundaryService(persistence)
-        self.registry = _registry(fixtures, owner_id=organization_id)
-        self.messages: list[BoundaryMessage] = []
-        self.effects: list[str] = []
-
-    def consume_published_boundary(self, message: BoundaryMessage, *, owner_id: str) -> None:
-        """Apply already-durable boundary effects with the normal leased consumer."""
-        self.messages.append(message)
-        effect = _consume_next(
-            self.service,
-            self.registry,
-            owner_id=owner_id,
-            now=message.produced_at,
-            expected_message_id=message.message_id,
-        )
-        self.effects.append(effect)
-        # Synchronous reference demonstration only. Production recurring
-        # recovery uses a durable next tick, never wall-time busy-polling.
-        deadline = monotonic() + 12.0
-        while True:
-            try:
-                _execute_intent(
-                    self.persistence,
-                    effect_id=effect,
-                    fixtures=self.fixtures,
-                    correlation_id=self.correlation_id,
-                    organization_id=self.organization_id,
-                )
-                break
-            except DurableResourceWait:
-                if monotonic() >= deadline:
-                    raise
-                sleep(0.02)
-
-    def publish_consume_execute(
-        self,
-        *,
-        contract_name: str,
-        source_domain: str,
-        source_identity: str,
-        destination_domain: str,
-        occurrence_key: str,
-        owner_id: str,
-        payload: dict[str, object],
-        contract_version: int = 1,
-    ) -> BoundaryMessage:
-        previous = self.messages[-1] if self.messages else None
-        message = _publish(
-            self.service,
-            contract_name=contract_name,
-            source_domain=source_domain,
-            source_identity=source_identity,
-            destination_domain=destination_domain,
-            occurrence_key=occurrence_key,
-            correlation_id=self.correlation_id,
-            causation_id=None if previous is None else previous.message_id,
-            produced_at=(
-                self.origin
-                if previous is None
-                else _next_logical_time(
-                    self.persistence, previous.produced_at,
-                    organization_id=self.organization_id,
-                )
-            ),
-            payload=payload,
-            contract_version=contract_version,
-        )
-        self.consume_published_boundary(message, owner_id=owner_id)
-        return message
 
 
 def run_customer_demand_path(
