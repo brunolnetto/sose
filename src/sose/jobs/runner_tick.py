@@ -11,7 +11,7 @@ from sose.jobs.model import SimulationJobState
 from sose.persistence.base import Persistence
 
 if TYPE_CHECKING:
-    from sose.jobs.runner import BackendFactory, JobTickResult
+    from sose.jobs.runner import JobTickResult
 
 
 class _TickExecutionMixin:
@@ -20,7 +20,6 @@ class _TickExecutionMixin:
     job_id: str
     definition: DomainDefinition
     persistence: Persistence
-    backend_factory: BackendFactory
     domain_persistence: object
 
     def _tick_trigger_id(
