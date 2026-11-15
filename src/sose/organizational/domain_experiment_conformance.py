@@ -174,42 +174,7 @@ def _exogenous_binding(
     for world in worlds:
         by_design[world.design_index].append(world)
 
-    ok = True
-    for design_index in sorted(by_design):
-        group = by_design[design_index]
-        expected_point = dict(group[0].exogenous_parameters)
-        if not set(expected_point) <= declared:
-            ok = False
-            break
-
-        # Framework-owned arm/agency expansion must carry the same sampled point
-        # through every comparison world.
-        if any(dict(world.exogenous_parameters) != expected_point for world in group):
-            ok = False
-            break
-
-        # Only the baseline ModelSpec must equal the raw DOE point. Treatment
-        # ModelSpecs are expected to differ exactly because the framework applies
-        # the declared ModelIntervention after building the sampled point model.
-        baselines = [world for world in group if world.arm_id == "baseline"]
-        if not baselines:
-            ok = False
-            break
-        for world in baselines:
-            for name, expected in expected_point.items():
-                actual = world.model_spec.parameters.get(name)
-                if (
-                    isinstance(actual, bool)
-                    or not isinstance(actual, (int, float))
-                    or not isfinite(float(actual))
-                    or float(actual) != expected
-                ):
-                    ok = False
-                    break
-            if not ok:
-                break
-        if not ok:
-            break
+    ok = all(_design_point_bound(by_design[index], declared) for index in sorted(by_design))
 
     return ConformanceCheck(
         name="exogenous-binding",
@@ -219,6 +184,36 @@ def _exogenous_binding(
             if ok
             else "DOE coordinates drift across worlds or fail baseline ModelSpec binding"
         ),
+    )
+
+
+def _design_point_bound(group: list[ExperimentWorld], declared: set[str]) -> bool:
+    expected_point = dict(group[0].exogenous_parameters)
+    if not set(expected_point) <= declared:
+        return False
+    # Framework-owned arm/agency expansion must carry the same sampled point
+    # through every comparison world.
+    if any(dict(world.exogenous_parameters) != expected_point for world in group):
+        return False
+    # Only the baseline ModelSpec must equal the raw DOE point. Treatment
+    # ModelSpecs are expected to differ exactly because the framework applies
+    # the declared ModelIntervention after building the sampled point model.
+    baselines = [world for world in group if world.arm_id == "baseline"]
+    if not baselines:
+        return False
+    return all(
+        _binds_point(world.model_spec.parameters.get(name), expected)
+        for world in baselines
+        for name, expected in expected_point.items()
+    )
+
+
+def _binds_point(actual: object, expected: float) -> bool:
+    return not (
+        isinstance(actual, bool)
+        or not isinstance(actual, (int, float))
+        or not isfinite(float(actual))
+        or float(actual) != expected
     )
 
 
@@ -345,35 +340,10 @@ def _ground_truth_integrity(
         world.world_hash: reference.observation(_execute(reference, plan, world))
         for world in _probe_worlds(worlds)
     }
-    ok = True
-    for world in worlds:
-        claims = reference.ground_truth(world)
-        ids = [claim.claim_id for claim in claims]
-        if not claims or len(ids) != len(set(ids)):
-            ok = False
-            break
-        if any(
-            claim.eligible and claim.ineligibility_reason is not None
-            for claim in claims
-        ):
-            ok = False
-            break
-        if any(
-            (not claim.eligible) and claim.ineligibility_reason is None
-            for claim in claims
-        ):
-            ok = False
-            break
-
-        observation = observations.get(world.world_hash)
-        if observation is not None and any(
-            claim.eligible
-            and claim.target_kind is GroundTruthTargetKind.METRIC
-            and claim.target_name not in observation.metrics
-            for claim in claims
-        ):
-            ok = False
-            break
+    ok = all(
+        _claims_valid(reference.ground_truth(world), observations.get(world.world_hash))
+        for world in worlds
+    )
 
     return ConformanceCheck(
         name="ground-truth-integrity",
@@ -383,6 +353,36 @@ def _ground_truth_integrity(
             if ok
             else "ground-truth claims or eligible observation bindings are invalid"
         ),
+    )
+
+
+def _claims_valid(claims, observation) -> bool:
+    ids = [claim.claim_id for claim in claims]
+    if not claims or len(ids) != len(set(ids)):
+        return False
+    if not _eligibility_consistent(claims):
+        return False
+    return observation is None or _eligible_metrics_observed(claims, observation)
+
+
+def _eligibility_consistent(claims) -> bool:
+    if any(
+        claim.eligible and claim.ineligibility_reason is not None
+        for claim in claims
+    ):
+        return False
+    return not any(
+        (not claim.eligible) and claim.ineligibility_reason is None
+        for claim in claims
+    )
+
+
+def _eligible_metrics_observed(claims, observation) -> bool:
+    return not any(
+        claim.eligible
+        and claim.target_kind is GroundTruthTargetKind.METRIC
+        and claim.target_name not in observation.metrics
+        for claim in claims
     )
 
 

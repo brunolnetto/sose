@@ -161,31 +161,17 @@ class AgencyCapabilitySpec(BaseModel):
         if range_names != default_names:
             raise ValueError("agency capability defaults must exactly match parameter ranges")
 
-        for name, value in self.defaults.items():
-            if not isfinite(value):
-                raise ValueError(f"agency capability default for {name} must be finite")
-            bounds = self.parameter_ranges[name]
-            if not bounds.low <= value <= bounds.high:
-                raise ValueError(
-                    f"agency capability default for {name} must lie within its range"
-                )
-
+        _require_defaults_in_ranges(self.defaults, self.parameter_ranges)
+        has_contracts = (bool(self.observation_contract_ids), bool(self.action_contract_ids))
         if self.level is AgencyLevel.A2:
-            if not self.observation_contract_ids or not self.action_contract_ids:
+            if not all(has_contracts):
                 raise ValueError("A2 requires observation and action contracts")
-        elif self.observation_contract_ids or self.action_contract_ids:
+        elif any(has_contracts):
             raise ValueError("observation/action contracts are only valid for A2")
 
-        if len(set(self.compatibility_constraints)) != len(
-            self.compatibility_constraints
-        ):
-            raise ValueError("duplicate agency compatibility constraints are not allowed")
-        if len(set(self.observation_contract_ids)) != len(
-            self.observation_contract_ids
-        ):
-            raise ValueError("duplicate observation contract ids are not allowed")
-        if len(set(self.action_contract_ids)) != len(self.action_contract_ids):
-            raise ValueError("duplicate action contract ids are not allowed")
+        _require_unique(self.compatibility_constraints, "agency compatibility constraints")
+        _require_unique(self.observation_contract_ids, "observation contract ids")
+        _require_unique(self.action_contract_ids, "action contract ids")
 
         object.__setattr__(
             self,
@@ -269,10 +255,8 @@ class GroundTruthClaim(BaseModel):
             raise ValueError("eligible ground-truth claim cannot have ineligibility_reason")
         if not self.eligible and self.ineligibility_reason is None:
             raise ValueError("ineligible ground-truth claim requires ineligibility_reason")
-        if len(set(self.assumptions)) != len(self.assumptions):
-            raise ValueError("duplicate ground-truth assumptions are not allowed")
-        if len(set(self.provenance)) != len(self.provenance):
-            raise ValueError("duplicate ground-truth provenance entries are not allowed")
+        _require_unique(self.assumptions, "ground-truth assumptions")
+        _require_unique(self.provenance, "ground-truth provenance entries")
         object.__setattr__(self, "expected", _freeze_json(self.expected))
         return self
 
@@ -314,19 +298,12 @@ class DomainReferenceDescriptor(BaseModel):
 
     @model_validator(mode="after")
     def validate_uniqueness(self) -> "DomainReferenceDescriptor":
-        parameter_names = [item.name for item in self.parameters]
-        if len(set(parameter_names)) != len(parameter_names):
-            raise ValueError("duplicate parameter names are not allowed")
-
-        capability_keys = [
-            (item.level.value, item.capability_id)
-            for item in self.agency_capabilities
-        ]
-        if len(set(capability_keys)) != len(capability_keys):
-            raise ValueError("duplicate agency capability declarations are not allowed")
-
-        if len(set(self.ground_truth_kinds)) != len(self.ground_truth_kinds):
-            raise ValueError("duplicate ground-truth kinds are not allowed")
+        _require_unique([item.name for item in self.parameters], "parameter names")
+        _require_unique(
+            [(item.level.value, item.capability_id) for item in self.agency_capabilities],
+            "agency capability declarations",
+        )
+        _require_unique(self.ground_truth_kinds, "ground-truth kinds")
         return self
 
     def canonical_payload(self) -> dict[str, object]:
@@ -362,9 +339,7 @@ class ParameterSpaceSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_uniqueness(self) -> "ParameterSpaceSpec":
-        names = [item.name for item in self.parameters]
-        if len(set(names)) != len(names):
-            raise ValueError("duplicate parameter names are not allowed")
+        _require_unique([item.name for item in self.parameters], "parameter names")
         return self
 
     def canonical_payload(self) -> dict[str, object]:
@@ -455,6 +430,22 @@ class DomainReference(Protocol):
     ) -> object: ...
 
     def observation(self, result: object) -> ExperimentObservation: ...
+
+def _require_unique(values, what: str) -> None:
+    if len(set(values)) != len(values):
+        raise ValueError(f"duplicate {what} are not allowed")
+
+
+def _require_defaults_in_ranges(defaults, parameter_ranges) -> None:
+    for name, value in defaults.items():
+        if not isfinite(value):
+            raise ValueError(f"agency capability default for {name} must be finite")
+        bounds = parameter_ranges[name]
+        if not bounds.low <= value <= bounds.high:
+            raise ValueError(
+                f"agency capability default for {name} must lie within its range"
+            )
+
 
 def _is_repository_relative(path: str) -> bool:
     if not path or "\\" in path:

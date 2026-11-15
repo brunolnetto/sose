@@ -8,7 +8,7 @@ from sose.core.randomness import CounterRandomSource, scoped_seed
 
 from .agency import A1Policy, A1PolicyName, AgencyLevel
 from .experiment import ExperimentProtocol
-from .ledger import ActorCategory, ActorLedger, ActorLedgerInterval
+from .ledger import ActorCategory, ActorLedger
 from .synthetic_runner import SyntheticItemRecord
 from .synthetic_a1_support import (
     _ActorTrack,

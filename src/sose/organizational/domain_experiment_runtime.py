@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
+from functools import partial
 from hashlib import sha256
 import json
 from math import isfinite
@@ -367,10 +368,6 @@ def run_domain_experiment(
         )
         for world in worlds
     )
-    claims_by_world = {
-        record.world_hash: record.ground_truth
-        for record in references
-    }
     reference_by_world = {
         record.world_hash: record
         for record in references
@@ -380,6 +377,7 @@ def run_domain_experiment(
     evidence_records: list[DomainEvidenceRecord] = []
     assessments: list[GroundTruthAssessment] = []
     for world in worlds:
+        world_reference = reference_by_world[world.world_hash]
         for replication in range(replication_plan.min_replications):
             execution = reference.execute(
                 DomainExecutionRequest(
@@ -420,9 +418,9 @@ def run_domain_experiment(
                     replication=replication,
                     claim=claim,
                     observation=observation,
-                    regime=reference_by_world[world.world_hash].regime,
+                    regime=world_reference.regime,
                 )
-                for claim in claims_by_world[world.world_hash]
+                for claim in world_reference.ground_truth
             )
 
     run_tuple = tuple(runs)
@@ -480,73 +478,52 @@ def _assess_claim(
     observation: ExperimentObservation,
     regime: RegimeReference,
 ) -> GroundTruthAssessment:
+    assess = partial(
+        GroundTruthAssessment,
+        world_hash=world_hash,
+        replication=replication,
+        claim_id=claim.claim_id,
+        claim_hash=claim.claim_hash,
+    )
     if not claim.eligible:
-        return GroundTruthAssessment(
-            world_hash=world_hash,
-            replication=replication,
-            claim_id=claim.claim_id,
-            claim_hash=claim.claim_hash,
-            eligible=False,
-            reason=claim.ineligibility_reason,
-        )
+        return assess(eligible=False, reason=claim.ineligibility_reason)
     if claim.target_kind is GroundTruthTargetKind.REGIME:
         observed_regime = regime.label
-        expected_regime = claim.expected
         if (
             claim.comparison_rule.kind is not GroundTruthComparisonKind.EXACT
-            or not isinstance(expected_regime, str)
+            or not isinstance(claim.expected, str)
         ):
-            return GroundTruthAssessment(
-                world_hash=world_hash,
-                replication=replication,
-                claim_id=claim.claim_id,
-                claim_hash=claim.claim_hash,
-                eligible=True,
-                observed=observed_regime,
+            return assess(
+                eligible=True, observed=observed_regime,
                 reason="regime claims require an exact string expectation",
             )
-        return GroundTruthAssessment(
-            world_hash=world_hash,
-            replication=replication,
-            claim_id=claim.claim_id,
-            claim_hash=claim.claim_hash,
-            eligible=True,
-            observed=observed_regime,
-            passed=observed_regime == expected_regime,
+        return assess(
+            eligible=True, observed=observed_regime,
+            passed=observed_regime == claim.expected,
         )
-
     if claim.target_kind is not GroundTruthTargetKind.METRIC:
-        return GroundTruthAssessment(
-            world_hash=world_hash,
-            replication=replication,
-            claim_id=claim.claim_id,
-            claim_hash=claim.claim_hash,
-            eligible=True,
-            reason="claim target is not assessed by the Gate-A runtime",
+        return assess(
+            eligible=True, reason="claim target is not assessed by the Gate-A runtime",
         )
+    return _assess_metric(assess, claim, observation.metrics.get(claim.target_name))
 
-    observed = observation.metrics.get(claim.target_name)
+
+def _assess_metric(
+    assess: Callable[..., GroundTruthAssessment],
+    claim: GroundTruthClaim,
+    observed: float | None,
+) -> GroundTruthAssessment:
     if observed is None:
-        return GroundTruthAssessment(
-            world_hash=world_hash,
-            replication=replication,
-            claim_id=claim.claim_id,
-            claim_hash=claim.claim_hash,
+        return assess(
             eligible=True,
             reason="standard observation does not expose the claimed metric",
         )
     expected = claim.expected
     if isinstance(expected, bool) or not isinstance(expected, (int, float)):
-        return GroundTruthAssessment(
-            world_hash=world_hash,
-            replication=replication,
-            claim_id=claim.claim_id,
-            claim_hash=claim.claim_hash,
-            eligible=True,
-            observed=observed,
+        return assess(
+            eligible=True, observed=observed,
             reason="metric claim expected value is not numeric",
         )
-
     expected_value = float(expected)
     rule = claim.comparison_rule
     if rule.kind is GroundTruthComparisonKind.EXACT:
@@ -561,16 +538,7 @@ def _assess_claim(
         passed = observed >= expected_value
     else:
         passed = observed <= expected_value
-
-    return GroundTruthAssessment(
-        world_hash=world_hash,
-        replication=replication,
-        claim_id=claim.claim_id,
-        claim_hash=claim.claim_hash,
-        eligible=True,
-        observed=observed,
-        passed=passed,
-    )
+    return assess(eligible=True, observed=observed, passed=passed)
 
 
 def _canonical_hash(payload: object) -> str:

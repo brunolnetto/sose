@@ -110,30 +110,7 @@ class ExperimentWorld(BaseModel):
         if self.model_spec_hash != self.model_spec.model_spec_hash:
             raise ValueError("model_spec_hash must match world ModelSpec")
 
-        if self.arm_id == "baseline":
-            if any(
-                value is not None
-                for value in (
-                    self.intervention_id,
-                    self.intervention_class,
-                    self.intervention_hash,
-                )
-            ):
-                raise ValueError("baseline world cannot declare intervention identity")
-            if any(
-                value != 0.0
-                for value in (
-                    self.intervention_operating_cost,
-                    self.intervention_transition_cost,
-                    self.intervention_transition_time,
-                )
-            ):
-                raise ValueError("baseline world cannot declare intervention costs")
-        else:
-            if self.intervention_id != self.arm_id:
-                raise ValueError("non-baseline arm must match intervention_id")
-            if self.intervention_class is None or self.intervention_hash is None:
-                raise ValueError("non-baseline world requires intervention metadata")
+        self._validate_arm_intervention()
 
         for name, value in self.exogenous_parameters.items():
             if not isfinite(value):
@@ -144,6 +121,24 @@ class ExperimentWorld(BaseModel):
             MappingProxyType(dict(sorted(self.exogenous_parameters.items()))),
         )
         return self
+
+    def _validate_arm_intervention(self) -> None:
+        if self.arm_id != "baseline":
+            if self.intervention_id != self.arm_id:
+                raise ValueError("non-baseline arm must match intervention_id")
+            if self.intervention_class is None or self.intervention_hash is None:
+                raise ValueError("non-baseline world requires intervention metadata")
+            return
+        identity = (self.intervention_id, self.intervention_class, self.intervention_hash)
+        if any(value is not None for value in identity):
+            raise ValueError("baseline world cannot declare intervention identity")
+        costs = (
+            self.intervention_operating_cost,
+            self.intervention_transition_cost,
+            self.intervention_transition_time,
+        )
+        if any(value != 0.0 for value in costs):
+            raise ValueError("baseline world cannot declare intervention costs")
 
     @field_serializer("domain_reference")
     def serialize_domain_reference(
@@ -248,20 +243,7 @@ def build_experiment_worlds(
             "protocol baseline_model_spec_hash does not match the domain reference default model"
         )
 
-    interventions = reference.interventions()
-    intervention_by_id = {item.intervention_id: item for item in interventions}
-    if "baseline" in intervention_by_id:
-        raise ValueError("baseline is a reserved experiment arm identifier")
-    if len(intervention_by_id) != len(interventions):
-        raise ValueError("duplicate intervention ids are not allowed")
-    unknown_interventions = sorted(
-        set(protocol.intervention_ids) - set(intervention_by_id)
-    )
-    if unknown_interventions:
-        raise ValueError(
-            "experiment protocol requests unknown intervention id(s): "
-            + ", ".join(unknown_interventions)
-        )
+    intervention_by_id = _interventions_by_id(reference.interventions(), protocol)
 
     sampled_points = sample_parameter_space(
         parameter_ranges=protocol.parameter_ranges,
@@ -362,6 +344,23 @@ def _validate_protocol_parameter_space(
             )
 
 
+def _interventions_by_id(
+    interventions: tuple[ModelIntervention, ...], protocol: ExperimentProtocol,
+) -> dict[str, ModelIntervention]:
+    intervention_by_id = {item.intervention_id: item for item in interventions}
+    if "baseline" in intervention_by_id:
+        raise ValueError("baseline is a reserved experiment arm identifier")
+    if len(intervention_by_id) != len(interventions):
+        raise ValueError("duplicate intervention ids are not allowed")
+    unknown_interventions = sorted(set(protocol.intervention_ids) - set(intervention_by_id))
+    if unknown_interventions:
+        raise ValueError(
+            "experiment protocol requests unknown intervention id(s): "
+            + ", ".join(unknown_interventions)
+        )
+    return intervention_by_id
+
+
 def _validate_agency_configurations(
     *,
     protocol: ExperimentProtocol,
@@ -385,23 +384,23 @@ def _validate_agency_configurations(
     }
     for configuration in configurations:
         key = (configuration.level, configuration.capability_id)
-        capability = capability_by_key.get(key)
-        if capability is None:
-            raise ValueError(
-                "selected agency capability is not declared by the domain reference"
-            )
-        if set(configuration.parameters) != set(capability.parameter_ranges):
-            raise ValueError(
-                "agency configuration parameters must exactly match the capability schema"
-            )
-        for name, value in configuration.parameters.items():
-            bounds = capability.parameter_ranges[name]
-            if value < bounds.low or value > bounds.high:
-                raise ValueError(
-                    f"agency parameter {name} is outside its declared range"
-                )
-
+        _require_declared_capability(configuration, capability_by_key.get(key))
     return by_level
+
+
+def _require_declared_capability(
+    configuration: AgencyConfiguration, capability: AgencyCapabilitySpec | None,
+) -> None:
+    if capability is None:
+        raise ValueError("selected agency capability is not declared by the domain reference")
+    if set(configuration.parameters) != set(capability.parameter_ranges):
+        raise ValueError(
+            "agency configuration parameters must exactly match the capability schema"
+        )
+    for name, value in configuration.parameters.items():
+        bounds = capability.parameter_ranges[name]
+        if value < bounds.low or value > bounds.high:
+            raise ValueError(f"agency parameter {name} is outside its declared range")
 
 
 def _validate_built_model(
