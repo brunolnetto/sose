@@ -58,7 +58,6 @@
   "max_lines:organizational/manufacturing_reference.py": 614,
   "max_lines:organizational/od2_actor.py": 497,
   "max_lines:organizational/od4_intake.py": 433,
-  "max_lines:organizational/od5a_durable.py": 468,
   "min_mi:backends/simpy.py": 12.264483822158764,
   "min_mi:core/preemption.py": 11.912140208065287,
   "min_mi:core/runtime.py": 10.299823889245058,
@@ -77,6 +76,5 @@
   "min_mi:examples/warehouse_fulfillment/simulation.py": 2.706192649494063,
   "min_mi:examples/warehouse_management/simulation.py": 13.793961210494095,
   "min_mi:jobs/runner.py": 6.217371042029867,
-  "min_mi:organizational/ledger.py": 19.76193053380103,
   "min_mi:organizational/od4_intake.py": 17.624204288926034
 }
