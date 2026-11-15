@@ -1,21 +1,21 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta
-import math
+from dataclasses import dataclass  # noqa: F401
+from datetime import datetime, timedelta  # noqa: F401
+import math  # noqa: F401
 
-from sose.backends.simpy import SimPyBackend
-from sose.core.clock import SimulationClock
-from sose.core.context import SimulationContext
-from sose.core.engine import Engine
-from sose.core.identity import deterministic_id
-from sose.core.randomness import RandomSource
-from sose.core.runtime import ResourceDefinition, StoreDefinition
-from sose.core.scheduler import Scheduler
-from sose.domain.registry import DomainRegistry, EntityType
-from sose.persistence.memory import MemoryPersistence
+from sose.backends.simpy import SimPyBackend  # noqa: F401
+from sose.core.clock import SimulationClock  # noqa: F401
+from sose.core.context import SimulationContext  # noqa: F401
+from sose.core.engine import Engine  # noqa: F401
+from sose.core.identity import deterministic_id  # noqa: F401
+from sose.core.randomness import RandomSource  # noqa: F401
+from sose.core.runtime import ResourceDefinition, StoreDefinition  # noqa: F401
+from sose.core.scheduler import Scheduler  # noqa: F401
+from sose.domain.registry import DomainRegistry, EntityType  # noqa: F401
+from sose.persistence.memory import MemoryPersistence  # noqa: F401
 
-from .entities import (
+from .entities import (  # noqa: F401
     Assessment,
     Claim,
     DocumentRequest,
@@ -24,8 +24,8 @@ from .entities import (
     Policy,
     Reserve,
 )
-from .scenarios import ORIGIN
-from .statecharts import (
+from .scenarios import ORIGIN  # noqa: F401
+from .statecharts import (  # noqa: F401
     AssessmentChart,
     ClaimChart,
     DocumentRequestChart,
@@ -34,181 +34,42 @@ from .statecharts import (
     PolicyChart,
     ReserveChart,
 )
-
-
-DOCUMENT_DEADLINE = timedelta(hours=4)
-PAYMENT_DELAY = timedelta(hours=2)
-
-
-def _reference_minor_units(value: float) -> int:
-    scaled = float(value) * 100
-    if not math.isfinite(scaled):
-        raise ValueError("Reference payout amount must be finite")
-
-    # Float-facing References tolerate representational noise around an exact
-    # minor-unit boundary, but never enough to reinterpret a true half-minor
-    # value as integral. This avoids an arbitrary magnitude cutoff while keeping
-    # the acceptance region strictly narrower than half a minor unit.
-    ulp = math.ulp(scaled)
-    nearest = round(scaled)
-    half_minor_cap = math.nextafter(0.5, 0.0)
-    tolerance = min(max(1e-7, 2 * ulp), half_minor_cap)
-    if abs(scaled - nearest) > tolerance:
-        raise ValueError("Reference payout amount must not contain fractional minor units")
-    return int(nearest)
-
-
-@dataclass(frozen=True, slots=True)
-class InsuranceEntities:
-    policy_id: str
-    claim_id: str
-
-
-def flow_correlation_id(claim_id: str) -> str:
-    return deterministic_id("insurance-flow", claim_id)
-
-
-def document_request_id(claim_id: str, ordinal: int = 1) -> str:
-    return deterministic_id(
-        "entity", "insurance_document_request",
-        "insurance-reference", claim_id, "document-request", ordinal,
-    )
-
-
-def assessment_id(claim_id: str, ordinal: int = 1) -> str:
-    return deterministic_id(
-        "entity", "insurance_assessment",
-        "insurance-reference", claim_id, "assessment", ordinal,
-    )
-
-
-def fraud_investigation_id(claim_id: str) -> str:
-    return deterministic_id(
-        "entity", "insurance_fraud_investigation",
-        "insurance-reference", claim_id, "fraud-investigation",
-    )
-
-
-def reserve_id(claim_id: str) -> str:
-    return deterministic_id(
-        "entity", "insurance_reserve",
-        "insurance-reference", claim_id, "reserve",
-    )
-
-
-def payment_id(claim_id: str) -> str:
-    return deterministic_id(
-        "entity", "insurance_payment",
-        "insurance-reference", claim_id, "payment",
-    )
-
-
-def build_runtime(
-    persistence: MemoryPersistence,
-    *,
-    owner_id: str,
-    now: datetime = ORIGIN,
-    tick: int = 0,
-    scenarios=(),
-    step: timedelta = timedelta(hours=1),
-    random_seed: int = 511,
-) -> tuple[SimulationContext, Engine]:
-    context = SimulationContext(
-        clock=SimulationClock(now=now, step=step, tick=tick),
-        random=RandomSource(root_seed=random_seed),
-        scheduler=Scheduler(),
-    )
-    registry = DomainRegistry()
-    registry.register(EntityType("insurance_policy", PolicyChart))
-    registry.register(EntityType("insurance_claim", ClaimChart))
-    registry.register(EntityType("insurance_document_request", DocumentRequestChart))
-    registry.register(EntityType("insurance_assessment", AssessmentChart))
-    registry.register(EntityType("insurance_reserve", ReserveChart))
-    registry.register(EntityType("insurance_payment", PaymentChart))
-    registry.register(
-        EntityType("insurance_fraud_investigation", FraudInvestigationChart)
-    )
-    return context, Engine(
-        context=context,
-        registry=registry,
-        owner_id=owner_id,
-        persistence=persistence,
-        scenarios=scenarios,
-    )
-
-
-def seed_reference(
-    persistence: MemoryPersistence,
-    *,
-    owner_id: str,
-    now: datetime = ORIGIN,
-    severity: int = 50,
-    amount: float = 5000.0,
-    claim_type: str = "property",
-    currency: str = "USD",
-) -> InsuranceEntities:
-    amount_units = _reference_minor_units(amount)
-    if amount_units <= 0:
-        raise ValueError("amount must be positive")
-    amount = amount_units / 100
-    if not currency:
-        raise ValueError("currency must be non-empty")
-    context, engine = build_runtime(persistence, owner_id=owner_id, now=now)
-    policy = context.entities.create(
-        Policy,
-        key=("insurance-reference", "policy-1"),
-        state="active",
-        attributes={
-            "coverage_limit": 10000.0,
-            "currency": currency,
-            "claim_type": claim_type,
-        },
-    )
-    claim = context.entities.create(
-        Claim,
-        key=("insurance-reference", "claim-1"),
-        state="opened",
-        attributes={
-            "policy_id": policy.id,
-            "severity": int(severity),
-            "amount": float(amount),
-            "currency": currency,
-            "claim_type": claim_type,
-        },
-    )
-    with persistence.transaction() as uow:
-        uow.save_entity(policy)
-        uow.save_entity(claim)
-        uow.save_resource_definition(ResourceDefinition("claims_adjuster", capacity=1))
-        uow.save_resource_definition(ResourceDefinition("fraud_investigator", capacity=1))
-        uow.save_resource_definition(ResourceDefinition("payment_processor", capacity=1))
-    engine.stores.define(StoreDefinition("claim_queue", kind="priority", capacity=100))
-    return InsuranceEntities(policy_id=policy.id, claim_id=claim.id)
-
-
-def _entity(persistence, entity_type, entity_id):
-    value = persistence.entity(entity_type, entity_id)
-    if value is None:
-        raise RuntimeError(f"{entity_type} was not persisted: {entity_id}")
-    return value
-
-
-def _policy(persistence, entities):
-    return _entity(persistence, "insurance_policy", entities.policy_id)
-
-
-def _claim(persistence, entities):
-    return _entity(persistence, "insurance_claim", entities.claim_id)
-
-
-def _dispatch(engine, entity, event, *, key, correlation_id):
-    command = engine.context.commands.create(
-        event,
-        target=entity,
-        correlation_id=correlation_id,
-        key=key,
-    )
-    engine.dispatch(command)
+from .foundation import (  # noqa: F401
+    DOCUMENT_DEADLINE,
+    PAYMENT_DELAY,
+    InsuranceEntities,
+    _claim,
+    _dispatch,
+    _entity,
+    _policy,
+    _reference_minor_units,
+    assessment_id,
+    build_runtime,
+    document_request_id,
+    flow_correlation_id,
+    fraud_investigation_id,
+    payment_id,
+    reserve_id,
+    seed_reference,
+)
+from .fraud import (  # noqa: F401
+    _dispatch_claim_fraud_outcome,
+    _progress_fraud_investigation,
+    _reconcile_fraud_terminal_if_any,
+    ensure_fraud_investigation,
+    reconcile_fraud,
+)
+from .payments import (  # noqa: F401
+    _dispatch_payment_completion,
+    _latest_approved_assessment,
+    _partial_units_if_requested,
+    _reconcile_paid_payment_terminal,
+    _validated_reserve_amount,
+    ensure_payment,
+    ensure_reserve,
+    reconcile_payment,
+    schedule_payment,
+)
 
 
 def ensure_document_request(
@@ -469,443 +330,6 @@ def complete_assessment(
         "insurance_assessment",
         assessment_id(claim.id, ordinal),
     ).state
-
-
-def ensure_fraud_investigation(persistence, engine, *, entities):
-    claim = _claim(persistence, entities)
-    existing = persistence.entity(
-        "insurance_fraud_investigation",
-        fraud_investigation_id(claim.id),
-    )
-    if existing is not None:
-        return existing
-    if claim.state != "fraud_review":
-        raise RuntimeError("fraud investigation requires Claim(fraud_review)")
-    value = engine.context.entities.create(
-        FraudInvestigation,
-        key=("insurance-reference", claim.id, "fraud-investigation"),
-        state="opened",
-        attributes={"claim_id": claim.id},
-    )
-    with persistence.transaction() as uow:
-        uow.save_entity(value)
-    return value
-
-
-def reconcile_fraud(
-    persistence,
-    engine,
-    backend,
-    *,
-    entities,
-    confirm=False,
-):
-    claim = _claim(persistence, entities)
-    investigation = ensure_fraud_investigation(
-        persistence,
-        engine,
-        entities=entities,
-    )
-    request_id = f"fraud-investigator:{investigation.id}"
-    terminal = _reconcile_fraud_terminal_if_any(
-        persistence,
-        engine,
-        backend,
-        claim=claim,
-        investigation=investigation,
-        request_id=request_id,
-    )
-    if terminal is not None:
-        return terminal
-
-    if engine.resources.ensure_requested(
-        backend,
-        resource_name="fraud_investigator",
-        request_id=request_id,
-        requested_at=backend.now,
-        priority=1,
-    ) is None:
-        return False
-
-    correlation_id = flow_correlation_id(claim.id)
-    investigation = _progress_fraud_investigation(
-        persistence,
-        engine,
-        investigation=investigation,
-        confirm=confirm,
-        correlation_id=correlation_id,
-    )
-    claim = _claim(persistence, entities)
-    _dispatch_claim_fraud_outcome(
-        engine,
-        claim=claim,
-        investigation=investigation,
-        confirm=confirm,
-        correlation_id=correlation_id,
-    )
-    engine.resources.withdraw(backend, request_id)
-    return not confirm
-
-
-def ensure_reserve(persistence, engine, *, entities, amount=None):
-    claim = _claim(persistence, entities)
-    existing = persistence.entity("insurance_reserve", reserve_id(claim.id))
-    if existing is not None:
-        if existing.state == "proposed":
-            _dispatch(
-                engine,
-                existing,
-                "establish",
-                key=("insurance-reserve", existing.id, "establish"),
-                correlation_id=flow_correlation_id(claim.id),
-            )
-            existing = _entity(
-                persistence,
-                "insurance_reserve",
-                existing.id,
-            )
-        return existing
-    approved_assessment = _latest_approved_assessment(persistence, claim_id=claim.id)
-    if claim.state != "approved" or approved_assessment is None:
-        raise RuntimeError("reserve requires approved claim and assessment evidence")
-    reserve_amount = _validated_reserve_amount(
-        amount if amount is not None else claim.attributes["amount"]
-    )
-    value = engine.context.entities.create(
-        Reserve,
-        key=("insurance-reference", claim.id, "reserve"),
-        state="proposed",
-        attributes={
-            "claim_id": claim.id,
-            "amount": reserve_amount,
-            "currency": claim.attributes["currency"],
-        },
-    )
-    with persistence.transaction() as uow:
-        uow.save_entity(value)
-    _dispatch(
-        engine,
-        value,
-        "establish",
-        key=("insurance-reserve", value.id, "establish"),
-        correlation_id=flow_correlation_id(claim.id),
-    )
-    return _entity(persistence, "insurance_reserve", value.id)
-
-
-def ensure_payment(persistence, engine, *, entities):
-    claim = _claim(persistence, entities)
-    existing = persistence.entity("insurance_payment", payment_id(claim.id))
-    if existing is not None:
-        return existing
-    reserve = persistence.entity("insurance_reserve", reserve_id(claim.id))
-    if claim.state != "approved" or reserve is None or reserve.state != "established":
-        raise RuntimeError("payment requires Claim(approved) and established Reserve")
-    value = engine.context.entities.create(
-        Payment,
-        key=("insurance-reference", claim.id, "payment"),
-        state="planned",
-        attributes={
-            "claim_id": claim.id,
-            "amount": float(reserve.attributes["amount"]),
-            "paid_amount": 0.0,
-            "currency": reserve.attributes["currency"],
-        },
-    )
-    with persistence.transaction() as uow:
-        uow.save_entity(value)
-    return value
-
-
-def schedule_payment(
-    persistence,
-    engine,
-    backend,
-    *,
-    entities,
-    delay=PAYMENT_DELAY,
-):
-    claim = _claim(persistence, entities)
-    payment = ensure_payment(persistence, engine, entities=entities)
-    correlation_id = flow_correlation_id(claim.id)
-    if payment.state == "planned":
-        _dispatch(
-            engine,
-            payment,
-            "schedule",
-            key=("insurance-payment", payment.id, "schedule"),
-            correlation_id=correlation_id,
-        )
-        payment = _entity(persistence, "insurance_payment", payment.id)
-    claim = _claim(persistence, entities)
-    if claim.state == "approved":
-        _dispatch(
-            engine,
-            claim,
-            "schedule_payment",
-            key=("insurance", claim.id, payment.id, "schedule-payment"),
-            correlation_id=correlation_id,
-        )
-    existing = engine.scheduler.find_pending(
-        entity_type="insurance_payment",
-        entity_id=payment.id,
-        name="make_due",
-    )
-    if payment.state == "scheduled" and existing is None:
-        due_at = backend.now + delay
-        command = engine.context.commands.create(
-            "make_due",
-            target=payment,
-            due_at=due_at,
-            correlation_id=correlation_id,
-            key=("insurance-payment", payment.id, "due"),
-        )
-        engine.context.schedules.at(due_at, command=command)
-        return due_at
-    if existing is not None:
-        return existing.work.due_at
-    return backend.now
-
-
-def reconcile_payment(
-    persistence,
-    engine,
-    backend,
-    *,
-    entities,
-    partial=False,
-):
-    claim = _claim(persistence, entities)
-    payment = _entity(
-        persistence,
-        "insurance_payment",
-        payment_id(claim.id),
-    )
-    reserve = _entity(
-        persistence,
-        "insurance_reserve",
-        reserve_id(claim.id),
-    )
-    request_id = f"payment-processor:{payment.id}"
-
-    if payment.state == "paid":
-        return _reconcile_paid_payment_terminal(
-            engine,
-            backend,
-            claim=claim,
-            payment=payment,
-            reserve=reserve,
-            request_id=request_id,
-        )
-
-    if payment.state not in {"due", "partially_paid"}:
-        return False
-    if reserve.state != "established":
-        raise RuntimeError("payout requires established reserve")
-    if not engine.context.scenarios.attribute("insurance.payment.available", True):
-        engine.resources.withdraw(backend, request_id)
-        return False
-
-    partial_units = _partial_units_if_requested(payment=payment, partial=partial)
-
-    reservation = engine.resources.ensure_requested(
-        backend,
-        resource_name="payment_processor",
-        request_id=request_id,
-        requested_at=backend.now,
-    )
-    if reservation is None:
-        return False
-
-    correlation_id = flow_correlation_id(claim.id)
-    payment = _entity(persistence, "insurance_payment", payment.id)
-    if partial and payment.state == "due":
-        assert partial_units is not None
-        payment.attributes["paid_amount"] = (partial_units // 2) / 100
-        with persistence.transaction() as uow:
-            uow.save_entity(payment)
-        _dispatch(
-            engine,
-            payment,
-            "record_partial",
-            key=("insurance-payment", payment.id, "partial"),
-            correlation_id=correlation_id,
-        )
-        engine.resources.withdraw(backend, request_id)
-        return False
-
-    if payment.state in {"due", "partially_paid"}:
-        _dispatch_payment_completion(
-            persistence,
-            engine,
-            payment=payment,
-            correlation_id=correlation_id,
-        )
-
-    engine.resources.withdraw(backend, request_id)
-    return reconcile_payment(
-        persistence,
-        engine,
-        backend,
-        entities=entities,
-    )
-
-
-def _reconcile_fraud_terminal_if_any(
-    persistence,
-    engine,
-    backend,
-    *,
-    claim,
-    investigation,
-    request_id: str,
-) -> bool | None:
-    if investigation.state not in {"cleared", "confirmed"}:
-        return None
-    if claim.state == "fraud_review":
-        event = "clear_fraud" if investigation.state == "cleared" else "reject"
-        _dispatch(
-            engine,
-            claim,
-            event,
-            key=("insurance", claim.id, investigation.id, "reconcile-terminal"),
-            correlation_id=flow_correlation_id(claim.id),
-        )
-    engine.resources.withdraw(backend, request_id)
-    return investigation.state == "cleared"
-
-
-def _progress_fraud_investigation(
-    persistence,
-    engine,
-    *,
-    investigation,
-    confirm: bool,
-    correlation_id: str,
-):
-    if investigation.state == "opened":
-        _dispatch(
-            engine,
-            investigation,
-            "assign",
-            key=("insurance-fraud", investigation.id, "assign"),
-            correlation_id=correlation_id,
-        )
-        investigation = persistence.entity(
-            "insurance_fraud_investigation", investigation.id
-        )
-    if investigation is not None and investigation.state == "assigned":
-        event = "confirm" if confirm else "clear"
-        _dispatch(
-            engine,
-            investigation,
-            event,
-            key=("insurance-fraud", investigation.id, event),
-            correlation_id=correlation_id,
-        )
-    return investigation
-
-
-def _dispatch_claim_fraud_outcome(
-    engine,
-    *,
-    claim,
-    investigation,
-    confirm: bool,
-    correlation_id: str,
-) -> None:
-    if claim.state != "fraud_review":
-        return
-    event = "reject" if confirm else "clear_fraud"
-    key_suffix = "fraud-reject" if confirm else "fraud-clear"
-    _dispatch(
-        engine,
-        claim,
-        event,
-        key=("insurance", claim.id, investigation.id, key_suffix),
-        correlation_id=correlation_id,
-    )
-
-
-def _latest_approved_assessment(persistence, *, claim_id: str):
-    return next(
-        (
-            candidate
-            for ordinal in (3, 2, 1)
-            for candidate in (
-                persistence.entity(
-                    "insurance_assessment",
-                    assessment_id(claim_id, ordinal),
-                ),
-            )
-            if candidate is not None and candidate.state == "approved"
-        ),
-        None,
-    )
-
-
-def _validated_reserve_amount(amount: float) -> float:
-    reserve_units = _reference_minor_units(float(amount))
-    if reserve_units <= 0:
-        raise ValueError("reserve amount must be positive")
-    return reserve_units / 100
-
-
-def _reconcile_paid_payment_terminal(
-    engine,
-    backend,
-    *,
-    claim,
-    payment,
-    reserve,
-    request_id: str,
-) -> bool:
-    engine.resources.withdraw(backend, request_id)
-    if claim.state == "payment_scheduled":
-        _dispatch(
-            engine,
-            claim,
-            "record_payment",
-            key=("insurance", claim.id, payment.id, "record-payment"),
-            correlation_id=flow_correlation_id(claim.id),
-        )
-    if reserve.state == "established":
-        _dispatch(
-            engine,
-            reserve,
-            "release",
-            key=("insurance-reserve", reserve.id, "release"),
-            correlation_id=flow_correlation_id(claim.id),
-        )
-    return True
-
-
-def _partial_units_if_requested(*, payment, partial: bool) -> int | None:
-    if not partial or payment.state != "due":
-        return None
-    partial_units = _reference_minor_units(float(payment.attributes["amount"]))
-    if partial_units < 2:
-        raise ValueError("partial payout requires at least two minor units")
-    return partial_units
-
-
-def _dispatch_payment_completion(
-    persistence,
-    engine,
-    *,
-    payment,
-    correlation_id: str,
-) -> None:
-    payment.attributes["paid_amount"] = float(payment.attributes["amount"])
-    with persistence.transaction() as uow:
-        uow.save_entity(payment)
-    _dispatch(
-        engine,
-        payment,
-        "complete",
-        key=("insurance-payment", payment.id, "complete"),
-        correlation_id=correlation_id,
-    )
 
 
 def reopen_claim(persistence, engine, *, entities):
