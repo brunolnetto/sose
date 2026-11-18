@@ -15,11 +15,6 @@ from .runtime import (
     measurement_id,
 )
 from .execution_resources import (  # noqa: F401 - historical import location
-    _advance_rework_if_needed,
-    _ensure_execution_capacity,
-    _execution_request_ids,
-    _request_resources_if_ready,
-    _withdraw_execution_requests,
     finish_execution,
     request_execution_resources,
 )

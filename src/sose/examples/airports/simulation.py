@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta  # noqa: F401
+from datetime import datetime  # noqa: F401
 
 from sose.backends.simpy import SimPyBackend  # noqa: F401
 from sose.core.clock import SimulationClock  # noqa: F401
@@ -31,20 +31,16 @@ from .statecharts import (
 )
 from .simulation_runtime import (  # noqa: F401 - re-exported, historical import location
     ARRIVAL_DELAY, DEPARTURE_SLOT_DELAY, flow_correlation_id, build_runtime, _entity,
-    _turnaround, _gate_assignment, _service_task, _baggage, _slot, _dispatch,
 )
 from .simulation_gates import (  # noqa: F401 - re-exported, historical import location
-    schedule_arrival, reconcile_gate, reallocate_gate, _dispatch_assign_gate_if_waiting,
-    _release_gate_and_hold_if_arrived, _hold_gate_if_arrived, _progress_gate_assignment,
+    schedule_arrival, reconcile_gate, reallocate_gate,
 )
 from .simulation_ground import (  # noqa: F401 - re-exported, historical import location
     reconcile_ground_service, reconcile_baggage,
 )
 from .simulation_departures import (  # noqa: F401 - re-exported, historical import location
-    schedule_departure_slot, queue_departure, _validate_departure_queue_preconditions,
-    _departure_item_already_observed, reconcile_departure, _reconcile_departed_turnaround,
-    _dispatch_depart_and_recurse, _ensure_departure_capacity,
-    _ensure_departure_queue_selection, _progress_departure_entities,
+    schedule_departure_slot, queue_departure,
+    reconcile_departure,
 )
 
 

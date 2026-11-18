@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass  # noqa: F401
-from datetime import datetime, timedelta  # noqa: F401
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
@@ -33,29 +31,18 @@ from .foundation import (  # noqa: F401
     CLOSE_DELAY,
     R2REntities,
     REOPEN_CLOSE_DELAY,
-    _adjustment,
-    _close_task,
     _dispatch,
     _entity,
     _journal,
-    _period,
     _reconciliation,
     build_runtime,
     seed_reference,
 )
 from .adjustments import (  # noqa: F401
-    _adjustment_or_error,
-    _apply_posted_adjustment_if_needed,
-    _post_or_reject_adjustment_if_approved,
-    _progress_adjustment_submission,
     ensure_adjustment,
     post_adjustment,
 )
 from .close import (  # noqa: F401
-    _complete_close_task_if_active,
-    _period_ready_for_close,
-    _reconcile_period_close_transitions,
-    _scheduled_close_work,
     reconcile_close,
     reopen_period,
     schedule_close,

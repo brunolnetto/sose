@@ -31,7 +31,6 @@ from .domain_experiment_records import (  # noqa: F401 - re-exported public/lega
     _freeze_json,
     _thaw_json,
     _validate_json,
-    _validate_sha256,
 )
 from .domain_reference import (
     DomainReferenceDescriptor,

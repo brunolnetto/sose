@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass  # noqa: F401
-from datetime import datetime, timedelta, timezone  # noqa: F401
+from datetime import timedelta  # noqa: F401
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
@@ -33,26 +32,11 @@ from .foundation import (  # noqa: F401
     seed_happy_path,
 )
 from .receiving import (  # noqa: F401
-    _apply_preinspection_receipt_transitions,
-    _dispatch_receipt_event,
-    _ensure_inspector_if_required,
-    _ensure_receiving_dock_if_pending,
-    _finalize_receiving_result,
-    _receipt_or_error,
-    _validate_receiving_outcome,
     reconcile_receiving_resources,
     request_inspector,
     request_receiving_slot,
 )
 from .inventory import (  # noqa: F401
-    _container_intent_exists,
-    _container_result_exists,
-    _ensure_consumption_side_effects,
-    _ensure_stocking_side_effects,
-    _lot_durable,
-    _lot_visible_or_pending,
-    _store_get_request_exists,
-    _store_get_result_exists,
     reconcile_consumption,
     reconcile_shortage_state,
     reconcile_stocking,

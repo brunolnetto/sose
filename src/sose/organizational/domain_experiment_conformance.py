@@ -11,12 +11,8 @@ from pydantic import BaseModel, ConfigDict, Field, InstanceOf
 from .domain_experiment import ExperimentWorld, build_experiment_worlds
 from .domain_experiment_conformance_checks import (  # noqa: F401 - moved, legacy surface
     ConformanceCheck,
-    _binds_point,
     _claims_valid,
     _deterministic_world_construction,
-    _design_point_bound,
-    _eligibility_consistent,
-    _eligible_metrics_observed,
     _exogenous_binding,
 )
 from .domain_experiment_runtime import (

@@ -1,10 +1,7 @@
 from __future__ import annotations
 
-from contextlib import contextmanager, nullcontext  # noqa: F401
 from dataclasses import dataclass
-from datetime import datetime, timedelta  # noqa: F401
 from collections.abc import Mapping
-from math import isfinite  # noqa: F401
 from time import monotonic, sleep  # noqa: F401 - resolved via this module
 
 from sose.backends.simpy import SimPyBackend  # noqa: F401
@@ -45,7 +42,6 @@ from .trading_company_customer_support import (  # noqa: F401 - historical impor
     _causal_command_scope,
     _complete_intent,
     _consume_next,
-    _dispatch_o2c_event,
     _intent_handler,
     _next_logical_time,
     _operational_owner,

@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass  # noqa: F401
-from datetime import datetime, timedelta  # noqa: F401
+from datetime import datetime  # noqa: F401
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone  # noqa: F401
+from datetime import datetime, timedelta  # noqa: F401
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
@@ -31,12 +31,9 @@ from .simulation_resources import (  # noqa: F401 - re-exported, historical impo
 )
 from .simulation_material import (  # noqa: F401 - re-exported, historical import location
     seed_material, reconcile_material_availability, reconcile_material_issue,
-    _ensure_material_issue_requests, _has_store_get_activity, _has_container_withdraw_activity,
-    _material_issue_completed,
 )
 from .simulation_output import (  # noqa: F401 - re-exported, historical import location
-    reconcile_wip_output, _ensure_wip_store_record, _wip_durable_or_pending, _wip_durable,
-    _wip_for_quality_release, _ensure_quality_release_requests, _quality_release_committed,
+    reconcile_wip_output,
     reconcile_quality_pass, reconcile_quality_hold, reconcile_rework, reconcile_output,
 )
 

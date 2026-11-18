@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass  # noqa: F401 - historical import location
 from datetime import datetime, timedelta
 
 from sose.backends.simpy import SimPyBackend

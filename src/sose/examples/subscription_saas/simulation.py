@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass  # noqa: F401
 from datetime import datetime, timedelta
 
 from sose.backends.simpy import SimPyBackend
@@ -37,11 +36,6 @@ from .foundation import (  # noqa: F401
     seed_reference,
 )
 from .plan_changes import (  # noqa: F401
-    _create_scheduled_change,
-    _existing_change_if_compatible,
-    _pending_plan_changes,
-    _schedule_plan_change,
-    _validate_plan_change_request,
     request_plan_change,
 )
 

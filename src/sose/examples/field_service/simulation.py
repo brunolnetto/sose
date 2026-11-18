@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass  # noqa: F401
-from datetime import datetime, timedelta  # noqa: F401
+from datetime import timedelta  # noqa: F401
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
@@ -32,8 +31,6 @@ from .foundation import (  # noqa: F401
     _at,
     _dispatch,
     _entity,
-    _overlaps,
-    _required_part_filter,
     _technician,
     _work_order,
     appointment_id,
@@ -44,8 +41,6 @@ from .foundation import (  # noqa: F401
     visit_id,
 )
 from .scheduling import (  # noqa: F401
-    _ensure_appointment_boundaries,
-    _technician_is_eligible,
     confirm_appointment,
     propose_appointment,
     select_technician,
