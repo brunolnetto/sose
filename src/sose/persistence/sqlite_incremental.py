@@ -17,6 +17,10 @@ from .memory import (
 )
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 from .sqlite_incremental_reads import SQLiteIncrementalFreshReadsMixin
+from .sqlite_incremental_fencing import (
+    ScopedWriterLease,  # noqa: F401 - public lease type of claim_scoped_writer
+    SQLiteIncrementalWriterFencingMixin,
+)
 from .sqlite_incremental_schema import (
     SQLiteIncrementalSchemaMixin,
 )
@@ -37,6 +41,7 @@ class StaleWriterError(RuntimeError):
 
 class SQLiteIncrementalPersistence(
     SQLiteIncrementalSchemaMixin,
+    SQLiteIncrementalWriterFencingMixin,
     SQLiteIncrementalFreshReadsMixin,
     MemoryPersistence,
 ):
@@ -48,6 +53,8 @@ class SQLiteIncrementalPersistence(
         self.namespace = namespace
         self._meta_table = f'"{namespace}_record_meta"'
         self._record_table = f'"{namespace}_record"'
+        self._scoped_writers_table = f'"{namespace}_writer_scope"'
+        self._correlation_owners_table = f'"{namespace}_recovery_owner"'
         self.path = str(path)
         self._ensure_parent_path()
         self._connection = self._connect()
@@ -234,17 +241,6 @@ class SQLiteIncrementalPersistence(
             self._connection.rollback()
             raise
 
-    @staticmethod
-    def _register_initial_job(uow: MemoryUnitOfWork, initial_job) -> None:
-        prior = uow.get_job_state(initial_job.job_id)
-        if prior is not None:
-            if prior.domain_name != initial_job.domain_name:
-                raise ValueError("recovery job identity already belongs to another domain")
-            if prior.config_json != initial_job.config_json:
-                raise ValueError("recovery job's durable organizational binding changed")
-        else:
-            uow.save_job_state(initial_job)
-
     def claim_writer_and_register(
         self,
         owner_id: str,
@@ -263,7 +259,6 @@ class SQLiteIncrementalPersistence(
             raise ValueError("expected_epoch must be >= 0")
 
         self._connection.execute("BEGIN IMMEDIATE")
-        before = None
         try:
             cursor = self._connection.execute(
                 f"""
@@ -281,26 +276,12 @@ class SQLiteIncrementalPersistence(
             if row is None:
                 raise RuntimeError("writer metadata disappeared")
             epoch = int(row[0])
-            self._refresh_from_db()
-            before = self._state
-            uow = MemoryUnitOfWork(fork_state(self._state), self)
-            self._register_initial_job(uow, initial_job)
-            uow.commit()
-            changed = self._apply_changes(before, self._state, uow.dirty_records)
-            next_revision = self._revision
-            if changed:
-                next_revision += 1
-                self._connection.execute(
-                    f"UPDATE {self._meta_table} SET revision = ? WHERE singleton = 1",
-                    (next_revision,),
-                )
+            next_revision = self._persist_job_registration(initial_job)
             self._connection.commit()
             self._revision = next_revision
             return WriterLease(owner_id=owner_id, epoch=epoch)
         except Exception:
             self._connection.rollback()
-            if before is not None:
-                self._state = before
             raise
 
     def boundary_protocol_snapshot(self):
@@ -342,12 +323,18 @@ class SQLiteIncrementalPersistence(
         self,
         *,
         owner_epoch: int | None = None,
+        writer_scope: str | None = None,
         owner_id: str | None = None,
     ) -> Iterator[MemoryUnitOfWork]:
         if owner_id is not None and not owner_id:
             raise ValueError("owner_id must not be empty")
+        if writer_scope is not None and (not writer_scope or owner_epoch is None):
+            raise ValueError("scoped transactions require scope and writer epoch")
         self._connection.execute("BEGIN IMMEDIATE")
-        self._require_current_writer_epoch(owner_epoch)
+        if writer_scope is None:
+            self._require_current_writer_epoch(owner_epoch)
+        else:
+            self._require_current_scoped_epoch(owner_epoch, writer_scope)
         self._refresh_from_db()
         before = self._state
         try:
