@@ -63,6 +63,11 @@ markers = [
     "slow: marks tests as slow-running (deselect with '-m \"not slow\"')",
 ]
 addopts = "-p tests.support.pytest_auto_postgres"
+filterwarnings = [
+    # Existing suites still exercise policy-less recovery until its 0.9 removal (#634);
+    # tests/unit/sose/composition/test_recovery_deprecation.py asserts the warning itself.
+    "ignore:TradingCustomerRecoveryRunner without resource_policies:DeprecationWarning",
+]
 [tool.codebase-stats.gates]
 # Quality ratchet (ADR-0010): no new violation and no worse existing one.
 # Known violations live in the baseline and may only shrink.
