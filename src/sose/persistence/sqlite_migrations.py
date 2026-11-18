@@ -153,8 +153,8 @@ def stamp_owner_qualified_codec(connection: sqlite3.Connection) -> None:
             "this SQLite database holds an unowned runtime snapshot written by SOSE 0.8 or "
             f"earlier (fields: {', '.join(legacy)}). SOSE 0.9 runs owner-qualified durable "
             "state only (ADR-0009) and will not adopt unowned history. Migrate it offline "
-            "with an explicit owner mapping first; see ADR-0009, 'Break and migration'. "
-            "The database was not modified."
+            "into a new database first: sose migrate-owners --sqlite <this file> --output "
+            "<new file> --owner <owner>. The database was not modified."
         )
     connection.execute(
         "UPDATE sose_state SET codec_version = ? WHERE singleton = 1",
