@@ -124,7 +124,8 @@ def _v2_shipment_id(
     return shipment_id
 
 
-def _legacy_shipment_id(persistence: MemoryPersistence) -> str:
+def _single_instance_shipment_id(persistence: MemoryPersistence) -> str:
+    """Contract v1 is the single-instance reference flow: exactly one shipment exists."""
     shipment_ids = [
         entity.id for entity in persistence.entities()
         if entity.entity_type == "shipment"
@@ -152,7 +153,7 @@ def _request_shipment_id(
     request = matching[0]
     if request.contract_key == "o2c.fulfillment_requested.v2":
         return _v2_shipment_id(persistence, request, requests)
-    return _legacy_shipment_id(persistence)
+    return _single_instance_shipment_id(persistence)
 
 
 def _order_owned_allocation(
