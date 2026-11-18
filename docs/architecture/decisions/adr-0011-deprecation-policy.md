@@ -27,8 +27,9 @@ workers. Removing a surface with no warning breaks them silently.
    - `removed_in`, the release that removes it;
    - the replacement (`instead`).
 2. **Removal happens in the next minor release** after the deprecation ships. A surface
-   deprecated in `0.8.x` is removed in `0.9.0`. Patch releases never remove a deprecated
-   surface.
+   deprecated in `0.9.0` is removed in `0.10.0`. Patch releases never remove a deprecated
+   surface, and per `docs/releases/release-policy.md` they cannot introduce one either (a
+   deprecation is an API change, so it ships in a minor release).
 3. **The warning points at the caller.** `stacklevel` is set so the warning is attributed
    to the user's call site, not to SOSE internals. A unit test asserts the attribution.
 4. **The test suite stays warning-clean.** Suites that deliberately keep exercising a
@@ -43,8 +44,10 @@ workers. Removing a surface with no warning breaks them silently.
 ## Consequences
 
 - Each deprecated surface carries an explicit removal release. Release preparation for
-  `0.9.0` must grep for `removed_in="0.9.0"` and remove those surfaces and their ignores.
-- The first application is #634: `TradingCustomerRecoveryRunner` without
-  `resource_policies` (and with it the SQLite path of `sose composition-recovery`) is
-  deprecated in `0.8.1` and removed in `0.9.0`. From then on composition recovery requires
-  PostgreSQL.
+  `0.10.0` must grep for `removed_in="0.10.0"` and remove those surfaces and their ignores.
+- The first deprecations ship in `0.9.0` and are removed in `0.10.0`:
+  - #634: `TradingCustomerRecoveryRunner` without `resource_policies`, and with it the
+    SQLite path of `sose composition-recovery`. From `0.10.0` composition recovery requires
+    PostgreSQL.
+  - #637: `PersistentJobRunner` on persistence without scoped writers.
+  - #632: public names reached through a module they were split out of.

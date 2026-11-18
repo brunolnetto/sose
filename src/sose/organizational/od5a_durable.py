@@ -13,7 +13,6 @@ from copy import deepcopy
 from typing import Any, Callable
 
 from sose.core.events import DomainEvent
-from sose.core.identity import deterministic_id  # noqa: F401 - legacy module surface
 from sose.core.runtime import ResourceDefinition, ResourceReservation  # noqa: F401
 from sose.domain.entity import Entity
 from sose.persistence.base import Persistence
@@ -287,3 +286,12 @@ def od5a_durable_events(store: Persistence, *, job_id: str) -> tuple[DomainEvent
         (e for e in store.events() if e.entity_type == _KIND and e.entity_id == job_id),
         key=lambda e: (e.tick if e.tick is not None else -1, e.event_id),
     ))
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "deterministic_id": "sose.core.identity",
+}, since="0.9.0", removed_in="0.10.0")

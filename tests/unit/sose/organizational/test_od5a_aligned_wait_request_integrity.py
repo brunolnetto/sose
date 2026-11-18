@@ -12,7 +12,7 @@ import pytest
 from sose.core.resource_identity import ResourcePoolContract
 from sose.core.resource_reservations import ResourceConflictError, TemporalReservation
 from sose.organizational.od5a_durable import _ORIGIN
-from sose.organizational.od5a_recurring import _aligned_physical_start
+from sose.organizational.od5a_shared_wait_alignment import _aligned_physical_start
 
 
 POOL = ResourcePoolContract(

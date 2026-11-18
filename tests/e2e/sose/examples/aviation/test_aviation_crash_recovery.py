@@ -3,7 +3,6 @@ from sose.examples.aviation.simulation import (
     ORIGIN,
     build_runtime,
     flow_correlation_id,
-    inspection_id,
     land_flight,
     maintenance_work_order_id,
     reconcile_departure,
@@ -11,6 +10,7 @@ from sose.examples.aviation.simulation import (
     schedule_departure,
     seed_reference,
 )
+from sose.examples.aviation.simulation_runtime import inspection_id
 from sose.persistence.memory import MemoryPersistence
 
 

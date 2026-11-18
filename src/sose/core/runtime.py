@@ -8,7 +8,6 @@ from sose.core.runtime_containers import (  # noqa: F401
     ContainerOperationIntent,
     ContainerOperationResult,
     ContainerState,
-    _require_nonnegative_finite,
 )
 from sose.core.runtime_preemption import (  # noqa: F401
     PreemptiveResourceDefinition,

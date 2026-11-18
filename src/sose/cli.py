@@ -4,30 +4,8 @@ import argparse
 import sys
 
 # Names that lived here before the split stay importable from ``sose.cli``.
-from pathlib import Path  # noqa: F401
 
-from sose.jobs.config import load_sose_config  # noqa: F401
-from sose.jobs.config_edit import (  # noqa: F401
-    describe_domain_config,
-    parse_cli_value,
-    set_domain_parameter,
-)
-from sose.jobs.doctor import inspect_job_file_health  # noqa: F401
-from sose.jobs.factory import build_job_from_file  # noqa: F401
-from sose.jobs.job_edit import describe_job_policy, set_job_policy  # noqa: F401
-from sose.jobs.plan import build_execution_plan_from_file  # noqa: F401
 from sose.jobs.storage import build_storage_plan  # noqa: F401
-from sose.jobs.storage_edit import (  # noqa: F401
-    add_analytical_sink,
-    parse_key_value_options,
-    remove_analytical_sink,
-    set_authoritative_storage,
-)
-from sose.persistence.registry import builtin_persistence_registry  # noqa: F401
-from sose.sinks.registry import builtin_sink_registry  # noqa: F401
-from sose.cli_validation import (  # noqa: F401
-    _close_persistence,
-)
 from sose.cli_commands import (
     _cmd_apply,
     _cmd_composition_recovery,
@@ -66,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     store = recovery.add_mutually_exclusive_group(required=True)
     store.add_argument(
         "--sqlite",
-        help="Authoritative SQLite DB path (deprecated: policy-less recovery, removed in 0.9).",
+        help="Authoritative SQLite DB path (deprecated: policy-less recovery, removed in 0.10).",
     )
     store.add_argument("--postgres-dsn", help="Authoritative PostgreSQL DSN.")
     recovery.add_argument("--namespace", default="sose", help="PostgreSQL namespace.")
@@ -330,3 +308,26 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "add_analytical_sink": "sose.jobs.storage_edit",
+    "build_execution_plan_from_file": "sose.jobs.plan",
+    "build_job_from_file": "sose.jobs.factory",
+    "builtin_persistence_registry": "sose.persistence.registry",
+    "builtin_sink_registry": "sose.sinks.registry",
+    "describe_domain_config": "sose.jobs.config_edit",
+    "describe_job_policy": "sose.jobs.job_edit",
+    "inspect_job_file_health": "sose.jobs.doctor",
+    "load_sose_config": "sose.jobs.config",
+    "parse_cli_value": "sose.jobs.config_edit",
+    "parse_key_value_options": "sose.jobs.storage_edit",
+    "remove_analytical_sink": "sose.jobs.storage_edit",
+    "set_authoritative_storage": "sose.jobs.storage_edit",
+    "set_domain_parameter": "sose.jobs.config_edit",
+    "set_job_policy": "sose.jobs.job_edit",
+}, since="0.9.0", removed_in="0.10.0")

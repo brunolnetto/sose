@@ -18,7 +18,7 @@ from sose.examples.record_to_report import simulation as r2r  # noqa: F401
 from sose.examples.warehouse_management import simulation as wm  # noqa: F401
 
 from .boundary import BoundaryConsumerRegistry, BoundaryService  # noqa: F401
-from .effects import BusinessEffectService, CERTIFIED_INTENTS  # noqa: F401
+from .effects import BusinessEffectService  # noqa: F401
 from .bindings import CustomerSettlementBinding, SettlementBindingService
 from .model import BoundaryMessage, DeliveryStatus  # noqa: F401
 from .trading_company_customer_stages import (
@@ -64,7 +64,6 @@ from .trading_company_fulfillment_intents import (  # noqa: F401 - historical im
     _execute_consume_fulfillment_inventory,
     _execute_request_fulfillment_inventory,
     _execute_reserve_fulfillment_inventory,
-    _materialize_fulfillment_from_request,
 )
 from .trading_company_logistics_egress import (  # noqa: F401 - historical import location
     reconcile_completed_logistics_egress,

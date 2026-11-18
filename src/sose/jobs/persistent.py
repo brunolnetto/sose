@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import Callable
 
 from sose._deprecation import warn_deprecated
 from sose.jobs.runner import SimulationJob
@@ -18,7 +17,7 @@ class PersistentJobRunner:
     The lease is scoped to ``job.job_id`` (#637) when the persistence offers
     scoped writers, so independent jobs in one namespace no longer fence each
     other out. Persistence that only implements the namespace-wide writer still
-    works, with a deprecation warning (removed in 0.9).
+    works, with a deprecation warning (removed in 0.10).
 
     Upgrade note: global and scoped epochs do not fence each other. Stop every
     worker of the previous version before starting workers of this version on
@@ -44,7 +43,7 @@ class PersistentJobRunner:
             # helper -> __post_init__ -> dataclass __init__ -> constructing caller
             warn_deprecated(
                 "PersistentJobRunner on persistence without scoped writers",
-                since="0.8.1", removed_in="0.9.0",
+                since="0.9.0", removed_in="0.10.0",
                 instead="implement scoped_writer_epoch and claim_scoped_writer",
                 stacklevel=4,
             )

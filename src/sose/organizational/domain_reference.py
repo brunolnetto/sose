@@ -17,11 +17,7 @@ from .domain_reference_ground_truth import (  # noqa: F401 - moved, re-exported 
     GroundTruthTargetKind,
     NonBlankString,
     _canonical_hash,
-    _freeze_json,
-    _is_finite_number,
     _require_unique,
-    _thaw_json,
-    _validate_json,
 )
 from .experiment import ParameterRange
 from .model_spec import EvidenceClass

@@ -67,7 +67,7 @@ filterwarnings = [
     # Existing suites still exercise policy-less recovery until its 0.9 removal (#634);
     # tests/unit/sose/composition/test_recovery_deprecation.py asserts the warning itself.
     "ignore:TradingCustomerRecoveryRunner without resource_policies:DeprecationWarning",
-    # Global-writer-only fakes in the jobs edge tests (#637, removed in 0.9);
+    # Global-writer-only fakes in the jobs edge tests (#637, removed in 0.10);
     # tests/unit/sose/jobs/test_persistent_scoped_runner.py asserts the warning itself.
     "ignore:PersistentJobRunner on persistence without scoped writers:DeprecationWarning",
 ]

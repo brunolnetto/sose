@@ -2,16 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass  # noqa: F401
 from datetime import datetime, timezone
-from typing import Callable, Generic, TypeVar
+from typing import Callable, Generic
 
 from sose.domain.config import ConfigT, DomainDefinition, SeedT
 from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.storage import DomainPersistence
 from sose.domain.warehouse import DomainMutation
-from sose.core.identity import deterministic_id
 from sose.domain.warehouse import DomainWarehouse
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
-from sose.jobs.registration import job_registration_guard  # noqa: F401
 from sose.jobs.runner_batch import _BatchTriggerMixin
 from sose.jobs.runner_lifecycle import _JobLifecycleMixin
 from sose.jobs.runner_tick import _TickExecutionMixin
@@ -369,3 +367,13 @@ class SimulationJob(
         except Exception as exc:
             self._persist_failed_tick(claimed=claimed, exc=exc)
             raise
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "deterministic_id": "sose.core.identity",
+    "job_registration_guard": "sose.jobs.registration",
+}, since="0.9.0", removed_in="0.10.0")

@@ -10,7 +10,6 @@ from sose.examples.logistics.simulation import (
     PICKUP_DUE,
     _shipment,
     delivery_attempt_id,
-    ensure_delivery_attempt,
     reconcile_delivery_dispatch,
     reconcile_delivery_failure,
     reconcile_delivery_success,
@@ -20,6 +19,7 @@ from sose.examples.logistics.simulation import (
     seed_reference,
     build_runtime,
 )
+from sose.examples.logistics.delivery import ensure_delivery_attempt
 from sose.persistence.memory import MemoryPersistence
 
 ORGANIZATION_ID = "logistics-reference-organization"

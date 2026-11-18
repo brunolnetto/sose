@@ -1,4 +1,4 @@
-"""#634: policy-less trading-company recovery is deprecated (removed in 0.9)."""
+"""#634: policy-less trading-company recovery is deprecated (removed in 0.10)."""
 from __future__ import annotations
 
 import json
@@ -29,7 +29,7 @@ def test_policy_less_runner_warns_with_removal_version_at_the_call_site(tmp_path
     assert len(deprecations) == 1
     message = str(deprecations[0].message)
     assert "without resource_policies" in message
-    assert "0.8.1" in message and "0.9.0" in message
+    assert "0.9.0" in message and "0.10.0" in message
     assert "resource_policies" in message.split(";", 1)[1]
     assert deprecations[0].filename == __file__   # attributed to the constructing caller
 

@@ -5,15 +5,10 @@ from datetime import datetime, timedelta  # noqa: F401
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.scheduler import Scheduler  # noqa: F401
 from sose.domain.registry import DomainRegistry, EntityType  # noqa: F401
 from sose.persistence.base import Persistence
-from sose.examples.warehouse_management.reservations import (  # noqa: F401
-    matching_reservation,
-    validated_consumption_request,
-)
 
 from .entities import Dock, Forklift, Shipment, StockPosition, Truck, WarehouseSite
 from .statecharts import (  # noqa: F401 - historical import location
@@ -42,7 +37,6 @@ from .unloading import (  # noqa: F401 - historical import location
     _release_completed_resources,
     complete_unload,
 )
-from .kpis import shipment_kpis  # noqa: F401 - historical import location
 
 
 def _validate_seed_arguments(
@@ -326,3 +320,15 @@ def assign_forklift(
     shipment.attributes["assigned_forklift_id"] = forklift.id
     _save(persistence, shipment)
     return True
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "deterministic_id": "sose.core.identity",
+    "matching_reservation": "sose.examples.warehouse_management.reservations",
+    "shipment_kpis": "sose.examples.warehouse_management.kpis",
+    "validated_consumption_request": "sose.examples.warehouse_management.reservations",
+}, since="0.9.0", removed_in="0.10.0")

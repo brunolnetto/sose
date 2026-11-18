@@ -57,7 +57,7 @@ sose composition-recovery \
 "scope": "shared", "capacity": 2}}`.
 
 > **Deprecated (ADR-0011, #634):** `--sqlite` without `--resource-policies` runs the
-> policy-less recovery mode. It is deprecated since 0.8.1 and removed in 0.9.0. From 0.9,
+> policy-less recovery mode. It is deprecated since 0.9.0 and removed in 0.10.0. From 0.10,
 > composition recovery requires PostgreSQL, because the physical resource ledger
 > (`IntentResourceCoordinator`) is PostgreSQL-backed.
 
