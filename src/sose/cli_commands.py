@@ -345,3 +345,17 @@ def _cmd_composition_recovery(args: argparse.Namespace) -> int:
     finally:
         store.close()
     return 0
+
+
+def _cmd_migrate_owners(args: argparse.Namespace) -> int:
+    """Offline owner-mapping migration of a SOSE <= 0.8 SQLite database (ADR-0009)."""
+    from pathlib import Path
+
+    from sose.persistence.owner_migration import migrate_unowned_sqlite
+
+    report = migrate_unowned_sqlite(args.sqlite, args.output, owner_id=args.owner)
+    text = report.to_json()
+    if args.report:
+        Path(args.report).write_text(text + "\n", encoding="utf-8")
+    print(text)
+    return 0
