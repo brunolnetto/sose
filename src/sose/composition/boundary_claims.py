@@ -62,7 +62,8 @@ def delivery_claimable(
 def typed_predecessor_certified(message, predecessor, consumption, uow) -> bool:
     # Opt-in causal contract upgrade: for typed PC6 links, a missing
     # pending Command is not evidence that business application committed.
-    # Legacy untyped v1 links preserve their original completion semantics.
+    # Untyped links (causation_kind=None, still produced today; see #644) keep the
+    # original completion semantics.
     from .effects import _CERTIFIED_TERMINALS
     if message.causation_kind != "boundary" or predecessor.contract_key not in {
         expected[2] for expected in _CERTIFIED_TERMINALS.values()

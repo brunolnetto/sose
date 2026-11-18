@@ -34,10 +34,10 @@ def ensure_delivery_attempt(
     ordinal: int,
     shipment_id: str | None = None,
 ) -> DeliveryAttempt:
-    legacy_shipment = deterministic_id(
+    reference_shipment = deterministic_id(
         "entity", "shipment", "logistics-reference", "shipment-1",
     )
-    actual_shipment = legacy_shipment if shipment_id is None else shipment_id
+    actual_shipment = reference_shipment if shipment_id is None else shipment_id
     existing = _attempt(persistence, ordinal, shipment_id=actual_shipment)
     if existing is not None:
         if existing.attributes.get("shipment_id") != actual_shipment:
@@ -47,7 +47,7 @@ def ensure_delivery_attempt(
     attempt = engine.context.entities.create(
         DeliveryAttempt,
         key=("logistics-reference",
-             "shipment-1" if actual_shipment == legacy_shipment else actual_shipment,
+             "shipment-1" if actual_shipment == reference_shipment else actual_shipment,
              "attempt", ordinal),
         state="pending",
         attributes={"shipment_id": actual_shipment, "ordinal": ordinal},

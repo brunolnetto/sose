@@ -304,7 +304,7 @@ class BoundaryService(_BoundaryCausationMixin):
     def _causal_predecessor_applied(message: BoundaryMessage, uow: "UnitOfWork") -> bool:
         """Prevent causal overtaking when predecessors are known or explicitly typed.
 
-        Legacy IDs without indexed parents remain opaque external causes.
+        Untyped IDs without indexed parents remain opaque external causes.
         Typed boundary parents with missing records remain blocked; typed
         domain-event causes must resolve to committed causal evidence.
         """

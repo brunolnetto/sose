@@ -15,10 +15,10 @@ class _BoundaryCausationMixin:
 
     @staticmethod
     def _validate_causation(message: BoundaryMessage, uow: "UnitOfWork") -> None:
-        """Follow durable typed/legacy ancestry inside the transaction.
+        """Follow durable typed/untyped ancestry inside the transaction.
 
         The optional discriminator lives in the message record, not an
-        overloaded identifier prefix. A legacy external ID like 'event:abc'
+        overloaded identifier prefix. An untyped external ID like 'event:abc'
         is never silently reinterpreted after a code upgrade.
         """
         visited = {message.message_id}

@@ -55,7 +55,7 @@ class BusinessEffectApplied:
 
 
 # Restrict certification to transitions with a concrete reference-model
-# terminal outcome. Other legacy commands retain the v1 completion convention
+# terminal outcome. Other commands retain the original completion convention
 # until their own business-result semantics are specified.
 # name -> (target entity type, terminal state, inbound contract key,
 #          inbound source domain, inbound destination domain, payload identity key)

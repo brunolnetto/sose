@@ -192,7 +192,7 @@ def _appended_event(before: _State, after: _State, change):
 def _replayed_in_snapshot(before: _State, event) -> bool:
     """Tell whether ``event`` exactly replays one already in this UoW's snapshot."""
     # Exact deterministic replay is idempotent; a reused identity
-    # with changed causal facts is not. Inspect legacy numeric-key
+    # with changed causal facts is not. Inspect numeric-key
     # events in this UoW's snapshot as well as new identity keys.
     earlier = tuple(item for item in before.events if item.event_id == event.event_id)
     if earlier:

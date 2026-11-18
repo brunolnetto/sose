@@ -44,10 +44,10 @@ def flow_correlation_id() -> str:
 def delivery_attempt_id(ordinal: int, *, shipment_id: str | None = None) -> str:
     if ordinal < 1:
         raise ValueError("delivery attempt ordinal must be >= 1")
-    legacy_shipment = deterministic_id("entity", "shipment", "logistics-reference", "shipment-1")
+    reference_shipment = deterministic_id("entity", "shipment", "logistics-reference", "shipment-1")
     if shipment_id is not None and not shipment_id:
         raise ValueError("shipment_id must be nonempty")
-    identity = "shipment-1" if shipment_id in (None, legacy_shipment) else shipment_id
+    identity = "shipment-1" if shipment_id in (None, reference_shipment) else shipment_id
     return deterministic_id(
         "entity", "delivery_attempt", "logistics-reference", identity, "attempt", ordinal,
     )

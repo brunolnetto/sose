@@ -2,7 +2,7 @@
 
 Callers pass kind and identity separately to BoundaryMessage.create. The type
 discriminator is durably serialized with the message, never inferred from a
-reserved prefix that could collide with legacy event/command identifiers.
+reserved prefix that could collide with untyped event/command identifiers.
 """
 from __future__ import annotations
 

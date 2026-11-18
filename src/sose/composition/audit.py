@@ -61,7 +61,7 @@ def audit_causal_history(persistence: Persistence) -> CausalAuditReport:
     """Validate a coherent, adapter-authoritative snapshot and its typed DAG.
 
     This audits persisted evidence, not a hypothetical full-state transaction
-    across external side effects. Legacy v1 links are counted but not inferred
+    across external side effects. Untyped links (causation_kind=None) are counted but not inferred
     into typed edges. The digest is semantic, not a wall-clock/lease replay hash.
     """
     tx = getattr(persistence, "boundary_transaction", None)
