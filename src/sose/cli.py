@@ -17,6 +17,7 @@ from sose.cli_commands import (
     _cmd_inspect,
     _cmd_job_set_policy,
     _cmd_job_show,
+    _cmd_migrate_owners,
     _cmd_persistence,
     _cmd_plan,
     _cmd_run,
@@ -63,6 +64,16 @@ def build_parser() -> argparse.ArgumentParser:
     recovery.add_argument("--serve", action="store_true", help="Poll continuously.")
     recovery.add_argument("--poll-seconds", type=float, default=5.0)
     recovery.set_defaults(handler=_cmd_composition_recovery)
+
+    migrate = subparsers.add_parser(
+        "migrate-owners",
+        help="Offline: migrate an unowned SOSE <= 0.8 SQLite database to an owned one.",
+    )
+    migrate.add_argument("--sqlite", required=True, help="Source SOSE <= 0.8 database.")
+    migrate.add_argument("--output", required=True, help="New database to write.")
+    migrate.add_argument("--owner", required=True, help="Owner of the database's runtime.")
+    migrate.add_argument("--report", help="Write the JSON migration report here.")
+    migrate.set_defaults(handler=_cmd_migrate_owners)
 
     init = subparsers.add_parser(
         "init",

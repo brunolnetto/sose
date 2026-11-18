@@ -11,6 +11,7 @@ from sose.examples.order_to_cash import simulation as o2c
 
 from .boundary import BoundaryService
 from .model import BoundaryMessage
+from .causality import matches_durable_message
 from .trading_company_customer_support import (
     _consumer_effect_is_pending,
     _is_foreign_or_unconsumed,
@@ -135,14 +136,15 @@ def reconcile_invoiced_o2c_egress(
             source_domain="order_to_cash", source_identity=order_id,
             destination_domain="cards_payments", occurrence_key="payment-requested",
             correlation_id=upstream.correlation_id,
-            causation_id=upstream.message_id, produced_at=produced_at,
+            causation_id=upstream.message_id, causation_kind="boundary",
+            produced_at=produced_at,
             payload={
                 "order_id": order_id, "payment_id": payment_id,
                 "amount": amount, "currency": currency,
             },
         )
         if previous is not None:
-            if previous != outgoing:
+            if not matches_durable_message(previous, outgoing):
                 raise ValueError("durable O2C payment request conflicts with source facts")
             emitted.append(previous)
             continue
@@ -255,14 +257,15 @@ def reconcile_settled_payment_egress(
             destination_domain="record_to_report",
             occurrence_key="customer-settlement-entry",
             correlation_id=upstream.correlation_id,
-            causation_id=upstream.message_id, produced_at=produced_at,
+            causation_id=upstream.message_id, causation_kind="boundary",
+            produced_at=produced_at,
             payload={
                 "payment_id": payment_id, "journal_id": journal_id,
                 "amount": amount, "currency": currency,
             },
         )
         if existing is not None:
-            if existing != message:
+            if not matches_durable_message(existing, message):
                 raise ValueError("durable settled-payment egress conflicts with source facts")
             results.append(existing)
             continue

@@ -11,6 +11,7 @@ from sose.persistence.memory import MemoryPersistence
 from sose.examples.warehouse_fulfillment import simulation as fulfillment
 
 from .boundary import BoundaryService
+from .causality import matches_durable_message
 from .model import BoundaryMessage, DeliveryStatus
 from .trading_company_customer_support import _next_logical_time, _operational_owner
 
@@ -50,9 +51,9 @@ class _FulfillmentEgressPublisher:
                 source_domain="warehouse_fulfillment", source_identity=source_identity,
                 destination_domain=destination_domain, occurrence_key=occurrence_key,
                 correlation_id=correlation, causation_id=causation,
-                produced_at=prior.produced_at, payload=payload,
+                causation_kind="boundary", produced_at=prior.produced_at, payload=payload,
             )
-            if prior != expected:
+            if not matches_durable_message(prior, expected):
                 raise ValueError("durable outbound contract conflicts with source facts")
             return prior
         if self._remaining is not None:
