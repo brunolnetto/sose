@@ -27,7 +27,9 @@ from sose.jobs.storage_edit import (
 from sose.persistence.registry import builtin_persistence_registry
 from sose.sinks.registry import builtin_sink_registry
 
-from sose.cli_validation import _close_persistence, _json, _validate_config
+from sose.cli_validation import (
+    _close_persistence, _json, _recovery_resource_policies, _recovery_store, _validate_config,
+)
 
 
 def _cmd_init(args: argparse.Namespace) -> int:
@@ -308,13 +310,13 @@ def _cmd_composition_recovery(args: argparse.Namespace) -> int:
 
     from sose.composition.recovery import TradingCustomerRecoveryRunner
     from sose.composition.scheduler import RecoverySchedule
-    from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
     if args.serve and args.now is not None:
         raise ValueError("--now is only supported for one-shot execution")
     if args.serve and args.poll_seconds <= 0:
         raise ValueError("--poll-seconds must be positive")
-    store = SQLiteIncrementalPersistence(args.sqlite)
+    policies = _recovery_resource_policies(args)
+    store = _recovery_store(args)
     try:
         runner = TradingCustomerRecoveryRunner(
             persistence=store,
@@ -322,6 +324,10 @@ def _cmd_composition_recovery(args: argparse.Namespace) -> int:
             correlation_id=args.correlation_id,
             organization_owners={args.correlation_id: args.organization_id},
             max_actions=args.max_actions,
+            **({} if policies is None else {
+                "resource_policies": policies,
+                "resource_organizations": {args.correlation_id: args.organization_id},
+            }),
         )
         scheduler = RecoverySchedule(
             runner=runner,

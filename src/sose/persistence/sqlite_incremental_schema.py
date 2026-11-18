@@ -56,6 +56,8 @@ class SQLiteIncrementalSchemaMixin:
             )
             """
         )
+        # Additive (#637): older SOSE versions ignore these tables.
+        self._create_scoped_writer_tables()
 
     def _meta_columns(self) -> set[str]:
         return {

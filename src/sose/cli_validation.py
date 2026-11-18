@@ -93,3 +93,33 @@ def _validate_config(path: str | Path) -> dict[str, object]:
             for sink in config.sinks
         ],
     }
+
+
+def _recovery_resource_policies(args):
+    """Load ``--resource-policies``: {intent name: ResourcePoolContract fields}."""
+    if args.resource_policies is None:
+        return None
+    if args.postgres_dsn is None:
+        raise ValueError("--resource-policies requires --postgres-dsn")
+    from sose.core.resource_identity import ResourcePoolContract
+
+    raw = json.loads(Path(args.resource_policies).read_text(encoding="utf-8"))
+    if not isinstance(raw, dict) or not raw:
+        raise ValueError("--resource-policies must be a non-empty JSON object")
+    return {
+        str(intent): ResourcePoolContract(**{
+            **fields, "instance_ids": tuple(fields.get("instance_ids", ())),
+        })
+        for intent, fields in raw.items()
+    }
+
+
+def _recovery_store(args):
+    """Open the authoritative store selected by ``--sqlite`` / ``--postgres-dsn``."""
+    if args.postgres_dsn is not None:
+        from sose.persistence.postgres import PostgresPersistence
+
+        return PostgresPersistence(args.postgres_dsn, namespace=args.namespace)
+    from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+
+    return SQLiteIncrementalPersistence(args.sqlite)
