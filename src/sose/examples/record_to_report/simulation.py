@@ -253,4 +253,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "close_task_id": "sose.examples.record_to_report.identity",
     "ensure_adjustment": "sose.examples.record_to_report.adjustments",
     "reopen_period": "sose.examples.record_to_report.close",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

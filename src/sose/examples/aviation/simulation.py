@@ -149,4 +149,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "inspection_id": "sose.examples.aviation.simulation_runtime",
     "preemption_result_for": "sose.examples.aviation.simulation_maintenance",
     "schedule_rotation": "sose.examples.aviation.simulation_departures",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

@@ -102,4 +102,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "ensure_loan": "sose.examples.credit_loans.simulation_origination",
     "payment_id": "sose.examples.credit_loans.simulation_runtime",
     "restructure_id": "sose.examples.credit_loans.simulation_runtime",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

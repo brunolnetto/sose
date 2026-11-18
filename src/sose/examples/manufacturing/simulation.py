@@ -142,4 +142,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "deterministic_id": "sose.core.identity",
     "reconcile_breakdown": "sose.examples.manufacturing.simulation_resources",
     "reconcile_rework": "sose.examples.manufacturing.simulation_output",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

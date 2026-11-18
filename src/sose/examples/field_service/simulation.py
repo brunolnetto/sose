@@ -397,4 +397,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "appointment_id": "sose.examples.field_service.foundation",
     "deterministic_id": "sose.core.identity",
     "select_technician": "sose.examples.field_service.scheduling",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

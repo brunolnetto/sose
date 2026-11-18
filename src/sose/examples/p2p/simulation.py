@@ -170,4 +170,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "reconcile_shortage_state": "sose.examples.p2p.inventory",
     "request_inspector": "sose.examples.p2p.receiving",
     "request_receiving_slot": "sose.examples.p2p.receiving",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

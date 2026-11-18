@@ -331,4 +331,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "matching_reservation": "sose.examples.warehouse_management.reservations",
     "shipment_kpis": "sose.examples.warehouse_management.kpis",
     "validated_consumption_request": "sose.examples.warehouse_management.reservations",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

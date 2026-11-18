@@ -300,4 +300,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "deterministic_id": "sose.core.identity",
     "pick_allocation": "sose.examples.warehouse_fulfillment.handling",
     "service_task_id": "sose.examples.warehouse_fulfillment.records",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

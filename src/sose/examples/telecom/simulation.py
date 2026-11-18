@@ -359,4 +359,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "subscription_service_id": "sose.examples.telecom.foundation",
     "trouble_ticket_id": "sose.examples.telecom.foundation",
     "usage_record_id": "sose.examples.telecom.foundation",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

@@ -13,7 +13,7 @@ from sose._deprecation import deprecated_reexports
 def _module_with(moved):
     module = types.ModuleType("sose_test_old_home")
     module.__getattr__ = deprecated_reexports(
-        module.__name__, moved, since="0.8.1", removed_in="0.9.0",
+        module.__name__, moved, since="0.9.0", removed_in="0.10.0",
     )
     return module
 
@@ -29,8 +29,8 @@ def test_old_path_returns_the_same_object_and_warns_at_the_caller():
     [warning] = caught
     assert issubclass(warning.category, DeprecationWarning)
     assert str(warning.message) == (
-        "importing deterministic_id from sose_test_old_home is deprecated since SOSE 0.8.1 "
-        "and will be removed in SOSE 0.9.0; import it from sose.core.identity."
+        "importing deterministic_id from sose_test_old_home is deprecated since SOSE 0.9.0 "
+        "and will be removed in SOSE 0.10.0; import it from sose.core.identity."
     )
     assert warning.filename == __file__
 

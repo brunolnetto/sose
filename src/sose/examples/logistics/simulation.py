@@ -389,4 +389,4 @@ from sose._deprecation import deprecated_reexports as _deprecated_reexports
 __getattr__ = _deprecated_reexports(__name__, {
     "deterministic_id": "sose.core.identity",
     "ensure_delivery_attempt": "sose.examples.logistics.delivery",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

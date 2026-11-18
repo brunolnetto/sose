@@ -44,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     store = recovery.add_mutually_exclusive_group(required=True)
     store.add_argument(
         "--sqlite",
-        help="Authoritative SQLite DB path (deprecated: policy-less recovery, removed in 0.9).",
+        help="Authoritative SQLite DB path (deprecated: policy-less recovery, removed in 0.10).",
     )
     store.add_argument("--postgres-dsn", help="Authoritative PostgreSQL DSN.")
     recovery.add_argument("--namespace", default="sose", help="PostgreSQL namespace.")
@@ -330,4 +330,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "set_authoritative_storage": "sose.jobs.storage_edit",
     "set_domain_parameter": "sose.jobs.config_edit",
     "set_job_policy": "sose.jobs.job_edit",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

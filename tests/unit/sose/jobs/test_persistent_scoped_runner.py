@@ -58,7 +58,7 @@ def test_global_only_persistence_still_works_but_is_deprecated():
         runner = PersistentJobRunner(_job(_GlobalOnly()), owner_id="w1")
     [warning] = [w for w in caught if issubclass(w.category, DeprecationWarning)]
     assert "without scoped writers" in str(warning.message)
-    assert "0.9.0" in str(warning.message)
+    assert "0.10.0" in str(warning.message)
     assert warning.filename == __file__
     assert runner._claim().epoch == 1
 

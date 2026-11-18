@@ -336,4 +336,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "deterministic_id": "sose.core.identity",
     "opt_out_demand_response": "sose.examples.energy_utilities.simulation_demand_response",
     "reading_id": "sose.examples.energy_utilities.simulation_runtime",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

@@ -376,4 +376,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "run_dispute_path": "sose.examples.cards_payments.paths",
     "run_refund_path": "sose.examples.cards_payments.paths",
     "run_retry_path": "sose.examples.cards_payments.paths",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")

@@ -279,4 +279,4 @@ __getattr__ = _deprecated_reexports(__name__, {
     "deterministic_id": "sose.core.identity",
     "escalation_id": "sose.examples.itsm.foundation",
     "reopen_incident": "sose.examples.itsm.queueing",
-}, since="0.8.1", removed_in="0.9.0")
+}, since="0.9.0", removed_in="0.10.0")
