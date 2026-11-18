@@ -9,6 +9,7 @@ from sose.persistence.memory import MemoryPersistence
 
 from .boundary import BoundaryService
 from .model import BoundaryMessage
+from .causality import matches_durable_message
 from .trading_company_customer_support import (
     _consumer_effect_is_pending,
     _is_foreign_or_unconsumed,
@@ -122,11 +123,11 @@ def reconcile_completed_logistics_egress(
             source_domain="logistics", source_identity=shipment_id,
             destination_domain="order_to_cash", occurrence_key="delivery-completed",
             correlation_id=dispatch.correlation_id, causation_id=dispatch.message_id,
-            produced_at=produced_at,
+            causation_kind="boundary", produced_at=produced_at,
             payload={"shipment_id": shipment_id, "order_id": sales_order_id},
         )
         if prior is not None:
-            if prior != message:
+            if not matches_durable_message(prior, message):
                 raise ValueError("durable Logistics egress conflicts with source facts")
             outgoing.append(prior)
             continue

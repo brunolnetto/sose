@@ -6,7 +6,10 @@ from typing import TYPE_CHECKING, Callable
 
 from sose.persistence.base import Persistence
 
+from sose._deprecation import warn_deprecated
+
 from .boundary_causation import _BoundaryCausationMixin
+from .causality import matches_durable_message
 from .boundary_claims import (
     charge_recovery_publication,
     delivery_claimable,
@@ -137,11 +140,14 @@ class BoundaryService(_BoundaryCausationMixin):
         with self._transaction() as uow:
             self._validate_causation(message, uow)
             existing_message = uow.get_boundary_message(message.message_id)
-            if existing_message is not None and existing_message != message:
+            if existing_message is not None and not matches_durable_message(
+                existing_message, message,
+            ):
                 raise ValueError(
                     f"boundary message identity conflict: {message.message_id}"
                 )
             if existing_message is None:
+                _warn_if_untyped(message)
                 self._validate_existing_descendants(message, uow)
                 # The publication and its bounded-trigger charge must commit
                 # together. A process dying immediately after this transaction
@@ -374,3 +380,15 @@ __all__ = [
     "StaleBoundaryClaimError",
     "UnsupportedBoundaryContractError",
 ]
+
+
+def _warn_if_untyped(message: BoundaryMessage) -> None:
+    """#644: a new message with a cause must say whether it is a boundary message or event."""
+    if message.causation_id is not None and message.causation_kind is None:
+        # helper -> warn_deprecated -> _warn_if_untyped -> publish -> caller
+        warn_deprecated(
+            "publishing a boundary message whose causation_id has no causation_kind",
+            since="0.9.0", removed_in="0.10.0",
+            instead='pass causation_kind="boundary" or "event" (see CausalReference)',
+            stacklevel=4,
+        )
