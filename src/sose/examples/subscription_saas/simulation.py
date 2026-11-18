@@ -6,7 +6,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.scheduler import Scheduler  # noqa: F401
 from sose.domain.registry import DomainRegistry, EntityType  # noqa: F401
@@ -22,14 +21,12 @@ from .statecharts import (  # noqa: F401
 )
 from .foundation import (  # noqa: F401
     SubscriptionEntities,
-    TERM_DURATION,
     _change_entity,
     _dispatch,
     _entitlement_entity,
     _entity,
     _subscription_entity,
     build_runtime,
-    change_request_id,
     entitlement_id,
     flow_correlation_id,
     occurrence_id,
@@ -279,3 +276,13 @@ def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, SubscriptionEnt
     if entitlement is None:
         raise RuntimeError("scheduled plan change did not become applicable")
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "change_request_id": "sose.examples.subscription_saas.foundation",
+    "deterministic_id": "sose.core.identity",
+}, since="0.8.1", removed_in="0.9.0")

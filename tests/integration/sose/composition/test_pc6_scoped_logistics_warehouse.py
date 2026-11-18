@@ -4,6 +4,7 @@ from sose.examples.warehouse_management import simulation as warehouse
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 import pytest
+from sose.examples.logistics.delivery import ensure_delivery_attempt
 
 
 @pytest.mark.parametrize("adapter", ["memory", "sqlite"])
@@ -22,7 +23,7 @@ def test_two_isolated_logistics_and_warehouse_instances_survive_restart(adapter,
                 correlation_id=f"pc6-{key}",
             )
             _, logistics_engine = logistics.build_runtime(store, owner_id=key)
-            attempt = logistics.ensure_delivery_attempt(
+            attempt = ensure_delivery_attempt(
                 store, logistics_engine, ordinal=1, shipment_id=ship_ref.shipment_id,
             )
             assert attempt.attributes["shipment_id"] == ship_ref.shipment_id

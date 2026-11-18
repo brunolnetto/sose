@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 from dataclasses import dataclass
-from typing import Callable
 
 from sose._deprecation import warn_deprecated
 from sose.jobs.runner import SimulationJob

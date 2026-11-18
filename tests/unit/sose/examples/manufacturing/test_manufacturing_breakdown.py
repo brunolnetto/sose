@@ -2,13 +2,13 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.manufacturing.simulation import (
     ORIGIN,
     build_runtime,
-    reconcile_breakdown,
     reconcile_material_issue,
     reconcile_repair,
     reconcile_setup_resources,
     seed_happy_path,
     seed_material,
 )
+from sose.examples.manufacturing.simulation_resources import reconcile_breakdown
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "manufacturing-reference-organization"

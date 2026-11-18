@@ -11,9 +11,7 @@ from .ledger import ActorCategory, ActorLedgerInterval
 from .synthetic_mechanics import (  # noqa: F401 - shared with the A0 runner
     _draw_service,
     _lead_statistics,
-    _lognormal_with_mean_cv,
     _ServiceDraw,
-    _standard_normal,
     _throughput_and_wip,
 )
 

@@ -11,7 +11,6 @@ from .domain_experiment_analysis_models import (  # noqa: F401 - re-exported pub
     ComparisonKind,
     DomainExperimentReport,
     ExperimentEffect,
-    NonBlankString,
     _canonical_hash,
     _ComparisonDomainReference,
 )
@@ -24,8 +23,6 @@ from .domain_reference import DomainReferenceDescriptor  # noqa: F401 - legacy m
 from .experiment import MetricDirection
 from .domain_experiment_pairing import _paired_values, _runs_by_world, _worlds_by_key
 from .student_t import (  # noqa: F401 - re-exported for callers and tests
-    _regularized_incomplete_beta,
-    _student_t_cdf,
     _student_t_critical,
 )
 

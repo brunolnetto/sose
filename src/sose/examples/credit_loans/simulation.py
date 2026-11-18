@@ -7,7 +7,6 @@ from sose.backends.simpy import SimPyBackend  # noqa: F401
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine  # noqa: F401
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import ResourceDefinition
 from sose.core.scheduler import Scheduler  # noqa: F401
@@ -36,22 +35,19 @@ from .statecharts import (
     RestructureChart,  # noqa: F401
 )
 from .simulation_runtime import (  # noqa: F401 - re-exported, historical import location
-    FIRST_DUE_DELAY, INSTALLMENT_INTERVAL, OVERDUE_GRACE, COLLECTION_FOLLOWUP, _usd_cents,
-    flow_correlation_id, credit_decision_id, loan_id, installment_id, payment_id,
-    delinquency_case_id, collection_case_id, restructure_id, build_runtime, _entity,
+    COLLECTION_FOLLOWUP, _usd_cents,
+    flow_correlation_id, loan_id, installment_id,
+    build_runtime,
 )
 from .simulation_origination import (  # noqa: F401 - re-exported, historical import location
-    reconcile_underwriting, ensure_loan,
+    reconcile_underwriting,
     disburse_and_schedule, schedule_overdue,
 )
 from .simulation_payments import (  # noqa: F401 - re-exported, historical import location
     post_payment,
 )
 from .simulation_delinquency import (  # noqa: F401 - re-exported, historical import location
-    ensure_delinquency, reconcile_collection, cure_delinquency, default_loan,
-)
-from .simulation_restructure import (  # noqa: F401 - re-exported, historical import location
-    apply_restructure,
+    reconcile_collection, cure_delinquency,
 )
 
 
@@ -91,3 +87,19 @@ def seed_reference(
     return CreditLoanEntities(application_id=application.id)
 
 
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "apply_restructure": "sose.examples.credit_loans.simulation_restructure",
+    "collection_case_id": "sose.examples.credit_loans.simulation_runtime",
+    "credit_decision_id": "sose.examples.credit_loans.simulation_runtime",
+    "default_loan": "sose.examples.credit_loans.simulation_delinquency",
+    "delinquency_case_id": "sose.examples.credit_loans.simulation_runtime",
+    "deterministic_id": "sose.core.identity",
+    "ensure_delinquency": "sose.examples.credit_loans.simulation_delinquency",
+    "ensure_loan": "sose.examples.credit_loans.simulation_origination",
+    "payment_id": "sose.examples.credit_loans.simulation_runtime",
+    "restructure_id": "sose.examples.credit_loans.simulation_runtime",
+}, since="0.8.1", removed_in="0.9.0")

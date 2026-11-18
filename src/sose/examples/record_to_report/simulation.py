@@ -11,7 +11,7 @@ from sose.core.scheduler import Scheduler  # noqa: F401
 from sose.domain.registry import DomainRegistry, EntityType  # noqa: F401
 from sose.persistence.memory import MemoryPersistence
 
-from .identity import adjustment_id, close_task_id, flow_correlation_id  # noqa: F401
+from .identity import flow_correlation_id  # noqa: F401
 from .entities import (  # noqa: F401
     AccountingPeriod,
     Adjustment,
@@ -28,23 +28,19 @@ from .statecharts import (  # noqa: F401
     ReconciliationItemChart,
 )
 from .foundation import (  # noqa: F401
-    CLOSE_DELAY,
     R2REntities,
     REOPEN_CLOSE_DELAY,
     _dispatch,
-    _entity,
     _journal,
     _reconciliation,
     build_runtime,
     seed_reference,
 )
 from .adjustments import (  # noqa: F401
-    ensure_adjustment,
     post_adjustment,
 )
 from .close import (  # noqa: F401
     reconcile_close,
-    reopen_period,
     schedule_close,
 )
 
@@ -246,3 +242,15 @@ def run_adjustment_path(*, owner_id: str) -> tuple[MemoryPersistence, R2REntitie
     ):
         raise RuntimeError("period close failed")
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "adjustment_id": "sose.examples.record_to_report.identity",
+    "close_task_id": "sose.examples.record_to_report.identity",
+    "ensure_adjustment": "sose.examples.record_to_report.adjustments",
+    "reopen_period": "sose.examples.record_to_report.close",
+}, since="0.8.1", removed_in="0.9.0")

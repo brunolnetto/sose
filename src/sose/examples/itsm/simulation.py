@@ -6,7 +6,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import ResourceDefinition, StoreDefinition
 from sose.core.scheduler import Scheduler  # noqa: F401
@@ -18,20 +17,16 @@ from .scenarios import ORIGIN
 from .statecharts import EscalationChart, IncidentChart  # noqa: F401
 from .foundation import (  # noqa: F401
     ITSMEntities,
-    SLA_DELAY,
     _dispatch,
     _escalation,
     _incident,
     build_runtime,
     cancel_sla,
-    create_incident,
-    escalation_id,
     flow_correlation_id,
     release_incident_owner,
 )
 from .queueing import (  # noqa: F401
     claim_next_incident,
-    reopen_incident,
     triage_and_queue,
 )
 
@@ -273,3 +268,15 @@ def run_escalation_path(*, owner_id: str) -> tuple[MemoryPersistence, ITSMEntiti
     ):
         raise RuntimeError("escalation capacity unavailable")
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "create_incident": "sose.examples.itsm.foundation",
+    "deterministic_id": "sose.core.identity",
+    "escalation_id": "sose.examples.itsm.foundation",
+    "reopen_incident": "sose.examples.itsm.queueing",
+}, since="0.8.1", removed_in="0.9.0")

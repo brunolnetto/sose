@@ -273,6 +273,5 @@ def _validate_operational_configs(
 
 # Admission lives in organization_admission; keep its historical import path.
 from .organization_admission import (  # noqa: E402,F401
-    _reject_unadmitted_cycles,
     validate_organization_admission,
 )

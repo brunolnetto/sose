@@ -5,9 +5,9 @@ from sose.examples.aviation.simulation import (
     land_flight,
     reconcile_departure,
     reconcile_inspection,
-    schedule_rotation,
     seed_reference,
 )
+from sose.examples.aviation.simulation_departures import schedule_rotation
 from sose.persistence.memory import MemoryPersistence
 
 

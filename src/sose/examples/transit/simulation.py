@@ -7,7 +7,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.scheduler import Scheduler  # noqa: F401
 from sose.domain.registry import DomainRegistry, EntityType  # noqa: F401
@@ -29,12 +28,12 @@ from .statecharts import (
     VehiclePositionOccurrenceChart,  # noqa: F401
 )
 from .simulation_runtime import (  # noqa: F401 - re-exported, historical import location
-    TRIP_A_START, TRIP_A_END, TRIP_B_START, TRIP_B_END, REALTIME_STALE_AFTER,
-    flow_correlation_id, trip_update_id, vehicle_position_id, service_alert_id, build_runtime,
+    TRIP_A_START,
+    flow_correlation_id, trip_update_id, build_runtime,
     _entity, _trip, _dispatch, _at,
 )
 from .simulation_boundaries import (  # noqa: F401 - re-exported, historical import location
-    ensure_trip_boundaries, schedule_reference_block,
+    schedule_reference_block,
     reconcile_vehicle_for_trip,
 )
 from .simulation_trip_projection import (  # noqa: F401 - re-exported, historical import location
@@ -42,11 +41,6 @@ from .simulation_trip_projection import (  # noqa: F401 - re-exported, historica
 )
 from .simulation_vehicle_positions import (  # noqa: F401 - re-exported, historical import location
     record_vehicle_position,
-    realtime_vehicle_view,
-)
-from .simulation_alerts import (  # noqa: F401 - re-exported, historical import location
-    cancel_trip, schedule_service_alert,
-    cancel_service_alert,
 )
 
 
@@ -280,3 +274,19 @@ def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, TransitEntities
         trip_id=trip_b.id,
     )
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "cancel_service_alert": "sose.examples.transit.simulation_alerts",
+    "cancel_trip": "sose.examples.transit.simulation_alerts",
+    "deterministic_id": "sose.core.identity",
+    "ensure_trip_boundaries": "sose.examples.transit.simulation_boundaries",
+    "realtime_vehicle_view": "sose.examples.transit.simulation_vehicle_positions",
+    "schedule_service_alert": "sose.examples.transit.simulation_alerts",
+    "service_alert_id": "sose.examples.transit.simulation_runtime",
+    "vehicle_position_id": "sose.examples.transit.simulation_runtime",
+}, since="0.8.1", removed_in="0.9.0")

@@ -8,7 +8,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401 - historical import location
 from sose.core.context import SimulationContext  # noqa: F401 - historical import location
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id  # noqa: F401 - historical import location
 from sose.core.randomness import RandomSource  # noqa: F401 - historical import location
 from sose.core.runtime import ResourceDefinition, StoreDefinition
 from sose.core.resource_reservations import ResourceConflictError, TemporalReservation, authoritative_effect_reservation_id
@@ -21,7 +20,6 @@ from .statecharts import DeliveryAttemptChart, ShipmentChart  # noqa: F401 - his
 from .records import (  # noqa: F401 - historical import location
     ORIGIN,
     PICKUP_DUE,
-    RETRY_DELAY,
     LogisticsEntities,
     _organization_queue,
     _shipment,
@@ -34,7 +32,6 @@ from .queues import (  # noqa: F401 - historical import location
     _ensure_origin_queue_dequeue,
 )
 from .delivery import (  # noqa: F401 - historical import location
-    ensure_delivery_attempt,
     reconcile_delivery_dispatch,
     reconcile_delivery_failure,
     reconcile_delivery_success,
@@ -383,3 +380,13 @@ def run_failed_retry_path(*, owner_id: str) -> tuple[MemoryPersistence, Logistic
         persistence, engine, backend, entities=entities, ordinal=2
     )
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "deterministic_id": "sose.core.identity",
+    "ensure_delivery_attempt": "sose.examples.logistics.delivery",
+}, since="0.8.1", removed_in="0.9.0")

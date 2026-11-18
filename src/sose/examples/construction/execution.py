@@ -11,7 +11,6 @@ from .runtime import (
     dispatch,
     flow_correlation_id,
     inspection,
-    inspection_id,
     measurement_id,
 )
 from .execution_resources import (  # noqa: F401 - historical import location
@@ -359,3 +358,12 @@ def complete_activity(
         key=("construction", current.id, "complete"),
         correlation_id=flow_correlation_id(current.id),
     )
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "inspection_id": "sose.examples.construction.runtime",
+}, since="0.8.1", removed_in="0.9.0")

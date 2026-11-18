@@ -6,7 +6,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import ResourceDefinition  # noqa: F401
 from sose.core.scheduler import Scheduler  # noqa: F401
@@ -38,21 +37,12 @@ from .foundation import (  # noqa: F401
     _product_order,
     _service,
     _service_order,
-    alarm_id,
     build_runtime,
     flow_correlation_id,
     seed_reference,
-    service_order_id,
-    subscription_service_id,
-    trouble_ticket_id,
-    usage_record_id,
 )
 from .operations import (  # noqa: F401
-    _drop_open_incident_if_resolved,
-    acknowledge_incident,
-    raise_service_alarm,
     record_usage,
-    restore_service,
 )
 
 
@@ -353,3 +343,20 @@ def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, TelecomEntities
         quantity=512.0,
     )
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "acknowledge_incident": "sose.examples.telecom.operations",
+    "alarm_id": "sose.examples.telecom.foundation",
+    "deterministic_id": "sose.core.identity",
+    "raise_service_alarm": "sose.examples.telecom.operations",
+    "restore_service": "sose.examples.telecom.operations",
+    "service_order_id": "sose.examples.telecom.foundation",
+    "subscription_service_id": "sose.examples.telecom.foundation",
+    "trouble_ticket_id": "sose.examples.telecom.foundation",
+    "usage_record_id": "sose.examples.telecom.foundation",
+}, since="0.8.1", removed_in="0.9.0")

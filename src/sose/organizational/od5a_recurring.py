@@ -64,7 +64,6 @@ from .od5a_recurring_fence import (  # noqa: F401,E402
     _assert_active_claimed_lease,
 )
 from .od5a_shared_wait import (  # noqa: F401,E402
-    _aligned_physical_start,
     _require_shared_wait_marker,
     _validate_shared_wait_record,
 )

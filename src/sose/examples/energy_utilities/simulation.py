@@ -7,7 +7,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.scheduler import Scheduler  # noqa: F401
 from sose.domain.registry import DomainRegistry, EntityType  # noqa: F401
@@ -31,7 +30,7 @@ from .statecharts import (
     ServicePointChart,  # noqa: F401
 )
 from .simulation_runtime import (  # noqa: F401 - re-exported, historical import location
-    DR_START_DELAY, DR_DURATION, flow_correlation_id, reading_id, outage_id, dr_event_id,
+    flow_correlation_id, outage_id, dr_event_id,
     dr_participation_id, build_runtime, _entity, _service_point, _dispatch,
 )
 from .simulation_metering import (  # noqa: F401 - re-exported, historical import location
@@ -39,7 +38,7 @@ from .simulation_metering import (  # noqa: F401 - re-exported, historical impor
 )
 from .simulation_demand_response import (  # noqa: F401 - re-exported, historical import location
     schedule_demand_response,
-    opt_out_demand_response, reconcile_demand_response,
+    reconcile_demand_response,
 )
 
 
@@ -327,3 +326,14 @@ def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, EnergyEntities]
         event_key="dr-1",
     )
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "deterministic_id": "sose.core.identity",
+    "opt_out_demand_response": "sose.examples.energy_utilities.simulation_demand_response",
+    "reading_id": "sose.examples.energy_utilities.simulation_runtime",
+}, since="0.8.1", removed_in="0.9.0")

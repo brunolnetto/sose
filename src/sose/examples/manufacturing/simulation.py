@@ -7,7 +7,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine  # noqa: F401
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import (
     ContainerDefinition,
@@ -22,19 +21,19 @@ from sose.persistence.memory import MemoryPersistence
 from .entities import Operation, ProductionOrder
 from .statecharts import OperationChart, ProductionOrderChart  # noqa: F401
 from .simulation_runtime import (  # noqa: F401 - re-exported, historical import location
-    ORIGIN, SKU, RAW_SKU, MATERIAL_CAPACITY, FINISHED_CAPACITY, flow_correlation_id,
+    ORIGIN, SKU, MATERIAL_CAPACITY, FINISHED_CAPACITY, flow_correlation_id,
     build_runtime, _validate_quantity,
 )
 from .simulation_resources import (  # noqa: F401 - re-exported, historical import location
     reconcile_setup_resources, release_setup_resources, reconcile_scenario_breakdown,
-    reconcile_breakdown, reconcile_repair,
+    reconcile_repair,
 )
 from .simulation_material import (  # noqa: F401 - re-exported, historical import location
     seed_material, reconcile_material_availability, reconcile_material_issue,
 )
 from .simulation_output import (  # noqa: F401 - re-exported, historical import location
     reconcile_wip_output,
-    reconcile_quality_pass, reconcile_quality_hold, reconcile_rework, reconcile_output,
+    reconcile_quality_pass, reconcile_quality_hold, reconcile_output,
 )
 
 
@@ -133,3 +132,14 @@ def run_happy_path(
         persistence, engine, backend, entities=entities
     )
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "deterministic_id": "sose.core.identity",
+    "reconcile_breakdown": "sose.examples.manufacturing.simulation_resources",
+    "reconcile_rework": "sose.examples.manufacturing.simulation_output",
+}, since="0.8.1", removed_in="0.9.0")

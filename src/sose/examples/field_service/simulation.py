@@ -6,7 +6,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import ResourceDefinition, StoreDefinition  # noqa: F401
 from sose.core.scheduler import Scheduler  # noqa: F401
@@ -25,15 +24,12 @@ from .foundation import (  # noqa: F401
     FieldServiceEntities,
     PART_FILTER_KEY,
     REQUIRED_PART,
-    REQUIRED_SKILL,
-    REQUIRED_TERRITORY,
     _appointment,
     _at,
     _dispatch,
     _entity,
     _technician,
     _work_order,
-    appointment_id,
     build_runtime,
     flow_correlation_id,
     seed_part_inventory,
@@ -43,7 +39,6 @@ from .foundation import (  # noqa: F401
 from .scheduling import (  # noqa: F401
     confirm_appointment,
     propose_appointment,
-    select_technician,
 )
 
 
@@ -393,3 +388,13 @@ def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, FieldServiceEnt
         outcome="completed",
     )
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+__getattr__ = _deprecated_reexports(__name__, {
+    "appointment_id": "sose.examples.field_service.foundation",
+    "deterministic_id": "sose.core.identity",
+    "select_technician": "sose.examples.field_service.scheduling",
+}, since="0.8.1", removed_in="0.9.0")

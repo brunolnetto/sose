@@ -6,7 +6,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine  # noqa: F401
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import ContainerDefinition, ResourceDefinition, StoreDefinition  # noqa: F401
 from sose.core.scheduler import Scheduler  # noqa: F401
@@ -33,12 +32,9 @@ from .foundation import (  # noqa: F401
 )
 from .receiving import (  # noqa: F401
     reconcile_receiving_resources,
-    request_inspector,
-    request_receiving_slot,
 )
 from .inventory import (  # noqa: F401
     reconcile_consumption,
-    reconcile_shortage_state,
     reconcile_stocking,
 )
 
@@ -163,3 +159,15 @@ def run_shortage_backorder(
         engine.dispatch(command)
 
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "deterministic_id": "sose.core.identity",
+    "reconcile_shortage_state": "sose.examples.p2p.inventory",
+    "request_inspector": "sose.examples.p2p.receiving",
+    "request_receiving_slot": "sose.examples.p2p.receiving",
+}, since="0.8.1", removed_in="0.9.0")

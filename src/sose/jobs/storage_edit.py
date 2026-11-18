@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from pathlib import Path
 import re
-from typing import Any
 
 from sose.jobs.config import load_sose_config
 from sose.jobs.config_edit import parse_cli_value

@@ -7,7 +7,6 @@ from sose.backends.simpy import SimPyBackend  # noqa: F401
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine  # noqa: F401
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import (
     PreemptiveResourceDefinition,
@@ -36,12 +35,12 @@ from .statecharts import (
     PartDemandChart,  # noqa: F401
 )
 from .simulation_runtime import (  # noqa: F401 - re-exported, historical import location
-    LEG1_DEPARTURE_DELAY, LEG2_DEPARTURE_DELAY, flow_correlation_id, inspection_id,
-    maintenance_work_order_id, part_demand_id, build_runtime, _entity,
+    flow_correlation_id,
+    maintenance_work_order_id, part_demand_id, build_runtime,
 )
 from .simulation_maintenance import (  # noqa: F401 - re-exported, historical import location
-    ensure_maintenance, reconcile_aog_maintenance,
-    complete_aog_maintenance, preemption_result_for,
+    reconcile_aog_maintenance,
+    complete_aog_maintenance,
 )
 from .simulation_parts import (  # noqa: F401 - re-exported, historical import location
     seed_spare_part, reconcile_part_issue,
@@ -50,7 +49,7 @@ from .simulation_inspection import (  # noqa: F401 - re-exported, historical imp
     ensure_inspection, reconcile_inspection,
 )
 from .simulation_departures import (  # noqa: F401 - re-exported, historical import location
-    schedule_departure, schedule_rotation, _crew_for_flight, reconcile_departure, land_flight,
+    schedule_departure, reconcile_departure, land_flight,
 )
 
 
@@ -140,3 +139,14 @@ def seed_reference(
     )
 
 
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "deterministic_id": "sose.core.identity",
+    "ensure_maintenance": "sose.examples.aviation.simulation_maintenance",
+    "inspection_id": "sose.examples.aviation.simulation_runtime",
+    "preemption_result_for": "sose.examples.aviation.simulation_maintenance",
+    "schedule_rotation": "sose.examples.aviation.simulation_departures",
+}, since="0.8.1", removed_in="0.9.0")

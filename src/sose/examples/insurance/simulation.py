@@ -5,7 +5,6 @@ from sose.backends.simpy import SimPyBackend  # noqa: F401
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine  # noqa: F401
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import ResourceDefinition, StoreDefinition  # noqa: F401
 from sose.core.scheduler import Scheduler  # noqa: F401
@@ -33,28 +32,22 @@ from .statecharts import (  # noqa: F401
 )
 from .foundation import (  # noqa: F401
     DOCUMENT_DEADLINE,
-    PAYMENT_DELAY,
     InsuranceEntities,
     _claim,
     _dispatch,
     _entity,
     _policy,
-    _reference_minor_units,
     assessment_id,
     build_runtime,
     document_request_id,
     flow_correlation_id,
-    fraud_investigation_id,
     payment_id,
-    reserve_id,
     seed_reference,
 )
 from .fraud import (  # noqa: F401
-    ensure_fraud_investigation,
     reconcile_fraud,
 )
 from .payments import (  # noqa: F401
-    ensure_payment,
     ensure_reserve,
     reconcile_payment,
     schedule_payment,
@@ -333,3 +326,16 @@ def reopen_claim(persistence, engine, *, entities):
         correlation_id=flow_correlation_id(claim.id),
     )
     return _claim(persistence, entities)
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "deterministic_id": "sose.core.identity",
+    "ensure_fraud_investigation": "sose.examples.insurance.fraud",
+    "ensure_payment": "sose.examples.insurance.payments",
+    "fraud_investigation_id": "sose.examples.insurance.foundation",
+    "reserve_id": "sose.examples.insurance.foundation",
+}, since="0.8.1", removed_in="0.9.0")

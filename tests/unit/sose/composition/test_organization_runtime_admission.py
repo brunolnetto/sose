@@ -150,7 +150,7 @@ def test_fully_qualified_versioned_edge_can_pass_when_registry_and_both_manifest
 
 
 def test_feedback_cycle_requires_explicit_liveness_contract_and_is_not_admitted():
-    from sose.composition.organization import _reject_unadmitted_cycles
+    from sose.composition.organization_admission import _reject_unadmitted_cycles
 
     with pytest.raises(ValueError, match="cyclic"):
         _reject_unadmitted_cycles(

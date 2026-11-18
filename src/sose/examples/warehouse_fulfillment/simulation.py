@@ -5,7 +5,6 @@ from datetime import datetime, timedelta
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id  # noqa: F401
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import ResourceDefinition
 from sose.core.scheduler import Scheduler  # noqa: F401
@@ -36,13 +35,10 @@ from .records import (  # noqa: F401 - historical import location
     WarehouseEntities,
     _allocation_entity,
     _dispatch,
-    _entity,
     _order_entity,
-    allocation_id,
     build_runtime,
     flow_correlation_id,
     occurrence_id,
-    service_task_id,
 )
 from .allocation import (  # noqa: F401 - historical import location
     allocate_order,
@@ -50,9 +46,7 @@ from .allocation import (  # noqa: F401 - historical import location
 from .handling import (  # noqa: F401 - historical import location
     _append_occurrence_id,
     _validate_occurrence_identity,
-    correct_lot_balance,
     pack_order,
-    pick_allocation,
     pick_order,
     ship_order,
 )
@@ -294,3 +288,16 @@ def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, WarehouseEntiti
     pack_order(persistence, engine, entities=entities)
     ship_order(persistence, engine, entities=entities)
     return persistence, entities
+
+
+# Moved by the quality-ratchet splits (#632); importing these names from here
+# is deprecated (ADR-0011). Import them from the module named on the right.
+from sose._deprecation import deprecated_reexports as _deprecated_reexports
+
+__getattr__ = _deprecated_reexports(__name__, {
+    "allocation_id": "sose.examples.warehouse_fulfillment.records",
+    "correct_lot_balance": "sose.examples.warehouse_fulfillment.handling",
+    "deterministic_id": "sose.core.identity",
+    "pick_allocation": "sose.examples.warehouse_fulfillment.handling",
+    "service_task_id": "sose.examples.warehouse_fulfillment.records",
+}, since="0.8.1", removed_in="0.9.0")

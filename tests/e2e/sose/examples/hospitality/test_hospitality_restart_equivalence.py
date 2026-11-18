@@ -4,13 +4,13 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.hospitality.scenarios import ORIGIN
 from sose.examples.hospitality.simulation import (
     available_room_ids,
-    booking_id,
     build_runtime,
     confirm_reservation,
     create_hold,
-    record_no_show_occurrence,
     seed_reference,
 )
+from sose.examples.hospitality.foundation import booking_id
+from sose.examples.hospitality.stay import record_no_show_occurrence
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
