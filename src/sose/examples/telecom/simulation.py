@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass  # noqa: F401
 from datetime import datetime, timedelta
-import math  # noqa: F401
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
@@ -50,11 +48,7 @@ from .foundation import (  # noqa: F401
     usage_record_id,
 )
 from .operations import (  # noqa: F401
-    _append_open_incident_if_needed,
-    _clear_alarm_if_needed,
     _drop_open_incident_if_resolved,
-    _load_or_create_alarm_and_ticket,
-    _progress_ticket_resolution,
     acknowledge_incident,
     raise_service_alarm,
     record_usage,

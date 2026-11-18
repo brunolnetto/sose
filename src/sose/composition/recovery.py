@@ -7,11 +7,11 @@ still require separate domain worker ownership.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace  # noqa: F401
+from dataclasses import dataclass  # noqa: F401
 from datetime import datetime, timedelta
-import json  # noqa: F401
 from typing import Mapping
 
+from sose._deprecation import warn_deprecated
 from sose.core.resource_identity import ResourcePoolContract
 from sose.core.resource_reservations import TemporalReservation  # noqa: F401
 from sose.composition.resource_intents import IntentResourceCoordinator
@@ -20,12 +20,6 @@ from sose.composition import trading_company_customer as customer  # noqa: F401
 from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService  # noqa: F401
 from sose.composition.model import BoundaryMessage, DeliveryStatus  # noqa: F401
 from sose.composition.recovery_boundary import (  # noqa: F401
-    _LOGISTICS_CONTRACT,
-    _O2C_CONTRACT,
-    _PAYMENTS_CONTRACT,
-    _R2R_CONTRACT,
-    _RECOVERABLE,
-    _WM_CONTRACT,
     execute_pending,
     pending_effects,
     registry_for,
@@ -83,6 +77,16 @@ class TradingCustomerRecoveryRunner:
 
     def __post_init__(self) -> None:
         validate_recovery_runner(self)
+        if self.resource_policies is None:
+            # #634: recovery without a physical resource ledger goes away in 0.9.
+            # helper -> __post_init__ -> dataclass __init__ -> constructing caller
+            warn_deprecated(
+                "TradingCustomerRecoveryRunner without resource_policies",
+                since="0.8.1", removed_in="0.9.0",
+                instead=("pass resource_policies and resource_organizations "
+                         "(PostgreSQL-backed recovery)"),
+                stacklevel=4,
+            )
 
     def _egress_organization_owners(self) -> dict[str, str]:
         """Bind every known correlation to its stable operational owner."""
@@ -174,8 +178,8 @@ class TradingCustomerRecoveryRunner:
 
         lease_clock = observed_at if observed_at is not None else now
         if self.resource_policies is None:
-            # Legacy recovery extension points accept only 'now'. Preserve
-            # their call contract and the historical physical lease clock.
+            # Deprecated policy-less mode (#634, removed in 0.9): overrides of this
+            # older hook accept only 'now'; keep their call contract until then.
             actions = self._run_bounded(store, now=lease_clock)
         else:
             actions = self._run_bounded(store, now=lease_clock, logical_now=now)

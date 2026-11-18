@@ -41,7 +41,8 @@ on every invocation):
 
 ```sh
 sose composition-recovery \
-  --sqlite state/trading.sqlite3 \
+  --postgres-dsn postgresql://user@host/db --namespace trading \
+  --resource-policies policies.json \
   --owner-id pc6-recovery-1 \
   --correlation-id <durable-flow-correlation-id> \
   --organization-id <authoritative-organization-id> \
@@ -50,6 +51,15 @@ sose composition-recovery \
   --max-slots 16 \
   --max-actions 16
 ```
+
+`policies.json` maps each resource-backed intent to a pool contract, for example
+`{"composition.deliver_shipment": {"resource_type": "pickup_courier", "pool_id": "couriers",
+"scope": "shared", "capacity": 2}}`.
+
+> **Deprecated (ADR-0011, #634):** `--sqlite` without `--resource-policies` runs the
+> policy-less recovery mode. It is deprecated since 0.8.1 and removed in 0.9.0. From 0.9,
+> composition recovery requires PostgreSQL, because the physical resource ledger
+> (`IntentResourceCoordinator`) is PostgreSQL-backed.
 
 The operator must supply the real durable correlation and its authoritative organizational owner. `--owner-id` identifies the worker lease only; it must never be reused to infer Engine ownership. This command handles one correlation per invocation.
 

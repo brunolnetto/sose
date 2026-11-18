@@ -9,7 +9,6 @@ queries (postgres_reads).
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import dataclass  # noqa: F401
 from datetime import datetime, timezone
 import re
 from typing import Iterator
@@ -31,7 +30,6 @@ from .postgres_fencing import PostgresWriterFencingMixin
 from .postgres_leases import ScopedWriterLease, StaleWriterError, WriterLease  # noqa: F401
 from .postgres_reads import PostgresFreshReadsMixin
 from .postgres_schema import (
-    _SCHEMA_VERSION,  # noqa: F401
     bootstrap_schema,
     committed_schema_is_current,
 )

@@ -22,7 +22,6 @@ from .od5a_admission import OD5aCompiledArm
 from .od5a_durable_actions import (  # noqa: F401 - moved, re-exported module surface
     _KIND,
     _ORIGIN,
-    _add_exact_seconds,
     _canonical_hash,
     _event_id,
     _finish_idle,
@@ -34,11 +33,10 @@ from .od5a_durable_actions import (  # noqa: F401 - moved, re-exported module su
     _on_stage_executed,
     _queue_stage,
     _release_lease,
-    _request,
     _schedule,
     _time,
 )
-from .od5a_durable_inputs import _precise_time, _time_us, validated_od5a_pilot  # noqa: F401
+from .od5a_durable_inputs import _time_us, validated_od5a_pilot  # noqa: F401
 from .od5a_mechanisms import OD5aWorkItem
 
 

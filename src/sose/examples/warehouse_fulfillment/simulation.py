@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass  # noqa: F401 - historical import location
 from datetime import datetime, timedelta
 
 from sose.core.clock import SimulationClock  # noqa: F401
@@ -38,7 +37,6 @@ from .records import (  # noqa: F401 - historical import location
     _allocation_entity,
     _dispatch,
     _entity,
-    _lot_entity,
     _order_entity,
     allocation_id,
     build_runtime,
@@ -47,17 +45,10 @@ from .records import (  # noqa: F401 - historical import location
     service_task_id,
 )
 from .allocation import (  # noqa: F401 - historical import location
-    _available_quantity,
-    _build_allocation_plan,
-    _eligible_lots_for_order,
-    _materialize_allocations,
-    _resolve_existing_allocations,
     allocate_order,
 )
 from .handling import (  # noqa: F401 - historical import location
     _append_occurrence_id,
-    _ensure_occurrence,
-    _persist_occurrence_scope,
     _validate_occurrence_identity,
     correct_lot_balance,
     pack_order,
@@ -74,10 +65,7 @@ from .service_tasks import (  # noqa: F401 - historical import location
     _apply_completed_service_task,
     _ensure_service_task,
     _reconcile_service_task,
-    _release_service_capacity,
-    _save_entity,
     _service_task_entity,
-    _start_service_task_if_capacity_available,
 )
 
 

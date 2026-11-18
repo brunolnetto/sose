@@ -4,10 +4,7 @@ import argparse
 import sys
 
 # Names that lived here before the split stay importable from ``sose.cli``.
-from dataclasses import asdict  # noqa: F401
-import json  # noqa: F401
 from pathlib import Path  # noqa: F401
-from datetime import datetime  # noqa: F401
 
 from sose.jobs.config import load_sose_config  # noqa: F401
 from sose.jobs.config_edit import (  # noqa: F401
@@ -16,7 +13,7 @@ from sose.jobs.config_edit import (  # noqa: F401
     set_domain_parameter,
 )
 from sose.jobs.doctor import inspect_job_file_health  # noqa: F401
-from sose.jobs.factory import _domain_warehouse, build_job_from_file  # noqa: F401
+from sose.jobs.factory import build_job_from_file  # noqa: F401
 from sose.jobs.job_edit import describe_job_policy, set_job_policy  # noqa: F401
 from sose.jobs.plan import build_execution_plan_from_file  # noqa: F401
 from sose.jobs.storage import build_storage_plan  # noqa: F401
@@ -30,11 +27,6 @@ from sose.persistence.registry import builtin_persistence_registry  # noqa: F401
 from sose.sinks.registry import builtin_sink_registry  # noqa: F401
 from sose.cli_validation import (  # noqa: F401
     _close_persistence,
-    _json,
-    _validate_config,
-    _validate_domain_warehouse_section,
-    _validate_postgres_domain_warehouse_options,
-    _validate_sqlite_domain_warehouse_options,
 )
 from sose.cli_commands import (
     _cmd_apply,
@@ -71,7 +63,17 @@ def build_parser() -> argparse.ArgumentParser:
         "composition-recovery",
         help="Run deterministic PC6 catch-up once (cron) or as a recurring worker.",
     )
-    recovery.add_argument("--sqlite", required=True, help="Authoritative SQLite DB path.")
+    store = recovery.add_mutually_exclusive_group(required=True)
+    store.add_argument(
+        "--sqlite",
+        help="Authoritative SQLite DB path (deprecated: policy-less recovery, removed in 0.9).",
+    )
+    store.add_argument("--postgres-dsn", help="Authoritative PostgreSQL DSN.")
+    recovery.add_argument("--namespace", default="sose", help="PostgreSQL namespace.")
+    recovery.add_argument(
+        "--resource-policies",
+        help="JSON file mapping intent names to resource pool contracts (PostgreSQL only).",
+    )
     recovery.add_argument("--owner-id", required=True, help="Worker lease identity, not the organization.")
     recovery.add_argument("--correlation-id", required=True, help="Durable flow correlation handled by this worker.")
     recovery.add_argument("--organization-id", required=True, help="Authoritative organizational owner of the flow runtime.")

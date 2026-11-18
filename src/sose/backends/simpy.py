@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable
-from dataclasses import dataclass, field  # noqa: F401
 from datetime import datetime, timedelta, timezone
 
 try:

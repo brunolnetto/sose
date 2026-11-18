@@ -3,9 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable  # noqa: F401 - re-exported for compatibility
 from contextlib import contextmanager
 from contextvars import ContextVar
-from copy import deepcopy  # noqa: F401 - re-exported for compatibility
 from dataclasses import dataclass, field, fields
-from datetime import datetime  # noqa: F401 - re-exported for compatibility
 from typing import Iterator
 
 from sose.core.events import Command, DomainEvent

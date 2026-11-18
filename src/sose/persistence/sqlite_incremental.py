@@ -22,7 +22,6 @@ from .sqlite_incremental_fencing import (
     SQLiteIncrementalWriterFencingMixin,
 )
 from .sqlite_incremental_schema import (
-    _SCHEMA_VERSION,  # noqa: F401 - re-exported for compatibility
     SQLiteIncrementalSchemaMixin,
 )
 
