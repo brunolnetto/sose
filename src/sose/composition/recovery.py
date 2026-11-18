@@ -7,9 +7,8 @@ still require separate domain worker ownership.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, replace  # noqa: F401
+from dataclasses import dataclass  # noqa: F401
 from datetime import datetime, timedelta
-import json  # noqa: F401
 from typing import Mapping
 
 from sose._deprecation import warn_deprecated
@@ -21,12 +20,6 @@ from sose.composition import trading_company_customer as customer  # noqa: F401
 from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService  # noqa: F401
 from sose.composition.model import BoundaryMessage, DeliveryStatus  # noqa: F401
 from sose.composition.recovery_boundary import (  # noqa: F401
-    _LOGISTICS_CONTRACT,
-    _O2C_CONTRACT,
-    _PAYMENTS_CONTRACT,
-    _R2R_CONTRACT,
-    _RECOVERABLE,
-    _WM_CONTRACT,
     execute_pending,
     pending_effects,
     registry_for,

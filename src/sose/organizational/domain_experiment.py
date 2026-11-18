@@ -27,7 +27,6 @@ from .experiment import ExperimentProtocol
 from .model_spec import InterventionClass, ModelIntervention, ModelSpec
 from .domain_experiment_validation import (  # noqa: F401 - moved helpers, legacy surface
     _interventions_by_id,
-    _require_declared_capability,
     _validate_agency_configurations,
     _validate_built_model,
     _validate_protocol_parameter_space,

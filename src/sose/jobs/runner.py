@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, replace  # noqa: F401
+from dataclasses import dataclass  # noqa: F401
 from datetime import datetime, timezone
 from typing import Callable, Generic, TypeVar
 
