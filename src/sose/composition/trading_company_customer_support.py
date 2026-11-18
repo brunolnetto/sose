@@ -123,6 +123,8 @@ def _publish(
         occurrence_key=occurrence_key,
         correlation_id=correlation_id,
         causation_id=causation_id,
+        # Every composition cause is an upstream boundary message (#644).
+        causation_kind=None if causation_id is None else "boundary",
         produced_at=produced_at,
         payload=payload,
     )

@@ -302,7 +302,17 @@ def test_certificate_cannot_be_reused_under_different_correlation():
 def test_unlinked_business_certificate_cannot_disappear_from_audit_digest():
     result = run_customer_demand_path(organization_id="test-org-causal-dag-audit")
     store = result.persistence
-    proof = next(x for x in store.business_effects() if x.entity_type == "shipment")
+    with store.transaction() as uow:
+        parents = {
+            uow.get_boundary_message(d.message_id).causation_id
+            for d in uow.boundary_deliveries()
+        }
+    # Use a certificate whose message parents no other message: removing a typed parent
+    # (#644) is caught earlier as "missing typed boundary parent"; this test targets the
+    # orphaned-certificate check itself.
+    proof = next(
+        x for x in store.business_effects() if x.boundary_message_id not in parents
+    )
     with store.transaction() as uow:
         owned = next(
             delivery for delivery in uow.boundary_deliveries()
