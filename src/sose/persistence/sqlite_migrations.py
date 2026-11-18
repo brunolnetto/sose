@@ -1,12 +1,24 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 import sqlite3
 from typing import Callable
 
 
 CURRENT_SCHEMA_VERSION = 2
-CURRENT_CODEC_VERSION = 1
+# Codec 2: the owner-qualified durable snapshot (ADR-0009). Codec 1 covers both the
+# unowned SOSE <= 0.8 snapshot and owner-qualified snapshots written before this bump.
+CURRENT_CODEC_VERSION = 2
+OWNER_QUALIFIED_CODEC_VERSION = 2
+# Scalar runtime fields of the unowned snapshot; their presence identifies SOSE <= 0.8 data.
+LEGACY_UNOWNED_SNAPSHOT_FIELDS = frozenset(
+    {"committed_tick", "simulation_position", "scenario_state"}
+)
+
+
+class LegacyUnownedSnapshotError(RuntimeError):
+    """The database holds an unowned (SOSE <= 0.8) snapshot that this runtime refuses to run."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,3 +133,30 @@ def _migrate_v1_to_v2(connection: sqlite3.Connection) -> None:
 MIGRATIONS: dict[int, Migration] = {
     1: _migrate_v1_to_v2,
 }
+
+
+def stamp_owner_qualified_codec(connection: sqlite3.Connection) -> None:
+    """Inside an open transaction: refuse an unowned snapshot, else stamp codec 2.
+
+    A codec-1 payload is either the unowned SOSE <= 0.8 snapshot or an owner-qualified
+    snapshot written before the codec bump; only the field names tell them apart.
+    """
+    row = connection.execute(
+        "SELECT codec_version, payload FROM sose_state WHERE singleton = 1"
+    ).fetchone()
+    if row is None or int(row[0]) >= OWNER_QUALIFIED_CODEC_VERSION:
+        return
+    fields = set((json.loads(str(row[1])).get("fields") or {}))
+    legacy = sorted(fields & LEGACY_UNOWNED_SNAPSHOT_FIELDS)
+    if legacy:
+        raise LegacyUnownedSnapshotError(
+            "this SQLite database holds an unowned runtime snapshot written by SOSE 0.8 or "
+            f"earlier (fields: {', '.join(legacy)}). SOSE 0.9 runs owner-qualified durable "
+            "state only (ADR-0009) and will not adopt unowned history. Migrate it offline "
+            "with an explicit owner mapping first; see ADR-0009, 'Break and migration'. "
+            "The database was not modified."
+        )
+    connection.execute(
+        "UPDATE sose_state SET codec_version = ? WHERE singleton = 1",
+        (OWNER_QUALIFIED_CODEC_VERSION,),
+    )
