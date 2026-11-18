@@ -13,8 +13,6 @@ from .experiment import ExperimentProtocol
 from .synthetic_mechanics import (
     _draw_service,
     _lead_statistics,
-    _lognormal_with_mean_cv,  # noqa: F401 - historical import location
-    _standard_normal,  # noqa: F401 - historical import location
     _throughput_and_wip,
 )
 from .synthetic_study import SyntheticWorldSpec

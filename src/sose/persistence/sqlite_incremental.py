@@ -18,7 +18,6 @@ from .memory import (
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 from .sqlite_incremental_reads import SQLiteIncrementalFreshReadsMixin
 from .sqlite_incremental_schema import (
-    _SCHEMA_VERSION,  # noqa: F401 - re-exported for compatibility
     SQLiteIncrementalSchemaMixin,
 )
 

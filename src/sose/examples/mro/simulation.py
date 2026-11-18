@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from datetime import datetime, timedelta, timezone  # noqa: F401
+from datetime import datetime, timedelta  # noqa: F401
 
 from sose.core.clock import SimulationClock  # noqa: F401
 from sose.core.context import SimulationContext  # noqa: F401
@@ -31,11 +31,8 @@ from .simulation_capacity import (  # noqa: F401 - re-exported, historical impor
     _discard_granted_capacity_if_terminal, reconcile_capacity, release_capacity,
 )
 from .simulation_parts import (  # noqa: F401 - re-exported, historical import location
-    seed_spare_parts, _part_issue_complete, reconcile_material_availability,
-    _can_issue_part_now, _dispatch_material_wait, _ensure_part_issue_requests,
-    _dispatch_part_demand_progress, reconcile_part_issue, _available_spare_parts,
-    _material_is_available, _reconcile_material_shortage, _part_issue_now_complete,
-    _part_issue_started,
+    seed_spare_parts, reconcile_material_availability,
+    reconcile_part_issue,
 )
 from .simulation_emergency import (  # noqa: F401 - re-exported, historical import location
     _active_emergency_request_id, _committed_emergency_result, _next_emergency_request_id,

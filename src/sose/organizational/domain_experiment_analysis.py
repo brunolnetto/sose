@@ -24,7 +24,6 @@ from .domain_reference import DomainReferenceDescriptor  # noqa: F401 - legacy m
 from .experiment import MetricDirection
 from .domain_experiment_pairing import _paired_values, _runs_by_world, _worlds_by_key
 from .student_t import (  # noqa: F401 - re-exported for callers and tests
-    _beta_continued_fraction,
     _regularized_incomplete_beta,
     _student_t_cdf,
     _student_t_critical,

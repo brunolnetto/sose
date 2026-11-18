@@ -56,22 +56,16 @@ from .od5a_shared_wait import (
 
 # Former module-level internals, kept importable from their historical home
 # after the split (tests and sibling modules reference several of them).
-from .od5a_durable import _ORIGIN, _advance_od5a_in_uow, _transition  # noqa: F401,E402
 from .od5a_native_arbiter import (  # noqa: F401,E402
     _PhysicalStepPreview,
     _RecurringNativePhysicalArbiter,
 )
 from .od5a_recurring_fence import (  # noqa: F401,E402
-    _SHARED_WAIT_KIND,
     _assert_active_claimed_lease,
-    _assert_claim,
-    _lease_expiry,
-    _next_trigger_id,
 )
 from .od5a_shared_wait import (  # noqa: F401,E402
     _aligned_physical_start,
     _require_shared_wait_marker,
-    _source_wait_digest,
     _validate_shared_wait_record,
 )
 

@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import math  # noqa: F401
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.clock import SimulationClock  # noqa: F401
@@ -32,26 +31,22 @@ from .statecharts import (
 from .simulation_runtime import (  # noqa: F401 - re-exported, historical import location
     TRIP_A_START, TRIP_A_END, TRIP_B_START, TRIP_B_END, REALTIME_STALE_AFTER,
     flow_correlation_id, trip_update_id, vehicle_position_id, service_alert_id, build_runtime,
-    _entity, _vehicle, _trip, _dispatch, _at,
+    _entity, _trip, _dispatch, _at,
 )
 from .simulation_boundaries import (  # noqa: F401 - re-exported, historical import location
-    _ensure_boundary, ensure_trip_boundaries, schedule_reference_block, _sync_trip_boundary,
-    _reschedule_trip_boundaries, reconcile_vehicle_for_trip,
+    ensure_trip_boundaries, schedule_reference_block,
+    reconcile_vehicle_for_trip,
 )
 from .simulation_trip_projection import (  # noqa: F401 - re-exported, historical import location
-    _apply_trip_projection, _compute_trip_projection, _persist_trip_projection,
-    _reconcile_changed_projection, _complete_running_trip_from_projection,
-    _start_planned_trip_from_projection, _reconcile_trip_update_projection,
+    _reconcile_trip_update_projection,
 )
 from .simulation_vehicle_positions import (  # noqa: F401 - re-exported, historical import location
-    _reconcile_vehicle_position_projection, record_vehicle_position,
-    _validate_vehicle_position_inputs, _coordinates_valid,
-    _assert_vehicle_position_preconditions, _create_vehicle_position,
-    _reconcile_existing_vehicle_position, realtime_vehicle_view,
+    record_vehicle_position,
+    realtime_vehicle_view,
 )
 from .simulation_alerts import (  # noqa: F401 - re-exported, historical import location
-    cancel_trip, schedule_service_alert, _validate_and_resolve_alert_scope,
-    _load_or_create_service_alert, _schedule_alert_boundary_if_missing, cancel_service_alert,
+    cancel_trip, schedule_service_alert,
+    cancel_service_alert,
 )
 
 

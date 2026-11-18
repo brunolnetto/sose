@@ -8,7 +8,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from .ledger_support import (  # noqa: F401 - moved, re-exported public surface
     _CAPACITY_ABS_TOL,
     _NON_CAPACITY,
-    _TIMESTAMP_ABS_TOL,
     ActorCategory,
     ItemCategory,
     _check_config_epochs,
