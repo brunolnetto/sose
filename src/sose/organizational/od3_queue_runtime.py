@@ -117,7 +117,7 @@ def seed_od3_queue(
         len({item.item_id for item in items}) != len(items)
         or any(
             item.owner_id != owner_id
-            or not isinstance(item.blocked, bool)
+            or type(item.service_us) is not int
             or type(item.blocked) is not bool
             or _utc(item.arrived_at) > now
             or (item.last_contact_at is not None and _utc(item.last_contact_at) > now)

@@ -997,3 +997,14 @@ def test_foreign_event_at_our_deterministic_id_fails_closed(adapter, when, tmp_p
     finally:
         if adapter == "sqlite":
             store.close()
+
+
+@pytest.mark.parametrize("bad", (70.0, True))
+def test_seed_rejects_non_integer_service_time(bad):
+    """The seed digest must not drift through a float/JSON round-trip."""
+    item = work("slow", 15, 70)
+    object.__setattr__(item, "service_us", bad)
+    store = MemoryPersistence()
+    with pytest.raises(ValueError, match="foreign or future"):
+        seed_od3_queue(store, owner_id=OWNER, queue_key=KEY, items=(item,), at=NOW)
+    assert not store.events()
