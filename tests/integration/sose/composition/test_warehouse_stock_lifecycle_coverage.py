@@ -9,6 +9,7 @@ from __future__ import annotations
 import pytest
 
 from sose.examples.warehouse_management import simulation as wm
+from sose.examples.warehouse_management.kpis import shipment_kpis
 from sose.persistence.memory import MemoryPersistence
 
 
@@ -336,7 +337,7 @@ def test_handling_refuses_to_move_stock_against_corrupt_transfer_projection(fiel
 
 def test_transfer_lifecycle_kpis_are_derived_from_durable_actual_times():
     store, entities, engine = _world()
-    initial = wm.shipment_kpis(store, entities=entities)
+    initial = shipment_kpis(store, entities=entities)
     assert initial["completed"] is False
     assert initial["lead_time_seconds"] is None
     assert initial["lateness_seconds"] is None
@@ -349,7 +350,7 @@ def test_transfer_lifecycle_kpis_are_derived_from_durable_actual_times():
     assert wm.assign_forklift(store, engine, entities=entities) is True
     engine.context.clock.advance(3)
     assert wm.complete_unload(store, engine, entities=entities) is True
-    final = wm.shipment_kpis(store, entities=entities)
+    final = shipment_kpis(store, entities=entities)
     assert final["completed"] is True
     assert final["lead_time_seconds"] == 5 * 3600.0
     assert final["lateness_seconds"] == 1 * 3600.0
