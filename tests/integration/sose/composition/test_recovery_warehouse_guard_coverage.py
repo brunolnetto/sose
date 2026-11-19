@@ -11,6 +11,7 @@ from datetime import timedelta
 import pytest
 
 from sose.composition.recovery import TradingCustomerRecoveryRunner
+from sose.core.resource_identity import ResourcePoolContract
 from sose.domain.entity import Entity
 from sose.examples.warehouse_fulfillment import simulation as warehouse
 from sose.examples.warehouse_fulfillment.records import service_task_id
@@ -22,6 +23,14 @@ from sose.persistence.memory import MemoryPersistence
 
 OWNER = "worker:recovery-coverage"
 ORG = "organization:operational-coverage"
+# #634 policy mode for the constructed runners: a certified intent these
+# constructor/binding checks never issue.
+NEUTRAL_POLICY = {
+    "composition.post_replenishment_journal": ResourcePoolContract(
+        resource_type="journal_clerk", pool_id="recovery-guard-neutral",
+        scope="shared", capacity=1,
+    ),
+}
 
 
 class _FencedWriter:
@@ -42,7 +51,7 @@ class _FencedWriter:
 
 def _runner(**overrides):
     store = _FencedWriter()
-    config = {"persistence": store, "owner_id": OWNER}
+    config = {"persistence": store, "owner_id": OWNER, "resource_policies": NEUTRAL_POLICY}
     config.update(overrides)
     return TradingCustomerRecoveryRunner(**config), store
 
