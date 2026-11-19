@@ -197,7 +197,10 @@ def _check_step_source(uow, actor, head: DomainEvent, payload: dict) -> None:
 
 def _expected_totals(uow, actor, origin: DomainEvent) -> dict:
     seq = len(actor.attributes["applied_causes"])
-    if uow.get_event(step_event_id(actor.id, seq + 1)) is not None:
+    successor = uow.get_event(step_event_id(actor.id, seq + 1))
+    if successor is not None:
+        if not _is_own(successor, STEP_EVENT, STEP_ENTITY, actor):
+            raise ValueError("OD-2 actor-time ledger ID occupied by a foreign event")
         raise ValueError("OD-2 actor-time causal history truncated in projection")
     if seq == 0:
         return _initial_totals(origin)

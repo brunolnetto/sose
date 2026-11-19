@@ -370,3 +370,18 @@ def test_tracked_seed_fails_clearly_when_origin_id_is_taken(adapter, tmp_path):
         assert store.events() == before
     finally:
         _close(store)
+
+
+@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+def test_foreign_event_at_next_step_id_is_reported_as_occupied(adapter, tmp_path):
+    store = _store(adapter, tmp_path, "step-collision")
+    try:
+        actor_id = _seed(store)
+        _transition(store, actor_id, "activate", 1)
+        _squat(store, ledger.step_event_id(actor_id, 2))
+        before = store.events()
+        with pytest.raises(ValueError, match="ledger ID occupied by a foreign event"):
+            _transition(store, actor_id, "exit", 2)
+        assert store.events() == before
+    finally:
+        _close(store)
