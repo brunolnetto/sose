@@ -81,9 +81,10 @@ def test_cherry_picking_changes_durable_rank_while_paid_sham_does_not(adapter, t
         assert [x["item_id"] for x in attrs_sham["items"]] == ["slow", "fast"]
         assert attrs_active["paid_policy_us"] == attrs_sham["paid_policy_us"] == 3
         assert version_active == version_sham == 1
-        assert len(store.events()) == 6  # 2 x (seed anchor, decision, effect)
+        assert len(store.events()) == 8  # 2 x (seed anchor, decision, effect, slot)
         assert {ev.name for ev in store.events()} == {
             "od3.queue_anchored", "od3.policy_decided", "od3.queue_effect_applied",
+            "od3.queue_version_claimed",
         }
         # A replay is harmless even after the queue was already modified.
         assert apply_od3_queue_policy(
@@ -141,7 +142,7 @@ def test_follow_up_updates_contact_and_cooldown_without_inventing_service(adapte
         assert next_action.payload["action"] == "CONTACT"
         assert next_action.payload["selected_item_id"] == "later"
         assert snapshot(store, queue_id)[0]["paid_policy_us"] == 6
-        assert len(store.events()) == 7  # seed anchor + 3 x (decision/effect)
+        assert len(store.events()) == 10  # seed anchor + 3 x (decision/effect/slot)
     finally:
         if adapter == "sqlite":
             store.close()
@@ -310,8 +311,8 @@ def test_distinct_identical_queues_and_diagnostic_observations_cannot_collide(
         assert second.causation_id != diagnostic.decision_id
         assert snapshot(store, first_id)[0]["paid_policy_us"] == 3
         assert snapshot(store, second_id)[0]["paid_policy_us"] == 3
-        # pure diagnostic + 2 x (seed anchor, decision, effect)
-        assert len(store.events()) == 7
+        # pure diagnostic + 2 x (seed anchor, decision, effect, slot)
+        assert len(store.events()) == 9
     finally:
         if adapter == "sqlite":
             store.close()
@@ -413,6 +414,7 @@ def test_every_memory_derived_adapter_rejects_nested_queue_mutation(
         assert tuple(event.name for event in recovered.events()) == (
             "od3.queue_anchored", "outer.preserved",
             "od3.policy_decided", "od3.queue_effect_applied",
+            "od3.queue_version_claimed",
         )
 
 
@@ -914,3 +916,49 @@ def test_inconsistent_legacy_projection_is_not_adopted():
     with pytest.raises(ValueError, match="legacy projection inconsistent"):
         apply_at(store, "adopt")
     assert not store.events()
+
+
+def _restore_snapshot(store, saved):
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_entity(saved)
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("target", ("seed", "first_effect"))
+def test_rollback_to_an_older_consistent_projection_is_rejected(adapter, target, tmp_path):
+    """An entity-only writer cannot re-save an earlier valid snapshot and fork the chain."""
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_pair(store)
+        if target == "seed":
+            saved = store.entity(QUEUE_KIND, queue_id)
+        apply_at(store, "one")
+        if target == "first_effect":
+            saved = store.entity(QUEUE_KIND, queue_id)
+        apply_at(store, "two", 21)
+        _restore_snapshot(store, saved)
+        old = snapshot(store, queue_id)
+        with pytest.raises(ValueError, match="rolled back behind a later durable effect"):
+            apply_at(store, "three", 42)
+        assert snapshot(store, queue_id) == old
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("target", ("adoption_head", "pre_adoption"))
+def test_adopted_legacy_queue_cannot_be_rolled_back(adapter, target, tmp_path):
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = _legacy_queue(store)
+        legacy = store.entity(QUEUE_KIND, queue_id)
+        apply_at(store, "adopt", 21)
+        first_new = store.entity(QUEUE_KIND, queue_id)
+        apply_at(store, "next", 42)
+        _restore_snapshot(store, legacy if target == "pre_adoption" else first_new)
+        with pytest.raises(ValueError, match="OD-3 charged queue"):
+            apply_at(store, "again", 63)
+    finally:
+        if adapter == "sqlite":
+            store.close()

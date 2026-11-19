@@ -29,6 +29,7 @@ from sose.organizational.od3_decisions import _utc
 ANCHOR_EVENT = "od3.queue_anchored"
 EFFECT_EVENT = "od3.queue_effect_applied"
 DECISION_EVENT = "od3.policy_decided"
+SLOT_EVENT = "od3.queue_version_claimed"
 _DECISION_FIELDS = (
     "policy", "matched_policy", "action", "selected_item_id", "before", "after", "cost_us",
 )
@@ -46,6 +47,11 @@ def items_digest(records: list) -> str:
 
 def anchor_id(queue_id: str) -> str:
     return deterministic_id("od3-queue-anchor", queue_id)
+
+
+def slot_id(queue_id: str, version: int) -> str:
+    """One durable claim per queue version: a later version proves a newer head."""
+    return deterministic_id("od3-queue-slot", queue_id, version)
 
 
 def anchor_event(queue: Entity, *, owner_id: str, origin: str) -> DomainEvent:
@@ -176,6 +182,18 @@ def _check_head_projection(queue: Entity, head: DomainEvent) -> None:
         _fail("projection contradicts durable contact")
 
 
+def _check_latest(uow, queue: Entity, *, owner_id: str) -> None:
+    """Refuse a projection rolled back to an older (still consistent) ledger state."""
+    head_id = queue.attributes["ledger_head"]
+    if head_id is not None:
+        slot = _owned(uow, slot_id(queue.id, queue.version), name=SLOT_EVENT,
+                      queue=queue, owner_id=owner_id)
+        if slot is None or slot.payload.get("effect_event_id") != head_id:
+            _fail("ledger head does not hold its version slot")
+    if uow.get_event(slot_id(queue.id, queue.version + 1)) is not None:
+        _fail("projection rolled back behind a later durable effect")
+
+
 def verify_queue_ledger(uow, queue: Entity, *, owner_id: str) -> DomainEvent | None:
     """Check the projection against the latest ledger entry; ``None`` means legacy.
 
@@ -191,6 +209,7 @@ def verify_queue_ledger(uow, queue: Entity, *, owner_id: str) -> DomainEvent | N
         return None
     if "ledger_head" not in attrs:
         _fail("projection dropped its ledger head")
+    _check_latest(uow, queue, owner_id=owner_id)
     head_id = attrs["ledger_head"]
     if head_id is None:
         _check_projection(queue, _state(anchor, anchor=True))
@@ -235,3 +254,18 @@ def ledger_fields(queue: Entity, before_items: list) -> dict:
         "items_digest": items_digest(queue.attributes["items"]),
         "last_action_at": queue.attributes["last_action_at"],
     }
+
+
+def claim_version_slot(uow, queue: Entity, effect: DomainEvent) -> None:
+    """Append the per-version claim for a new effect; refuse an occupied slot."""
+    version = effect.payload["queue_version"]
+    event_id = slot_id(queue.id, version)
+    if uow.get_event(event_id) is not None:
+        raise ValueError("OD-3 queue version slot already claimed")
+    uow.append_event(DomainEvent(
+        event_id=event_id, name=SLOT_EVENT,
+        entity_type=queue.entity_type, entity_id=queue.id, owner_id=effect.owner_id,
+        occurred_at=effect.occurred_at, causation_id=effect.event_id,
+        correlation_id=effect.correlation_id,
+        payload={"queue_version": version, "effect_event_id": effect.event_id},
+    ))

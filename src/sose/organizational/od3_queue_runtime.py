@@ -18,7 +18,7 @@ from sose.organizational.od3_decisions import (
     OD3Policy, QueuedWork, _utc, decide_od3, od3_decision_event,
 )
 from sose.organizational.od3_queue_ledger import (
-    append_anchor, ensure_queue_ledger, ledger_fields,
+    append_anchor, claim_version_slot, ensure_queue_ledger, ledger_fields,
 )
 
 QUEUE_KIND = "od3_operational_queue"
@@ -279,4 +279,5 @@ def apply_od3_queue_policy(
             uow.save_entity(queue)
             uow.append_event(decided_event)
             uow.append_event(effect)
+            claim_version_slot(uow, queue, effect)
             return effect
