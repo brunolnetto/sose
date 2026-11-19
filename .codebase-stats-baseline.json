@@ -13,12 +13,12 @@
   "max_cc:organizational/queue_policy_runtime.py::_read": 21,
   "max_cc:organizational/queue_policy_runtime.py::apply_od3_queue_policy": 33,
   "max_cc:organizational/queue_policy_runtime.py::seed_od3_queue": 16,
-  "max_cc:organizational/od4_intake.py::_check_admission": 19,
-  "max_cc:organizational/od4_intake.py::_verify_decision_ledger": 68,
-  "max_cc:organizational/od4_intake.py::intervene_work": 45,
+  "max_cc:organizational/work_intake.py::_check_admission": 19,
+  "max_cc:organizational/work_intake.py::_verify_decision_ledger": 68,
+  "max_cc:organizational/work_intake.py::intervene_work": 45,
   "max_lines:examples/process_manifest.py": 613,
   "max_lines:organizational/manufacturing_reference.py": 614,
   "max_lines:organizational/actor_lifecycle.py": 497,
-  "max_lines:organizational/od4_intake.py": 433,
-  "min_mi:organizational/od4_intake.py": 17.624204288926034
+  "max_lines:organizational/work_intake.py": 433,
+  "min_mi:organizational/work_intake.py": 17.624204288926034
 }

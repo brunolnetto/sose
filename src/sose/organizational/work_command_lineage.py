@@ -3,7 +3,7 @@
 Each earlier paid decision event must still match the original Command that caused it:
 identity, owner, entity, action, due/issued time, the work's deterministic flow
 correlation, cause and frozen request. Replay requests keep their own stronger checks
-in ``od4_intake``. This is a consistency check over a public unit of work, not an
+in ``work_intake``. This is a consistency check over a public unit of work, not an
 issuer root (#545).
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from sose.core.identity import deterministic_id
 
 
 def verify_original_management_commands(uow, owner_id: str, work_id: str, protocol) -> None:
-    from sose.organizational.od4_intake import _DECISION_EVENT, WORK_KIND, _utc
+    from sose.organizational.work_intake import _DECISION_EVENT, WORK_KIND, _utc
 
     snapshot = protocol.snapshot()
     flow = deterministic_id("od4-work-flow", owner_id, work_id)
