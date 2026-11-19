@@ -221,7 +221,8 @@ def test_engine_dispatch_probabilistic_and_evaluate_entity_edges(monkeypatch):
 
     engine.rules_for = lambda entity_type: (_Rule("n1", None), _Rule("n2", "release"))
     dispatched.clear()
-    engine.evaluate_entity(entity)
+    with pytest.warns(DeprecationWarning, match="Engine.evaluate_entity is deprecated"):
+        engine.evaluate_entity(entity)
     assert len(dispatched) == 1
     assert dispatched[0].name == "release"
 
