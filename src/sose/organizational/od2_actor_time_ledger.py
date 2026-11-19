@@ -137,6 +137,13 @@ def _check_origin(actor, origin: DomainEvent | None) -> None:
         raise ValueError("OD-2 actor-time enrollment source contradicts projection")
 
 
+def _is_own(event: DomainEvent, name: str, entity_type: str, actor) -> bool:
+    """True if ``event`` is a ledger record of ``name`` for this actor/owner."""
+    return (
+        event.name, event.entity_type, event.entity_id, event.owner_id,
+    ) == (name, entity_type, actor.id, actor.attributes.get("owner_id"))
+
+
 def _prev_event_id(actor_id: str, seq: int) -> str:
     return origin_event_id(actor_id) if seq == 1 else step_event_id(actor_id, seq - 1)
 
@@ -201,14 +208,18 @@ def _expected_totals(uow, actor, origin: DomainEvent) -> dict:
 def verify_time_ledger(uow, actor) -> None:
     """Fail closed unless a tracked actor projection equals its ledger head.
 
-    Untracked actors (no projection marker and no origin event) pass
-    unchanged. Constant number of keyed reads; no event-log scan.
+    Untracked actors (no projection marker and no genuine origin event for
+    this actor) pass unchanged; a foreign event squatting on the predictable
+    origin ID cannot affect them. A genuine origin always enforces, so
+    stripping the marker is caught. Constant number of keyed reads; no
+    event-log scan.
     """
     meta = actor.attributes
     if not isinstance(meta, dict):
         raise ValueError("OD-2 actor-time projection malformed")
     origin = uow.get_event(origin_event_id(actor.id))
-    if origin is None and meta.get("tracked_time_version") is None:
+    genuine = origin is not None and _is_own(origin, ORIGIN_EVENT, actor.entity_type, actor)
+    if not genuine and meta.get("tracked_time_version") is None:
         return
     try:
         _check_origin(actor, origin)

@@ -308,3 +308,50 @@ def test_marker_without_origin_event_is_rejected():
     _tamper(store, actor_id, lambda a: a.attributes.update(tracked_time_version=1))
     with pytest.raises(ValueError, match="OD-2 actor-time enrollment source missing"):
         _transition(store, actor_id, "activate", 1)
+
+
+def _squat(store, event_id, *, name="foreign.squat"):
+    """A foreign owner appends an arbitrary event at a predictable ledger ID."""
+    with store.transaction(owner_id=OTHER) as uow:
+        uow.append_event(DomainEvent(
+            event_id=event_id, name=name, entity_type="noise", entity_id=event_id,
+            occurred_at=T0, owner_id=OTHER, payload={},
+        ))
+
+
+def _store(adapter, tmp_path, name):
+    if adapter == "memory":
+        return MemoryPersistence()
+    return SQLitePersistence(tmp_path / (name + ".sqlite"))
+
+
+def _close(store):
+    if isinstance(store, SQLitePersistence):
+        store.close()
+
+
+@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+def test_foreign_event_at_origin_id_cannot_disable_untracked_actor(adapter, tmp_path):
+    """Review finding: untracked actors must behave exactly as on main."""
+    store = _store(adapter, tmp_path, "squat-origin")
+    try:
+        actor_id = _seed(store, tracked_time=False)
+        _squat(store, ledger.origin_event_id(actor_id))
+        _transition(store, actor_id, "activate", 1, cost_us=2)
+        assert _transition(store, actor_id, "activate", 1, cost_us=2).state == "eligible"
+        assert _transition(store, actor_id, "exit", 2).state == "exited"
+    finally:
+        _close(store)
+
+
+@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+def test_genuine_origin_still_enforces_after_marker_strip(adapter, tmp_path):
+    store = _store(adapter, tmp_path, "genuine-origin")
+    try:
+        actor_id = _seed(store)
+        _transition(store, actor_id, "activate", 1)
+        _tamper(store, actor_id, lambda a: a.attributes.pop("tracked_time_version"))
+        with pytest.raises(ValueError, match="OD-2 actor-time enrollment"):
+            _transition(store, actor_id, "exit", 2)
+    finally:
+        _close(store)
