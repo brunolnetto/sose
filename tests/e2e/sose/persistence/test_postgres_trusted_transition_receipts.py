@@ -165,9 +165,9 @@ def test_pg_signed_warehouse_ship_is_replayable_but_public_forgery_is_not():
     # Three brand-new OS processes and PG connections. No in-memory runtime
     # object or cached StateChart can constitute the verifier's evidence.
     verified = _fresh_verifier(DSN, namespace, ship.event_id, SECRET)
-    # Receipt identity is owner/entity/version-qualified (one per version).
+    # Receipt identity is entity/version-qualified (one per version, any owner).
     assert verified == ("verified", deterministic_id(
-        "engine-attested-transition", OWNER, order.entity_type, order.id, 4,
+        "engine-attested-transition", order.entity_type, order.id, 4,
     ))
     bad_root = _fresh_verifier(DSN, namespace, ship.event_id, b"x" * 32)
     assert bad_root[0] == "rejected" and "signature invalid" in bad_root[1]

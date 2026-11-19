@@ -1,6 +1,6 @@
 {
   "max_cc:core/transition_authority.py::TransitionAuthority.seal": 27,
-  "max_cc:core/transition_authority.py::TransitionAuthority.verify": 46,
+  "max_cc:core/transition_authority.py::TransitionAuthority.verify": 15,
   "max_cc:examples/process_manifest.py::ProcessManifest.__post_init__": 39,
   "max_cc:examples/process_manifest.py::builtin_process_manifests": 12,
   "max_cc:organizational/manufacturing_reference.py::ManufacturingReferenceDomain.execute": 17,
