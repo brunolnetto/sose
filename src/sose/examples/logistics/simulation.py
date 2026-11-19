@@ -1,86 +1,58 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Mapping
 from contextlib import nullcontext
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta  # noqa: F401 - historical import location
 
 from sose.backends.simpy import SimPyBackend
-from sose.core.clock import SimulationClock
-from sose.core.context import SimulationContext
+from sose.core.clock import SimulationClock  # noqa: F401 - historical import location
+from sose.core.context import SimulationContext  # noqa: F401 - historical import location
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id
-from sose.core.randomness import RandomSource
+from sose.core.randomness import RandomSource  # noqa: F401 - historical import location
 from sose.core.runtime import ResourceDefinition, StoreDefinition
 from sose.core.resource_reservations import ResourceConflictError, TemporalReservation, authoritative_effect_reservation_id
-from sose.core.scheduler import Scheduler
-from sose.domain.registry import DomainRegistry, EntityType
+from sose.core.scheduler import Scheduler  # noqa: F401 - historical import location
+from sose.domain.registry import DomainRegistry, EntityType  # noqa: F401 - historical import location
 from sose.persistence.memory import MemoryPersistence
 
-from .entities import DeliveryAttempt, Shipment
-from .statecharts import DeliveryAttemptChart, ShipmentChart
+from .entities import DeliveryAttempt, Shipment  # noqa: F401 - historical import location
+from .statecharts import DeliveryAttemptChart, ShipmentChart  # noqa: F401 - historical import location
+from .records import (  # noqa: F401 - historical import location
+    ORIGIN,
+    PICKUP_DUE,
+    LogisticsEntities,
+    _organization_queue,
+    _shipment,
+    build_runtime,
+    delivery_attempt_id,
+    flow_correlation_id,
+)
+from .queues import (  # noqa: F401 - historical import location
+    _destination_queued,
+    _ensure_origin_queue_dequeue,
+)
+from .delivery import (  # noqa: F401 - historical import location
+    reconcile_delivery_dispatch,
+    reconcile_delivery_failure,
+    reconcile_delivery_success,
+)
 
 
-ORIGIN = datetime(2026, 3, 1, 8, tzinfo=timezone.utc)
-PICKUP_DUE = ORIGIN + timedelta(hours=1)
-RETRY_DELAY = timedelta(hours=2)
-
-
-def _organization_queue(owner_id: str, queue: str) -> str:
-    """Physical Store names are owner-qualified; independent FIFO heads cannot alias."""
-    if not isinstance(owner_id, str) or not owner_id.strip():
-        raise ValueError("store queue owner_id must not be empty")
-    if queue not in {"origin_hub_queue", "destination_hub_queue"}:
-        raise ValueError("unknown Logistics queue")
-    return f"{owner_id}/{queue}"
-
-
-@dataclass(frozen=True, slots=True)
-class LogisticsEntities:
-    shipment_id: str
-
-
-def flow_correlation_id() -> str:
-    return deterministic_id("logistics-flow", "reference", "shipment-1")
-
-
-def delivery_attempt_id(ordinal: int, *, shipment_id: str | None = None) -> str:
-    if ordinal < 1:
-        raise ValueError("delivery attempt ordinal must be >= 1")
-    legacy_shipment = deterministic_id("entity", "shipment", "logistics-reference", "shipment-1")
-    if shipment_id is not None and not shipment_id:
-        raise ValueError("shipment_id must be nonempty")
-    identity = "shipment-1" if shipment_id in (None, legacy_shipment) else shipment_id
-    return deterministic_id(
-        "entity", "delivery_attempt", "logistics-reference", identity, "attempt", ordinal,
-    )
-
-
-def build_runtime(
-    persistence: MemoryPersistence,
-    *,
-    owner_id: str,
-    now: datetime = ORIGIN,
-    tick: int = 0,
-    scenarios=(),
-    step: timedelta = timedelta(hours=1),
-    random_seed: int = 126,
-) -> tuple[SimulationContext, Engine]:
-    context = SimulationContext(
-        clock=SimulationClock(now=now, step=step, tick=tick),
-        random=RandomSource(root_seed=random_seed),
-        scheduler=Scheduler(),
-    )
-    registry = DomainRegistry()
-    registry.register(EntityType("shipment", ShipmentChart))
-    registry.register(EntityType("delivery_attempt", DeliveryAttemptChart))
-    return context, Engine(
-        context=context,
-        registry=registry,
-        owner_id=owner_id,
-        persistence=persistence,
-        scenarios=scenarios,
-    )
+def _validated_resource_capacities(
+    resource_capacities: Mapping[str, int] | None,
+    resource_names: tuple[str, ...],
+) -> dict[str, int]:
+    capacities = {} if resource_capacities is None else dict(resource_capacities)
+    if set(capacities) - set(resource_names):
+        raise ValueError("unknown Logistics physical resource capacity override")
+    if any(
+        isinstance(capacity, bool)
+        or not isinstance(capacity, int)
+        or capacity < 1
+        for capacity in capacities.values()
+    ):
+        raise ValueError("physical resource capacities must be positive integers")
+    return capacities
 
 
 def seed_reference(
@@ -110,16 +82,7 @@ def seed_reference(
         "pickup_courier", "origin_dock", "transfer_vehicle",
         "destination_dock", "delivery_courier",
     )
-    capacities = {} if resource_capacities is None else dict(resource_capacities)
-    if set(capacities) - set(resource_names):
-        raise ValueError("unknown Logistics physical resource capacity override")
-    if any(
-        isinstance(capacity, bool)
-        or not isinstance(capacity, int)
-        or capacity < 1
-        for capacity in capacities.values()
-    ):
-        raise ValueError("physical resource capacities must be positive integers")
+    capacities = _validated_resource_capacities(resource_capacities, resource_names)
     with persistence.transaction() as uow:
         uow.save_entity(shipment)
         for name in resource_names:
@@ -143,22 +106,6 @@ def seed_reference(
     )
     context.schedules.at(command.due_at, command=command)
     return LogisticsEntities(shipment_id=shipment.id)
-
-
-def _shipment(persistence: MemoryPersistence, entities: LogisticsEntities) -> Shipment:
-    shipment = persistence.entity("shipment", entities.shipment_id)
-    if shipment is None:
-        raise RuntimeError("shipment was not persisted")
-    return shipment
-
-
-def _attempt(
-    persistence: MemoryPersistence, ordinal: int, *, shipment_id: str | None = None,
-) -> DeliveryAttempt | None:
-    return persistence.entity(
-        "delivery_attempt", delivery_attempt_id(ordinal, shipment_id=shipment_id),
-    )
-
 
 def _dispatch(
     engine: Engine,
@@ -193,6 +140,40 @@ def reconcile_pickup(
     # Validate the resource before *any* business transition, including
     # resuming a delayed pickup. The domain UoW then commits under the same
     # pool-scoped PostgreSQL transaction as the resource validation.
+    authorized, guard = _authoritative_pickup_guard(
+        persistence, backend, shipment, authoritative_pickup, resource_persistence,
+    )
+    with guard:
+        if authorized:
+            _verify_authoritative_pickup(
+                persistence, shipment, authoritative_pickup,
+                authoritative_effect_id, scoped=resource_persistence is not None,
+            )
+        if shipment.state == "delayed_pickup" and courier_available:
+            _dispatch(engine, shipment, "resume",
+                      key=("logistics-pickup", shipment.id, "capacity-resume"))
+            shipment = _shipment(persistence, entities)
+        if shipment.state != "pickup_scheduled":
+            return shipment.state not in {"created", "delayed_pickup"}
+        if not courier_available:
+            _dispatch(engine, shipment, "delay",
+                      key=("logistics-pickup", shipment.id, "capacity-delay"))
+            return False
+        if authorized:
+            # PostgreSQL owns physical capacity; never allocate this courier
+            # again through the independent SimPy/Engine resource lifecycle.
+            _dispatch(engine, shipment, "pickup", key=("logistics-pickup", shipment.id, "pickup"))
+            return True
+        return _pickup_with_local_courier(persistence, engine, backend, entities, shipment)
+
+
+def _authoritative_pickup_guard(
+    persistence: MemoryPersistence,
+    backend: SimPyBackend,
+    shipment,
+    authoritative_pickup: TemporalReservation | None,
+    resource_persistence: MemoryPersistence | None,
+):
     authorized = authoritative_pickup is not None and shipment.state in {
         "pickup_scheduled", "delayed_pickup",
     }
@@ -204,73 +185,46 @@ def reconcile_pickup(
         )
         if authorized else nullcontext()
     )
-    with guard:
-        if authorized:
-            effect_id = authoritative_effect_id or authoritative_pickup.reservation_id
-            expected_resource_id = authoritative_effect_reservation_id(
-                effect_id,
-                scope=persistence.namespace if resource_persistence is not None else None,
+    return authorized, guard
+
+
+def _verify_authoritative_pickup(
+    persistence: MemoryPersistence, shipment, pickup: TemporalReservation,
+    authoritative_effect_id: str | None, *, scoped: bool,
+) -> None:
+    effect_id = authoritative_effect_id or pickup.reservation_id
+    expected_resource_id = authoritative_effect_reservation_id(
+        effect_id, scope=persistence.namespace if scoped else None,
+    )
+    if pickup.reservation_id != expected_resource_id:
+        raise ResourceConflictError("authoritative pickup physical identity mismatch")
+    with persistence.transaction() as uow:
+        command = uow.get_command(effect_id)
+        if (
+            command is None
+            or command.name != "composition.deliver_shipment"
+            or command.entity_type != "shipment"
+            or command.entity_id != shipment.id
+            or command.causation_id != pickup.causation_id
+            or not command.correlation_id
+        ):
+            raise ResourceConflictError(
+                "authoritative pickup target or causal predecessor mismatch"
             )
-            if authoritative_pickup.reservation_id != expected_resource_id:
-                raise ResourceConflictError("authoritative pickup physical identity mismatch")
-            with persistence.transaction() as uow:
-                command = uow.get_command(effect_id)
-                if (
-                    command is None
-                    or command.name != "composition.deliver_shipment"
-                    or command.entity_type != "shipment"
-                    or command.entity_id != shipment.id
-                    or command.causation_id != authoritative_pickup.causation_id
-                    or not command.correlation_id
-                ):
-                    raise ResourceConflictError(
-                        "authoritative pickup target or causal predecessor mismatch"
-                    )
-        if shipment.state == "delayed_pickup" and courier_available:
-            _dispatch(
-                engine, shipment, "resume",
-                key=("logistics-pickup", shipment.id, "capacity-resume"),
-            )
-            shipment = _shipment(persistence, entities)
 
-        if shipment.state != "pickup_scheduled":
-            return shipment.state not in {"created", "delayed_pickup"}
 
-        if not courier_available:
-            _dispatch(
-                engine, shipment, "delay",
-                key=("logistics-pickup", shipment.id, "capacity-delay"),
-            )
-            return False
-
-        if authorized:
-            # PostgreSQL owns physical capacity; never allocate this courier
-            # again through the independent SimPy/Engine resource lifecycle.
-            _dispatch(
-                engine, shipment, "pickup",
-                key=("logistics-pickup", shipment.id, "pickup"),
-            )
-            return True
-
-        request_id = f"pickup-courier:{shipment.id}"
-        reservation = engine.resources.ensure_requested(
-            backend,
-            resource_name="pickup_courier",
-            request_id=request_id,
-            requested_at=backend.now,
-        )
-        if reservation is None:
-            return False
-
-        shipment = _shipment(persistence, entities)
-        _dispatch(
-            engine,
-            shipment,
-            "pickup",
-            key=("logistics-pickup", shipment.id, "pickup"),
-        )
-        engine.resources.withdraw(backend, request_id)
-        return True
+def _pickup_with_local_courier(persistence, engine, backend, entities, shipment) -> bool:
+    request_id = f"pickup-courier:{shipment.id}"
+    reservation = engine.resources.ensure_requested(
+        backend, resource_name="pickup_courier", request_id=request_id,
+        requested_at=backend.now,
+    )
+    if reservation is None:
+        return False
+    shipment = _shipment(persistence, entities)
+    _dispatch(engine, shipment, "pickup", key=("logistics-pickup", shipment.id, "pickup"))
+    engine.resources.withdraw(backend, request_id)
+    return True
 
 
 def reconcile_origin_hub(
@@ -320,62 +274,19 @@ def reconcile_origin_hub(
     engine.resources.withdraw(backend, request_id)
     return True
 
-
-def _has_store_get_result(persistence: MemoryPersistence, request_id: str) -> bool:
-    return any(
-        result.request_id == request_id
-        for result in persistence.store_get_results()
+def _dispatch_transfer(persistence, engine, backend, entities, shipment, transfer_request) -> bool:
+    vehicle = engine.resources.ensure_requested(
+        backend, resource_name="transfer_vehicle", request_id=transfer_request,
+        requested_at=backend.now,
     )
-
-
-def _has_store_get_request(persistence: MemoryPersistence, request_id: str) -> bool:
-    return any(
-        request.request_id == request_id
-        for request in persistence.store_get_requests()
-    )
-
-
-def _ensure_origin_queue_dequeue(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    shipment_id: str,
-) -> bool:
-    dequeue_id = f"origin-dequeue:{shipment_id}"
-    if _has_store_get_result(persistence, dequeue_id):
-        return True
-    if not _has_store_get_request(persistence, dequeue_id):
-        engine.stores.get(
-            backend,
-            store_name=_organization_queue(engine.owner_id, "origin_hub_queue"),
-            request_id=dequeue_id,
-            requested_at=backend.now,
-        )
-    backend.run_until(backend.now)
-    return _has_store_get_result(persistence, dequeue_id)
-
-
-def _ensure_destination_queue_dequeue(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    shipment_id: str,
-) -> bool:
-    dequeue_id = f"destination-dequeue:{shipment_id}"
-    if _has_store_get_result(persistence, dequeue_id):
-        return True
-    if not _has_store_get_request(persistence, dequeue_id):
-        engine.stores.get(
-            backend,
-            store_name=_organization_queue(engine.owner_id, "destination_hub_queue"),
-            request_id=dequeue_id,
-            requested_at=backend.now,
-        )
-    backend.run_until(backend.now)
-    return _has_store_get_result(persistence, dequeue_id)
-
+    if vehicle is None:
+        return False
+    if not _ensure_origin_queue_dequeue(persistence, engine, backend, shipment_id=shipment.id):
+        return False
+    shipment = _shipment(persistence, entities)
+    _dispatch(engine, shipment, "dispatch_transfer",
+              key=("logistics-transfer", shipment.id, "dispatch"))
+    return True
 
 def reconcile_transfer(
     persistence: MemoryPersistence,
@@ -387,30 +298,10 @@ def reconcile_transfer(
     shipment = _shipment(persistence, entities)
     transfer_request = f"transfer-vehicle:{shipment.id}"
 
-    if shipment.state == "at_origin_hub":
-        vehicle = engine.resources.ensure_requested(
-            backend,
-            resource_name="transfer_vehicle",
-            request_id=transfer_request,
-            requested_at=backend.now,
-        )
-        if vehicle is None:
-            return False
-        if not _ensure_origin_queue_dequeue(
-            persistence,
-            engine,
-            backend,
-            shipment_id=shipment.id,
-        ):
-            return False
-
-        shipment = _shipment(persistence, entities)
-        _dispatch(
-            engine,
-            shipment,
-            "dispatch_transfer",
-            key=("logistics-transfer", shipment.id, "dispatch"),
-        )
+    if shipment.state == "at_origin_hub" and not _dispatch_transfer(
+        persistence, engine, backend, entities, shipment, transfer_request,
+    ):
+        return False
 
     shipment = _shipment(persistence, entities)
     if shipment.state != "in_transfer":
@@ -426,36 +317,7 @@ def reconcile_transfer(
     if dock is None:
         return False
 
-    item_id = f"destination-queue:{shipment.id}"
-    destination_queue = _organization_queue(
-        engine.owner_id, "destination_hub_queue",
-    )
-    if not any(
-        item.item_id == item_id and item.store_name == destination_queue
-        for item in persistence.store_items()
-    ):
-        # Reuse the exact pending PUT after finite-queue backpressure.
-        engine.stores.ensure_put(
-            backend,
-            store_name=destination_queue,
-            item_id=item_id,
-            value={"shipment_id": shipment.id},
-            requested_at=backend.now,
-        )
-        backend.run_until(backend.now)
-
-    # A concurrent consumer may have accepted and removed the item already.
-    # Its durable receipt is equivalent to a live destination-queue item.
-    destination_available = any(
-        item.item_id == item_id and item.store_name == destination_queue
-        for item in persistence.store_items()
-    )
-    destination_consumed = any(
-        result.item.item_id == item_id
-        and result.store_name == destination_queue
-        for result in persistence.store_get_results()
-    )
-    if not destination_available and not destination_consumed:
+    if not _destination_queued(persistence, engine, backend, shipment):
         return False
 
     shipment = _shipment(persistence, entities)
@@ -468,257 +330,6 @@ def reconcile_transfer(
     engine.resources.withdraw(backend, dock_request)
     engine.resources.withdraw(backend, transfer_request)
     return True
-
-
-def ensure_delivery_attempt(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    *,
-    ordinal: int,
-    shipment_id: str | None = None,
-) -> DeliveryAttempt:
-    legacy_shipment = deterministic_id(
-        "entity", "shipment", "logistics-reference", "shipment-1",
-    )
-    actual_shipment = legacy_shipment if shipment_id is None else shipment_id
-    existing = _attempt(persistence, ordinal, shipment_id=actual_shipment)
-    if existing is not None:
-        if existing.attributes.get("shipment_id") != actual_shipment:
-            raise ValueError("delivery attempt belongs to another shipment")
-        return existing
-
-    attempt = engine.context.entities.create(
-        DeliveryAttempt,
-        key=("logistics-reference",
-             "shipment-1" if actual_shipment == legacy_shipment else actual_shipment,
-             "attempt", ordinal),
-        state="pending",
-        attributes={"shipment_id": actual_shipment, "ordinal": ordinal},
-    )
-    with persistence.transaction() as uow:
-        uow.save_entity(attempt)
-    return attempt
-
-
-def _resume_destination_hub_if_available(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    *,
-    entities: LogisticsEntities,
-    ordinal: int,
-    courier_available: bool,
-):
-    shipment = _shipment(persistence, entities)
-    if shipment.state != "delayed_destination_hub" or not courier_available:
-        return shipment
-    _dispatch(
-        engine,
-        shipment,
-        "resume",
-        key=("logistics-delivery", shipment.id, ordinal, "capacity-resume"),
-    )
-    return _shipment(persistence, entities)
-
-
-def _eligible_delivery_dispatch_state(shipment) -> bool:
-    return shipment.state in {"at_destination_hub", "out_for_delivery"}
-
-
-def _attempt_ready_for_dispatch(attempt: DeliveryAttempt) -> bool:
-    if attempt.state == "out_for_delivery":
-        return True
-    return attempt.state == "pending"
-
-
-def _dispatch_delay_if_unavailable(
-    engine: Engine,
-    *,
-    shipment,
-    ordinal: int,
-    courier_available: bool,
-) -> bool:
-    if courier_available:
-        return False
-    if shipment.state == "at_destination_hub":
-        _dispatch(
-            engine,
-            shipment,
-            "delay",
-            key=("logistics-delivery", shipment.id, ordinal, "capacity-delay"),
-        )
-    return True
-
-
-def _dispatch_shipment_for_delivery(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    entities: LogisticsEntities,
-    shipment,
-    ordinal: int,
-) -> bool:
-    if shipment.state != "at_destination_hub":
-        return True
-    if not _ensure_destination_queue_dequeue(
-        persistence,
-        engine,
-        backend,
-        shipment_id=shipment.id,
-    ):
-        return False
-    shipment = _shipment(persistence, entities)
-    _dispatch(
-        engine,
-        shipment,
-        "dispatch_delivery",
-        key=("logistics-delivery", shipment.id, ordinal, "dispatch-shipment"),
-    )
-    return True
-
-
-def reconcile_delivery_dispatch(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    entities: LogisticsEntities,
-    ordinal: int,
-) -> bool:
-    courier_available = engine.context.scenarios.attribute(
-        "logistics.courier.available", True
-    )
-    shipment = _resume_destination_hub_if_available(
-        persistence,
-        engine,
-        entities=entities,
-        ordinal=ordinal,
-        courier_available=courier_available,
-    )
-    if not _eligible_delivery_dispatch_state(shipment):
-        return False
-
-    attempt = ensure_delivery_attempt(
-        persistence, engine, ordinal=ordinal, shipment_id=entities.shipment_id,
-    )
-    if attempt.state == "out_for_delivery":
-        return True
-    if not _attempt_ready_for_dispatch(attempt):
-        return False
-
-    if _dispatch_delay_if_unavailable(
-        engine,
-        shipment=shipment,
-        ordinal=ordinal,
-        courier_available=courier_available,
-    ):
-        return False
-
-    request_id = f"delivery-courier:{attempt.id}"
-    if engine.resources.ensure_requested(
-        backend,
-        resource_name="delivery_courier",
-        request_id=request_id,
-        requested_at=backend.now,
-    ) is None:
-        return False
-
-    if not _dispatch_shipment_for_delivery(
-        persistence,
-        engine,
-        backend,
-        entities=entities,
-        shipment=shipment,
-        ordinal=ordinal,
-    ):
-        return False
-
-    attempt = _attempt(persistence, ordinal, shipment_id=entities.shipment_id)
-    if attempt is None:
-        raise RuntimeError("delivery attempt disappeared")
-    _dispatch(
-        engine,
-        attempt,
-        "dispatch",
-        key=("logistics-delivery", attempt.id, "dispatch"),
-    )
-    return True
-
-
-def reconcile_delivery_success(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    entities: LogisticsEntities,
-    ordinal: int,
-) -> None:
-    attempt = _attempt(persistence, ordinal, shipment_id=entities.shipment_id)
-    shipment = _shipment(persistence, entities)
-    if attempt is None or attempt.state != "out_for_delivery":
-        raise RuntimeError("delivery attempt is not active")
-    if shipment.state != "out_for_delivery":
-        raise RuntimeError("shipment is not out for delivery")
-
-    _dispatch(
-        engine,
-        attempt,
-        "deliver",
-        key=("logistics-delivery", attempt.id, "deliver"),
-    )
-    shipment = _shipment(persistence, entities)
-    _dispatch(
-        engine,
-        shipment,
-        "deliver",
-        key=("logistics-delivery", shipment.id, ordinal, "deliver"),
-    )
-    engine.resources.withdraw(backend, f"delivery-courier:{attempt.id}")
-
-
-def reconcile_delivery_failure(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    entities: LogisticsEntities,
-    ordinal: int,
-    retry_after: timedelta = RETRY_DELAY,
-) -> datetime:
-    attempt = _attempt(persistence, ordinal, shipment_id=entities.shipment_id)
-    shipment = _shipment(persistence, entities)
-    if attempt is None or attempt.state != "out_for_delivery":
-        raise RuntimeError("delivery attempt is not active")
-    if shipment.state != "out_for_delivery":
-        raise RuntimeError("shipment is not out for delivery")
-
-    _dispatch(
-        engine,
-        attempt,
-        "fail",
-        key=("logistics-delivery", attempt.id, "fail"),
-    )
-    shipment = _shipment(persistence, entities)
-    _dispatch(
-        engine,
-        shipment,
-        "delay",
-        key=("logistics-delivery", shipment.id, ordinal, "retry-delay"),
-    )
-
-    shipment = _shipment(persistence, entities)
-    due_at = backend.now + retry_after
-    command = engine.context.commands.create(
-        "resume",
-        target=shipment,
-        due_at=due_at,
-        correlation_id=flow_correlation_id(),
-        key=("logistics-delivery", shipment.id, ordinal, "retry-resume"),
-    )
-    engine.context.schedules.at(due_at, command=command)
-    engine.resources.withdraw(backend, f"delivery-courier:{attempt.id}")
-    return due_at
-
 
 def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, LogisticsEntities]:
     persistence = MemoryPersistence()

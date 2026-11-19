@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
 from functools import cached_property, lru_cache
 
 from .agency import A1Policy, A1PolicyName, AgencyLevel, AgencySpec

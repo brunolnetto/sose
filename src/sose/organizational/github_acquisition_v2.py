@@ -14,6 +14,17 @@ from .acquisition_v2 import (
     GitHubPRAcquisitionManifestV2,
     build_complete_github_pr_evidence_v2,
 )
+from .github_acquisition_v2_parsing import (  # noqa: F401 - moved, legacy surface
+    _iso_datetime,
+    _known_and_different,
+    _next_link,
+    _non_negative_int,
+    _positive_int,
+    _require_mapping,
+    _strict_int,
+    _stripped,
+    _workflow_run_belongs_to_pr,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -248,66 +259,22 @@ def _collect_wrapped_pages(
     return records, source_urls
 
 
-
 def _correlate_workflow_runs_to_pr(
-    *,
-    client: GitHubJsonClient,
-    api: str,
-    pull_request: Mapping[str, Any],
-    candidate_runs: Sequence[Mapping[str, Any]],
-    pr_number: int,
-    opened_at: datetime,
-    merged_at: datetime,
+    *, client: GitHubJsonClient, api: str, pull_request: Mapping[str, Any],
+    candidate_runs: Sequence[Mapping[str, Any]], pr_number: int,
+    opened_at: datetime, merged_at: datetime,
 ) -> tuple[list[Mapping[str, Any]], list[str]]:
     correlated: list[Mapping[str, Any]] = []
     source_urls: list[str] = []
-    association_cache: dict[str, tuple[bool, tuple[str, ...]]] = {}
-
+    cache: dict[str, tuple[bool, tuple[str, ...]]] = {}
     for run in candidate_runs:
-        pull_requests = run.get("pull_requests")
-        if isinstance(pull_requests, list) and pull_requests:
-            if _workflow_run_belongs_to_pr(run, pr_number=pr_number):
-                correlated.append(run)
-            continue
-
-        if not _workflow_run_matches_pr_candidate(
-            run,
-            pull_request=pull_request,
-            opened_at=opened_at,
-            merged_at=merged_at,
-        ):
-            continue
-
-        head_sha = run.get("head_sha")
-        if not isinstance(head_sha, str) or not head_sha.strip():
-            raise ValueError("GitHub workflow run requires head_sha for durable PR correlation")
-        head_sha = head_sha.strip()
-
-        cached = association_cache.get(head_sha)
-        if cached is None:
-            first_url = f"{api}/commits/{head_sha}/pulls?per_page=100&page=1"
-            associated_pulls, urls = _collect_list_pages(
-                client=client,
-                first_url=first_url,
-                collection_name="commit pull associations",
-            )
-            associated_numbers = {
-                _positive_int(pull.get("number"), name="associated pull request number")
-                for pull in associated_pulls
-            }
-            if len(associated_numbers) > 1:
-                raise ValueError(
-                    "ambiguous commit-to-PR association for workflow run head SHA"
-                )
-            belongs = associated_numbers == {pr_number}
-            cached = (belongs, tuple(urls))
-            association_cache[head_sha] = cached
-
-        belongs, urls = cached
+        belongs, urls = _run_correlation(
+            run, client=client, api=api, pull_request=pull_request,
+            pr_number=pr_number, opened_at=opened_at, merged_at=merged_at, cache=cache,
+        )
         source_urls.extend(url for url in urls if url not in source_urls)
         if belongs:
             correlated.append(run)
-
     return correlated, source_urls
 
 
@@ -330,79 +297,54 @@ def _workflow_run_matches_pr_candidate(
     pr_repo = head.get("repo")
     run_repo = run.get("head_repository")
     if isinstance(pr_repo, Mapping) and isinstance(run_repo, Mapping):
-        pr_repo_id = pr_repo.get("id")
-        run_repo_id = run_repo.get("id")
-        if (
-            isinstance(pr_repo_id, int)
-            and not isinstance(pr_repo_id, bool)
-            and isinstance(run_repo_id, int)
-            and not isinstance(run_repo_id, bool)
-            and pr_repo_id != run_repo_id
-        ):
-            return False
-        pr_full_name = pr_repo.get("full_name")
-        run_full_name = run_repo.get("full_name")
-        if (
-            isinstance(pr_full_name, str)
-            and pr_full_name.strip()
-            and isinstance(run_full_name, str)
-            and run_full_name.strip()
-            and pr_full_name.strip() != run_full_name.strip()
+        if _known_and_different(
+            _strict_int(pr_repo.get("id")), _strict_int(run_repo.get("id")),
+        ) or _known_and_different(
+            _stripped(pr_repo.get("full_name")), _stripped(run_repo.get("full_name")),
         ):
             return False
 
     created_at = _iso_datetime(run.get("created_at"), name="workflow run created_at")
     return opened_at <= created_at <= merged_at
 
-def _workflow_run_belongs_to_pr(run: Mapping[str, Any], *, pr_number: int) -> bool:
+
+def _run_correlation(
+    run: Mapping[str, Any], *, client: GitHubJsonClient, api: str,
+    pull_request: Mapping[str, Any], pr_number: int,
+    opened_at: datetime, merged_at: datetime,
+    cache: dict[str, tuple[bool, tuple[str, ...]]],
+) -> tuple[bool, tuple[str, ...]]:
+    """(run belongs to the PR, association URLs consulted for it)."""
     pull_requests = run.get("pull_requests")
-    if not isinstance(pull_requests, list):
-        return False
-    return any(
-        isinstance(pull_request, Mapping) and pull_request.get("number") == pr_number
-        for pull_request in pull_requests
+    if isinstance(pull_requests, list) and pull_requests:
+        return _workflow_run_belongs_to_pr(run, pr_number=pr_number), ()
+    if not _workflow_run_matches_pr_candidate(
+        run, pull_request=pull_request, opened_at=opened_at, merged_at=merged_at,
+    ):
+        return False, ()
+    head_sha = run.get("head_sha")
+    if not isinstance(head_sha, str) or not head_sha.strip():
+        raise ValueError("GitHub workflow run requires head_sha for durable PR correlation")
+    head_sha = head_sha.strip()
+    if head_sha not in cache:
+        cache[head_sha] = _commit_pr_association(client, api, head_sha, pr_number)
+    return cache[head_sha]
+
+
+def _commit_pr_association(
+    client: GitHubJsonClient, api: str, head_sha: str, pr_number: int,
+) -> tuple[bool, tuple[str, ...]]:
+    associated_pulls, urls = _collect_list_pages(
+        client=client,
+        first_url=f"{api}/commits/{head_sha}/pulls?per_page=100&page=1",
+        collection_name="commit pull associations",
     )
-
-
-def _iso_datetime(value: object, *, name: str) -> datetime:
-    if not isinstance(value, str) or not value.strip():
-        raise ValueError(f"GitHub source requires {name}")
-    normalized = value[:-1] + "+00:00" if value.endswith("Z") else value
-    try:
-        parsed = datetime.fromisoformat(normalized)
-    except ValueError as exc:
-        raise ValueError(f"GitHub source requires ISO-8601 {name}") from exc
-    if parsed.tzinfo is None or parsed.utcoffset() is None:
-        raise ValueError(f"GitHub source requires timezone-aware {name}")
-    return parsed
-
-
-def _require_mapping(value: object, *, name: str) -> Mapping[str, Any]:
-    if not isinstance(value, Mapping):
-        raise ValueError(f"GitHub {name} payload must be an object")
-    return value
-
-
-def _positive_int(value: object, *, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
-        raise ValueError(f"GitHub {name} must be a positive integer")
-    return value
-
-
-def _non_negative_int(value: object, *, name: str) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"GitHub {name} must be a non-negative integer")
-    return value
-
-
-def _next_link(link_header: str | None) -> str | None:
-    if not link_header:
-        return None
-    for part in link_header.split(","):
-        section = part.strip()
-        if 'rel="next"' not in section:
-            continue
-        if not section.startswith("<") or ">" not in section:
-            raise ValueError("malformed GitHub Link header")
-        return section[1 : section.index(">")]
-    return None
+    associated_numbers = {
+        _positive_int(pull.get("number"), name="associated pull request number")
+        for pull in associated_pulls
+    }
+    if len(associated_numbers) > 1:
+        raise ValueError(
+            "ambiguous commit-to-PR association for workflow run head SHA"
+        )
+    return associated_numbers == {pr_number}, tuple(urls)

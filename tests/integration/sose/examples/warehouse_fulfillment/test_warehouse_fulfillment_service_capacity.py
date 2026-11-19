@@ -12,8 +12,8 @@ from sose.examples.warehouse_fulfillment.simulation import (
     build_runtime,
     reconcile_fulfillment_services,
     seed_reference,
-    service_task_id,
 )
+from sose.examples.warehouse_fulfillment.records import service_task_id
 from sose.persistence.memory import MemoryPersistence
 
 

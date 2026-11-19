@@ -7,16 +7,15 @@ from sose.examples.hospitality.scenarios import ORIGIN
 from sose.examples.hospitality import simulation as hospitality_simulation
 from sose.examples.hospitality.simulation import (
     available_room_ids,
-    booking_id,
     build_runtime,
-    cancel_reservation,
     check_out,
     check_in,
     confirm_reservation,
     create_hold,
-    record_no_show_occurrence,
     seed_reference,
 )
+from sose.examples.hospitality.foundation import booking_id
+from sose.examples.hospitality.stay import cancel_reservation, record_no_show_occurrence
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "hospitality-reference-organization"
