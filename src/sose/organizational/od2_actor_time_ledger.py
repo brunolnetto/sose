@@ -13,7 +13,10 @@ must equal the totals of the chain head, the head must bind to its original
 StateChart event and Command, and no successor step may already exist. Each
 step is written only after its predecessor was verified, so verification
 reads a constant number of records by ID (``get_event``/``get_command``) and
-never scans the shared event log: cost is independent of total store size.
+never enumerates or deep-copies the shared event log; the per-ID lookup cost
+is the persistence adapter's (e.g. linear in the memory adapter).
+
+Ledger steps, not Commands, are the authoritative per-transition cost record.
 
 This is a consistency/fail-closed control on public UoW records, NOT an
 independent source authorization or physical-capacity grant (see #545).
@@ -217,7 +220,7 @@ def verify_time_ledger(uow, actor) -> None:
     this actor) pass unchanged; a foreign event squatting on the predictable
     origin ID cannot affect them. A genuine origin always enforces, so
     stripping the marker is caught. Constant number of keyed reads; no
-    event-log scan.
+    event-log enumeration or deep copy.
     """
     meta = actor.attributes
     if not isinstance(meta, dict):

@@ -85,7 +85,14 @@ all by key. The mutable projection must equal the head totals and no successor
 may exist, so dropping a cause or rolling the whole projection back to an
 earlier verified snapshot is detected. Because each step is written only after
 its predecessor was verified, this is incremental: a constant number of keyed
-reads, no event-log scan, independent of other owners' history. Buckets are
+reads with no event-log enumeration or deep copy (the per-ID lookup cost is
+the persistence adapter's; the memory adapter's `get_event` is a linear
+comparison). Ledger steps, not Commands, are the authoritative
+per-transition cost record; the guard binds only the head step back to its
+original Command. Untracked actors are skipped unless a genuine origin event
+for that actor/owner exists, so a foreign event at the predictable origin or
+step ID cannot disable them; it fails a tracked seed or transition with an
+explicit "ID already committed"/"occupied by a foreign event" error. Buckets are
 compared by present key with missing keys meaning zero, so adding a lifecycle
 state later does not invalidate stored actors.
 
