@@ -38,6 +38,11 @@ LEDGER_VERSION = 1
 _LEDGER_ERRORS = (AttributeError, KeyError, TypeError, ValueError)
 
 
+def actor_identity(owner_id: str, actor_key: str) -> str:
+    """Deterministic OD-2 actor ID; an origin must re-derive its actor from it."""
+    return deterministic_id("od2-actor", owner_id, actor_key)
+
+
 def origin_event_id(actor_id: str) -> str:
     return deterministic_id("od2-actor-time-origin-v1", actor_id)
 
@@ -63,7 +68,7 @@ def _origin_payload(meta: dict) -> dict:
     }
 
 
-def record_origin(uow, actor) -> None:
+def record_origin(uow, actor, actor_key: str) -> None:
     """Append the immutable v1 origin event for a newly tracked actor."""
     meta = actor.attributes
     if meta.get("tracked_time_version") != LEDGER_VERSION:
@@ -75,7 +80,7 @@ def record_origin(uow, actor) -> None:
         entity_type=actor.entity_type, entity_id=actor.id,
         owner_id=meta["owner_id"], occurred_at=actor.created_at,
         correlation_id=deterministic_id("od2-actor-flow", meta["owner_id"], actor.id),
-        payload=_origin_payload(meta),
+        payload={**_origin_payload(meta), "actor_key": actor_key},
     ))
 
 
@@ -132,7 +137,8 @@ def _check_origin(actor, origin: DomainEvent | None) -> None:
     marker = meta.get("tracked_time_version")
     actual = (
         origin.name, origin.entity_type, origin.entity_id, origin.owner_id,
-        dict(origin.payload), origin.occurred_at, type(marker), marker,
+        {k: v for k, v in origin.payload.items() if k != "actor_key"},
+        origin.occurred_at, type(marker), marker,
     )
     expected = (
         ORIGIN_EVENT, actor.entity_type, actor.id, meta.get("owner_id"),
@@ -143,10 +149,22 @@ def _check_origin(actor, origin: DomainEvent | None) -> None:
 
 
 def _is_own(event: DomainEvent, name: str, entity_type: str, actor) -> bool:
-    """True if ``event`` is a ledger record of ``name`` for this actor/owner."""
-    return (
-        event.name, event.entity_type, event.entity_id, event.owner_id,
-    ) == (name, entity_type, actor.id, actor.attributes.get("owner_id"))
+    """True if ``event`` is a ledger record of ``name`` for this actor ID.
+
+    Uses only immutable identity (record key/type), never editable actor
+    attributes such as the projection's claimed owner.
+    """
+    return (event.name, event.entity_type, event.entity_id) == (
+        name, entity_type, actor.id,
+    )
+
+
+def _is_genuine_origin(origin: DomainEvent | None, actor) -> bool:
+    """Origin for this actor ID whose own owner + recorded key re-derive it."""
+    if origin is None or not _is_own(origin, ORIGIN_EVENT, actor.entity_type, actor):
+        return False
+    key = origin.payload.get("actor_key")
+    return isinstance(key, str) and actor_identity(origin.owner_id, key) == actor.id
 
 
 def _prev_event_id(actor_id: str, seq: int) -> str:
@@ -217,17 +235,18 @@ def verify_time_ledger(uow, actor) -> None:
     """Fail closed unless a tracked actor projection equals its ledger head.
 
     Untracked actors (no projection marker and no genuine origin event for
-    this actor) pass unchanged; a foreign event squatting on the predictable
-    origin ID cannot affect them. A genuine origin always enforces, so
-    stripping the marker is caught. Constant number of keyed reads; no
+    this actor ID) pass unchanged; an unrelated event squatting on the
+    predictable origin ID cannot affect them. "Genuine" is decided only from
+    the immutable event and actor ID (the origin's owner + recorded key must
+    re-derive the actor ID), never from editable projection fields, so
+    stripping the marker and/or rewriting the claimed owner is caught. Constant number of keyed reads; no
     event-log enumeration or deep copy.
     """
     meta = actor.attributes
     if not isinstance(meta, dict):
         raise ValueError("OD-2 actor-time projection malformed")
     origin = uow.get_event(origin_event_id(actor.id))
-    genuine = origin is not None and _is_own(origin, ORIGIN_EVENT, actor.entity_type, actor)
-    if not genuine and meta.get("tracked_time_version") is None:
+    if not _is_genuine_origin(origin, actor) and meta.get("tracked_time_version") is None:
         return
     try:
         _check_origin(actor, origin)

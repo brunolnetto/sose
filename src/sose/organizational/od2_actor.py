@@ -243,7 +243,7 @@ def seed_actor(
             raise TypeError("availability_calendar must be ActorAvailabilityCalendar")
         if availability_calendar.config_epoch != config_epoch:
             raise ValueError("actor calendar epoch contradicts admitted actor epoch")
-    identity = deterministic_id("od2-actor", owner_id, actor_key)
+    identity = _time_ledger.actor_identity(owner_id, actor_key)
     if replaces_actor_id is not None:
         _identity(replaces_actor_id, "replaces_actor_id")
         if replaces_actor_id == identity:
@@ -317,7 +317,7 @@ def seed_actor(
                         "model_spec_hash": model_spec_hash,
                     },
                 ))
-            _time_ledger.record_origin(uow, uow.get_entity(ACTOR_KIND, identity))
+            _time_ledger.record_origin(uow, uow.get_entity(ACTOR_KIND, identity), actor_key)
     return identity
 
 

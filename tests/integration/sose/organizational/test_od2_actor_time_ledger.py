@@ -385,3 +385,25 @@ def test_foreign_event_at_next_step_id_is_reported_as_occupied(adapter, tmp_path
         assert store.events() == before
     finally:
         _close(store)
+
+
+@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+def test_strip_marker_and_swap_owner_cannot_bypass_guard(adapter, tmp_path):
+    """Delta-review falsifier: 'genuine origin' must not read editable owner."""
+    store = _store(adapter, tmp_path, "owner-swap")
+    try:
+        actor_id = _seed(store)
+        _transition(store, actor_id, "activate", 1, cost_us=7)
+
+        def hijack(actor):
+            actor.attributes.pop("tracked_time_version")
+            actor.attributes["owner_id"] = OTHER
+            actor.attributes["paid_transition_us"] = 0
+
+        _tamper(store, actor_id, hijack)
+        before = store.events()
+        with pytest.raises(ValueError, match="OD-2 actor-time enrollment"):
+            _transition(store, actor_id, "make_unavailable", 2, owner=OTHER)
+        assert store.events() == before
+    finally:
+        _close(store)
