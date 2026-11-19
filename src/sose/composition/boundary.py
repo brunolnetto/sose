@@ -6,8 +6,6 @@ from typing import TYPE_CHECKING, Callable
 
 from sose.persistence.base import Persistence
 
-from sose._deprecation import warn_deprecated
-
 from .boundary_causation import _BoundaryCausationMixin
 from .causality import matches_durable_message
 from .boundary_claims import (
@@ -147,7 +145,7 @@ class BoundaryService(_BoundaryCausationMixin):
                     f"boundary message identity conflict: {message.message_id}"
                 )
             if existing_message is None:
-                _warn_if_untyped(message)
+                _require_typed_cause(message)
                 self._validate_existing_descendants(message, uow)
                 # The publication and its bounded-trigger charge must commit
                 # together. A process dying immediately after this transaction
@@ -382,13 +380,14 @@ __all__ = [
 ]
 
 
-def _warn_if_untyped(message: BoundaryMessage) -> None:
-    """#644: a new message with a cause must say whether it is a boundary message or event."""
+def _require_typed_cause(message: BoundaryMessage) -> None:
+    """A new message with a cause must say whether it is a boundary message or event.
+
+    Untyped caused publishing was deprecated in 0.9.0 and removed in 0.10.0 (#644).
+    Untyped messages already durable stay readable and still satisfy re-derivation.
+    """
     if message.causation_id is not None and message.causation_kind is None:
-        # helper -> warn_deprecated -> _warn_if_untyped -> publish -> caller
-        warn_deprecated(
-            "publishing a boundary message whose causation_id has no causation_kind",
-            since="0.9.0", removed_in="0.10.0",
-            instead='pass causation_kind="boundary" or "event" (see CausalReference)',
-            stacklevel=4,
+        raise ValueError(
+            "boundary message has a causation_id but no causation_kind; "
+            'pass causation_kind="boundary" or "event" (see CausalReference)'
         )
