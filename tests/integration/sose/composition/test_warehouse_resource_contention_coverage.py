@@ -7,7 +7,6 @@ are never claimed to be legitimate domain transitions or PostgreSQL proofs.
 """
 from __future__ import annotations
 
-from datetime import timedelta
 
 import pytest
 
