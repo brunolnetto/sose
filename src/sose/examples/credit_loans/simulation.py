@@ -85,21 +85,3 @@ def seed_reference(
         uow.save_resource_definition(ResourceDefinition("credit_analyst", capacity=1))
         uow.save_resource_definition(ResourceDefinition("collection_agent", capacity=1))
     return CreditLoanEntities(application_id=application.id)
-
-
-# Moved by the quality-ratchet splits (#632); importing these names from here
-# is deprecated (ADR-0011). Import them from the module named on the right.
-from sose._deprecation import deprecated_reexports as _deprecated_reexports
-
-__getattr__ = _deprecated_reexports(__name__, {
-    "apply_restructure": "sose.examples.credit_loans.simulation_restructure",
-    "collection_case_id": "sose.examples.credit_loans.simulation_runtime",
-    "credit_decision_id": "sose.examples.credit_loans.simulation_runtime",
-    "default_loan": "sose.examples.credit_loans.simulation_delinquency",
-    "delinquency_case_id": "sose.examples.credit_loans.simulation_runtime",
-    "deterministic_id": "sose.core.identity",
-    "ensure_delinquency": "sose.examples.credit_loans.simulation_delinquency",
-    "ensure_loan": "sose.examples.credit_loans.simulation_origination",
-    "payment_id": "sose.examples.credit_loans.simulation_runtime",
-    "restructure_id": "sose.examples.credit_loans.simulation_runtime",
-}, since="0.9.0", removed_in="0.10.0")

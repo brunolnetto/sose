@@ -364,16 +364,3 @@ def reconcile_dispute(
     )
     engine.resources.withdraw(backend, request_id)
     return True
-
-
-# Moved by the quality-ratchet splits (#632); importing these names from here
-# is deprecated (ADR-0011). Import them from the module named on the right.
-from sose._deprecation import deprecated_reexports as _deprecated_reexports
-
-__getattr__ = _deprecated_reexports(__name__, {
-    "deterministic_id": "sose.core.identity",
-    "dispute_entity_id": "sose.examples.cards_payments.records",
-    "run_dispute_path": "sose.examples.cards_payments.paths",
-    "run_refund_path": "sose.examples.cards_payments.paths",
-    "run_retry_path": "sose.examples.cards_payments.paths",
-}, since="0.9.0", removed_in="0.10.0")
