@@ -1,23 +1,42 @@
-"""TDD recovery of Logistics effect and delivery egress after worker death."""
+"""TDD recovery of Logistics effect and delivery egress after worker death.
+
+PostgreSQL policy-mode port of the deprecated SQLite recovery (#634); restart
+is a fresh PostgresPersistence connection on the same namespace.
+"""
 from datetime import timedelta
+import os
+from uuid import uuid4
 
 import pytest
 
 from sose.composition import trading_company_customer as customer
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.examples.order_to_cash import simulation as o2c
-from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+from sose.core.resource_identity import ResourcePoolContract
+from sose.persistence.postgres import PostgresPersistence
+
+DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
+pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
+
+# Certified, but never issued by the customer demand path: every customer
+# effect keeps its historical (unmapped) admission semantics (#634).
+NEUTRAL_POLICY = {
+    "composition.post_replenishment_journal": ResourcePoolContract(
+        resource_type="journal_clerk", pool_id="logistics-recovery-neutral",
+        scope="shared", capacity=1,
+    ),
+}
 
 
 @pytest.mark.parametrize("crash_point", ["logistics_after_ack", "delivery_publish"])
 def test_logistics_composition_restarts_without_replaying_in_memory_stages(
-    tmp_path, monkeypatch, crash_point,
+    monkeypatch, crash_point,
 ):
-    path = tmp_path / "logistics-recovery.sqlite"
+    namespace = "logistics_recovery_" + uuid4().hex[:12]
     held = []
 
     def store_factory():
-        store = SQLiteIncrementalPersistence(path)
+        store = PostgresPersistence(DSN, namespace=namespace)
         held.append(store)
         return store
 
@@ -39,7 +58,8 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
         ):
             raise RuntimeError("worker killed")
         return original_execute(
-            persistence, effect_id=effect_id, fixtures=fixtures, correlation_id=correlation_id, organization_id=organization_id,
+            persistence, effect_id=effect_id, fixtures=fixtures,
+            correlation_id=correlation_id, organization_id=organization_id,
         )
 
     monkeypatch.setattr(customer, "_publish", interrupt_publish)
@@ -50,7 +70,7 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
     monkeypatch.setattr(customer, "_publish", original_publish)
     monkeypatch.setattr(customer, "_execute_intent", original_execute)
 
-    with SQLiteIncrementalPersistence(path) as store:
+    with PostgresPersistence(DSN, namespace=namespace) as store:
         # Reconstitute the flow from persisted delivery evidence, but take its
         # owning organization from the explicit fixture identity.
         with store.transaction() as uow:
@@ -64,6 +84,8 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="recovered-logistics",
             organization_owners={flow_id: "test-org-logistics-durable-recovery"},
+            resource_policies=NEUTRAL_POLICY,
+            resource_organizations={flow_id: "test-org-logistics-durable-recovery"},
             job_id="logistics-recovery-test", max_actions=16,
         )
         first = runner.run_trigger(
@@ -74,7 +96,10 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
         with store.transaction(owner_epoch=store.writer_epoch()) as uow:
             deliveries = uow.boundary_deliveries()
             messages = {d.message_id: uow.get_boundary_message(d.message_id) for d in deliveries}
-            dispatch = next(m for m in messages.values() if m.contract_key == "warehouse.dispatch_ready.v1")
+            dispatch = next(
+                m for m in messages.values()
+                if m.contract_key == "warehouse.dispatch_ready.v1"
+            )
             delivered = [
                 m for m in messages.values()
                 if m.contract_key == "logistics.delivery_completed.v1"
@@ -113,13 +138,13 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
     ],
 )
 def test_mid_transition_worker_death_resumes_from_durable_logistics_state(
-    tmp_path, monkeypatch, cut, expected_state,
+    monkeypatch, cut, expected_state,
 ):
-    path = tmp_path / "partial-logistics.sqlite"
+    namespace = "logistics_recovery_" + uuid4().hex[:12]
     held = []
 
     def store_factory():
-        store = SQLiteIncrementalPersistence(path)
+        store = PostgresPersistence(DSN, namespace=namespace)
         held.append(store)
         return store
 
@@ -145,7 +170,7 @@ def test_mid_transition_worker_death_resumes_from_durable_logistics_state(
     monkeypatch.setattr(customer.logistics, stage, original)
     held[-1].close()
 
-    with SQLiteIncrementalPersistence(path) as store:
+    with PostgresPersistence(DSN, namespace=namespace) as store:
         shipment = next(e for e in store.entities() if e.entity_type == "shipment")
         assert shipment.state == expected_state
         # Reconstitute the flow from persisted delivery evidence, but take its
@@ -161,6 +186,8 @@ def test_mid_transition_worker_death_resumes_from_durable_logistics_state(
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="logistics-stage-restart",
             organization_owners={flow_id: "test-org-logistics-durable-recovery"},
+            resource_policies=NEUTRAL_POLICY,
+            resource_organizations={flow_id: "test-org-logistics-durable-recovery"},
             job_id="recovery-after-midphase", max_actions=16,
         )
         result = runner.run_trigger(
