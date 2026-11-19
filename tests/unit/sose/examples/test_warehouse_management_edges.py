@@ -12,9 +12,9 @@ from sose.examples.warehouse_management.simulation import (
     build_runtime,
     complete_unload,
     seed_reference,
-    shipment_kpis,
     start_transfer,
 )
+from sose.examples.warehouse_management.kpis import shipment_kpis
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "warehouse-management-reference-organization"

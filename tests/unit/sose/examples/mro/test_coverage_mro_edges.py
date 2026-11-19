@@ -7,6 +7,8 @@ import pytest
 from sose.backends.simpy import SimPyBackend
 from sose.examples.mro import simulation as mro
 from sose.persistence.memory import MemoryPersistence
+from sose.examples.mro.simulation_capacity import _discard_granted_capacity_if_terminal
+from sose.examples.mro.simulation_closeout import reconcile_cancel
 
 
 MRO_REFERENCE_OWNER = "mro-coverage-reference"
@@ -69,7 +71,8 @@ def test_mro_reconcilers_fail_loudly_when_durable_entities_disappear(
         else entities.part_demand_id
     )
     _hide_entity(monkeypatch, persistence, missing_type, entity_id)
-    function = getattr(mro, function_name)
+    # reconcile_cancel moved out of simulation.py (#632); resolve it at its home module.
+    function = reconcile_cancel if function_name == "reconcile_cancel" else getattr(mro, function_name)
 
     kwargs = {"entities": entities}
     if function_name in {
@@ -88,7 +91,7 @@ def test_mro_reconcilers_fail_loudly_when_durable_entities_disappear(
 
 def test_terminal_work_discards_late_regular_and_preemptive_grants(monkeypatch):
     persistence, entities, engine, backend = _released_runtime()
-    mro.reconcile_cancel(persistence, engine, backend, entities=entities)
+    reconcile_cancel(persistence, engine, backend, entities=entities)
 
     regular = []
     preemptive = []
@@ -103,7 +106,7 @@ def test_terminal_work_discards_late_regular_and_preemptive_grants(monkeypatch):
         lambda _backend, request_id: preemptive.append(request_id),
     )
 
-    mro._discard_granted_capacity_if_terminal(
+    _discard_granted_capacity_if_terminal(
         persistence,
         engine,
         backend,
@@ -111,7 +114,7 @@ def test_terminal_work_discards_late_regular_and_preemptive_grants(monkeypatch):
         reservation=SimpleNamespace(request_id="technician-late"),
         preemptive=False,
     )
-    mro._discard_granted_capacity_if_terminal(
+    _discard_granted_capacity_if_terminal(
         persistence,
         engine,
         backend,

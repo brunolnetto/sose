@@ -3,11 +3,11 @@ from sose.examples.itsm.simulation import (
     ORIGIN,
     build_runtime,
     claim_next_incident,
-    escalation_id,
     reconcile_escalation,
     seed_reference,
     triage_and_queue,
 )
+from sose.examples.itsm.foundation import escalation_id
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 

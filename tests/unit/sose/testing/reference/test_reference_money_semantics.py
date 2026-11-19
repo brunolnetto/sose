@@ -10,18 +10,17 @@ from sose.examples.credit_loans.simulation import (
     disburse_and_schedule,
     installment_id,
     loan_id,
-    payment_id as credit_payment_id,
     post_payment,
     reconcile_underwriting,
     seed_reference as seed_credit,
 )
+from sose.examples.credit_loans.simulation_runtime import payment_id as credit_payment_id
 from sose.examples.insurance.simulation import (
     ORIGIN as INSURANCE_ORIGIN,
     build_runtime as build_insurance_runtime,
     claim_next_for_assessment,
     complete_assessment,
     ensure_document_request,
-    ensure_payment,
     ensure_reserve,
     payment_id as insurance_payment_id,
     queue_claim,
@@ -30,6 +29,7 @@ from sose.examples.insurance.simulation import (
     schedule_payment as schedule_insurance_payment,
     seed_reference as seed_insurance,
 )
+from sose.examples.insurance.payments import ensure_payment
 from sose.examples.order_to_cash.simulation import (
     ORIGIN as O2C_ORIGIN,
     build_runtime as build_o2c_runtime,
@@ -42,11 +42,11 @@ from sose.examples.order_to_cash.simulation import (
 from sose.examples.record_to_report.simulation import (
     ORIGIN as R2R_ORIGIN,
     build_runtime as build_r2r_runtime,
-    ensure_adjustment,
     reconcile_item,
     seed_reference as seed_r2r,
     submit_and_post_journal,
 )
+from sose.examples.record_to_report.adjustments import ensure_adjustment
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 

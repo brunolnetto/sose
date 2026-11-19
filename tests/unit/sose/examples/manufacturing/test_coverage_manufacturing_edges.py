@@ -5,6 +5,8 @@ import pytest
 from sose.backends.simpy import SimPyBackend
 from sose.examples.manufacturing import simulation as manufacturing
 from sose.persistence.memory import MemoryPersistence
+from sose.examples.manufacturing.simulation_output import reconcile_rework
+from sose.examples.manufacturing.simulation_resources import reconcile_breakdown
 
 ORGANIZATION_ID = "manufacturing-reference-organization"
 
@@ -98,7 +100,7 @@ def test_breakdown_returns_pending_when_higher_priority_machine_holder_blocks_re
     )
     backend.run_until(backend.now)
 
-    assert manufacturing.reconcile_breakdown(
+    assert reconcile_breakdown(
         persistence,
         engine,
         backend,
@@ -109,7 +111,7 @@ def test_breakdown_returns_pending_when_higher_priority_machine_holder_blocks_re
 def test_breakdown_without_displacement_is_not_committed_as_preemption():
     persistence, entities, engine, backend = _released_runtime()
 
-    assert manufacturing.reconcile_breakdown(
+    assert reconcile_breakdown(
         persistence,
         engine,
         backend,
@@ -123,7 +125,7 @@ def test_breakdown_fails_loudly_when_business_entities_disappear_after_preemptio
     _hide_entity(monkeypatch, persistence, "production_order", entities.production_order_id)
 
     with pytest.raises(RuntimeError, match="manufacturing entities were not persisted"):
-        manufacturing.reconcile_breakdown(
+        reconcile_breakdown(
             persistence,
             engine,
             backend,
@@ -133,7 +135,7 @@ def test_breakdown_fails_loudly_when_business_entities_disappear_after_preemptio
 
 def test_repair_waits_when_machine_is_taken_after_repair_release():
     persistence, entities, engine, backend = _producing_runtime()
-    assert manufacturing.reconcile_breakdown(
+    assert reconcile_breakdown(
         persistence,
         engine,
         backend,
@@ -160,7 +162,7 @@ def test_repair_waits_when_machine_is_taken_after_repair_release():
 
 def test_repair_fails_loudly_when_entities_disappear_after_machine_reacquire(monkeypatch):
     persistence, entities, engine, backend = _producing_runtime()
-    assert manufacturing.reconcile_breakdown(
+    assert reconcile_breakdown(
         persistence,
         engine,
         backend,
@@ -372,7 +374,7 @@ def test_rework_requires_persisted_order_and_operation(monkeypatch):
     _hide_entity(monkeypatch, persistence, "manufacturing_operation", entities.operation_id)
 
     with pytest.raises(RuntimeError, match="manufacturing entities were not persisted"):
-        manufacturing.reconcile_rework(
+        reconcile_rework(
             persistence,
             engine,
             entities=entities,

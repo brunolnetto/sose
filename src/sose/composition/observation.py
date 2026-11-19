@@ -63,48 +63,8 @@ def observe_organization_events(
         # two component instances with one owner ID to a unique source.
         raise ValueError("owner-qualified observation requires distinct component owner_id")
 
-    permitted = {}
-    types_by_owner: dict[str, frozenset[str]] = {}
-    all_known_types = set()
-    for component in components:
-        registered = catalog.get(component.domain).registered_entity_types
-        types = frozenset(
-            entry.name for entry in registered
-            if entry.chart_factory.__name__ in component.statechart_types
-        )
-        if not types:
-            raise ValueError("component observation requires registered entity types")
-        permitted[component.owner_id] = component
-        types_by_owner[component.owner_id] = types
-        all_known_types.update(types)
-
-    by_owner: dict[str, list[str]] = {owner: [] for owner in owner_ids}
-    seen_ids = set()
-    # Never read per-owner clocks to infer a global cut or coordinate owners.
-    # Store.events is the sole observation read; no UoW and no write.
-    for event in persistence.events():
-        if event.owner_id not in permitted:
-            continue
-        if event.entity_type in types_by_owner[event.owner_id]:
-            # Same entity type does not make an arbitrary DomainEvent a
-            # StateChart transition. Enrollment/config events are distinct
-            # evidence families, even when emitted by the same entity.
-            if event.name != "entity.state_transition":
-                continue
-            if not all(
-                isinstance(event.payload.get(field), str)
-                and event.payload[field].strip()
-                for field in ("trigger", "from_state", "to_state")
-            ):
-                raise ValueError("malformed observed StateChart transition payload")
-            if event.event_id in seen_ids:
-                raise ValueError("duplicate durable organization event identity")
-            seen_ids.add(event.event_id)
-            by_owner[event.owner_id].append(event.event_id)
-        elif event.entity_type in all_known_types:
-            raise ValueError("owner/event StateChart type contradicts admitted component")
-        # Other event families owned by this component (e.g. config-source
-        # attestations) are not implicitly promoted into constituent events.
+    types_by_owner = _component_entity_types(components, catalog)
+    by_owner = _owner_transition_ids(persistence.events(), types_by_owner, owner_ids)
 
     return OrganizationEvidence(
         organization_id=definition.organization_id,
@@ -126,3 +86,61 @@ def observe_organization_events(
             for component in components
         ),
     )
+
+
+def _owner_transition_ids(events, types_by_owner, owner_ids) -> dict[str, list[str]]:
+    """Owner -> transition event IDs, in event-tuple order within each owner."""
+    all_known_types = set().union(*types_by_owner.values())
+    by_owner: dict[str, list[str]] = {owner: [] for owner in owner_ids}
+    seen_ids = set()
+    # Never read per-owner clocks to infer a global cut or coordinate owners.
+    # Store.events is the sole observation read; no UoW and no write.
+    for event in events:
+        if event.owner_id not in types_by_owner:
+            continue
+        if event.entity_type in types_by_owner[event.owner_id]:
+            if _is_observed_transition(event):
+                if event.event_id in seen_ids:
+                    raise ValueError("duplicate durable organization event identity")
+                seen_ids.add(event.event_id)
+                by_owner[event.owner_id].append(event.event_id)
+        elif event.entity_type in all_known_types:
+            raise ValueError("owner/event StateChart type contradicts admitted component")
+        # Other event families owned by this component (e.g. config-source
+        # attestations) are not implicitly promoted into constituent events.
+    return by_owner
+
+
+def _component_entity_types(components, catalog) -> dict[str, frozenset[str]]:
+    """Owner -> StateChart entity types its component may emit (in order)."""
+    types_by_owner: dict[str, frozenset[str]] = {}
+    for component in components:
+        registered = catalog.get(component.domain).registered_entity_types
+        types = frozenset(
+            entry.name for entry in registered
+            if entry.chart_factory.__name__ in component.statechart_types
+        )
+        if not types:
+            raise ValueError("component observation requires registered entity types")
+        types_by_owner[component.owner_id] = types
+    return types_by_owner
+
+
+_TRANSITION_FIELDS = ("trigger", "from_state", "to_state")
+
+
+def _is_observed_transition(event) -> bool:
+    """A well-formed StateChart transition; other event families are skipped.
+
+    Same entity type does not make an arbitrary DomainEvent a StateChart
+    transition. Enrollment/config events are distinct evidence families,
+    even when emitted by the same entity.
+    """
+    if event.name != "entity.state_transition":
+        return False
+    if not all(
+        isinstance(event.payload.get(field), str) and event.payload[field].strip()
+        for field in _TRANSITION_FIELDS
+    ):
+        raise ValueError("malformed observed StateChart transition payload")
+    return True

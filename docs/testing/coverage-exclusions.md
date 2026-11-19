@@ -30,26 +30,26 @@ them would require invalidating an already-tested stronger contract.
 
 | File / line | Invariant |
 | --- | --- |
-| `backends/simpy.py:275` | SimPy store-put event cannot be processed before callback attachment under the supported scheduling lifecycle |
-| `backends/simpy.py:319` | SimPy store-get event callback lifecycle |
-| `backends/simpy.py:350` | Store kind is a closed internal set validated before backend reconstruction |
-| `backends/simpy.py:454` | Container operation is a closed internal set |
-| `backends/simpy.py:457` | SimPy container event callback lifecycle |
-| `backends/simpy.py:529` | SimPy resource-request callback lifecycle |
-| `backends/simpy.py:646` | Preemptive resource lifecycle executes inside an active SimPy process |
-| `persistence/postgres.py:170` | Metadata singleton cannot disappear after transactional bootstrap |
-| `persistence/postgres.py:384` | Record changes have a closed internal operation set |
-| `persistence/postgres.py:792` | Metadata singleton cannot disappear during revision update |
-| `persistence/sqlite_incremental.py:144` | Metadata singleton cannot disappear after transactional bootstrap |
-| `persistence/sqlite_incremental.py:288` | Record changes have a closed internal operation set |
-| `persistence/sqlite_incremental.py:327` | Writer metadata cannot disappear after a successful compare-and-swap update |
-| `core/stores.py:400` | Store-item consume helper is only called after caller-level presence checks |
+| `backends/simpy_stores.py:71` | SimPy store-put event cannot be processed before callback attachment under the supported scheduling lifecycle |
+| `backends/simpy_stores.py:115` | SimPy store-get event callback lifecycle |
+| `backends/simpy_stores.py:146` | Store kind is a closed internal set validated before backend reconstruction |
+| `backends/simpy_containers.py:116` | Container operation is a closed internal set |
+| `backends/simpy_containers.py:119` | SimPy container event callback lifecycle |
+| `backends/simpy_resources.py:93` | SimPy resource-request callback lifecycle |
+| `backends/simpy_preemptive.py:83` | Preemptive resource lifecycle executes inside an active SimPy process |
+| `persistence/postgres_schema.py:115` | Metadata singleton cannot disappear after transactional bootstrap |
+| `persistence/postgres_writes.py:114` | Record changes have a closed internal operation set |
+| `persistence/postgres.py:326` | Metadata singleton cannot disappear during revision update |
+| `persistence/sqlite_incremental_schema.py:91` | Metadata singleton cannot disappear after transactional bootstrap |
+| `persistence/sqlite_incremental.py:201` | Record changes have a closed internal operation set |
+| `persistence/sqlite_incremental.py:236` | Writer metadata cannot disappear after a successful compare-and-swap update |
+| `core/stores_queries.py:46` | Store-item consume helper is only called after caller-level presence checks |
 | `core/engine.py:105` | Engine construction requires a statechart factory |
 | `core/engine.py:159` | Engine construction requires a statechart factory |
 | `core/engine.py:276` | Engine construction requires a statechart factory |
 | `core/durable.py:87` | Attached durable scheduler requires its due callback |
-| `core/durable.py:222` | Recovery participants are validated for `rebuild_backend()` before reconstruction |
-| `persistence/duckdb.py:132` | Record changes have a closed internal operation set |
+| `core/durable.py:218` | Recovery participants are validated for `rebuild_backend()` before reconstruction |
+| `persistence/duckdb.py:144` | Record changes have a closed internal operation set |
 | `jobs/config.py:22` | Namespace construction normalizes to a lowercase SQL-safe stem, prefixes digit/empty starts, truncates length, and appends an 8-hex digest; the final regex rejection cannot be reached through any `job_id` input |
 
 These are still defensive guards. The exclusion says the failure branch is not
