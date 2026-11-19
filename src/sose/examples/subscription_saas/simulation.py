@@ -276,13 +276,3 @@ def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, SubscriptionEnt
     if entitlement is None:
         raise RuntimeError("scheduled plan change did not become applicable")
     return persistence, entities
-
-
-# Moved by the quality-ratchet splits (#632); importing these names from here
-# is deprecated (ADR-0011). Import them from the module named on the right.
-from sose._deprecation import deprecated_reexports as _deprecated_reexports
-
-__getattr__ = _deprecated_reexports(__name__, {
-    "change_request_id": "sose.examples.subscription_saas.foundation",
-    "deterministic_id": "sose.core.identity",
-}, since="0.9.0", removed_in="0.10.0")

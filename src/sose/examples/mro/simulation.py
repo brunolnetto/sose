@@ -344,13 +344,3 @@ def run_happy_path(
     reconcile_complete(persistence, engine, entities=ids)
     release_capacity(persistence, engine, backend, entities=ids)
     return persistence, ids
-
-
-# Moved by the quality-ratchet splits (#632); importing these names from here
-# is deprecated (ADR-0011). Import them from the module named on the right.
-from sose._deprecation import deprecated_reexports as _deprecated_reexports
-
-__getattr__ = _deprecated_reexports(__name__, {
-    "deterministic_id": "sose.core.identity",
-    "reconcile_cancel": "sose.examples.mro.simulation_closeout",
-}, since="0.9.0", removed_in="0.10.0")
