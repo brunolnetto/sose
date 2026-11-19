@@ -66,29 +66,41 @@ For **prospectively enrolled actors with `seed_actor(tracked_time=True)`**,
 write a versioned `od2.actor_time_origin_recorded` admission event in the same
 UoW as their initial entity. The event binds owner/model/epoch, replacement
 identity and the original effective timestamp; rewriting `actor.created_at`
-together with the admitted-time bucket can no longer pass the ledger audit.
-Also commit append-only `od2.actor_nonwork_cost_caused` receipts for every
-non-work native transition (even cost=0), preventing a paid
-`begin_development` from being rewritten or downgraded by changing its
-persisted Command.
+can no longer pass the ledger audit, and removing or altering the projection's
+`tracked_time_version` marker while the origin event remains fails closed.
 
-Before a **new tracked** actor StateChart transition, reconstruct the actor's recorded
-elapsed microseconds by original predecessor state and paid transition cost
-from chronological native `entity.state_transition` events and their persisted
-`Command` records. Require the projected per-state buckets, sum, final
-state, last effective timestamp, charged cost, original cause identities, and
-current assigned work to reconcile. For `assign`/`complete`, verify the
-immutable `od2.actor_work_caused` source receipt in the same snapshot.
+Every native transition of a tracked actor (work and non-work, even cost=0)
+appends one `od2.actor_time_ledger_step` event in the same UoW. Its ID is
+deterministic in (actor, sequence number); it names its predecessor (origin or
+previous step), the original Command/StateChart event and cause, and carries
+the running totals *after* the transition: per-state elapsed microseconds
+(nonzero buckets only), paid cost, last effective time, state, assigned work
+and a SHA-256 digest of the cause index (implementation:
+`sose.organizational.od2_actor_time_ledger`).
+
+Before a **new** tracked transition and before returning a **same-cause
+replay**, the guard reads the origin, the chain head (sequence = number of
+applied causes), its source event and Command, and the would-be successor ID,
+all by key. The mutable projection must equal the head totals and no successor
+may exist, so dropping a cause or rolling the whole projection back to an
+earlier verified snapshot is detected. Because each step is written only after
+its predecessor was verified, this is incremental: a constant number of keyed
+reads, no event-log scan, independent of other owners' history. Buckets are
+compared by present key with missing keys meaning zero, so adding a lifecycle
+state later does not invalidate stored actors.
 
 Memory and SQLite regression tests corrupt individual buckets (including
-a *zero-sum reclassification*), paid cost, work identity, cause index, and
-time while leaving real history untouched; the next attempted transition
-must fail without appending an event/Command. A legal paid lifecycle and
-SQLite restart are the positive control. Original idempotent replay-specific
-checks remain in their existing order. Markerless/legacy actors keep their
-previous reference-runtime semantics, but **cannot claim trusted actor-time
-conservation** without a separately authorized, versioned cutover. Opt-in
-records are still public-UoW consistency evidence, not protected issuer proof.
+a *zero-sum reclassification*), paid cost, work identity, cause index,
+admission time and coordinated Command+projection cost rewrites; the next
+attempted transition must fail without appending an event/Command. Further
+tests cover owner isolation of same-key actors, tracked replacement of a
+legacy actor, tracked actors with availability calendars, and a spy proving
+tracked transitions never call `uow.events()` with foreign events present.
+Original idempotent replay-specific checks remain in their existing order.
+Markerless/legacy actors keep their previous reference-runtime semantics, but
+**cannot claim trusted actor-time conservation** without a separately
+authorized, versioned cutover. Opt-in records are still public-UoW consistency
+evidence, not protected issuer proof.
 
 **Limit:** this detects inconsistent *mutable projections*; public writers
 can potentially forge matching Command+event metadata. Only a separately
