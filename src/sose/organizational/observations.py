@@ -92,26 +92,8 @@ class ObservedPRTrace(BaseModel):
         # Python's stable sort preserves source sequence among equal timestamps.
         # That order is semantically relevant when source timestamps are coarse.
         ordered = tuple(sorted(self.events, key=lambda event: event.occurred_at))
-        opened = [event for event in ordered if event.kind is ObservedEventKind.OPENED]
-        if len(opened) != 1:
-            raise ValueError("observed trace requires exactly one opened event")
-        open_time = opened[0].occurred_at
-        if any(event.occurred_at < open_time for event in ordered):
-            raise ValueError("observed trace contains event before opened event")
-
-        terminal = [
-            event
-            for event in ordered
-            if event.kind in {ObservedEventKind.CLOSED, ObservedEventKind.MERGED}
-        ]
-        if len(terminal) > 1:
-            raise ValueError("observed trace allows at most one terminal event")
-        if terminal:
-            terminal_time = terminal[0].occurred_at
-            if terminal_time < open_time:
-                raise ValueError("terminal event cannot precede opened event")
-            if any(event.occurred_at > terminal_time for event in ordered):
-                raise ValueError("observed trace contains event after terminal event")
+        open_time = _opened_time(ordered)
+        _validate_terminal_order(ordered, open_time)
 
         object.__setattr__(self, "events", ordered)
         return self
@@ -189,3 +171,29 @@ def _thaw_json(value: object) -> object:
     if isinstance(value, tuple):
         return [_thaw_json(item) for item in value]
     return value
+
+
+def _opened_time(ordered) -> datetime:
+    opened = [event for event in ordered if event.kind is ObservedEventKind.OPENED]
+    if len(opened) != 1:
+        raise ValueError("observed trace requires exactly one opened event")
+    open_time = opened[0].occurred_at
+    if any(event.occurred_at < open_time for event in ordered):
+        raise ValueError("observed trace contains event before opened event")
+    return open_time
+
+
+_TERMINAL_KINDS = frozenset({ObservedEventKind.CLOSED, ObservedEventKind.MERGED})
+
+
+def _validate_terminal_order(ordered, open_time: datetime) -> None:
+    terminal = [event for event in ordered if event.kind in _TERMINAL_KINDS]
+    if len(terminal) > 1:
+        raise ValueError("observed trace allows at most one terminal event")
+    if not terminal:
+        return
+    terminal_time = terminal[0].occurred_at
+    if terminal_time < open_time:
+        raise ValueError("terminal event cannot precede opened event")
+    if any(event.occurred_at > terminal_time for event in ordered):
+        raise ValueError("observed trace contains event after terminal event")

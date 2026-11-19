@@ -5,12 +5,12 @@ from sose.examples.energy_utilities.simulation import (
     build_runtime,
     dr_event_id,
     dr_participation_id,
-    reading_id,
     reconcile_demand_response,
     record_meter_reading,
     schedule_demand_response,
     seed_reference,
 )
+from sose.examples.energy_utilities.simulation_runtime import reading_id
 from sose.persistence.memory import MemoryPersistence
 from sose.scenarios import AttributeEffect, Scenario, ScheduledTrigger
 from sose.testing.restart import restart_reference_runtime

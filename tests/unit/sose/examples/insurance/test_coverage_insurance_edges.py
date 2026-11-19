@@ -8,13 +8,10 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.insurance.scenarios import ORIGIN
 from sose.examples.insurance.simulation import (
     _entity,
-    _reference_minor_units,
     build_runtime,
     claim_next_for_assessment,
     complete_assessment,
     ensure_document_request,
-    ensure_fraud_investigation,
-    ensure_payment,
     ensure_reserve,
     queue_claim,
     reconcile_fraud,
@@ -23,6 +20,9 @@ from sose.examples.insurance.simulation import (
     satisfy_documents,
     seed_reference,
 )
+from sose.examples.insurance.foundation import _reference_minor_units
+from sose.examples.insurance.fraud import ensure_fraud_investigation
+from sose.examples.insurance.payments import ensure_payment
 from sose.persistence.memory import MemoryPersistence
 
 ORGANIZATION_ID = "insurance-reference-organization"
@@ -387,7 +387,7 @@ def test_payment_requires_approved_claim_even_with_established_reserve():
     claim = _claim(persistence, entities)
 
     from sose.examples.insurance.entities import Reserve
-    from sose.examples.insurance.simulation import reserve_id
+    from sose.examples.insurance.foundation import reserve_id
 
     reserve = engine.context.entities.create(
         Reserve,
@@ -413,7 +413,8 @@ def test_payment_reconciliation_returns_false_for_not_due_payment():
     _save(persistence, claim)
 
     from sose.examples.insurance.entities import Reserve, Payment
-    from sose.examples.insurance.simulation import reserve_id, payment_id
+    from sose.examples.insurance.simulation import payment_id
+    from sose.examples.insurance.foundation import reserve_id
 
     reserve = engine.context.entities.create(
         Reserve,
@@ -452,7 +453,8 @@ def test_payment_reconciliation_requires_established_reserve():
     _save(persistence, claim)
 
     from sose.examples.insurance.entities import Reserve, Payment
-    from sose.examples.insurance.simulation import reserve_id, payment_id
+    from sose.examples.insurance.simulation import payment_id
+    from sose.examples.insurance.foundation import reserve_id
 
     reserve = engine.context.entities.create(
         Reserve,
@@ -492,7 +494,8 @@ def test_payment_reconciliation_respects_payment_outage(monkeypatch):
     _save(persistence, claim)
 
     from sose.examples.insurance.entities import Reserve, Payment
-    from sose.examples.insurance.simulation import reserve_id, payment_id
+    from sose.examples.insurance.simulation import payment_id
+    from sose.examples.insurance.foundation import reserve_id
 
     reserve = engine.context.entities.create(
         Reserve,
@@ -539,7 +542,8 @@ def test_partial_payment_requires_at_least_two_minor_units():
     _save(persistence, claim)
 
     from sose.examples.insurance.entities import Reserve, Payment
-    from sose.examples.insurance.simulation import reserve_id, payment_id
+    from sose.examples.insurance.simulation import payment_id
+    from sose.examples.insurance.foundation import reserve_id
 
     reserve = engine.context.entities.create(
         Reserve,

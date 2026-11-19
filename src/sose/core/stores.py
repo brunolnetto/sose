@@ -11,13 +11,12 @@ from sose.core.runtime import (
     StoreGetResult,
     StorePutIntent,
 )
+from sose.core.stores_queries import StoreFilter, _StoreDurableQueries
+from sose.core.stores_rebuild import _StoreRebuild
 from sose.persistence.base import Persistence
 
 
-StoreFilter = Callable[[StoreItem], bool]
-
-
-class DurableStoreManager:
+class DurableStoreManager(_StoreRebuild, _StoreDurableQueries):
     """Durable Store truth reconstructed into an ephemeral StoreBackend."""
 
     def __init__(
@@ -32,114 +31,6 @@ class DurableStoreManager:
     def define(self, definition: StoreDefinition) -> None:
         with self._persistence.transaction() as uow:
             uow.save_store_definition(definition)
-
-    def validate_rebuild(self) -> None:
-        definitions = {
-            definition.name: definition
-            for definition in self._persistence.store_definitions()
-        }
-        self._validate_store_records(definitions)
-        self._validate_store_capacities(definitions)
-
-    def _validate_store_records(self, definitions: dict[str, StoreDefinition]) -> None:
-        for item in self._persistence.store_items():
-            if item.store_name not in definitions:
-                raise RuntimeError(f"store item references unknown definition: {item.item_id}")
-        for intent in self._persistence.store_put_intents():
-            if intent.store_name not in definitions:
-                raise RuntimeError(f"store put references unknown definition: {intent.item_id}")
-        for request in self._persistence.store_get_requests():
-            definition = definitions.get(request.store_name)
-            if definition is None:
-                raise RuntimeError(
-                    f"store get references unknown definition: {request.request_id}"
-                )
-            if request.filter_key is not None:
-                if definition.kind != "filter":
-                    raise RuntimeError(
-                        f"filtered get targets non-filter store: {request.request_id}"
-                    )
-                self._filter(request.filter_key)
-
-    def _validate_store_capacities(
-        self,
-        definitions: dict[str, StoreDefinition],
-    ) -> None:
-        for definition in definitions.values():
-            if definition.capacity is None:
-                continue
-            count = sum(
-                item.store_name == definition.name
-                for item in self._persistence.store_items()
-            )
-            if count > definition.capacity:
-                raise RuntimeError(
-                    f"durable store {definition.name} contains more items than capacity"
-                )
-
-    def rebuild_backend(self, backend) -> int:
-        self.validate_rebuild()
-        definitions = {
-            definition.name: definition
-            for definition in self._persistence.store_definitions()
-        }
-        self._create_stores_on_backend(backend, definitions)
-        restored_items = self._restore_store_items(backend, definitions)
-        restored_pending = self._restore_pending_operations(backend)
-        return restored_items + restored_pending
-
-    def _create_stores_on_backend(
-        self,
-        backend,
-        definitions: dict[str, StoreDefinition],
-    ) -> None:
-        for definition in definitions.values():
-            self._create_backend_store(backend, definition)
-
-    def _restore_store_items(
-        self,
-        backend,
-        definitions: dict[str, StoreDefinition],
-    ) -> int:
-        restored = 0
-        for definition in definitions.values():
-            items = [
-                item
-                for item in self._persistence.store_items()
-                if item.store_name == definition.name
-            ]
-            for item in self._ordered_items(definition, items):
-                backend.put_store(
-                    definition.name,
-                    item_id=item.item_id,
-                    value=item.value,
-                    priority=item.priority,
-                )
-                restored += 1
-        return restored
-
-    def _restore_pending_operations(self, backend) -> int:
-        pending = [
-            *(
-                (intent.sequence, "put", intent)
-                for intent in self._persistence.store_put_intents()
-            ),
-            *(
-                (request.sequence, "get", request)
-                for request in self._persistence.store_get_requests()
-            ),
-        ]
-        restored = 0
-        for _, operation, record in sorted(
-            pending,
-            key=lambda value: (value[0], 0 if value[1] == "put" else 1),
-        ):
-            if operation == "put":
-                self._submit_put_intent(backend, record)
-            else:
-                self._submit_get_request(backend, record)
-            restored += 1
-        return restored
 
     def put(
         self,
@@ -348,18 +239,6 @@ class DurableStoreManager:
             uow.delete_store_get_request(request_id)
         return result
 
-    @staticmethod
-    def _assert_store_item_identity(
-        item: DurableStoreItem,
-        *,
-        store_name: str,
-        value: object,
-        item_id: str,
-    ) -> None:
-        if item.store_name == store_name and item.value == value:
-            return
-        raise ValueError(f"store item identity conflict: {item_id}")
-
     def _ensure_pending_put_intent(
         self,
         backend,
@@ -387,64 +266,6 @@ class DurableStoreManager:
             or pending.priority != priority
         ):
             raise ValueError(f"store item identity conflict: {item_id}")
-
-    @staticmethod
-    def _consume_store_item(
-        *,
-        item: DurableStoreItem | None,
-        intent: StorePutIntent | None,
-        item_id: str,
-    ) -> DurableStoreItem:
-        if item is not None:
-            return item
-        if intent is None:  # pragma: no cover - guarded by caller
-            raise KeyError(f"unknown durable store item: {item_id}")
-        return DurableStoreItem(
-            item_id=intent.item_id,
-            store_name=intent.store_name,
-            value=intent.value,
-            priority=intent.priority,
-            sequence=intent.sequence,
-        )
-
-    @staticmethod
-    def _consume_persisted_store_item(uow, item_id: str) -> None:
-        persisted_item = uow.get_store_item(item_id)
-        persisted_intent = uow.get_store_put_intent(item_id)
-        if persisted_item is None and persisted_intent is None:
-            raise RuntimeError(
-                f"store item disappeared during consume: {item_id}"
-            )
-        if persisted_item is not None:
-            uow.delete_store_item(item_id)
-        if persisted_intent is not None:
-            uow.delete_store_put_intent(item_id)
-
-    def _item_with_id(self, item_id: str) -> DurableStoreItem | None:
-        return next(
-            (item for item in self._persistence.store_items() if item.item_id == item_id),
-            None,
-        )
-
-    def _consumed_item_with_id(self, item_id: str) -> DurableStoreItem | None:
-        return next(
-            (
-                result.item
-                for result in self._persistence.store_get_results()
-                if result.item.item_id == item_id
-            ),
-            None,
-        )
-
-    def _pending_put_intent(self, item_id: str) -> StorePutIntent | None:
-        return next(
-            (
-                intent
-                for intent in self._persistence.store_put_intents()
-                if intent.item_id == item_id
-            ),
-            None,
-        )
 
     def _submit_put_intent(
         self,
@@ -491,33 +312,6 @@ class DurableStoreManager:
             on_received=received,
         )
 
-    def pending_get(self, request_id: str) -> StoreGetRequest | None:
-        """Return durable pending selection intent for one request."""
-        return next(
-            (
-                request
-                for request in self._persistence.store_get_requests()
-                if request.request_id == request_id
-            ),
-            None,
-        )
-
-    def selection(self, request_id: str) -> StoreGetResult | None:
-        """Return committed durable selection ownership, if any.
-
-        A committed StoreGetResult remains authoritative after the selected item
-        has disappeared from the store. Recovery should continue from this result
-        rather than attempting to rediscover or consume the original item.
-        """
-        return next(
-            (
-                result
-                for result in self._persistence.store_get_results()
-                if result.request_id == request_id
-            ),
-            None,
-        )
-
     def ensure_selection(
         self,
         backend,
@@ -561,56 +355,3 @@ class DurableStoreManager:
         if callable(run_until):
             run_until(getattr(backend, "now", requested_at))
         return self.selection(request_id)
-
-    def result(self, request_id: str) -> StoreGetResult | None:
-        """Backward-compatible alias for committed selection ownership."""
-        return self.selection(request_id)
-
-    def _definition(self, name: str) -> StoreDefinition:
-        definition = next(
-            (
-                definition
-                for definition in self._persistence.store_definitions()
-                if definition.name == name
-            ),
-            None,
-        )
-        if definition is None:
-            raise KeyError(f"unknown store definition: {name}")
-        return definition
-
-    def _filter(self, key: str) -> StoreFilter:
-        try:
-            return self._filters[key]
-        except KeyError as exc:
-            raise KeyError(f"unknown durable store filter: {key}") from exc
-
-    def _next_sequence(self) -> int:
-        return max(
-            [
-                *(item.sequence for item in self._persistence.store_items()),
-                *(intent.sequence for intent in self._persistence.store_put_intents()),
-                *(request.sequence for request in self._persistence.store_get_requests()),
-                *(result.sequence for result in self._persistence.store_get_results()),
-            ],
-            default=0,
-        ) + 1
-
-    @staticmethod
-    def _ordered_items(
-        definition: StoreDefinition,
-        items: list[DurableStoreItem],
-    ) -> list[DurableStoreItem]:
-        if definition.kind == "priority":
-            return sorted(items, key=lambda item: (item.priority, item.sequence, item.item_id))
-        return sorted(items, key=lambda item: (item.sequence, item.item_id))
-
-    @staticmethod
-    def _create_backend_store(backend, definition: StoreDefinition) -> None:
-        kwargs = {} if definition.capacity is None else {"capacity": definition.capacity}
-        if definition.kind == "fifo":
-            backend.create_store(definition.name, **kwargs)
-        elif definition.kind == "priority":
-            backend.create_priority_store(definition.name, **kwargs)
-        else:
-            backend.create_filter_store(definition.name, **kwargs)

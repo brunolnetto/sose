@@ -9,6 +9,12 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field, InstanceOf
 
 from .domain_experiment import ExperimentWorld, build_experiment_worlds
+from .domain_experiment_conformance_checks import (  # noqa: F401 - moved, legacy surface
+    ConformanceCheck,
+    _claims_valid,
+    _deterministic_world_construction,
+    _exogenous_binding,
+)
 from .domain_experiment_runtime import (
     DomainExecutionRequest,
     DomainExperimentPlan,
@@ -18,7 +24,7 @@ from .domain_experiment_runtime import (
 from .domain_reference import (
     DomainReferenceDescriptor,
     GroundTruthClaim,
-    GroundTruthTargetKind,
+    GroundTruthTargetKind,  # noqa: F401 - legacy module surface
 )
 
 
@@ -38,17 +44,6 @@ class _ConformanceReference(Protocol):
     def classify_regime(self, world: ExperimentWorld) -> RegimeReference: ...
 
     def crn_signature(self, result) -> object: ...
-
-
-class ConformanceCheck(BaseModel):
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    name: str = Field(min_length=1)
-    passed: bool
-    detail: str = Field(min_length=1)
-
-    def canonical_payload(self) -> dict[str, object]:
-        return self.model_dump(mode="json")
 
 
 class DomainExperimentConformance(BaseModel):
@@ -141,83 +136,6 @@ def _descriptor_integrity(
             "protocol axes and agency levels are declared by DomainReference"
             if ok
             else "protocol requests undeclared domain capabilities"
-        ),
-    )
-
-
-def _deterministic_world_construction(
-    left: tuple[ExperimentWorld, ...],
-    right: tuple[ExperimentWorld, ...],
-) -> ConformanceCheck:
-    left_hashes = tuple(world.world_hash for world in left)
-    right_hashes = tuple(world.world_hash for world in right)
-    ok = left_hashes == right_hashes and len(set(left_hashes)) == len(left_hashes)
-    return ConformanceCheck(
-        name="deterministic-world-construction",
-        passed=ok,
-        detail=(
-            f"{len(left_hashes)} unique worlds reproduce in identical order"
-            if ok
-            else "world construction is non-deterministic or duplicates identities"
-        ),
-    )
-
-
-def _exogenous_binding(
-    descriptor: DomainReferenceDescriptor,
-    worlds: tuple[ExperimentWorld, ...],
-) -> ConformanceCheck:
-    """Verify DOE coordinates without confusing interventions with DOE corruption."""
-
-    declared = {item.name for item in descriptor.parameters}
-    by_design: dict[int, list[ExperimentWorld]] = defaultdict(list)
-    for world in worlds:
-        by_design[world.design_index].append(world)
-
-    ok = True
-    for design_index in sorted(by_design):
-        group = by_design[design_index]
-        expected_point = dict(group[0].exogenous_parameters)
-        if not set(expected_point) <= declared:
-            ok = False
-            break
-
-        # Framework-owned arm/agency expansion must carry the same sampled point
-        # through every comparison world.
-        if any(dict(world.exogenous_parameters) != expected_point for world in group):
-            ok = False
-            break
-
-        # Only the baseline ModelSpec must equal the raw DOE point. Treatment
-        # ModelSpecs are expected to differ exactly because the framework applies
-        # the declared ModelIntervention after building the sampled point model.
-        baselines = [world for world in group if world.arm_id == "baseline"]
-        if not baselines:
-            ok = False
-            break
-        for world in baselines:
-            for name, expected in expected_point.items():
-                actual = world.model_spec.parameters.get(name)
-                if (
-                    isinstance(actual, bool)
-                    or not isinstance(actual, (int, float))
-                    or not isfinite(float(actual))
-                    or float(actual) != expected
-                ):
-                    ok = False
-                    break
-            if not ok:
-                break
-        if not ok:
-            break
-
-    return ConformanceCheck(
-        name="exogenous-binding",
-        passed=ok,
-        detail=(
-            "each design point is preserved across arms/agencies and binds the baseline ModelSpec"
-            if ok
-            else "DOE coordinates drift across worlds or fail baseline ModelSpec binding"
         ),
     )
 
@@ -345,35 +263,10 @@ def _ground_truth_integrity(
         world.world_hash: reference.observation(_execute(reference, plan, world))
         for world in _probe_worlds(worlds)
     }
-    ok = True
-    for world in worlds:
-        claims = reference.ground_truth(world)
-        ids = [claim.claim_id for claim in claims]
-        if not claims or len(ids) != len(set(ids)):
-            ok = False
-            break
-        if any(
-            claim.eligible and claim.ineligibility_reason is not None
-            for claim in claims
-        ):
-            ok = False
-            break
-        if any(
-            (not claim.eligible) and claim.ineligibility_reason is None
-            for claim in claims
-        ):
-            ok = False
-            break
-
-        observation = observations.get(world.world_hash)
-        if observation is not None and any(
-            claim.eligible
-            and claim.target_kind is GroundTruthTargetKind.METRIC
-            and claim.target_name not in observation.metrics
-            for claim in claims
-        ):
-            ok = False
-            break
+    ok = all(
+        _claims_valid(reference.ground_truth(world), observations.get(world.world_hash))
+        for world in worlds
+    )
 
     return ConformanceCheck(
         name="ground-truth-integrity",

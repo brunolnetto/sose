@@ -33,26 +33,13 @@ class ProspectiveEvidenceStateV2(BaseModel):
 
     @model_validator(mode="after")
     def validate_binding(self) -> "ProspectiveEvidenceStateV2":
-        if (
-            self.cohort.repository != self.protocol.repository
-            or self.cohort.registration_merged_at != self.protocol.registration_merged_at
-            or self.cohort.training_count != self.protocol.training_count
-            or self.cohort.holdout_count != self.protocol.holdout_count
-        ):
+        if not self._cohort_matches_protocol():
             raise ValueError("cohort configuration must match bound protocol")
-
+        self._validate_source_records()
         record_keys = {
             (record.repository, record.pr_number)
             for record in self.snapshot.records
         }
-        if any(record.repository != self.protocol.repository for record in self.snapshot.records):
-            raise ValueError("all source records must belong to the registered repository")
-        if any(
-            record.opened_at <= self.protocol.registration_merged_at
-            for record in self.snapshot.records
-        ):
-            raise ValueError("source records must open strictly after registration merge")
-
         enrolled = (
             *self.cohort.training_keys,
             *self.cohort.interstitial_keys,
@@ -63,6 +50,23 @@ class ProspectiveEvidenceStateV2(BaseModel):
         if len(enrolled) != len(enrolled_keys) or enrolled_keys != record_keys:
             raise ValueError("cohort partitions must partition every source snapshot record exactly once")
         return self
+
+    def _cohort_matches_protocol(self) -> bool:
+        return (
+            self.cohort.repository == self.protocol.repository
+            and self.cohort.registration_merged_at == self.protocol.registration_merged_at
+            and self.cohort.training_count == self.protocol.training_count
+            and self.cohort.holdout_count == self.protocol.holdout_count
+        )
+
+    def _validate_source_records(self) -> None:
+        if any(record.repository != self.protocol.repository for record in self.snapshot.records):
+            raise ValueError("all source records must belong to the registered repository")
+        if any(
+            record.opened_at <= self.protocol.registration_merged_at
+            for record in self.snapshot.records
+        ):
+            raise ValueError("source records must open strictly after registration merge")
 
     @property
     def protocol_hash(self) -> str:

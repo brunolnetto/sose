@@ -1,9 +1,7 @@
 from sose.backends.simpy import SimPyBackend
 from sose.examples.record_to_report.simulation import (
     ORIGIN,
-    adjustment_id,
     build_runtime,
-    ensure_adjustment,
     flow_correlation_id,
     post_adjustment,
     reconcile_close,
@@ -12,6 +10,8 @@ from sose.examples.record_to_report.simulation import (
     seed_reference,
     submit_and_post_journal,
 )
+from sose.examples.record_to_report.adjustments import ensure_adjustment
+from sose.examples.record_to_report.identity import adjustment_id
 from sose.persistence.memory import MemoryPersistence
 
 

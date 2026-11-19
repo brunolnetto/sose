@@ -10,11 +10,20 @@ import pytest
 
 from sose.organizational.agency import AgencyLevel
 from sose.organizational.domain_reference import (
-    AgencyCapabilitySpec, DomainReferenceDescriptor,
-    GroundTruthClaim, GroundTruthKind, GroundTruthTargetKind,
-    GroundTruthComparisonRule, GroundTruthComparisonKind,
-    _validate_json, _freeze_json, _thaw_json,
-    _is_repository_relative, _is_finite_number,
+    AgencyCapabilitySpec,
+    DomainReferenceDescriptor,
+    GroundTruthClaim,
+    GroundTruthKind,
+    GroundTruthTargetKind,
+    GroundTruthComparisonRule,
+    GroundTruthComparisonKind,
+    _is_repository_relative,
+)
+from sose.organizational.domain_reference_ground_truth import (
+    _validate_json,
+    _freeze_json,
+    _thaw_json,
+    _is_finite_number,
 )
 from sose.organizational.synthetic_queue_reference import QueueReferenceDomain
 

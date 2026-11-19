@@ -7,9 +7,8 @@ from sose.examples.telecom.simulation import (
     record_usage,
     schedule_activation,
     seed_reference,
-    subscription_service_id,
-    usage_record_id,
 )
+from sose.examples.telecom.foundation import subscription_service_id, usage_record_id
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 

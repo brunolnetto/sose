@@ -7,7 +7,8 @@ import sys
 
 import pytest
 
-from sose.cli import _close_persistence, main, run_cli
+from sose.cli import main, run_cli
+from sose.cli_validation import _close_persistence
 
 
 def _write_config(

@@ -12,6 +12,11 @@ from .runtime import (
     flow_correlation_id,
     maybe_episode,
 )
+from .procedure_steps import (  # noqa: F401
+    complete_procedure,
+    emergency_request_id,
+    preemption_result,
+)
 
 
 def queue_treatment_episode(
@@ -120,27 +125,6 @@ def ensure_emergency_episode(
     with persistence.transaction() as uow:
         uow.save_entity(emergency)
     return emergency
-
-
-def emergency_request_id(normal_episode_id: str) -> str:
-    return f"procedure-emergency:{normal_episode_id}:1"
-
-
-def preemption_result(
-    persistence: MemoryPersistence,
-    normal_episode_id: str,
-):
-    normal_request = f"procedure:{normal_episode_id}"
-    emergency_request = emergency_request_id(normal_episode_id)
-    return next(
-        (
-            result
-            for result in persistence.resource_preemption_results()
-            if result.displaced_request_id == normal_request
-            and result.preempting_request_id == emergency_request
-        ),
-        None,
-    )
 
 
 def _dispatch_emergency_start_if_waiting(
@@ -360,32 +344,6 @@ def complete_emergency_and_resume(
             ),
         )
     return episode(persistence, normal_episode_id).state == "in_progress"
-
-
-def complete_procedure(
-    persistence: MemoryPersistence,
-    engine: Engine,
-    backend: SimPyBackend,
-    *,
-    episode_id: str,
-) -> None:
-    current = episode(persistence, episode_id)
-    if current.state != "in_progress":
-        raise RuntimeError(f"procedure is not active: {current.state}")
-
-    dispatch(
-        engine,
-        current,
-        "complete",
-        key=("hospital-procedure", current.id, "complete"),
-        correlation_id=flow_correlation_id(
-            str(current.attributes["admission_id"])
-        ),
-    )
-    engine.preemptive_resources.withdraw(
-        backend,
-        f"procedure:{current.id}",
-    )
 
 
 def reconcile_scenario_emergency(
