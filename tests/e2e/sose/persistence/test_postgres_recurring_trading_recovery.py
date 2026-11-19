@@ -1,11 +1,16 @@
 """Executable restart-trigger contract for the Trading Company WM boundary.
 
 The one-shot customer demo is only a fixture; after death the *new worker* must
-read the authoritative SQLite-incremental records, with no remembered stage list.
+read the authoritative PostgreSQL records, with no remembered stage list.
+
+PostgreSQL policy-mode port of the deprecated SQLite recovery (#634); restart
+is a fresh PostgresPersistence connection on the same namespace.
 """
 from __future__ import annotations
 
 from datetime import timedelta
+import os
+from uuid import uuid4
 
 import pytest
 
@@ -13,20 +18,32 @@ from sose.composition import trading_company_customer as customer
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.examples.order_to_cash import simulation as o2c
 from sose.persistence.ownership import FencedEnginePersistence
-from sose.persistence.sqlite_incremental import (
-    SQLiteIncrementalPersistence,
-    StaleWriterError,
+from sose.core.resource_identity import ResourcePoolContract
+from sose.persistence.postgres import PostgresPersistence, StaleWriterError
+
+DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
+pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
+
+# Certified, but never issued by the customer demand path: every customer
+# effect keeps its historical (unmapped) admission semantics (#634).
+NEUTRAL_POLICY = {
+    "composition.post_replenishment_journal": ResourcePoolContract(
+        resource_type="journal_clerk", pool_id="recurring-trading-neutral",
+        scope="shared", capacity=1,
+    ),
+}
+
+
+@pytest.mark.parametrize(
+    "crash_point", ["pick_publish", "ack_before_business_effect", "dispatch_publish"],
 )
-
-
-@pytest.mark.parametrize("crash_point", ["pick_publish", "ack_before_business_effect", "dispatch_publish"])
 def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
-    tmp_path, monkeypatch, crash_point,
+    monkeypatch, crash_point,
 ):
-    path = tmp_path / "trading-recovery.sqlite3"
+    namespace = "recurring_trading_" + uuid4().hex[:12]
     held = []
     def store_factory():
-        store = SQLiteIncrementalPersistence(path)
+        store = PostgresPersistence(DSN, namespace=namespace)
         held.append(store)
         return store
 
@@ -64,7 +81,7 @@ def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
     monkeypatch.setattr(customer, "_publish", original_publish)
     monkeypatch.setattr(customer, "_execute_intent", original_execute)
 
-    recovered = SQLiteIncrementalPersistence(path)
+    recovered = PostgresPersistence(DSN, namespace=namespace)
     now = o2c.ORIGIN + timedelta(days=1)
     with recovered.transaction() as uow:
         correlations = {
@@ -76,6 +93,7 @@ def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
     owner_bindings = {next(iter(correlations)): "test-org-recurring-trading-recovery"}
     worker = TradingCustomerRecoveryRunner(
         organization_owners=owner_bindings,
+        resource_policies=NEUTRAL_POLICY, resource_organizations=owner_bindings,
         persistence=recovered, owner_id="new-worker",
         job_id="trading-pc6-recovery-test",
     )
@@ -121,17 +139,22 @@ def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
     assert again.actions == 0
     no_work = worker.run_trigger(trigger_id="scheduled-0002", now=now + timedelta(minutes=1))
     assert no_work.actions == 0
-    assert original == tuple((e.entity_type, e.id, e.state, e.version) for e in recovered.entities())
+    assert original == tuple(
+        (e.entity_type, e.id, e.state, e.version) for e in recovered.entities()
+    )
     assert recovered.job_state("trading-pc6-recovery-test").next_tick == 2
     recovered.close()
 
 
-def test_stale_composition_writer_cannot_commit_after_recovery_trigger(tmp_path):
-    path = tmp_path / "fenced-recovery.sqlite3"
-    persistence = SQLiteIncrementalPersistence(path)
+def test_stale_composition_writer_cannot_commit_after_recovery_trigger():
+    namespace = "fenced_recovery_" + uuid4().hex[:12]
+    persistence = PostgresPersistence(DSN, namespace=namespace)
     old = persistence.claim_writer("worker-old", expected_epoch=persistence.writer_epoch())
     worker = TradingCustomerRecoveryRunner(
         persistence=persistence, owner_id="worker-new", job_id="empty-composition",
+        resource_policies=NEUTRAL_POLICY,
+        # Explicit fixture binding; no flow exists on this empty ledger.
+        resource_organizations={"empty-composition-fixture": "test-org-empty-composition"},
     )
     first = worker.run_scheduled_trigger(scheduled_for=o2c.ORIGIN)
     assert first.actions == 0
