@@ -244,7 +244,10 @@ def verify_time_ledger(uow, actor) -> None:
     Residual (#545): the store does not bind an appended event's owner_id to
     the writing transaction, so another owner can append a fully forged
     origin at an untracked actor's origin ID. That locks the actor (fails
-    closed, writes nothing) but cannot fabricate tracked history; closing it
+    closed, writes nothing) and cannot alter an already-tracked actor's
+    history. Combined with the power to rewrite an untracked actor's record,
+    it can however enroll that actor as tracked from a forged clean state —
+    the same record-edit exposure untracked actors already have. Closing it
     needs store-level issuer authorization. Constant number of keyed reads; no
     event-log enumeration or deep copy.
     """

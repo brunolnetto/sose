@@ -100,8 +100,11 @@ the marker together with rewriting the claimed owner is still caught.
 **Residual store-level limit (#545):** `append_event` does not bind an event's
 `owner_id` to the writing transaction, so another owner can append a fully
 forged origin at an untracked actor's origin ID. That locks the actor: its
-transitions fail closed and write nothing, but no tracked history can be
-fabricated. Closing it needs store-level issuer authorization. Buckets are
+transitions fail closed and write nothing, and an already-tracked actor's
+history cannot be altered. Together with the power to rewrite an untracked
+actor's record, a forged origin can enroll that actor as tracked from a forged
+clean state (the same record-edit exposure untracked actors already have).
+Closing it needs store-level issuer authorization. Buckets are
 compared by present key with missing keys meaning zero, so adding a lifecycle
 state later does not invalidate stored actors.
 
