@@ -33,7 +33,7 @@ import json
 from sose.core.events import DomainEvent
 from sose.core.identity import deterministic_id
 from sose.domain.entity import Entity
-from sose.organizational.od3_decisions import _utc
+from sose.organizational.queue_decisions import _utc
 
 ANCHOR_EVENT = "od3.queue_anchored"
 EFFECT_EVENT = "od3.queue_effect_applied"

@@ -4,7 +4,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sose.organizational.od3_decisions import (
+from sose.organizational.queue_decisions import (
     QueuedWork, OD3Policy, decide_od3, persist_od3_decision,
 )
 from sose.persistence.memory import MemoryPersistence

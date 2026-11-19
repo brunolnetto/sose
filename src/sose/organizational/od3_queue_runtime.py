@@ -14,7 +14,7 @@ from dataclasses import replace
 from sose.core.events import DomainEvent
 from sose.core.identity import deterministic_id
 from sose.domain.entity import Entity
-from sose.organizational.od3_decisions import (
+from sose.organizational.queue_decisions import (
     OD3Policy, QueuedWork, _utc, decide_od3, od3_decision_event,
 )
 from sose.organizational.od3_queue_ledger import (
