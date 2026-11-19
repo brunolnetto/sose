@@ -92,6 +92,35 @@ class Engine:
             from sose.domain.delivery import DomainDelivery
             uow.save_domain_delivery(DomainDelivery(mutation))
 
+    def _apply_transition(self, uow, entity: Entity, command: Command) -> None:
+        """Run one StateChart command and record (and optionally attest) it."""
+        authority = self.transition_authority
+        if authority is not None and self.context.pending_events:
+            raise ValueError("cannot attest preexisting pending source events")
+        before_transition = deepcopy(entity)
+        chart = self.context.statecharts.bind(entity, caused_by=command)
+        predecessor = None
+        if authority is not None:
+            predecessor = authority.validate_prestate(
+                uow=uow, before=before_transition, chart=chart, owner_id=self.owner_id,
+            )
+        chart.send(command.name, **dict(command.payload))
+        self._save_entity(uow, entity)
+        emitted = self.context.drain_events()
+        if authority is not None and (
+            len(emitted) != 1 or emitted[0].name != "entity.state_transition"
+        ):
+            raise ValueError("attested dispatch requires exactly one recorder-produced transition")
+        for event in emitted:
+            uow.append_event(event)
+            if authority is not None:
+                uow.append_event(authority.seal(
+                    before=before_transition, after=entity, event=event,
+                    command=command, predecessor=predecessor,
+                ))
+            self.context.scenarios.on_event(event)
+        uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
+
     def dispatch(self, command: Command) -> None:
         if command.owner_id != self.owner_id:
             raise PermissionError("command belongs to a different or missing owner")
@@ -105,31 +134,7 @@ class Engine:
                 if self.context.statecharts is None:  # pragma: no cover - constructor invariant
                     raise RuntimeError("statechart factory is not configured")
 
-                if self.transition_authority is not None and self.context.pending_events:
-                    raise ValueError("cannot attest preexisting pending source events")
-                before_transition = deepcopy(entity)
-                chart = self.context.statecharts.bind(entity, caused_by=command)
-                if self.transition_authority is not None:
-                    self.transition_authority.validate_prestate(
-                        uow=uow, before=before_transition, chart=chart,
-                        owner_id=self.owner_id,
-                    )
-                chart.send(command.name, **dict(command.payload))
-                self._save_entity(uow, entity)
-                emitted = self.context.drain_events()
-                if self.transition_authority is not None and (
-                    len(emitted) != 1 or emitted[0].name != "entity.state_transition"
-                ):
-                    raise ValueError("attested dispatch requires exactly one recorder-produced transition")
-                for event in emitted:
-                    uow.append_event(event)
-                    if self.transition_authority is not None and event.name == "entity.state_transition":
-                        uow.append_event(self.transition_authority.seal(
-                            before=before_transition, after=entity,
-                            event=event, command=command,
-                        ))
-                    self.context.scenarios.on_event(event)
-                uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
+                self._apply_transition(uow, entity, command)
         except Exception:
             self.context.scenarios.restore_state(scenario_before)
             raise
@@ -164,31 +169,7 @@ class Engine:
         if self.context.statecharts is None:  # pragma: no cover - constructor invariant
             raise RuntimeError("statechart factory is not configured")
 
-        if self.transition_authority is not None and self.context.pending_events:
-            raise ValueError("cannot attest preexisting pending source events")
-        before_transition = deepcopy(entity)
-        chart = self.context.statecharts.bind(entity, caused_by=command)
-        if self.transition_authority is not None:
-            self.transition_authority.validate_prestate(
-                uow=uow, before=before_transition, chart=chart,
-                owner_id=self.owner_id,
-            )
-        chart.send(command.name, **dict(command.payload))
-        self._save_entity(uow, entity)
-        emitted = self.context.drain_events()
-        if self.transition_authority is not None and (
-            len(emitted) != 1 or emitted[0].name != "entity.state_transition"
-        ):
-            raise ValueError("attested dispatch requires exactly one recorder-produced transition")
-        for event in emitted:
-            uow.append_event(event)
-            if self.transition_authority is not None and event.name == "entity.state_transition":
-                uow.append_event(self.transition_authority.seal(
-                    before=before_transition, after=entity,
-                    event=event, command=command,
-                ))
-            self.context.scenarios.on_event(event)
-        uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
+        self._apply_transition(uow, entity, command)
 
         uow.delete_scheduled_work(work.work_id)
         uow.delete_command(command.command_id)
