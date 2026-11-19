@@ -5,9 +5,11 @@ Only an Engine explicitly configured with a separately provisioned secret may
 attest actual execution. The key must NOT be persisted in a DomainEvent,
 UnitOfWork or the simulation dataset. This does not itself provide DB roles.
 
-Receipts form a per-owner, per-entity linked chain: each one signs its
-predecessor receipt id and a digest of the resulting entity attributes, so
-Engine authenticates a predecessor in O(1) store reads. Enabling an authority
+Receipts form a per-entity linked chain with one receipt id per entity
+version (independent of owner): each signs its predecessor receipt id and a
+digest of the resulting entity attributes, so Engine authenticates a
+predecessor with a constant number of event-id lookups and no log
+enumeration or copy (lookup cost itself is adapter-specific). Enabling an authority
 on entities that already have unsigned (version > 0) history fails closed;
 there is no re-anchoring procedure for such entities.
 """
@@ -131,7 +133,7 @@ class TransitionAuthority:
         }
         signature = hmac_new(self.secret, _encoded(claims), sha256).hexdigest()
         return DomainEvent(
-            event_id=_receipt_id(event.owner_id, after.entity_type, after.id, after.version),
+            event_id=_receipt_id(after.entity_type, after.id, after.version),
             name=ATTESTATION_EVENT, entity_type=event.entity_type,
             entity_id=event.entity_id, occurred_at=event.occurred_at,
             tick=event.tick, owner_id=event.owner_id,
@@ -148,16 +150,25 @@ class TransitionAuthority:
         Engine passes it to :meth:`seal`, which signs its id into the new
         receipt. Every sealed receipt therefore names its predecessor, and is
         only issued after that predecessor was itself validated here. So the
-        check is O(1) in the size of the event log: it reads the receipt for
-        the current version and the (absent) receipt for the next one by their
-        deterministic, owner-qualified IDs, never ``uow.events()``.
+        check needs a constant number of ``get_event`` id lookups (the receipt
+        for the current version, the absent one for the next version, and the
+        head's source event) and no log enumeration or copy via
+        ``uow.events()``. Lookup cost is adapter-specific: the shared
+        in-memory UoW still scans its working log inside ``get_event``.
 
         A genuinely signed latest receipt alone is insufficient: an older
         unauthorized UoW write might skip versions 1-2 and still obtain a
         signature over version 3. Such a receipt has no predecessor link and
-        is rejected. Only receipts sealed for ``owner_id`` count; another
-        owner's ``entity.state_transition`` events for the same entity key are
-        ignored and cannot block or advance this owner's chain.
+        is rejected. Receipt ids are per entity version and owner-independent:
+        a version already claimed by ANY owner's receipt blocks every owner
+        (no fork after a rewind), while only a head receipt sealed for
+        ``owner_id`` can anchor this owner's next transition. Another owner's
+        plain ``entity.state_transition`` events are ignored.
+
+        Accepted fail-closed denial of service: a public writer that appends
+        any event under the next receipt id, or a conflicting event under an
+        existing one, blocks attested dispatch for that entity. Nothing is
+        written in that case; integrity is preserved, availability is not.
 
         Enabling the authority on an entity with existing unsigned history
         fails closed: a version above zero without this owner's anchored
@@ -169,7 +180,7 @@ class TransitionAuthority:
             raise ValueError("unauthenticated prestate: invalid entity version")
         initial = _initial_states(chart)
         successor = uow.get_event(_receipt_id(
-            owner_id, before.entity_type, before.id, before.version + 1,
+            before.entity_type, before.id, before.version + 1,
         ))
         if before.version == 0:
             if before.state not in initial or successor is not None:
@@ -180,9 +191,7 @@ class TransitionAuthority:
             return None
         if successor is not None:
             raise ValueError("trusted predecessor version replayed")
-        head = uow.get_event(_receipt_id(
-            owner_id, before.entity_type, before.id, before.version,
-        ))
+        head = uow.get_event(_receipt_id(before.entity_type, before.id, before.version))
         if head is None:
             raise ValueError("trusted predecessor history incomplete")
         source = uow.get_event(head.causation_id)
@@ -242,17 +251,19 @@ class TransitionAuthority:
         if not compare_digest(mac, expected):
             raise ValueError("authenticated StateChart receipt signature invalid")
         if _evidence_mismatch(data, event) or receipt.event_id != _receipt_id(
-            event.owner_id, event.entity_type, event.entity_id, data["to_version"],
+            event.entity_type, event.entity_id, data["to_version"],
         ):
             raise ValueError("authenticated StateChart receipt evidence contradicts event")
         return data
 
 
-def _receipt_id(owner_id: str, entity_type: str, entity_id: str, version: int) -> str:
-    """Owner-qualified receipt identity: at most one receipt per entity version."""
-    return deterministic_id(
-        "engine-attested-transition", owner_id, entity_type, entity_id, version,
-    )
+def _receipt_id(entity_type: str, entity_id: str, version: int) -> str:
+    """Owner-independent receipt identity: one receipt per entity version.
+
+    Entities are not owner-scoped, so a version claimed by any owner's receipt
+    is claimed for every owner; this prevents a fork after a projection rewind.
+    """
+    return deterministic_id("engine-attested-transition", entity_type, entity_id, version)
 
 
 def _attributes_sha256(entity: Entity) -> str:
@@ -272,7 +283,7 @@ def _predecessor_claim(before: Entity, event: DomainEvent,
     """Return the predecessor receipt id to sign, refusing a mismatched link."""
     if predecessor is None:
         return None
-    expected = _receipt_id(event.owner_id, before.entity_type, before.id, before.version)
+    expected = _receipt_id(before.entity_type, before.id, before.version)
     if (
         predecessor.event_id != expected
         or predecessor.payload.get("to_version") != before.version
@@ -319,10 +330,10 @@ def _evidence_mismatch(data: dict, event: DomainEvent) -> bool:
 
 def _require_anchored(claims: dict, before: Entity, initial: set[str], owner_id: str) -> None:
     """The head receipt must link to the previous version, or start at the chart root."""
+    if claims["owner_id"] != owner_id:
+        raise ValueError("trusted predecessor has foreign owner")
     version = before.version
-    expected = None if version == 1 else _receipt_id(
-        owner_id, before.entity_type, before.id, version - 1,
-    )
+    expected = None if version == 1 else _receipt_id(before.entity_type, before.id, version - 1)
     if claims.get("predecessor_receipt_id") != expected:
         raise ValueError("trusted predecessor chain has missing version")
     if version == 1 and claims["from_state"] not in initial:

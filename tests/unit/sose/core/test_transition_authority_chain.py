@@ -174,7 +174,7 @@ def test_foreign_owner_receipt_cannot_anchor_this_owner(store):
         uow.append_event(event)
         uow.append_event(receipt)
 
-    _rejects(store, order, "start_pick", "trusted predecessor history incomplete")
+    _rejects(store, order, "start_pick", "trusted predecessor has foreign owner")
 
 
 def test_replayed_version_after_rewind_is_rejected(store):
@@ -247,3 +247,42 @@ def test_seal_refuses_mismatched_predecessor_link(store):
     linked = ROOT.seal(before=picking, after=packed, event=event, command=command,
                        predecessor=second)
     assert linked.payload["predecessor_receipt_id"] == second.event_id
+
+
+def _rollback_to_requested(store, order):
+    _rewrite(store, order, state="requested", version=0, updated_at=NOW, attributes={})
+
+
+def test_other_owner_cannot_fork_history_after_projection_rollback(store):
+    """Same authority, two owners: B must not sign v1 over A's v1..v3."""
+    order = _seed(store)
+    runtime = _engine(store)
+    for step in ("allocate", "start_pick", "pack"):
+        runtime.dispatch(_command(step, order.id))
+    _rollback_to_requested(store, order)
+    recorded = tuple(store.events())
+    with pytest.raises(ValueError, match="version-zero entity"):
+        _engine(store, owner=FOREIGN).dispatch(_command("allocate", order.id, owner=FOREIGN))
+    assert tuple(store.events()) == recorded
+    assert store.entity(order.entity_type, order.id).version == 0
+
+
+@pytest.mark.parametrize("version", (0, 1))
+def test_junk_event_at_next_receipt_id_fails_closed(store, version):
+    """Accepted DoS: a public writer can block, but never advance, the chain."""
+    order = _seed(store)
+    if version:
+        _engine(store).dispatch(_command("allocate", order.id))
+    junk = DomainEvent(
+        event_id=deterministic_id(
+            "engine-attested-transition", order.entity_type, order.id, version + 1,
+        ),
+        name="public.junk", entity_type=order.entity_type, entity_id=order.id,
+        occurred_at=NOW, tick=0, owner_id=OWNER, payload={},
+    )
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.append_event(junk)
+    before = store.entity(order.entity_type, order.id)
+    step = "start_pick" if version else "allocate"
+    _rejects(store, order, step, "version-zero entity|trusted predecessor version replayed")
+    assert store.entity(order.entity_type, order.id) == before
