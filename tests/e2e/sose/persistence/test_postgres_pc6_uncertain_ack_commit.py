@@ -6,7 +6,6 @@ No post-failure application success is inferred from a client exception.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
 from datetime import timedelta
 from hashlib import sha256
 import json
@@ -14,7 +13,6 @@ import os
 from pathlib import Path
 import subprocess
 import sys
-import time
 from uuid import uuid4
 
 import pytest
