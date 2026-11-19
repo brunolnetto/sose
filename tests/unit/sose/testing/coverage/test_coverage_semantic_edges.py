@@ -431,19 +431,21 @@ def test_scenario_effect_and_scenario_validation():
 
 def test_legacy_scenario_rule_short_circuits_and_decides():
     calls = []
-    false_rule = ScenarioRule(
-        "false",
-        lambda entity, context: False,
-        lambda entity, context: calls.append("decide") or "go",
-    )
+    with pytest.warns(DeprecationWarning, match="ScenarioRule is deprecated"):
+        false_rule = ScenarioRule(
+            "false",
+            lambda entity, context: False,
+            lambda entity, context: calls.append("decide") or "go",
+        )
     assert false_rule.evaluate(ENTITY, SimpleNamespace()) is None
     assert calls == []
 
-    true_rule = ScenarioRule(
-        "true",
-        lambda entity, context: True,
-        lambda entity, context: "go",
-    )
+    with pytest.warns(DeprecationWarning, match="ScenarioRule is deprecated"):
+        true_rule = ScenarioRule(
+            "true",
+            lambda entity, context: True,
+            lambda entity, context: "go",
+        )
     assert true_rule.evaluate(ENTITY, SimpleNamespace()) == "go"
 
 

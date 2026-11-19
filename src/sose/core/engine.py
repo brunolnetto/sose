@@ -10,7 +10,7 @@ from sose.domain.entity_store import WarehouseBackedEntityStore
 from sose.core.identity import deterministic_id
 from sose.persistence.base import Persistence
 from sose.scenarios.model import Scenario
-from sose.scenarios.rules import ScenarioRule
+from sose.scenarios.rules import ScenarioRule, warn_rule_hook
 
 from .context import SimulationContext
 from .durable import (
@@ -62,6 +62,8 @@ class Engine:
             if domain_warehouse is not None
             else None
         )
+        if rules_for is not None:
+            warn_rule_hook("Engine(rules_for=...)")
         self.rules_for = rules_for or (lambda _: ())
         self.resources = DurableResourceManager(persistence)
         self.preemptive_resources = DurablePreemptiveResourceManager(persistence)
@@ -313,7 +315,9 @@ class Engine:
         """Evaluate scenario policies and dispatch resulting commands.
 
         Scenario rules choose valid intentions; they never mutate entity state directly.
+        Deprecated with ``ScenarioRule`` in 0.11.0, removed in 0.12.0.
         """
+        warn_rule_hook("Engine.evaluate_entity")
         for rule in self.rules_for(entity.entity_type):
             command_name = rule.evaluate(entity, self.context)
             if command_name:
@@ -348,9 +352,6 @@ class Engine:
         position_before = self.persistence.simulation_position(owner_id=self.owner_id)
         execution_sequence = (
             0 if position_before is None else position_before.execution_sequence
-        )
-        committed_sequence = (
-            0 if position_before is None else position_before.committed_sequence
         )
 
         try:
