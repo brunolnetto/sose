@@ -12,7 +12,7 @@ from hashlib import sha256
 from json import dumps
 
 from sose.core.identity import deterministic_id
-from sose.organizational.od2_actor import (
+from sose.organizational.actor_lifecycle import (
     ACTOR_KIND, ActorAvailabilityCalendar, ActorAvailabilityInterval,
 )
 

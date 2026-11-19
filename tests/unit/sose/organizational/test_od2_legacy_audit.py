@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from sose.core.identity import deterministic_id
-from sose.organizational.od2_actor import (
+from sose.organizational.actor_lifecycle import (
     ACTOR_KIND, ActorAvailabilityCalendar, ActorAvailabilityInterval, seed_actor,
     transition_actor,
 )

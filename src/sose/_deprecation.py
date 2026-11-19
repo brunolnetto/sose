@@ -44,3 +44,17 @@ def warn_deprecated(
         DeprecationWarning,
         stacklevel=stacklevel,
     )
+
+
+def persisted_module(module_name: str) -> Callable[[type], type]:
+    """Class decorator: keep a moved class's codec path (``module:Name``) at its old module.
+
+    Persisted records name their class by ``__module__``; renaming a module must not
+    change that identifier (ADR-0011 point 5). The old module must keep serving the class.
+    Apply it outermost, after ``@dataclass`` has resolved annotations in the real module.
+    """
+    def keep(cls: type) -> type:
+        cls.__module__ = module_name
+        return cls
+
+    return keep

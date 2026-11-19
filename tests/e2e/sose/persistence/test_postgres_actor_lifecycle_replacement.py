@@ -17,12 +17,12 @@ from uuid import uuid4
 import pytest
 
 from sose.core.identity import deterministic_id
-from sose.organizational.od2_actor import (
+from sose.organizational.actor_lifecycle import (
     ACTOR_KIND, ActorAvailabilityCalendar, ActorAvailabilityInterval,
     seed_actor, transition_actor,
 )
 from sose.persistence.postgres import PostgresPersistence
-from tests.e2e.sose.persistence.test_postgres_od2_actor_concurrency import (
+from tests.e2e.sose.persistence.test_postgres_actor_lifecycle_concurrency import (
     OWNER, PEER_OWNER, MODEL, T0, _enroll, _assign,
 )
 
