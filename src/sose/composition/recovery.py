@@ -78,11 +78,11 @@ class TradingCustomerRecoveryRunner:
     def __post_init__(self) -> None:
         validate_recovery_runner(self)
         if self.resource_policies is None:
-            # #634: recovery without a physical resource ledger goes away in 0.10.
+            # #634: recovery without a physical resource ledger goes away in 0.11.
             # helper -> __post_init__ -> dataclass __init__ -> constructing caller
             warn_deprecated(
                 "TradingCustomerRecoveryRunner without resource_policies",
-                since="0.9.0", removed_in="0.10.0",
+                since="0.9.0", removed_in="0.11.0",
                 instead=("pass resource_policies and resource_organizations "
                          "(PostgreSQL-backed recovery)"),
                 stacklevel=4,
@@ -178,7 +178,7 @@ class TradingCustomerRecoveryRunner:
 
         lease_clock = observed_at if observed_at is not None else now
         if self.resource_policies is None:
-            # Deprecated policy-less mode (#634, removed in 0.10): overrides of this
+            # Deprecated policy-less mode (#634, removed in 0.11): overrides of this
             # older hook accept only 'now'; keep their call contract until then.
             actions = self._run_bounded(store, now=lease_clock)
         else:

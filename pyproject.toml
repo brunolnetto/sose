@@ -64,7 +64,7 @@ markers = [
 ]
 addopts = "-p tests.support.pytest_auto_postgres"
 filterwarnings = [
-    # Existing suites still exercise policy-less recovery until its 0.9 removal (#634);
+    # Existing suites still exercise policy-less recovery until its 0.11 removal (#634);
     # tests/unit/sose/composition/test_recovery_deprecation.py asserts the warning itself.
     "ignore:TradingCustomerRecoveryRunner without resource_policies:DeprecationWarning",
     # Fixtures that publish untyped caused messages on purpose (#644, removed in 0.10);

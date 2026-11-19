@@ -45,7 +45,7 @@ def build_parser() -> argparse.ArgumentParser:
     store = recovery.add_mutually_exclusive_group(required=True)
     store.add_argument(
         "--sqlite",
-        help="Authoritative SQLite DB path (deprecated: policy-less recovery, removed in 0.10).",
+        help="Authoritative SQLite DB path (deprecated: policy-less recovery, removed in 0.11).",
     )
     store.add_argument("--postgres-dsn", help="Authoritative PostgreSQL DSN.")
     recovery.add_argument("--namespace", default="sose", help="PostgreSQL namespace.")
