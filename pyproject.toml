@@ -67,9 +67,6 @@ filterwarnings = [
     # Existing suites still exercise policy-less recovery until its 0.9 removal (#634);
     # tests/unit/sose/composition/test_recovery_deprecation.py asserts the warning itself.
     "ignore:TradingCustomerRecoveryRunner without resource_policies:DeprecationWarning",
-    # Global-writer-only fakes in the jobs edge tests (#637, removed in 0.10);
-    # tests/unit/sose/jobs/test_persistent_scoped_runner.py asserts the warning itself.
-    "ignore:PersistentJobRunner on persistence without scoped writers:DeprecationWarning",
     # Fixtures that publish untyped caused messages on purpose (#644, removed in 0.10);
     # tests/unit/sose/composition/test_typed_causation_644.py asserts the warning itself.
     "ignore:publishing a boundary message whose causation_id has no causation_kind:DeprecationWarning",
