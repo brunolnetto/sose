@@ -17,7 +17,7 @@ from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
-from sose.organizational.od4_command_lineage import verify_original_management_commands
+from sose.organizational.work_command_lineage import verify_original_management_commands
 from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.domain.entity import Entity
