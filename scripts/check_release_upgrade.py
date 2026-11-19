@@ -1,8 +1,9 @@
 """Release gate: durable state written by the previous minor's wheel upgrades to this one.
 
-Builds the previous minor from a git ref, writes a tutorial job that is mid-flight (started,
-completion scheduled), migrates the database with this release's ``sose migrate-owners``
-(ADR-0009: SOSE <= 0.8 data is unowned) and finishes the job with this release's runtime.
+Builds the previous minor from a git ref and writes a tutorial job that is mid-flight
+(started, completion scheduled). If this release refuses the database as unowned
+(SOSE <= 0.8, ADR-0009) it is migrated with ``sose migrate-owners``; otherwise it is
+opened directly. This release's runtime must then finish the job.
 
 usage: check_release_upgrade.py --previous-ref <git ref> --wheel <this release's wheel>
 """
@@ -15,23 +16,42 @@ import sys
 import tempfile
 from pathlib import Path
 
+OWNER = "upgrade"
+
+# Works against any previous minor: pass owner_id only where that API takes it.
 WRITE_PREVIOUS = """
-import json, sys
+import inspect, json, sys
 from datetime import timedelta
 from sose.backends.simpy import SimPyBackend
 from sose.examples.tutorial_job.simulation import (
     ORIGIN, build_runtime, seed_job, start_and_schedule_completion,
 )
 from sose.persistence.sqlite import SQLitePersistence
+owner = sys.argv[2]
+def owned(function):
+    return {"owner_id": owner} if "owner_id" in inspect.signature(function).parameters else {}
 persistence = SQLitePersistence(sys.argv[1])
-job = seed_job(persistence)
-_, engine = build_runtime(persistence)
+job = seed_job(persistence, **owned(seed_job))
+_, engine = build_runtime(persistence, **owned(build_runtime))
 engine.rebuild_backend(SimPyBackend(origin=ORIGIN))
 start_and_schedule_completion(
     persistence, engine, job_id=job.id, complete_at=ORIGIN + timedelta(hours=2),
 )
 assert persistence.entity("tutorial_job", job.id).state == "running"
 print(json.dumps({"job_id": job.id}))
+"""
+
+# Unowned (SOSE <= 0.8) databases are refused explicitly and must be migrated first.
+NEEDS_MIGRATION = """
+import sys
+from sose.persistence.sqlite import SQLitePersistence
+from sose.persistence.sqlite_migrations import LegacyUnownedSnapshotError
+try:
+    SQLitePersistence(sys.argv[1]).close()
+except LegacyUnownedSnapshotError:
+    print("yes")
+else:
+    print("no")
 """
 
 FINISH_CURRENT = """
@@ -84,15 +104,20 @@ def main() -> None:
         root = Path(tmp)
         previous = venv_with(build_previous_wheel(args.previous_ref, root), root, "previous")
         current = venv_with(args.wheel.resolve(), root, "current")
-        old_db, new_db, owner = root / "previous.sqlite3", root / "upgraded.sqlite3", "upgrade"
-        job_id = json.loads(run(str(previous), "-c", WRITE_PREVIOUS, str(old_db)))["job_id"]
-        report = json.loads(run(
-            str(current.parent / "sose"), "migrate-owners", "--sqlite", str(old_db),
-            "--output", str(new_db), "--owner", owner,
-        ))
-        print(f"migrated {report['owned_records']} records; digest {report['semantic_digest']}")
-        print(run(str(current), "-c", FINISH_CURRENT, str(new_db), job_id, owner).strip())
-
+        old_db = root / "previous.sqlite3"
+        job_id = json.loads(run(str(previous), "-c", WRITE_PREVIOUS, str(old_db), OWNER))["job_id"]
+        database = old_db
+        if run(str(current), "-c", NEEDS_MIGRATION, str(old_db)).strip() == "yes":
+            database = root / "upgraded.sqlite3"
+            report = json.loads(run(
+                str(current.parent / "sose"), "migrate-owners", "--sqlite", str(old_db),
+                "--output", str(database), "--owner", OWNER,
+            ))
+            print(f"migrated {report['owned_records']} records; "
+                  f"digest {report['semantic_digest']}")
+        else:
+            print("previous minor's database opens directly (already owner-qualified)")
+        print(run(str(current), "-c", FINISH_CURRENT, str(database), job_id, OWNER).strip())
 
 if __name__ == "__main__":
     main()

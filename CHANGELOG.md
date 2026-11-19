@@ -4,6 +4,32 @@
 
 Nothing yet.
 
+## 0.10.0 — 2026-11-19
+
+Release note: `docs/releases/v0.10.0.md`. This release completes the ADR-0011
+deprecation cycle started in 0.9.0. One window was extended instead.
+
+### Removed (deprecated in 0.9.0)
+
+- Names moved by the quality-ratchet splits can no longer be imported from the
+  module they were split out of. Import them from the module that defines them,
+  which each 0.9 warning named (#632, #649).
+- `PersistentJobRunner` requires job-scoped writers: `scoped_writer_epoch`,
+  `claim_scoped_writer` and `transaction(writer_scope=...)`. Persistence without
+  them raises `TypeError`. SQLite and PostgreSQL provide them (#637, #650).
+- Publishing a new boundary message that has a `causation_id` but no
+  `causation_kind` raises `ValueError`. Untyped messages already durable stay
+  readable and still satisfy re-derivation (#644, #652).
+
+### Changed
+
+- The #634 deprecation window is **extended to 0.11.0**: policy-less
+  `TradingCustomerRecoveryRunner` and the SQLite path of `sose composition-recovery`.
+  The roughly 75 recovery tests that use it are ported to PostgreSQL first.
+  ADR-0011 gains an amendment allowing (never shortening) extensions (#651).
+- The release upgrade gate works for any previous minor: it migrates unowned
+  databases and opens owner-qualified ones directly. It now starts from `v0.9.0`.
+
 ## 0.9.0 — 2026-11-18
 
 Release note and compatibility contract: `docs/releases/v0.9.0.md`.
