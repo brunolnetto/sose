@@ -1,7 +1,6 @@
 """ADR-0011 deprecated re-export helper, and the completed #632 removal."""
 from __future__ import annotations
 
-import importlib
 import types
 import warnings
 
