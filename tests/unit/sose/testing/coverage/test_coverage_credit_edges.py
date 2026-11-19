@@ -8,6 +8,9 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.credit_loans.entities import Payment
 from sose.examples.credit_loans import simulation as credit
 from sose.persistence.memory import MemoryPersistence
+from sose.examples.credit_loans.simulation_delinquency import ensure_delinquency
+from sose.examples.credit_loans.simulation_origination import ensure_loan
+from sose.examples.credit_loans.simulation_runtime import _entity, payment_id
 
 REFERENCE_OWNER_ID = "credit-reference-organization"
 
@@ -52,7 +55,7 @@ def test_credit_money_and_seed_validation_edges():
 
 def test_credit_entity_lookup_fails_loudly_for_missing_durable_state():
     with pytest.raises(RuntimeError, match="loan was not persisted: missing"):
-        credit._entity(MemoryPersistence(), "loan", "missing")
+        _entity(MemoryPersistence(), "loan", "missing")
 
 
 def test_underwriting_returns_pending_when_credit_analyst_is_busy():
@@ -99,7 +102,7 @@ def test_loan_creation_rejects_rejected_credit_decision():
         RuntimeError,
         match="loan creation requires approved application and credit decision",
     ):
-        credit.ensure_loan(persistence, engine, entities=entities)
+        ensure_loan(persistence, engine, entities=entities)
 
 
 def test_disbursement_reschedule_uses_now_for_already_due_installment():
@@ -210,7 +213,7 @@ def _save_payment(
     state: str,
 ):
     payment = Payment(
-        id=credit.payment_id(installment_id_value, ordinal),
+        id=payment_id(installment_id_value, ordinal),
         state=state,
         version=1,
         attributes={
@@ -285,7 +288,7 @@ def test_delinquency_requires_overdue_installment():
     backend.run_until(due_dates[0])
 
     with pytest.raises(RuntimeError, match="delinquency requires overdue installment"):
-        credit.ensure_delinquency(
+        ensure_delinquency(
             persistence,
             engine,
             installment_id_value=first_id,

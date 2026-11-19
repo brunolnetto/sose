@@ -86,24 +86,8 @@ def cards_payments_projection(
     dispute_key = _dispute_entity_id()
     dispute = persistence.entity("payment_dispute", dispute_key)
     events = _process_events(persistence, payment_id=payment.id)
-    settlement_events = tuple(
-        event
-        for event in events
-        if event.entity_type == "card_payment"
-        and event.payload.get("to_state") == "settled"
-    )
-    settlement_event = (
-        min(settlement_events, key=lambda event: event.occurred_at)
-        if settlement_events
-        else None
-    )
-
-    settlement_lead_time_seconds = None
-    if payment.created_at is not None and settlement_event is not None:
-        settlement_lead_time_seconds = max(
-            0.0,
-            (settlement_event.occurred_at - payment.created_at).total_seconds(),
-        )
+    settlement_event = _first_settlement(events)
+    settlement_lead_time_seconds = _elapsed_seconds(payment.created_at, settlement_event)
 
     terminal_outcome = (
         payment.state if payment.state in _PAYMENT_TERMINAL_OUTCOMES else None
@@ -114,9 +98,9 @@ def cards_payments_projection(
 
     return CardsPaymentsProjection(
         payment_id=payment.id,
-        dispute_id=dispute.id if dispute is not None else None,
+        dispute_id=_optional_attr(dispute, "id"),
         payment_state=payment.state,
-        dispute_state=dispute.state if dispute is not None else None,
+        dispute_state=_optional_attr(dispute, "state"),
         amount=float(payment.attributes["amount"]),
         currency=str(payment.attributes["currency"]),
         settled=settlement_event is not None,
@@ -125,6 +109,26 @@ def cards_payments_projection(
         dispute_open=dispute_open,
         settlement_lead_time_seconds=settlement_lead_time_seconds,
     )
+
+
+def _first_settlement(events):
+    settlements = tuple(
+        event
+        for event in events
+        if event.entity_type == "card_payment"
+        and event.payload.get("to_state") == "settled"
+    )
+    return min(settlements, key=lambda event: event.occurred_at) if settlements else None
+
+
+def _elapsed_seconds(started_at, event) -> float | None:
+    if started_at is None or event is None:
+        return None
+    return max(0.0, (event.occurred_at - started_at).total_seconds())
+
+
+def _optional_attr(entity, name: str):
+    return getattr(entity, name) if entity is not None else None
 
 
 def cards_payments_kpis(

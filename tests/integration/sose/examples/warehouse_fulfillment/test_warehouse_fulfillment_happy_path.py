@@ -1,9 +1,9 @@
 from sose.examples.warehouse_fulfillment.simulation import (
     PRIMARY_SKU,
     SUBSTITUTE_SKU,
-    allocation_id,
     run_happy_path,
 )
+from sose.examples.warehouse_fulfillment.records import allocation_id
 
 
 def test_order_allocates_primary_then_substitute_and_ships():

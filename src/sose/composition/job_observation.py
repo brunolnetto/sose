@@ -61,6 +61,22 @@ def observe_organization_jobs(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
     )
     components = {component.component_id: component for component in definition.components}
+    observed = _observed_declared_checkpoints(definition, persistence, components)
+    output = [
+        _declared_job_checkpoint(job, components[job.component_id], observed.get(job.job_id))
+        for job in sorted(definition.jobs, key=lambda item: item.job_id)
+    ]
+    return OrganizationJobCheckpointEvidence(
+        organization_id=definition.organization_id,
+        definition_fingerprint=fingerprint,
+        version=definition.version,
+        config_epoch=definition.config_epoch,
+        jobs=tuple(output),
+    )
+
+
+def _observed_declared_checkpoints(definition, persistence, components) -> dict:
+    """Persisted checkpoints of the declared jobs only, keyed by job_id."""
     declared = {job.job_id: job for job in definition.jobs}
     observed = {}
     for checkpoint in persistence.job_states():
@@ -75,31 +91,26 @@ def observe_organization_jobs(
         # clocks. Observation must preserve the committed value verbatim,
         # not impose a stronger new timezone contract on old checkpoints.
         observed[checkpoint.job_id] = checkpoint
+    return observed
 
-    output = []
-    for job in sorted(definition.jobs, key=lambda item: item.job_id):
-        component = components[job.component_id]
-        checkpoint = observed.get(job.job_id)
-        output.append(DeclaredJobCheckpoint(
-            component_id=component.component_id,
-            declared_owner_id=component.owner_id,
-            expected_domain=component.domain,
-            job_id=job.job_id,
-            checkpoint_present=checkpoint is not None,
-            status=checkpoint.status if checkpoint else None,
-            phase=checkpoint.phase if checkpoint else None,
-            logical_time=checkpoint.logical_time if checkpoint else None,
-            next_tick=checkpoint.next_tick if checkpoint else None,
-            run_count=checkpoint.run_count if checkpoint else None,
-            active_trigger_id=checkpoint.active_trigger_id if checkpoint else None,
-            last_completed_trigger_id=(
-                checkpoint.last_completed_trigger_id if checkpoint else None
-            ),
-        ))
-    return OrganizationJobCheckpointEvidence(
-        organization_id=definition.organization_id,
-        definition_fingerprint=fingerprint,
-        version=definition.version,
-        config_epoch=definition.config_epoch,
-        jobs=tuple(output),
+
+_CHECKPOINT_FIELDS = (
+    "status", "phase", "logical_time", "next_tick", "run_count",
+    "active_trigger_id", "last_completed_trigger_id",
+)
+
+
+def _declared_job_checkpoint(job, component, checkpoint) -> DeclaredJobCheckpoint:
+    """Missing checkpoints stay explicit: every observed field is None."""
+    observed = {
+        name: (getattr(checkpoint, name) if checkpoint else None)
+        for name in _CHECKPOINT_FIELDS
+    }
+    return DeclaredJobCheckpoint(
+        component_id=component.component_id,
+        declared_owner_id=component.owner_id,
+        expected_domain=component.domain,
+        job_id=job.job_id,
+        checkpoint_present=checkpoint is not None,
+        **observed,
     )

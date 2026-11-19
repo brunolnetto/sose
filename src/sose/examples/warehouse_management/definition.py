@@ -51,29 +51,31 @@ def _reconcile_tick(persistence, engine, backend, config, entities):
     shipment = persistence.entity("warehouse_management_shipment", entities.shipment_id)
     if shipment is None:
         raise RuntimeError("configured warehouse shipment was not persisted")
-    if shipment.state == "completed":
+    _advance_shipment(persistence, engine, entities, shipment.state)
+
+
+def _advance_shipment(persistence, engine, entities, state: str) -> None:
+    """Take the one durable step that the shipment's current state allows."""
+    if state in {"completed", "handling"}:
         complete_unload(persistence, engine, entities=entities)
-        return
-    if shipment.state in {"planned", "in_transit"}:
-        # start_transfer is intentionally recovery-aware: an in-transit shipment may
-        # still need the truck transition after a crash between durable phases.
-        if shipment.state == "planned":
-            start_transfer(persistence, engine, entities=entities)
-            return
-        truck = persistence.entity("warehouse_management_truck", entities.truck_id)
-        if truck is not None and truck.state == "scheduled":
-            start_transfer(persistence, engine, entities=entities)
-            return
+    elif state == "planned":
+        start_transfer(persistence, engine, entities=entities)
+    elif state == "in_transit":
+        _advance_in_transit(persistence, engine, entities)
+    elif state in {"arrived", "delayed"}:
         arrive_truck(persistence, engine, entities=entities)
-        return
-    if shipment.state in {"arrived", "delayed"}:
-        arrive_truck(persistence, engine, entities=entities)
-        return
-    if shipment.state == "docked":
+    elif state == "docked":
         assign_forklift(persistence, engine, entities=entities)
-        return
-    if shipment.state == "handling":
-        complete_unload(persistence, engine, entities=entities)
+
+
+def _advance_in_transit(persistence, engine, entities) -> None:
+    # start_transfer is intentionally recovery-aware: an in-transit shipment may
+    # still need the truck transition after a crash between durable phases.
+    truck = persistence.entity("warehouse_management_truck", entities.truck_id)
+    if truck is not None and truck.state == "scheduled":
+        start_transfer(persistence, engine, entities=entities)
+    else:
+        arrive_truck(persistence, engine, entities=entities)
 
 
 definition = DomainDefinition(

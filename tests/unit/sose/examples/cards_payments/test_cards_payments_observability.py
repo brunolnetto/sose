@@ -11,12 +11,10 @@ from sose.examples.cards_payments.observability import (
 )
 from sose.examples.cards_payments.process_audit import process_manifest
 from sose.examples.cards_payments.simulation import (
-    run_dispute_path,
     run_happy_path,
-    run_refund_path,
-    run_retry_path,
     seed_reference,
 )
+from sose.examples.cards_payments.paths import run_dispute_path, run_refund_path, run_retry_path
 from sose.examples.process_manifest import ProcessEvidence, ProcessMaturity
 from sose.persistence.memory import MemoryPersistence
 
