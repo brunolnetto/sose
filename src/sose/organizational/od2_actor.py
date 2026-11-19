@@ -23,7 +23,7 @@ from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry, EntityType
-from sose.organizational import od2_actor_time_ledger as _time_ledger
+from sose.organizational import actor_time_ledger as _time_ledger
 from sose.persistence.base import Persistence
 from sose.probability import probabilistic_transitions
 
