@@ -16,9 +16,16 @@ from .memory import (
     fork_state,
 )
 from .records import StateRecord, changes_for_dirty_records, records_to_state
+from .sqlite_incremental_reads import SQLiteIncrementalFreshReadsMixin
+from .sqlite_incremental_fencing import (
+    ScopedWriterLease,  # noqa: F401 - public lease type of claim_scoped_writer
+    SQLiteIncrementalWriterFencingMixin,
+)
+from .sqlite_incremental_schema import (
+    SQLiteIncrementalSchemaMixin,
+)
 
 
-_SCHEMA_VERSION = 3
 _NAMESPACE_RE = re.compile(r"^[a-z_][a-z0-9_]{0,39}$")
 
 
@@ -32,7 +39,12 @@ class StaleWriterError(RuntimeError):
     """Raised when a writer attempts to commit with an obsolete fencing epoch."""
 
 
-class SQLiteIncrementalPersistence(MemoryPersistence):
+class SQLiteIncrementalPersistence(
+    SQLiteIncrementalSchemaMixin,
+    SQLiteIncrementalWriterFencingMixin,
+    SQLiteIncrementalFreshReadsMixin,
+    MemoryPersistence,
+):
     """SQLite adapter that persists only changed durable records per transaction."""
 
     def __init__(self, path: str | Path, *, namespace: str = "sose") -> None:
@@ -41,6 +53,8 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
         self.namespace = namespace
         self._meta_table = f'"{namespace}_record_meta"'
         self._record_table = f'"{namespace}_record"'
+        self._scoped_writers_table = f'"{namespace}_writer_scope"'
+        self._correlation_owners_table = f'"{namespace}_recovery_owner"'
         self.path = str(path)
         self._ensure_parent_path()
         self._connection = self._connect()
@@ -73,112 +87,6 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             timeout=30.0,
             check_same_thread=False,
         )
-
-    def _bootstrap_schema(self) -> None:
-        # Schema creation, singleton bootstrap, and migrations share one
-        # BEGIN IMMEDIATE lock. Concurrent constructors therefore serialize
-        # before any metadata is inspected or mutated.
-        self._connection.execute("BEGIN IMMEDIATE")
-        try:
-            self._create_tables()
-            columns = self._meta_columns()
-            version = self._meta_schema_version()
-            self._migrate_schema(version, columns)
-
-            self._connection.commit()
-        except Exception:
-            self._connection.rollback()
-            raise
-
-    def _create_tables(self) -> None:
-        self._connection.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {self._meta_table} (
-                singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-                schema_version INTEGER NOT NULL,
-                revision INTEGER NOT NULL DEFAULT 0,
-                owner_id TEXT,
-                owner_epoch INTEGER NOT NULL DEFAULT 0
-            )
-            """
-        )
-        self._connection.execute(
-            f"""
-            CREATE TABLE IF NOT EXISTS {self._record_table} (
-                collection TEXT NOT NULL,
-                record_key TEXT NOT NULL,
-                position INTEGER NOT NULL,
-                payload TEXT NOT NULL,
-                PRIMARY KEY (collection, record_key)
-            )
-            """
-        )
-
-    def _meta_columns(self) -> set[str]:
-        return {
-            str(row[1])
-            for row in self._connection.execute(f"PRAGMA table_info({self._meta_table})").fetchall()
-        }
-
-    def _meta_schema_version(self) -> int:
-        row = self._connection.execute(
-            f"SELECT schema_version FROM {self._meta_table} WHERE singleton = 1"
-        ).fetchone()
-        if row is None:
-            self._connection.execute(
-                f"""
-                INSERT OR IGNORE INTO {self._meta_table}(
-                    singleton,
-                    schema_version,
-                    revision
-                )
-                VALUES (1, ?, 0)
-                """,
-                (_SCHEMA_VERSION,),
-            )
-            row = self._connection.execute(
-                f"""
-                SELECT schema_version
-                FROM {self._meta_table}
-                WHERE singleton = 1
-                """
-            ).fetchone()
-        if row is None:  # pragma: no cover - defensive database invariant
-            raise RuntimeError("SQLite incremental metadata bootstrap failed")
-        return int(row[0])
-
-    def _migrate_schema(self, version: int, columns: set[str]) -> None:
-        if version == 1:
-            if "revision" not in columns:
-                self._connection.execute(
-                    f"""
-                    ALTER TABLE {self._meta_table}
-                    ADD COLUMN revision INTEGER NOT NULL DEFAULT 0
-                    """
-                )
-            version = 2
-        if version == 2:
-            if "owner_id" not in columns:
-                self._connection.execute(f"ALTER TABLE {self._meta_table} ADD COLUMN owner_id TEXT")
-            if "owner_epoch" not in columns:
-                self._connection.execute(
-                    f"""
-                    ALTER TABLE {self._meta_table}
-                    ADD COLUMN owner_epoch INTEGER NOT NULL DEFAULT 0
-                    """
-                )
-            self._connection.execute(
-                f"""
-                UPDATE {self._meta_table}
-                SET schema_version = 3
-                WHERE singleton = 1
-                """
-            )
-            return
-        if version != _SCHEMA_VERSION:
-            raise RuntimeError(
-                f"unsupported SQLiteIncrementalPersistence schema version: {version}"
-            )
 
     def _ensure_wal(self) -> None:
         """Enable WAL safely when multiple constructors race on one database."""
@@ -351,7 +259,6 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             raise ValueError("expected_epoch must be >= 0")
 
         self._connection.execute("BEGIN IMMEDIATE")
-        before = None
         try:
             cursor = self._connection.execute(
                 f"""
@@ -369,33 +276,12 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             if row is None:
                 raise RuntimeError("writer metadata disappeared")
             epoch = int(row[0])
-            self._refresh_from_db()
-            before = self._state
-            uow = MemoryUnitOfWork(fork_state(self._state), self)
-            prior = uow.get_job_state(initial_job.job_id)
-            if prior is not None:
-                if prior.domain_name != initial_job.domain_name:
-                    raise ValueError("recovery job identity already belongs to another domain")
-                if prior.config_json != initial_job.config_json:
-                    raise ValueError("recovery job's durable organizational binding changed")
-            else:
-                uow.save_job_state(initial_job)
-            uow.commit()
-            changed = self._apply_changes(before, self._state, uow.dirty_records)
-            next_revision = self._revision
-            if changed:
-                next_revision += 1
-                self._connection.execute(
-                    f"UPDATE {self._meta_table} SET revision = ? WHERE singleton = 1",
-                    (next_revision,),
-                )
+            next_revision = self._persist_job_registration(initial_job)
             self._connection.commit()
             self._revision = next_revision
             return WriterLease(owner_id=owner_id, epoch=epoch)
         except Exception:
             self._connection.rollback()
-            if before is not None:
-                self._state = before
             raise
 
     def boundary_protocol_snapshot(self):
@@ -414,17 +300,8 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             self._connection.rollback()
             self._state, self._revision = before, revision
 
-    @tracked_transaction_depth
-    @contextmanager
-    def transaction(
-        self,
-        *,
-        owner_epoch: int | None = None,
-        owner_id: str | None = None,
-    ) -> Iterator[MemoryUnitOfWork]:
-        if owner_id is not None and not owner_id:
-            raise ValueError("owner_id must not be empty")
-        self._connection.execute("BEGIN IMMEDIATE")
+    def _require_current_writer_epoch(self, owner_epoch: int | None) -> None:
+        """Roll back the open transaction and raise unless ``owner_epoch`` is current."""
         row = self._connection.execute(
             f"SELECT owner_epoch FROM {self._meta_table} WHERE singleton = 1"
         ).fetchone()
@@ -439,6 +316,25 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
             raise StaleWriterError(
                 f"stale writer epoch {owner_epoch}; current epoch is {current_epoch}"
             )
+
+    @tracked_transaction_depth
+    @contextmanager
+    def transaction(
+        self,
+        *,
+        owner_epoch: int | None = None,
+        writer_scope: str | None = None,
+        owner_id: str | None = None,
+    ) -> Iterator[MemoryUnitOfWork]:
+        if owner_id is not None and not owner_id:
+            raise ValueError("owner_id must not be empty")
+        if writer_scope is not None and (not writer_scope or owner_epoch is None):
+            raise ValueError("scoped transactions require scope and writer epoch")
+        self._connection.execute("BEGIN IMMEDIATE")
+        if writer_scope is None:
+            self._require_current_writer_epoch(owner_epoch)
+        else:
+            self._require_current_scoped_epoch(owner_epoch, writer_scope)
         self._refresh_from_db()
         before = self._state
         try:
@@ -476,155 +372,3 @@ class SQLiteIncrementalPersistence(MemoryPersistence):
 
     def _fresh(self) -> None:
         self._refresh_from_db()
-
-    def job_state(self, job_id: str):
-        self._fresh()
-        return super().job_state(job_id)
-
-    def domain_delivery(self, mutation_id: str):
-        self._fresh()
-        return super().domain_delivery(mutation_id)
-
-    def domain_deliveries(self):
-        self._fresh()
-        return super().domain_deliveries()
-
-    def sink_delivery(self, delivery_id: str):
-        self._fresh()
-        return super().sink_delivery(delivery_id)
-
-    def sink_deliveries(self, *, job_id=None, sink_name=None):
-        self._fresh()
-        return super().sink_deliveries(job_id=job_id, sink_name=sink_name)
-
-    def sink_checkpoint(self, job_id: str, sink_name: str):
-        self._fresh()
-        return super().sink_checkpoint(job_id, sink_name)
-
-    def sink_checkpoints(self, *, job_id=None):
-        self._fresh()
-        return super().sink_checkpoints(job_id=job_id)
-
-    def business_effect(self, effect_id: str):
-        self._fresh()
-        return super().business_effect(effect_id)
-
-    def business_effects(self):
-        self._fresh()
-        return super().business_effects()
-
-    def job_states(self):
-        self._fresh()
-        return super().job_states()
-
-    def committed_tick(self, *, owner_id: str) -> int:
-        self._fresh()
-        return super().committed_tick(owner_id=owner_id)
-
-    def events(self):
-        self._fresh()
-        return super().events()
-
-    def count_events(self, *, owner_id: str) -> int:
-        self._fresh()
-        return super().count_events(owner_id=owner_id)
-
-    def entity(self, entity_type: str, entity_id: str):
-        self._fresh()
-        return super().entity(entity_type, entity_id)
-
-    def command(self, command_id: str):
-        self._fresh()
-        return super().command(command_id)
-
-    def missing_command_ids(self, command_ids):
-        self._fresh()
-        return super().missing_command_ids(command_ids)
-
-    def scheduled_work(self):
-        self._fresh()
-        return super().scheduled_work()
-
-    def due_scheduled_work(self, at):
-        self._fresh()
-        return tuple(work for work in super().scheduled_work() if work.due_at <= at)
-
-    def simulation_position(self, *, owner_id: str):
-        self._fresh()
-        return super().simulation_position(owner_id=owner_id)
-
-    def scenario_state(self, *, owner_id: str):
-        self._fresh()
-        return super().scenario_state(owner_id=owner_id)
-
-    def resource_definitions(self):
-        self._fresh()
-        return super().resource_definitions()
-
-    def resource_demands(self):
-        self._fresh()
-        return super().resource_demands()
-
-    def resource_reservations(self):
-        self._fresh()
-        return super().resource_reservations()
-
-    def resource_release_intents(self):
-        self._fresh()
-        return super().resource_release_intents()
-
-    def store_definitions(self):
-        self._fresh()
-        return super().store_definitions()
-
-    def store_items(self):
-        self._fresh()
-        return super().store_items()
-
-    def store_put_intents(self):
-        self._fresh()
-        return super().store_put_intents()
-
-    def store_get_requests(self):
-        self._fresh()
-        return super().store_get_requests()
-
-    def store_get_results(self):
-        self._fresh()
-        return super().store_get_results()
-
-    def container_definitions(self):
-        self._fresh()
-        return super().container_definitions()
-
-    def container_states(self):
-        self._fresh()
-        return super().container_states()
-
-    def container_operation_intents(self):
-        self._fresh()
-        return super().container_operation_intents()
-
-    def container_operation_results(self):
-        self._fresh()
-        return super().container_operation_results()
-
-    def preemptive_resource_definitions(self):
-        self._fresh()
-        return super().preemptive_resource_definitions()
-
-    def preemptive_resource_demands(self):
-        self._fresh()
-        return super().preemptive_resource_demands()
-
-    def preemptive_resource_reservations(self):
-        self._fresh()
-        return super().preemptive_resource_reservations()
-
-    def preemptive_resource_release_intents(self):
-        self._fresh()
-        return super().preemptive_resource_release_intents()
-
-    def resource_preemption_results(self):
-        self._fresh()
-        return super().resource_preemption_results()

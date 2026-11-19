@@ -3,17 +3,15 @@ from __future__ import annotations
 import pytest
 
 from sose.examples.warehouse_fulfillment.simulation import (
-    _entity,
     allocate_order,
-    allocation_id,
     build_runtime,
-    correct_lot_balance,
     pack_order,
-    pick_allocation,
     pick_order,
     seed_reference,
     ship_order,
 )
+from sose.examples.warehouse_fulfillment.handling import correct_lot_balance, pick_allocation
+from sose.examples.warehouse_fulfillment.records import _entity, allocation_id
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "warehouse-fulfillment-reference-organization"

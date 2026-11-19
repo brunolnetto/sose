@@ -1,81 +1,26 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from enum import StrEnum
-from hashlib import sha256
-import json
 from math import isfinite
 from pathlib import PurePosixPath
 from types import MappingProxyType
-from typing import Annotated, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
-from pydantic import BaseModel, ConfigDict, Field, InstanceOf, StringConstraints, field_serializer, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, InstanceOf, field_serializer, field_validator, model_validator
 
 from .agency import AgencyLevel
+from .domain_reference_ground_truth import (  # noqa: F401 - moved, re-exported public surface
+    GroundTruthClaim,
+    GroundTruthComparisonKind,
+    GroundTruthComparisonRule,
+    GroundTruthKind,
+    GroundTruthTargetKind,
+    NonBlankString,
+    _canonical_hash,
+    _require_unique,
+)
 from .experiment import ParameterRange
 from .model_spec import EvidenceClass
-
-
-NonBlankString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
-
-
-class GroundTruthKind(StrEnum):
-    ANALYTICAL = "analytical"
-    MECHANISTIC = "mechanistic"
-    INVARIANT = "invariant"
-    REFERENCE_SIMULATION = "reference_simulation"
-    EMPIRICAL = "empirical"
-
-
-class GroundTruthTargetKind(StrEnum):
-    METRIC = "metric"
-    REGIME = "regime"
-    INVARIANT = "invariant"
-    RELATION = "relation"
-
-
-class GroundTruthComparisonKind(StrEnum):
-    EXACT = "exact"
-    ABSOLUTE_TOLERANCE = "absolute_tolerance"
-    RELATIVE_TOLERANCE = "relative_tolerance"
-    LOWER_BOUND = "lower_bound"
-    UPPER_BOUND = "upper_bound"
-
-
-class GroundTruthComparisonRule(BaseModel):
-    """Explicit rule used to decide whether an eligible observation matches a claim.
-
-    Semantics:
-    - exact: observed equals expected;
-    - absolute_tolerance: abs(observed - expected) <= tolerance;
-    - relative_tolerance: abs(observed - expected) / abs(expected) <= tolerance;
-    - lower_bound: observed >= expected;
-    - upper_bound: observed <= expected.
-    """
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    kind: GroundTruthComparisonKind
-    tolerance: float | None = Field(default=None, gt=0.0, allow_inf_nan=False)
-
-    @model_validator(mode="after")
-    def validate_tolerance(self) -> "GroundTruthComparisonRule":
-        tolerance_kinds = {
-            GroundTruthComparisonKind.ABSOLUTE_TOLERANCE,
-            GroundTruthComparisonKind.RELATIVE_TOLERANCE,
-        }
-        if self.kind in tolerance_kinds:
-            if self.tolerance is None:
-                raise ValueError(f"{self.kind.value} requires a positive tolerance")
-        elif self.tolerance is not None:
-            raise ValueError(f"{self.kind.value} does not accept tolerance")
-        return self
-
-    def canonical_payload(self) -> dict[str, object]:
-        return {
-            "kind": self.kind.value,
-            "tolerance": self.tolerance,
-        }
 
 
 class DomainReferenceIdentity(BaseModel):
@@ -161,31 +106,17 @@ class AgencyCapabilitySpec(BaseModel):
         if range_names != default_names:
             raise ValueError("agency capability defaults must exactly match parameter ranges")
 
-        for name, value in self.defaults.items():
-            if not isfinite(value):
-                raise ValueError(f"agency capability default for {name} must be finite")
-            bounds = self.parameter_ranges[name]
-            if not bounds.low <= value <= bounds.high:
-                raise ValueError(
-                    f"agency capability default for {name} must lie within its range"
-                )
-
+        _require_defaults_in_ranges(self.defaults, self.parameter_ranges)
+        has_contracts = (bool(self.observation_contract_ids), bool(self.action_contract_ids))
         if self.level is AgencyLevel.A2:
-            if not self.observation_contract_ids or not self.action_contract_ids:
+            if not all(has_contracts):
                 raise ValueError("A2 requires observation and action contracts")
-        elif self.observation_contract_ids or self.action_contract_ids:
+        elif any(has_contracts):
             raise ValueError("observation/action contracts are only valid for A2")
 
-        if len(set(self.compatibility_constraints)) != len(
-            self.compatibility_constraints
-        ):
-            raise ValueError("duplicate agency compatibility constraints are not allowed")
-        if len(set(self.observation_contract_ids)) != len(
-            self.observation_contract_ids
-        ):
-            raise ValueError("duplicate observation contract ids are not allowed")
-        if len(set(self.action_contract_ids)) != len(self.action_contract_ids):
-            raise ValueError("duplicate action contract ids are not allowed")
+        _require_unique(self.compatibility_constraints, "agency compatibility constraints")
+        _require_unique(self.observation_contract_ids, "observation contract ids")
+        _require_unique(self.action_contract_ids, "action contract ids")
 
         object.__setattr__(
             self,
@@ -232,74 +163,6 @@ class AgencyCapabilitySpec(BaseModel):
         return _canonical_hash(self.canonical_payload())
 
 
-class GroundTruthClaim(BaseModel):
-    """Typed, eligibility-aware reference claim for one configured world."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True, arbitrary_types_allowed=True)
-
-    claim_id: NonBlankString
-    kind: GroundTruthKind
-    target_kind: GroundTruthTargetKind
-    target_name: NonBlankString
-    expected: object
-    comparison_rule: InstanceOf[GroundTruthComparisonRule]
-    assumptions: tuple[NonBlankString, ...] = Field(min_length=1)
-    eligibility_rule: NonBlankString
-    eligible: bool
-    ineligibility_reason: NonBlankString | None = None
-    provenance: tuple[NonBlankString, ...] = Field(min_length=1)
-
-    @model_validator(mode="after")
-    def validate_and_freeze(self) -> "GroundTruthClaim":
-        _validate_json(self.expected, path="/expected")
-        if self.comparison_rule.kind is not GroundTruthComparisonKind.EXACT:
-            if not _is_finite_number(self.expected):
-                raise ValueError(
-                    "non-exact ground-truth comparison requires a finite numeric expected value"
-                )
-            if (
-                self.comparison_rule.kind
-                is GroundTruthComparisonKind.RELATIVE_TOLERANCE
-                and float(self.expected) == 0.0
-            ):
-                raise ValueError(
-                    "relative_tolerance ground-truth comparison requires non-zero expected value"
-                )
-        if self.eligible and self.ineligibility_reason is not None:
-            raise ValueError("eligible ground-truth claim cannot have ineligibility_reason")
-        if not self.eligible and self.ineligibility_reason is None:
-            raise ValueError("ineligible ground-truth claim requires ineligibility_reason")
-        if len(set(self.assumptions)) != len(self.assumptions):
-            raise ValueError("duplicate ground-truth assumptions are not allowed")
-        if len(set(self.provenance)) != len(self.provenance):
-            raise ValueError("duplicate ground-truth provenance entries are not allowed")
-        object.__setattr__(self, "expected", _freeze_json(self.expected))
-        return self
-
-    def canonical_payload(self) -> dict[str, object]:
-        return {
-            "claim_id": self.claim_id,
-            "kind": self.kind.value,
-            "target_kind": self.target_kind.value,
-            "target_name": self.target_name,
-            "expected": _thaw_json(self.expected),
-            "comparison_rule": self.comparison_rule.canonical_payload(),
-            "assumptions": sorted(self.assumptions),
-            "eligibility_rule": self.eligibility_rule,
-            "eligible": self.eligible,
-            "ineligibility_reason": self.ineligibility_reason,
-            "provenance": sorted(self.provenance),
-        }
-
-    @field_serializer("expected")
-    def serialize_expected(self, value: object) -> object:
-        return _thaw_json(value)
-
-    @property
-    def claim_hash(self) -> str:
-        return _canonical_hash(self.canonical_payload())
-
-
 class DomainReferenceDescriptor(BaseModel):
     """Hash-addressed semantic capabilities exposed by one DomainReference."""
 
@@ -314,19 +177,12 @@ class DomainReferenceDescriptor(BaseModel):
 
     @model_validator(mode="after")
     def validate_uniqueness(self) -> "DomainReferenceDescriptor":
-        parameter_names = [item.name for item in self.parameters]
-        if len(set(parameter_names)) != len(parameter_names):
-            raise ValueError("duplicate parameter names are not allowed")
-
-        capability_keys = [
-            (item.level.value, item.capability_id)
-            for item in self.agency_capabilities
-        ]
-        if len(set(capability_keys)) != len(capability_keys):
-            raise ValueError("duplicate agency capability declarations are not allowed")
-
-        if len(set(self.ground_truth_kinds)) != len(self.ground_truth_kinds):
-            raise ValueError("duplicate ground-truth kinds are not allowed")
+        _require_unique([item.name for item in self.parameters], "parameter names")
+        _require_unique(
+            [(item.level.value, item.capability_id) for item in self.agency_capabilities],
+            "agency capability declarations",
+        )
+        _require_unique(self.ground_truth_kinds, "ground-truth kinds")
         return self
 
     def canonical_payload(self) -> dict[str, object]:
@@ -362,9 +218,7 @@ class ParameterSpaceSpec(BaseModel):
 
     @model_validator(mode="after")
     def validate_uniqueness(self) -> "ParameterSpaceSpec":
-        names = [item.name for item in self.parameters]
-        if len(set(names)) != len(names):
-            raise ValueError("duplicate parameter names are not allowed")
+        _require_unique([item.name for item in self.parameters], "parameter names")
         return self
 
     def canonical_payload(self) -> dict[str, object]:
@@ -456,6 +310,18 @@ class DomainReference(Protocol):
 
     def observation(self, result: object) -> ExperimentObservation: ...
 
+
+def _require_defaults_in_ranges(defaults, parameter_ranges) -> None:
+    for name, value in defaults.items():
+        if not isfinite(value):
+            raise ValueError(f"agency capability default for {name} must be finite")
+        bounds = parameter_ranges[name]
+        if not bounds.low <= value <= bounds.high:
+            raise ValueError(
+                f"agency capability default for {name} must lie within its range"
+            )
+
+
 def _is_repository_relative(path: str) -> bool:
     if not path or "\\" in path:
         return False
@@ -464,65 +330,4 @@ def _is_repository_relative(path: str) -> bool:
         not parsed.is_absolute()
         and ".." not in parsed.parts
         and str(parsed) == path
-    )
-
-
-def _canonical_hash(payload: object) -> str:
-    encoded = json.dumps(
-        payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-        allow_nan=False,
-    ).encode("utf-8")
-    return sha256(encoded).hexdigest()
-
-
-def _validate_json(value: object, *, path: str) -> None:
-    if value is None or isinstance(value, (str, bool, int)):
-        return
-    if isinstance(value, float):
-        if not isfinite(value):
-            raise ValueError(f"non-finite JSON number at {path}")
-        return
-    if isinstance(value, Mapping):
-        for key, child in value.items():
-            if not isinstance(key, str):
-                raise ValueError(f"JSON object key at {path} must be a string")
-            _validate_json(child, path=f"{path}/{key}")
-        return
-    if isinstance(value, (list, tuple)):
-        for index, child in enumerate(value):
-            _validate_json(child, path=f"{path}/{index}")
-        return
-    raise ValueError(f"value at {path} is not JSON-compatible: {type(value).__name__}")
-
-
-def _freeze_json(value: object) -> object:
-    if isinstance(value, Mapping):
-        return MappingProxyType(
-            {
-                key: _freeze_json(child)
-                for key, child in sorted(value.items())
-            }
-        )
-    if isinstance(value, (list, tuple)):
-        return tuple(_freeze_json(child) for child in value)
-    return value
-
-
-def _thaw_json(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {key: _thaw_json(child) for key, child in value.items()}
-    if isinstance(value, tuple):
-        return [_thaw_json(child) for child in value]
-    return value
-
-
-
-def _is_finite_number(value: object) -> bool:
-    return (
-        isinstance(value, (int, float))
-        and not isinstance(value, bool)
-        and isfinite(float(value))
     )

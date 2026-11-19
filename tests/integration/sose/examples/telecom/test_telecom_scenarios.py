@@ -6,8 +6,8 @@ from sose.examples.telecom.simulation import (
     reconcile_activation,
     schedule_activation,
     seed_reference,
-    subscription_service_id,
 )
+from sose.examples.telecom.foundation import subscription_service_id
 from sose.persistence.memory import MemoryPersistence
 
 

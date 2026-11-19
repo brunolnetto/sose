@@ -6,7 +6,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.manufacturing.simulation import (
     ORIGIN,
     build_runtime,
-    reconcile_breakdown,
     reconcile_material_issue,
     reconcile_output,
     reconcile_repair,
@@ -15,6 +14,7 @@ from sose.examples.manufacturing.simulation import (
     seed_happy_path,
     seed_material,
 )
+from sose.examples.manufacturing.simulation_resources import reconcile_breakdown
 from sose.persistence.memory import MemoryPersistence
 from sose.scenarios import AttributeEffect, Scenario, ScheduledTrigger
 

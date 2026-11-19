@@ -14,11 +14,11 @@ from sose.examples.itsm.simulation import (
     claim_next_incident,
     ensure_escalation,
     reconcile_escalation,
-    reopen_incident,
     resolve_incident,
     seed_reference,
     triage_and_queue,
 )
+from sose.examples.itsm.queueing import reopen_incident
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "itsm-reference-organization"

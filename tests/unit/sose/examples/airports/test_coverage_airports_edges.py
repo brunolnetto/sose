@@ -7,10 +7,8 @@ import pytest
 from sose.backends.simpy import SimPyBackend
 from sose.examples.airports.simulation import (
     ORIGIN,
-    _entity,
     build_runtime,
     queue_departure,
-    reallocate_gate,
     reconcile_baggage,
     reconcile_departure,
     reconcile_gate,
@@ -19,6 +17,8 @@ from sose.examples.airports.simulation import (
     schedule_departure_slot,
     seed_reference,
 )
+from sose.examples.airports.simulation_gates import reallocate_gate
+from sose.examples.airports.simulation_runtime import _entity
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "airports-reference-organization"
