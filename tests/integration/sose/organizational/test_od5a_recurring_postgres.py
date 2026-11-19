@@ -17,6 +17,7 @@ from uuid import uuid4
 import pytest
 
 from sose.core.identity import deterministic_id
+from sose.core.resource_identity import ResourcePoolContract
 from sose.core.events import DomainEvent
 from dataclasses import replace
 from sose.organizational.model_spec import EvidenceClass, ModelSpec
@@ -33,6 +34,24 @@ from sose.persistence.memory import MemoryUnitOfWork
 
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
+
+
+def _recovery_policy_mode(correlation, organization):
+    """Neutral certified policy (#634) binding the runner's own correlation.
+
+    These tests exercise registration and writer fencing only (the recovery
+    pass is patched out, rejected first, or the worker dies at the claim), so
+    no intent is ever admitted against the pool.
+    """
+    return {
+        "resource_policies": {
+            "composition.settle_customer_payment": ResourcePoolContract(
+                resource_type="settlement_slot", pool_id="neutral-od5a-registration",
+                scope="shared", capacity=1,
+            ),
+        },
+        "resource_organizations": {correlation: organization},
+    }
 pytestmark = pytest.mark.skipif(not DSN, reason="real SOSE_TEST_POSTGRES_DSN required")
 NOW = datetime(2026, 10, 12, tzinfo=timezone.utc)
 LEASE = timedelta(seconds=10)
@@ -211,7 +230,7 @@ def _ownership_racer(dsn, namespace, kind, barrier, results):
             else:
                 advance_od5a_durable(store, job_id="org:race")
             results.put((kind, "committed"))
-        except (ValueError, RuntimeError) as exc:
+        except (ValueError, RuntimeError):
             results.put((kind, "rejected"))
 
 
@@ -281,6 +300,7 @@ def _domain_registration_worker(dsn, namespace, domain, started, finished, resul
                     job_id="org:race", correlation_id="org:race",
                     organization_owners={"org:race": "organization:race"},
                     scoped_writer=True,
+                    **_recovery_policy_mode("org:race", "organization:race"),
                 )
                 # Isolate its real registration/fencing transaction from the
                 # unrelated customer boundary/drain business effect.
@@ -359,6 +379,7 @@ def _competing_domain_registrar(dsn, namespace, domain, barrier, results):
                     job_id="org:race", correlation_id="org:race",
                     organization_owners={"org:race": "organization:race"},
                     scoped_writer=True,
+                    **_recovery_policy_mode("org:race", "organization:race"),
                 )
                 # Isolate its real registration/fencing transaction from the
                 # unrelated customer boundary/drain business effect.
@@ -448,6 +469,7 @@ def test_composition_recovery_rejects_foreign_job_with_matching_config():
             job_id="org:race", correlation_id="org:race",
             organization_owners={"org:race": "organization:race"},
             scoped_writer=True,
+            **_recovery_policy_mode("org:race", "organization:race"),
         )
         writer_epoch_before = store.writer_epoch()
         scoped_epoch_before = store.scoped_writer_epoch("org:race")
@@ -485,6 +507,7 @@ def test_foreign_job_never_consumes_writer_epoch_before_validation(scoped):
             correlation_id="tenant:foreign" if scoped else None,
             organization_owners={"tenant:foreign": "organization:foreign"} if scoped else None,
             scoped_writer=scoped,
+            **_recovery_policy_mode("tenant:foreign", "organization:foreign"),
         )
         with pytest.raises(ValueError, match="already belongs to another domain"):
             runner.run_trigger(trigger_id="attempt", now=NOW)
@@ -513,6 +536,7 @@ def _die_after_postgres_atomic_recovery_registration(dsn, namespace, scoped):
             correlation_id="org:crash" if scoped else None,
             organization_owners={"org:crash": "organization:crash"} if scoped else None,
             scoped_writer=scoped,
+            **_recovery_policy_mode("org:crash", "organization:crash"),
         )
         runner.run_trigger(trigger_id="stable-trigger", now=NOW)
 
@@ -548,6 +572,7 @@ def test_postgres_death_after_atomic_writer_claim_keeps_recoverable_domain_ident
             correlation_id="org:crash" if scoped else None,
             organization_owners={"org:crash": "organization:crash"} if scoped else None,
             scoped_writer=scoped,
+            **_recovery_policy_mode("org:crash", "organization:crash"),
         )
         with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
             result = runner.run_trigger(trigger_id="stable-trigger", now=NOW)
