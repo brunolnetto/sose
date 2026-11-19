@@ -10,11 +10,11 @@ from sose.examples.warehouse_fulfillment.scenarios import ORIGIN
 from sose.examples.warehouse_fulfillment.simulation import (
     allocate_order,
     build_runtime,
-    pick_allocation,
     reconcile_fulfillment_services,
     seed_reference,
-    service_task_id,
 )
+from sose.examples.warehouse_fulfillment.records import service_task_id
+from sose.examples.warehouse_fulfillment.handling import pick_allocation
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 

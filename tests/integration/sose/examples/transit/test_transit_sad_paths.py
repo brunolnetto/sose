@@ -7,19 +7,21 @@ from sose.examples.transit.scenarios import ORIGIN
 from sose.examples.transit.simulation import (
     TRIP_A_START,
     build_runtime,
-    cancel_service_alert,
-    cancel_trip,
-    ensure_trip_boundaries,
     record_trip_update,
     record_vehicle_position,
-    realtime_vehicle_view,
     reconcile_vehicle_for_trip,
     schedule_reference_block,
-    schedule_service_alert,
     seed_reference,
     trip_update_id,
-    vehicle_position_id,
 )
+from sose.examples.transit.simulation_alerts import (
+    cancel_service_alert,
+    cancel_trip,
+    schedule_service_alert,
+)
+from sose.examples.transit.simulation_boundaries import ensure_trip_boundaries
+from sose.examples.transit.simulation_runtime import vehicle_position_id
+from sose.examples.transit.simulation_vehicle_positions import realtime_vehicle_view
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "transit-reference-organization"
@@ -296,7 +298,7 @@ def test_equal_position_timestamps_use_sequence_as_stable_tie_breaker():
 
 
 def test_cancel_trip_removes_boundaries_and_releases_vehicle():
-    from sose.examples.transit.simulation import cancel_trip
+    from sose.examples.transit.simulation_alerts import cancel_trip
 
     persistence, entities, engine, backend = _runtime()
     schedule_reference_block(persistence, engine, entities=entities)
@@ -323,7 +325,7 @@ def test_cancel_trip_removes_boundaries_and_releases_vehicle():
 
 
 def test_cancel_service_alert_removes_future_boundaries():
-    from sose.examples.transit.simulation import cancel_service_alert
+    from sose.examples.transit.simulation_alerts import cancel_service_alert
 
     persistence, entities, engine, backend = _runtime()
     start_at = ORIGIN + timedelta(minutes=30)

@@ -49,6 +49,19 @@ integrity/causal parents/resource occupancy, write a new versioned namespace,
 compare its immutable evidence hashes, and retain a rollback copy. It must
 not start workers while rewriting or convert ambiguous ownership automatically.
 
+**Implemented for SOSE <= 0.8 SQLite snapshots** by `sose migrate-owners --sqlite <old>
+--output <new> --owner <owner>` (`sose.persistence.owner_migration.migrate_unowned_sqlite`).
+A 0.8 database held one runtime, so one owner is supplied for the whole database. The tool:
+- reads the source under an exclusive lock, refusing while a writer is active;
+- writes a new database and keeps a byte copy of the source;
+- preserves every identity, adding only `owner_id`;
+- requires the semantic digest of everything except ownership to be equal on both sides;
+- requires current runtime diagnostics on the result to be healthy.
+
+Opening such a database directly raises `LegacyUnownedSnapshotError` naming this command.
+The release workflow proves the path from the previous minor's real wheel
+(`scripts/check_release_upgrade.py`).
+
 Frozen Manufacturing/O2C/MRO v1 scientific artifacts and their hashes remain
 immutable under ADR-0007. Read-only, version-pinned replay is an independent
 scientific gate; no live legacy runtime code is kept solely to replay old data.
