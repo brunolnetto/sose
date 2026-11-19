@@ -17,6 +17,7 @@ from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
+from sose.organizational.od4_command_lineage import verify_original_management_commands
 from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.domain.entity import Entity
@@ -346,14 +347,12 @@ def intervene_work(
                     command is None
                     or command.command_id != command_id
                     or command.name != action
-                    or command.entity_type != WORK_KIND
-                    or command.entity_id != work_id
+                    or command.entity_type != WORK_KIND or command.entity_id != work_id
                     or command.owner_id != owner_id
                     or command.due_at != now or command.issued_at != now
                     or command.causation_id is not None
                     or command.correlation_id != deterministic_id(
-                        "od4-work-flow", owner_id, work_id
-                    )
+                        "od4-work-flow", owner_id, work_id)
                     or command.payload.get("request") != list(request)
                     or command.payload.get("cause_id") != cause_id
                     or command.payload.get("protocol") != protocol.snapshot()
@@ -362,12 +361,13 @@ def intervene_work(
                     or original.payload.get("matched_action") != matched_action
                     or original.payload.get("cost_us") != protocol.cost_us
                     or original.payload.get("config_epoch") != protocol.config_epoch
-                    or original.owner_id != owner_id
-                    or original.entity_id != work_id
+                    or original.owner_id != owner_id or original.entity_id != work_id
                     or original.occurred_at != now
                 ):
                     raise ValueError("OD-4 replay lacks corresponding command")
                 return original
+            # #464: every earlier paid decision must still match its original Command.
+            verify_original_management_commands(uow, owner_id, work.id, protocol)
             if original is not None or uow.get_command(command_id) is not None:
                 raise ValueError("OD-4 cause identity already used")
             if work.state != "pending":
