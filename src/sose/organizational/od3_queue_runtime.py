@@ -17,7 +17,7 @@ from sose.domain.entity import Entity
 from sose.organizational.queue_decisions import (
     OD3Policy, QueuedWork, _utc, decide_od3, od3_decision_event,
 )
-from sose.organizational.od3_queue_ledger import (
+from sose.organizational.queue_policy_ledger import (
     append_anchor, claim_version_slot, ensure_queue_ledger, ledger_fields,
 )
 

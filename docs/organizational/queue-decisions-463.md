@@ -18,7 +18,7 @@ BATCHING.
 
 ## Wave 1 durable effect/cost ledger (incremental)
 
-Implemented in `sose.organizational.od3_queue_ledger`. What is enforced:
+Implemented in `sose.organizational.queue_policy_ledger`. What is enforced:
 
 - **Anchor.** `seed_od3_queue` appends one `od3.queue_anchored` event (event
   id derived from the queue id) recording a SHA-256 digest of the full seeded

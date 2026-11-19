@@ -974,7 +974,7 @@ def test_foreign_event_at_our_deterministic_id_fails_closed(adapter, when, tmp_p
     """
     from sose.core.events import DomainEvent
     from sose.core.identity import deterministic_id
-    from sose.organizational.od3_queue_ledger import anchor_id
+    from sose.organizational.queue_policy_ledger import anchor_id
 
     store = store_for(adapter, tmp_path)
     queue_id = deterministic_id("od3-queue", OWNER, KEY)
