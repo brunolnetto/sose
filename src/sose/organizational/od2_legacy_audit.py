@@ -2,8 +2,20 @@
 
 An unsigned event or mutable projection is evidence for migration review,
 NOT a capability to grant work, replacement or paid cancellation.
+
+Deprecated in 0.11.0 and removed in 0.12.0 (#634): the #462 cutover is complete;
+tracked actors are verified by the actor time ledger.
 """
 from __future__ import annotations
+
+from sose._deprecation import warn_deprecated
+
+# Attributed to this module: import-time frames below it belong to importlib.
+warn_deprecated(
+    "the sose.organizational.od2_legacy_audit module", since="0.11.0", removed_in="0.12.0",
+    instead="enroll actors with seed_actor(tracked_time=True); there is no replacement audit",
+    stacklevel=2,
+)
 
 from collections.abc import Mapping
 from dataclasses import dataclass
