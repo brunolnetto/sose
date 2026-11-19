@@ -17,6 +17,9 @@ from sose.domain.entity import Entity
 from sose.organizational.od3_decisions import (
     OD3Policy, QueuedWork, _utc, decide_od3, od3_decision_event,
 )
+from sose.organizational.od3_queue_ledger import (
+    append_anchor, ensure_queue_ledger, ledger_fields,
+)
 
 QUEUE_KIND = "od3_operational_queue"
 _SCHEMA_VERSION = 1
@@ -73,7 +76,7 @@ def _read(queue: Entity, *, owner_id: str, queue_key: str) -> tuple[QueuedWork, 
     attrs = queue.attributes
     if (
         queue.entity_type != QUEUE_KIND or queue.state != "ready"
-        or not isinstance(attrs, dict) or set(attrs) != {
+        or not isinstance(attrs, dict) or set(attrs) - {"ledger_head"} != {
             "schema_version", "owner_id", "queue_key", "items",
             "paid_policy_us", "last_action_at", "last_observed_at",
             "applied_observations",
@@ -98,94 +101,6 @@ def _read(queue: Entity, *, owner_id: str, queue_key: str) -> tuple[QueuedWork, 
     ):
         raise ValueError("OD-3 durable queue contains duplicate or foreign items")
     return items
-
-
-
-def _verify_effect_cost_ledger(uow, queue: Entity, *, owner_id: str) -> None:
-    """Reconcile charged policy time with canonical durable queue decisions.
-
-    This is consistency, not certified actor-time or physical service capacity.
-    A public writer can still forge untrusted sources without #545 authority.
-    """
-    # Materialize one transaction-consistent snapshot and index event IDs
-    # once. Repeated uow.get_event() scans would make a long-lived queue's
-    # next policy observation O(N * E) within the business guard.
-    all_events = tuple(uow.events())
-    by_id = {}
-    for event in all_events:
-        by_id.setdefault(event.event_id, []).append(event)
-    effects = tuple(event for event in all_events if (
-        event.name == "od3.queue_effect_applied"
-        and event.entity_type == QUEUE_KIND and event.entity_id == queue.id
-    ))
-    applied = queue.attributes["applied_observations"]
-    if len(effects) != queue.version or len(applied) != len(effects):
-        raise ValueError("OD-3 charged queue history incomplete or duplicated")
-    paid = 0
-    previous_at = _utc(queue.created_at)
-    previous_order = None
-    last_action_at = None
-    seen = set()
-    for ordinal, effect in enumerate(effects, start=1):
-        evidence = effect.payload
-        observation_id = evidence.get("observation_id")
-        matches = by_id.get(effect.causation_id, ())
-        decision = matches[0] if len(matches) == 1 else None
-        at = _utc(effect.occurred_at)
-        cost = evidence.get("cost_us")
-        if (
-            not isinstance(observation_id, str) or not observation_id.strip()
-            or observation_id in seen
-            or effect.owner_id != owner_id or at < previous_at
-            or decision is None or decision.name != "od3.policy_decided"
-            or decision.owner_id != owner_id or decision.occurred_at != at
-            or effect.event_id != deterministic_id(
-                "od3-queue-effect", queue.id, decision.event_id,
-            )
-            or effect.correlation_id != decision.correlation_id
-            or type(cost) is not int or cost < 0
-            or type(evidence.get("queue_version")) is not int
-            or evidence["queue_version"] != ordinal
-            or (
-                previous_order is not None
-                and evidence.get("before") != previous_order
-            )
-            or not isinstance(evidence.get("after"), list)
-            or evidence.get("policy") != decision.payload.get("policy")
-            or evidence.get("matched_policy") != decision.payload.get("matched_policy")
-            or evidence.get("action") != decision.payload.get("action")
-            or evidence.get("selected_item_id") != decision.payload.get("selected_item_id")
-            or evidence.get("before") != decision.payload.get("before")
-            or evidence.get("after") != decision.payload.get("after")
-            or cost != decision.payload.get("cost_us")
-            or applied.get(observation_id) != {
-                "request_id": applied.get(observation_id, {}).get("request_id")
-                if isinstance(applied.get(observation_id), dict) else None,
-                "effect_event_id": effect.event_id,
-            }
-        ):
-            raise ValueError("OD-3 charged queue causal decision ledger inconsistent")
-        paid += cost
-        if evidence.get("paid_policy_us") != paid:
-            raise ValueError("OD-3 charged queue cumulative cost differs from events")
-        if evidence["action"] != "NOOP":
-            last_action_at = at.isoformat()
-        previous_order = evidence["after"]
-        previous_at = at
-        seen.add(observation_id)
-    if (
-        type(queue.attributes.get("paid_policy_us")) is not int
-        or queue.attributes["paid_policy_us"] != paid
-        or queue.attributes.get("last_observed_at") != (
-            previous_at.isoformat() if effects else None
-        )
-        or queue.attributes.get("last_action_at") != last_action_at
-        or queue.updated_at != previous_at
-        or (previous_order is not None and previous_order != [
-            item["item_id"] for item in queue.attributes["items"]
-        ])
-    ):
-        raise ValueError("OD-3 charged queue projection contradicts durable effects")
 
 
 def seed_od3_queue(
@@ -217,7 +132,7 @@ def seed_od3_queue(
         with store.transaction(owner_id=owner_id) as uow:
             if uow.get_entity(QUEUE_KIND, queue_id) is not None:
                 raise ValueError("OD-3 queue has already been admitted")
-            uow.save_entity(Entity(
+            queue = Entity(
                 id=queue_id, entity_type=QUEUE_KIND, state="ready",
                 created_at=now, updated_at=now,
                 attributes={
@@ -226,7 +141,9 @@ def seed_od3_queue(
                     "paid_policy_us": 0, "last_action_at": None,
                     "last_observed_at": None, "applied_observations": {},
                 },
-            ))
+            )
+            append_anchor(uow, queue, owner_id=owner_id, origin="seed")
+            uow.save_entity(queue)
     return queue_id
 
 
@@ -293,9 +210,11 @@ def apply_od3_queue_policy(
 
             if queue.created_at is None or now < _utc(queue.created_at):
                 raise ValueError("OD-3 observation precedes queue admission")
-            _verify_effect_cost_ledger(uow, queue, owner_id=owner_id)
+            ensure_queue_ledger(uow, queue, owner_id=owner_id)
             previous_observed = queue.attributes["last_observed_at"]
-            if previous_observed is not None and now < _utc(datetime.fromisoformat(previous_observed)):
+            if previous_observed is not None and now < _utc(
+                datetime.fromisoformat(previous_observed)
+            ):
                 raise ValueError("OD-3 queue observation time regressed")
             last_action = queue.attributes["last_action_at"]
             previous_decision_at = (
@@ -327,6 +246,7 @@ def apply_od3_queue_policy(
             if tuple(item.item_id for item in changed) != decision.after:
                 raise ValueError("OD-3 applied queue differs from deterministic decision")
             before_paid = queue.attributes["paid_policy_us"]
+            before_items = queue.attributes["items"]
             queue.attributes["items"] = [_record(item) for item in changed]
             queue.attributes["paid_policy_us"] = before_paid + decision.cost_us
             queue.attributes["last_observed_at"] = now.isoformat()
@@ -346,6 +266,7 @@ def apply_od3_queue_policy(
                     "cost_us": decision.cost_us, "paid_policy_us": before_paid + decision.cost_us,
                     "queue_version": queue.version + 1,
                     "contact_at": now.isoformat() if decision.action == "CONTACT" else None,
+                    **ledger_fields(queue, before_items),
                 },
             )
             if uow.get_event(effect_id) is not None:
@@ -353,6 +274,7 @@ def apply_od3_queue_policy(
             applied[observation_id] = {
                 "request_id": request_id, "effect_event_id": effect_id,
             }
+            queue.attributes["ledger_head"] = effect_id
             queue.touch(now)
             uow.save_entity(queue)
             uow.append_event(decided_event)
