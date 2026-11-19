@@ -310,7 +310,7 @@ def test_replay_and_fresh_intervention_require_single_causal_identity(
     adapter, mutation, tmp_path,
 ):
     from dataclasses import replace as dc_replace
-    from sose.core.events import DomainEvent, Command
+    from sose.core.events import DomainEvent
 
     store = _store(adapter, tmp_path)
     try:
@@ -828,6 +828,68 @@ def test_od4_replay_requires_exactly_one_native_transition_receipt(
             _run(store, key, action="accept")
         assert store.events() == before
         assert store.entity(WORK_KIND, work_id).state == "accepted"
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("mutation", (
+    "missing", "foreign_owner", "backdated_command", "swapped_request", "wrong_action",
+    "foreign_correlation",
+))
+def test_subsequent_management_intervention_rejects_corrupted_original_command(
+    adapter, mutation, tmp_path,
+):
+    """#464: the first paid sham cannot have its cause silently rewritten.
+
+    The later intervention is permitted only if the earlier immutable-effect
+    event still matches the original persisted causal Command, not merely
+    the mutable projected aggregate cost.
+    """
+    store = _store(adapter, tmp_path)
+    key = "management-command-fence"
+    cause = "paid:sham:first"
+    try:
+        work_id = admit_work(
+            store, owner_id=OWNER, work_key=key,
+            protocol=PROTOCOL, at=T0,
+        )
+        original = _run(
+            store, key, action="sham", matched="accept", cause=cause,
+        )
+        command_id = deterministic_id("od4-command-v1", OWNER, work_id, cause)
+        with store.transaction(owner_id=OWNER) as uow:
+            command = uow.get_command(command_id)
+            assert command is not None
+            if mutation == "missing":
+                uow.delete_command(command_id)
+            elif mutation == "foreign_owner":
+                uow.save_command(replace(command, owner_id=OTHER))
+            elif mutation == "backdated_command":
+                uow.save_command(replace(
+                    command, issued_at=T0 + timedelta(seconds=1),
+                ))
+            elif mutation == "swapped_request":
+                rewritten = list(command.payload["request"])
+                rewritten[1] = "reject"
+                uow.save_command(replace(
+                    command, payload={**command.payload, "request": rewritten},
+                ))
+            elif mutation == "foreign_correlation":
+                uow.save_command(replace(command, correlation_id="forged-flow"))
+            else:
+                uow.save_command(replace(command, name="reject"))
+        prior_events = tuple(store.events())
+        prior_state = store.entity(WORK_KIND, work_id)
+        with pytest.raises(ValueError, match="OD-4 durable management original Command"):
+            _run(
+                store, key, action="sham", matched="accept",
+                cause="paid:sham:second", at=T0 + timedelta(minutes=2),
+            )
+        assert tuple(store.events()) == prior_events
+        assert store.entity(WORK_KIND, work_id) == prior_state
+        assert original in store.events()
     finally:
         if adapter == "sqlite":
             store.close()

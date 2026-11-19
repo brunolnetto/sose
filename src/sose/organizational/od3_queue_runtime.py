@@ -17,6 +17,9 @@ from sose.domain.entity import Entity
 from sose.organizational.od3_decisions import (
     OD3Policy, QueuedWork, _utc, decide_od3, od3_decision_event,
 )
+from sose.organizational.od3_queue_ledger import (
+    append_anchor, claim_version_slot, ensure_queue_ledger, ledger_fields,
+)
 
 QUEUE_KIND = "od3_operational_queue"
 _SCHEMA_VERSION = 1
@@ -73,7 +76,7 @@ def _read(queue: Entity, *, owner_id: str, queue_key: str) -> tuple[QueuedWork, 
     attrs = queue.attributes
     if (
         queue.entity_type != QUEUE_KIND or queue.state != "ready"
-        or not isinstance(attrs, dict) or set(attrs) != {
+        or not isinstance(attrs, dict) or set(attrs) - {"ledger_head"} != {
             "schema_version", "owner_id", "queue_key", "items",
             "paid_policy_us", "last_action_at", "last_observed_at",
             "applied_observations",
@@ -114,7 +117,7 @@ def seed_od3_queue(
         len({item.item_id for item in items}) != len(items)
         or any(
             item.owner_id != owner_id
-            or not isinstance(item.blocked, bool)
+            or type(item.service_us) is not int
             or type(item.blocked) is not bool
             or _utc(item.arrived_at) > now
             or (item.last_contact_at is not None and _utc(item.last_contact_at) > now)
@@ -129,7 +132,7 @@ def seed_od3_queue(
         with store.transaction(owner_id=owner_id) as uow:
             if uow.get_entity(QUEUE_KIND, queue_id) is not None:
                 raise ValueError("OD-3 queue has already been admitted")
-            uow.save_entity(Entity(
+            queue = Entity(
                 id=queue_id, entity_type=QUEUE_KIND, state="ready",
                 created_at=now, updated_at=now,
                 attributes={
@@ -138,7 +141,9 @@ def seed_od3_queue(
                     "paid_policy_us": 0, "last_action_at": None,
                     "last_observed_at": None, "applied_observations": {},
                 },
-            ))
+            )
+            append_anchor(uow, queue, owner_id=owner_id, origin="seed")
+            uow.save_entity(queue)
     return queue_id
 
 
@@ -205,8 +210,11 @@ def apply_od3_queue_policy(
 
             if queue.created_at is None or now < _utc(queue.created_at):
                 raise ValueError("OD-3 observation precedes queue admission")
+            ensure_queue_ledger(uow, queue, owner_id=owner_id)
             previous_observed = queue.attributes["last_observed_at"]
-            if previous_observed is not None and now < _utc(datetime.fromisoformat(previous_observed)):
+            if previous_observed is not None and now < _utc(
+                datetime.fromisoformat(previous_observed)
+            ):
                 raise ValueError("OD-3 queue observation time regressed")
             last_action = queue.attributes["last_action_at"]
             previous_decision_at = (
@@ -238,12 +246,17 @@ def apply_od3_queue_policy(
             if tuple(item.item_id for item in changed) != decision.after:
                 raise ValueError("OD-3 applied queue differs from deterministic decision")
             before_paid = queue.attributes["paid_policy_us"]
+            before_items = queue.attributes["items"]
             queue.attributes["items"] = [_record(item) for item in changed]
             queue.attributes["paid_policy_us"] = before_paid + decision.cost_us
             queue.attributes["last_observed_at"] = now.isoformat()
             if decision.action != "NOOP":
                 queue.attributes["last_action_at"] = now.isoformat()
             effect_id = deterministic_id("od3-queue-effect", queue_id, decided_event.event_id)
+            # Recorded before the effect so its applied digest covers this entry.
+            applied[observation_id] = {
+                "request_id": request_id, "effect_event_id": effect_id,
+            }
             effect = DomainEvent(
                 event_id=effect_id, name="od3.queue_effect_applied",
                 entity_type=QUEUE_KIND, entity_id=queue_id, owner_id=owner_id,
@@ -257,15 +270,15 @@ def apply_od3_queue_policy(
                     "cost_us": decision.cost_us, "paid_policy_us": before_paid + decision.cost_us,
                     "queue_version": queue.version + 1,
                     "contact_at": now.isoformat() if decision.action == "CONTACT" else None,
+                    **ledger_fields(queue, before_items),
                 },
             )
             if uow.get_event(effect_id) is not None:
                 raise ValueError("OD-3 operational effect identity already exists")
-            applied[observation_id] = {
-                "request_id": request_id, "effect_event_id": effect_id,
-            }
+            queue.attributes["ledger_head"] = effect_id
             queue.touch(now)
             uow.save_entity(queue)
             uow.append_event(decided_event)
             uow.append_event(effect)
+            claim_version_slot(uow, queue, effect)
             return effect

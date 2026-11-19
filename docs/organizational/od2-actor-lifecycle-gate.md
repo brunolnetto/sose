@@ -60,6 +60,74 @@ Physical work and in-flight exit/cancel/transfer are independent #462
 acceptance and remain OPEN. Do not infer real workplace schedules or OD-5b
 causal effects from synthetic windows.
 
+## Wave 1 — bounded causal time/cost projection guard (PR pending)
+
+For **prospectively enrolled actors with `seed_actor(tracked_time=True)`**,
+write a versioned `od2.actor_time_origin_recorded` admission event in the same
+UoW as their initial entity. The event binds owner/model/epoch, replacement
+identity and the original effective timestamp; rewriting `actor.created_at`
+can no longer pass the ledger audit, and removing or altering the projection's
+`tracked_time_version` marker while the origin event remains fails closed.
+
+Every native transition of a tracked actor (work and non-work, even cost=0)
+appends one `od2.actor_time_ledger_step` event in the same UoW. Its ID is
+deterministic in (actor, sequence number); it names its predecessor (origin or
+previous step), the original Command/StateChart event and cause, and carries
+the running totals *after* the transition: per-state elapsed microseconds
+(nonzero buckets only), paid cost, last effective time, state, assigned work
+and a SHA-256 digest of the cause index (implementation:
+`sose.organizational.od2_actor_time_ledger`).
+
+Before a **new** tracked transition and before returning a **same-cause
+replay**, the guard reads the origin, the chain head (sequence = number of
+applied causes), its source event and Command, and the would-be successor ID,
+all by key. The mutable projection must equal the head totals and no successor
+may exist, so dropping a cause or rolling the whole projection back to an
+earlier verified snapshot is detected. Because each step is written only after
+its predecessor was verified, this is incremental: a constant number of keyed
+reads with no event-log enumeration or deep copy (the per-ID lookup cost is
+the persistence adapter's; the memory adapter's `get_event` is a linear
+comparison). Ledger steps, not Commands, are the authoritative
+per-transition cost record; the guard binds only the head step back to its
+original Command. Untracked actors are skipped unless a genuine origin event
+for that actor/owner exists, so a foreign event at the predictable origin or
+step ID cannot disable them; it fails a tracked seed or transition with an
+explicit "ID already committed"/"occupied by a foreign event" error.
+Whether an origin is genuine is decided only from immutable identity (event
+name/type/actor ID, and the origin's own owner + recorded `actor_key` must
+re-derive the actor ID), never from editable projection fields, so stripping
+the marker together with rewriting the claimed owner is still caught.
+**Residual store-level limit (#545):** `append_event` does not bind an event's
+`owner_id` to the writing transaction, so another owner can append a fully
+forged origin at an untracked actor's origin ID. That locks the actor: its
+transitions fail closed and write nothing, and an already-tracked actor's
+history cannot be altered. Together with the power to rewrite an untracked
+actor's record, a forged origin can enroll that actor as tracked from a forged
+clean state (the same record-edit exposure untracked actors already have).
+Closing it needs store-level issuer authorization. Buckets are
+compared by present key with missing keys meaning zero, so adding a lifecycle
+state later does not invalidate stored actors.
+
+Memory and SQLite regression tests corrupt individual buckets (including
+a *zero-sum reclassification*), paid cost, work identity, cause index,
+admission time and coordinated Command+projection cost rewrites; the next
+attempted transition must fail without appending an event/Command. Further
+tests cover owner isolation of same-key actors, tracked replacement of a
+legacy actor, tracked actors with availability calendars, and a spy proving
+tracked transitions never call `uow.events()` with foreign events present.
+Original idempotent replay-specific checks remain in their existing order.
+Markerless/legacy actors keep their previous reference-runtime semantics, but
+**cannot claim trusted actor-time conservation** without a separately
+authorized, versioned cutover. Opt-in records are still public-UoW consistency
+evidence, not protected issuer proof.
+
+**Limit:** this detects inconsistent *mutable projections*; public writers
+can potentially forge matching Command+event metadata. Only a separately
+protected issuer and owner-fenced writer (#545) can establish source
+authenticity. No physical `ResourceReservation`, worker-time consumption,
+independently signed legacy cutover, or cancellation/preemption is asserted.
+Scientific OD-5b admission remains separate.
+
 ## Outstanding #462 acceptance
 
 1. Real worker/process death and simultaneous PostgreSQL actors attempting the

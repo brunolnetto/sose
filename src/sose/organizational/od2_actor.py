@@ -23,6 +23,7 @@ from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry, EntityType
+from sose.organizational import od2_actor_time_ledger as _time_ledger
 from sose.persistence.base import Persistence
 from sose.probability import probabilistic_transitions
 
@@ -71,7 +72,6 @@ def _utc(at: datetime) -> datetime:
     if not isinstance(at, datetime) or at.tzinfo is None or at.utcoffset() is None:
         raise ValueError("actor effective time requires timezone-aware datetime")
     return at.astimezone(timezone.utc)
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,20 +228,22 @@ def seed_actor(
     model_spec_hash: str, config_epoch: int, at: datetime,
     replaces_actor_id: str | None = None,
     availability_calendar: ActorAvailabilityCalendar | None = None,
+    tracked_time: bool = False,
 ) -> str:
-    """Enroll an independent actor; optional replacement requires exited peer."""
+    """Enroll an actor; optional v1 actor-time ledger is prospective only."""
     _identity(owner_id, "owner_id")
     _identity(actor_key, "actor_key")
     _identity(model_spec_hash, "model_spec_hash")
     if type(config_epoch) is not int or config_epoch < 0:
         raise ValueError("config_epoch must be a nonnegative integer")
     now = _utc(at)
+    tracked = _time_ledger.tracked_attributes(tracked_time)
     if availability_calendar is not None:
         if not isinstance(availability_calendar, ActorAvailabilityCalendar):
             raise TypeError("availability_calendar must be ActorAvailabilityCalendar")
         if availability_calendar.config_epoch != config_epoch:
             raise ValueError("actor calendar epoch contradicts admitted actor epoch")
-    identity = deterministic_id("od2-actor", owner_id, actor_key)
+    identity = _time_ledger.actor_identity(owner_id, actor_key)
     if replaces_actor_id is not None:
         _identity(replaces_actor_id, "replaces_actor_id")
         if replaces_actor_id == identity:
@@ -289,7 +291,7 @@ def seed_actor(
                     "paid_transition_us": 0,
                     "assigned_work_id": None, "applied_causes": {},
                     "replaces_actor_id": replaces_actor_id,
-                    "replaced_by_actor_id": None,
+                    "replaced_by_actor_id": None, **tracked,
                     **({
                         "availability_calendar": {
                             **availability_calendar.snapshot(),
@@ -315,6 +317,7 @@ def seed_actor(
                         "model_spec_hash": model_spec_hash,
                     },
                 ))
+            _time_ledger.record_origin(uow, uow.get_entity(ACTOR_KIND, identity), actor_key)
     return identity
 
 
@@ -335,10 +338,8 @@ def _committed_work_event(
         ),
         name="od2.actor_work_caused",
         entity_type="organizational_actor_work_cause",
-        entity_id=command.command_id,
-        occurred_at=source.occurred_at,
-        owner_id=command.owner_id,
-        causation_id=source.event_id,
+        entity_id=command.command_id, occurred_at=source.occurred_at,
+        owner_id=command.owner_id, causation_id=source.event_id,
         correlation_id=command.correlation_id,
         payload={
             "actor_id": actor_id, "command_id": command.command_id,
@@ -380,8 +381,7 @@ def transition_actor(
     command = Command(
         command_id=deterministic_id("od2-actor-command", owner_id, actor_id, cause_id),
         name=action, entity_type=ACTOR_KIND, entity_id=actor_id,
-        due_at=now, issued_at=now, owner_id=owner_id,
-        causation_id=None,
+        due_at=now, issued_at=now, owner_id=owner_id, causation_id=None,
         correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
         payload={
             "evidence_version": 1, "external_cause_id": cause_id,
@@ -405,9 +405,7 @@ def transition_actor(
                 raise ValueError("actor model_spec_hash changed")
             if type(meta.get("config_epoch")) is not int or meta["config_epoch"] != config_epoch:
                 raise ValueError("stale or unadmitted actor config_epoch")
-            _require_actor_calendar_start(
-                uow, actor, now, require_window=False,
-            )
+            _require_actor_calendar_start(uow, actor, now, require_window=False)
             used = meta["applied_causes"].get(cause_id)
             if used is not None:
                 if used != list(identity):
@@ -443,10 +441,10 @@ def transition_actor(
                         event for event in uow.events() if event.event_id == expected.event_id
                     )
                     if len(matches) != 1 or matches[0] != expected:
-                        raise ValueError(
-                            "actor replay lacks immutable work/cost causal evidence"
-                        )
+                        raise ValueError("actor replay lacks immutable work/cost causal evidence")
+                _time_ledger.verify_time_ledger(uow, actor)
                 return actor
+            _time_ledger.verify_time_ledger(uow, actor)  # tracked: O(1) keyed reads
             prior_at = datetime.fromisoformat(meta["last_at"])
             if now < prior_at:
                 raise ValueError("actor effective time regressed")
@@ -462,7 +460,7 @@ def transition_actor(
                 raise ValueError("work identity is only legal for assign/complete")
             if action == "begin_development" and cost_us == 0:
                 raise ValueError("development must have explicit paid cost")
-
+            # Tracked actors also append the next immutable ledger step below.
             engine = _engine(store, owner_id=owner_id, at=now)
             try:
                 chart = engine.context.statecharts.bind(actor, caused_by=command)
@@ -471,7 +469,8 @@ def transition_actor(
                 if len(emitted) != 1:
                     raise RuntimeError("actor transition must produce exactly one causal event")
                 elapsed_us = (now - prior_at) // timedelta(microseconds=1)
-                meta["time_us"][emitted[0].payload["from_state"]] += elapsed_us
+                from_state = emitted[0].payload["from_state"]
+                meta["time_us"][from_state] = meta["time_us"].get(from_state, 0) + elapsed_us
                 meta["last_at"] = now.isoformat()
                 meta["paid_transition_us"] += cost_us
                 meta["applied_causes"][cause_id] = list(identity)
@@ -492,6 +491,7 @@ def transition_actor(
                     if uow.get_event(work_evidence.event_id) is not None:
                         raise ValueError("actor work evidence ID already committed")
                     uow.append_event(work_evidence)
+                _time_ledger.record_step(uow, actor, command, emitted[0], cause_id)
                 return actor
             finally:
                 engine.context.drain_events()

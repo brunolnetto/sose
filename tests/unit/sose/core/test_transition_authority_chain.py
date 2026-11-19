@@ -1,4 +1,4 @@
-"""#545 review: chained, owner-scoped and O(1) attested predecessor checks.
+"""#545 review: chained attested predecessor checks with owner-independent receipt ids.
 
 Each Engine receipt signs its predecessor receipt id and a digest of the
 entity attributes. The dispatch-time prestate check reads only the current
