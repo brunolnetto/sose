@@ -836,6 +836,7 @@ def test_od4_replay_requires_exactly_one_native_transition_receipt(
 @pytest.mark.parametrize("adapter", ("memory", "sqlite"))
 @pytest.mark.parametrize("mutation", (
     "missing", "foreign_owner", "backdated_command", "swapped_request", "wrong_action",
+    "foreign_correlation",
 ))
 def test_subsequent_management_intervention_rejects_corrupted_original_command(
     adapter, mutation, tmp_path,
@@ -875,6 +876,8 @@ def test_subsequent_management_intervention_rejects_corrupted_original_command(
                 uow.save_command(replace(
                     command, payload={**command.payload, "request": rewritten},
                 ))
+            elif mutation == "foreign_correlation":
+                uow.save_command(replace(command, correlation_id="forged-flow"))
             else:
                 uow.save_command(replace(command, name="reject"))
         prior_events = tuple(store.events())

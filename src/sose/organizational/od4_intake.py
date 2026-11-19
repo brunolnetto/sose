@@ -17,6 +17,7 @@ from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
+from sose.organizational.od4_command_lineage import verify_original_management_commands
 from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.domain.entity import Entity
@@ -257,48 +258,6 @@ def _verify_decision_ledger(uow, work: ManagementWork,
         raise ValueError("OD-4 paid management projection contradicts durable ledger")
 
 
-
-def _verify_original_management_commands(
-    uow, work: ManagementWork, protocol: IntakeProtocol, owner_id: str,
-) -> None:
-    """Before a NEW decision, validate historical paid Command source identity.
-
-    Replay requests preserve their existing, stronger replay-specific errors.
-    This remains a consistency check on a public UoW, not an issuer root.
-    """
-    for decision in uow.events():
-        if not (
-            decision.name == _DECISION_EVENT
-            and decision.entity_type == WORK_KIND and decision.entity_id == work.id
-        ):
-            continue
-        payload = decision.payload
-        cause = payload.get("cause_id")
-        action = payload.get("action")
-        observed = _utc(decision.occurred_at)
-        command_id = deterministic_id("od4-command-v1", owner_id, work.id, cause)
-        command = uow.get_command(command_id)
-        if (
-            command is None
-            or command.command_id != command_id
-            or command.owner_id != owner_id
-            or command.entity_type != WORK_KIND or command.entity_id != work.id
-            or command.name != action
-            or command.due_at != observed or command.issued_at != observed
-            or command.causation_id is not None
-            or command.correlation_id != decision.correlation_id
-            or not isinstance(command.payload, dict)
-            or command.payload.get("cause_id") != cause
-            or command.payload.get("protocol") != protocol.snapshot()
-            or command.payload.get("request") != [
-                action, payload.get("matched_action"),
-                observed.isoformat(), protocol.snapshot(),
-            ]
-        ):
-            raise ValueError("OD-4 durable management original Command inconsistent")
-
-
-
 def admit_work(store, *, owner_id: str, work_key: str,
                protocol: IntakeProtocol, at: datetime) -> str:
     """Freeze a management protocol before observing and charging decisions."""
@@ -388,14 +347,12 @@ def intervene_work(
                     command is None
                     or command.command_id != command_id
                     or command.name != action
-                    or command.entity_type != WORK_KIND
-                    or command.entity_id != work_id
+                    or command.entity_type != WORK_KIND or command.entity_id != work_id
                     or command.owner_id != owner_id
                     or command.due_at != now or command.issued_at != now
                     or command.causation_id is not None
                     or command.correlation_id != deterministic_id(
-                        "od4-work-flow", owner_id, work_id
-                    )
+                        "od4-work-flow", owner_id, work_id)
                     or command.payload.get("request") != list(request)
                     or command.payload.get("cause_id") != cause_id
                     or command.payload.get("protocol") != protocol.snapshot()
@@ -404,13 +361,13 @@ def intervene_work(
                     or original.payload.get("matched_action") != matched_action
                     or original.payload.get("cost_us") != protocol.cost_us
                     or original.payload.get("config_epoch") != protocol.config_epoch
-                    or original.owner_id != owner_id
-                    or original.entity_id != work_id
+                    or original.owner_id != owner_id or original.entity_id != work_id
                     or original.occurred_at != now
                 ):
                     raise ValueError("OD-4 replay lacks corresponding command")
                 return original
-            _verify_original_management_commands(uow, work, protocol, owner_id)
+            # #464: every earlier paid decision must still match its original Command.
+            verify_original_management_commands(uow, owner_id, work.id, protocol)
             if original is not None or uow.get_command(command_id) is not None:
                 raise ValueError("OD-4 cause identity already used")
             if work.state != "pending":
