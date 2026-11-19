@@ -2,11 +2,11 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.mro.simulation import (
     ORIGIN,
     build_runtime,
-    reconcile_cancel,
     reconcile_start,
     seed_reference,
     seed_spare_parts,
 )
+from sose.examples.mro.simulation_closeout import reconcile_cancel
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "mro-sad-path-test-organization"

@@ -15,8 +15,8 @@ from sose.examples.field_service.simulation import (
     reconcile_work_start,
     seed_part_inventory,
     seed_reference,
-    select_technician,
 )
+from sose.examples.field_service.scheduling import select_technician
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "field-service-reference-organization"

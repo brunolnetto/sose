@@ -2,11 +2,11 @@
 
 Callers pass kind and identity separately to BoundaryMessage.create. The type
 discriminator is durably serialized with the message, never inferred from a
-reserved prefix that could collide with legacy event/command identifiers.
+reserved prefix that could collide with untyped event/command identifiers.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Literal
 
 CausalKind = Literal["boundary", "event"]
@@ -34,3 +34,20 @@ class CausalReference:
     def as_message_fields(self) -> dict[str, str]:
         """Use with BoundaryMessage.create(**ref.as_message_fields())."""
         return {"causation_id": self.identity, "causation_kind": self.kind}
+
+
+def matches_durable_message(prior, message) -> bool:
+    """True when the durable ``prior`` already records ``message``.
+
+    Typed causation (#644) changes only the ``causation_kind`` discriminator; the message
+    identity does not include it. A message recorded untyped before the upgrade therefore
+    still satisfies the same message re-derived with ``causation_kind="boundary"``; the
+    durable record is kept as written, never rewritten.
+    """
+    if prior == message:
+        return True
+    return (
+        prior.causation_kind is None
+        and message.causation_kind == "boundary"
+        and replace(prior, causation_kind="boundary") == message
+    )

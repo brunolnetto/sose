@@ -1,8 +1,8 @@
 from sose.examples.record_to_report.simulation import (
-    adjustment_id,
     run_adjustment_path,
     run_happy_path,
 )
+from sose.examples.record_to_report.identity import adjustment_id
 
 
 REFERENCE_OWNER_ID = "record-to-report-reference-organization"

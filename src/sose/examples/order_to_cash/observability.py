@@ -65,25 +65,17 @@ def order_to_cash_projection(
         case = persistence.entity("collection_case", case_key)
 
     collected = receivable is not None and receivable.state == "collected"
-    order_to_cash_seconds = None
-    if (
-        collected
-        and order.created_at is not None
-        and receivable is not None
-        and receivable.updated_at is not None
-    ):
-        order_to_cash_seconds = max(
-            0.0,
-            (receivable.updated_at - order.created_at).total_seconds(),
-        )
+    order_to_cash_seconds = (
+        _order_to_cash_seconds(order, receivable) if collected else None
+    )
 
     return OrderToCashProjection(
         order_id=order.id,
-        receivable_id=receivable.id if receivable is not None else None,
-        collection_case_id=case.id if case is not None else None,
+        receivable_id=_optional_attr(receivable, "id"),
+        collection_case_id=_optional_attr(case, "id"),
         order_state=order.state,
-        receivable_state=receivable.state if receivable is not None else None,
-        collection_case_state=case.state if case is not None else None,
+        receivable_state=_optional_attr(receivable, "state"),
+        collection_case_state=_optional_attr(case, "state"),
         amount=float(order.attributes["amount"]),
         currency=str(order.attributes["currency"]),
         collected=collected,
@@ -91,6 +83,16 @@ def order_to_cash_projection(
         collection_open=case is not None and case.state != "resolved",
         order_to_cash_seconds=order_to_cash_seconds,
     )
+
+
+def _order_to_cash_seconds(order, receivable) -> float | None:
+    if order.created_at is None or receivable.updated_at is None:
+        return None
+    return max(0.0, (receivable.updated_at - order.created_at).total_seconds())
+
+
+def _optional_attr(entity, name: str):
+    return getattr(entity, name) if entity is not None else None
 
 
 def order_to_cash_kpis(

@@ -6,11 +6,11 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.p2p.simulation import (
     ORIGIN,
     build_runtime,
-    reconcile_shortage_state,
     reconcile_receiving_resources,
     reconcile_stocking,
     seed_happy_path,
 )
+from sose.examples.p2p.inventory import reconcile_shortage_state
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"

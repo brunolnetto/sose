@@ -7,12 +7,9 @@ import pytest
 from sose.backends.simpy import SimPyBackend
 from sose.examples.aviation.simulation import (
     ORIGIN,
-    _crew_for_flight,
-    _entity,
     build_runtime,
     complete_aog_maintenance,
     ensure_inspection,
-    ensure_maintenance,
     land_flight,
     maintenance_work_order_id,
     part_demand_id,
@@ -24,6 +21,9 @@ from sose.examples.aviation.simulation import (
     seed_reference,
     seed_spare_part,
 )
+from sose.examples.aviation.simulation_departures import _crew_for_flight
+from sose.examples.aviation.simulation_maintenance import ensure_maintenance
+from sose.examples.aviation.simulation_runtime import _entity
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "aviation-reference-organization"
