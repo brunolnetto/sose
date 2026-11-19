@@ -8,7 +8,7 @@ import subprocess
 import pytest
 
 from scripts.verify_od5a_477_attestation import (
-    public_key_fingerprint, statement, verify_attestation,
+    main, public_key_fingerprint, statement, verify_attestation,
 )
 from tests.unit.sose.organizational.test_od5a_477_recovery_evidence import _bundle
 
@@ -205,3 +205,68 @@ def test_resigned_evidence_cannot_bypass_independent_source_pins(
     )
     with pytest.raises(ValueError, match=reason):
         _verify(signed_bundle)
+
+
+def _public_key(tmp_path, name, *algorithm):
+    private, public = tmp_path / f"{name}.pem", tmp_path / f"{name}.pub.pem"
+    subprocess.run(["openssl", "genpkey", *algorithm, "-out", str(private)],
+                   capture_output=True, check=True)
+    subprocess.run(["openssl", "pkey", "-in", str(private), "-pubout", "-out", str(public)],
+                   capture_output=True, check=True)
+    return public
+
+
+@pytest.mark.parametrize("algorithm, message", [
+    (("-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256"), "must be RSA"),
+    (("-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:1024"), "at least 2048 bits"),
+])
+def test_trust_root_must_be_rsa_of_at_least_2048_bits(tmp_path, algorithm, message):
+    public = _public_key(tmp_path, "weak", *algorithm)
+    with pytest.raises(ValueError, match=message):
+        public_key_fingerprint(public)
+
+
+def test_garbage_and_foreign_statement_signatures_fail_closed(signed_bundle, tmp_path):
+    garbage = tmp_path / "garbage.sig"
+    garbage.write_bytes(b"\x01" * 256)
+    with pytest.raises(ValueError, match="external detached signature invalid"):
+        _verify(signed_bundle, signature=garbage)
+    # A genuine signature by the trusted key, but over a different statement.
+    private = tmp_path / "private-test-only.pem"
+    foreign = tmp_path / "foreign.sig"
+    subprocess.run(["openssl", "dgst", "-sha256", "-sign", str(private), "-out", str(foreign)],
+                   input=b'{"schema":"something-else"}\n', capture_output=True, check=True)
+    with pytest.raises(ValueError, match="external detached signature invalid"):
+        _verify(signed_bundle, signature=foreign)
+
+
+@pytest.mark.parametrize("missing", [
+    ["--trusted-public-key", "--expected-key-sha256"],
+    ["--expected-source-git-oid", "--expected-uv-lock-sha256"],
+])
+def test_cli_refuses_verification_without_every_pin(signed_bundle, monkeypatch, missing):
+    root, public, signature, fingerprint = signed_bundle
+    options = {
+        "--trusted-public-key": str(public), "--expected-key-sha256": fingerprint,
+        "--expected-source-git-oid": "f" * 40, "--expected-uv-lock-sha256": "e" * 64,
+    }
+    argv = ["verify", str(root), "--issuer-id", ISSUER, "--signature", str(signature)]
+    for flag, value in options.items():
+        if flag not in missing:
+            argv += [flag, value]
+    monkeypatch.setattr("sys.argv", argv)
+    with pytest.raises(SystemExit) as exited:
+        main()
+    assert exited.value.code != 0
+
+
+def test_cli_verifies_a_fully_pinned_bundle(signed_bundle, monkeypatch, capsys):
+    root, public, signature, fingerprint = signed_bundle
+    monkeypatch.setattr("sys.argv", [
+        "verify", str(root), "--issuer-id", ISSUER, "--signature", str(signature),
+        "--trusted-public-key", str(public), "--expected-key-sha256", fingerprint,
+        "--expected-source-git-oid", "f" * 40, "--expected-uv-lock-sha256", "e" * 64,
+    ])
+    assert main() == 0
+    assert json.loads(capsys.readouterr().out)["signature_status"] == (
+        "VERIFIED_DETACHED_EXTERNAL_KEY")

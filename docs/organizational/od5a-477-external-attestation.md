@@ -24,3 +24,8 @@ independent issuer, nor can successful signature verification prove actual serve
 faults, fairness/preemption, multi-phase causal equivalence, or scientific
 admission. All records stay `NON_CONFIRMATORY / NOT_ADMITTED` and issue #477
 remains OPEN until the separate operational gates are certified.
+
+The trusted key must be RSA of at least 2048 bits. The signed statement carries no
+timestamp, expiry or revocation: a signature stays valid for that exact bundle and
+issuer indefinitely, which is acceptable for an offline, nonconfirmatory record.
+Only the five arm files are covered; other files in the bundle directory are ignored.

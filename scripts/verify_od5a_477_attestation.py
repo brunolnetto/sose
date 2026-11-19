@@ -62,7 +62,27 @@ def _trusted_key_snapshot(public_key: Path) -> tuple[bytes, str]:
     if not result.stdout:
         raise ValueError("trusted public key has no SubjectPublicKeyInfo")
     der = result.stdout
+    _require_rsa_2048(der)
     return der, sha256(der).hexdigest()
+
+
+_MIN_RSA_BITS = 2048
+
+
+def _require_rsa_2048(der: bytes) -> None:
+    """The gate is RSA-SHA256: refuse other key types and RSA keys under 2048 bits."""
+    try:
+        text = subprocess.run(
+            ["openssl", "pkey", "-pubin", "-inform", "DER", "-text_pub", "-noout"],
+            input=der, check=True, capture_output=True,
+        ).stdout.decode("ascii", "replace")
+    except (OSError, subprocess.CalledProcessError) as exc:
+        raise ValueError("trusted public key or OpenSSL cannot be loaded") from exc
+    bits = re.search(r"Public-Key: \((\d+) bit\)", text)
+    if "Modulus:" not in text or bits is None:
+        raise ValueError("trusted public key must be RSA (RSA-SHA256 gate)")
+    if int(bits.group(1)) < _MIN_RSA_BITS:
+        raise ValueError(f"trusted RSA public key must be at least {_MIN_RSA_BITS} bits")
 
 
 def public_key_fingerprint(public_key: Path) -> str:
