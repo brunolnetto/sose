@@ -1,15 +1,15 @@
 from sose.backends.simpy import SimPyBackend
 from sose.examples.record_to_report.simulation import (
     ORIGIN,
-    adjustment_id,
     build_runtime,
-    ensure_adjustment,
     reconcile_close,
     reconcile_item,
     schedule_close,
     seed_reference,
     submit_and_post_journal,
 )
+from sose.examples.record_to_report.adjustments import ensure_adjustment
+from sose.examples.record_to_report.identity import adjustment_id
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 from tests.support.behavioral_conformance import operational_snapshot

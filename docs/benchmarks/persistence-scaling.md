@@ -1,108 +1,18 @@
 # Persistence scaling curves
 
-The persistence scaling benchmark isolates one question:
+The pytest-benchmark suite asks how transaction cost changes as durable state grows. For each sink and cardinality, it seeds N entities in one transaction, closes and reopens the adapter to discard setup caches, then measures single-entity update transactions. Setup is excluded from the timed region. The sink matrix remains snapshot SQLite, incremental SQLite, JSONL journal, and DuckDB; full cardinalities remain 10, 100, 1,000, and 10,000.
 
-> when exactly one durable record changes, how does transaction cost grow as the
-> total durable state grows?
+## Command existence
 
-This is different from the throughput benchmark, which measures complete
-scheduled/recovery workflows.
+The same suite compares batch command-existence lookup with the legacy per-ID fallback in MemoryPersistence and each local durable adapter. It preserves the original lookup cardinalities and 80/20 present/missing mix. Seeding is excluded from timing, and result equivalence is asserted before measurement.
 
-## Workload
+## CI and local execution
 
-For each sink and cardinality:
-
-1. create N durable entities in one setup transaction;
-2. close and reopen the sink so setup caches do not leak into measurement;
-3. update exactly one entity per measured transaction;
-4. repeat the update several times;
-5. record min/median/max update latency and durable storage size.
-
-The default full cardinalities are:
-
-```text
-10
-100
-1,000
-10,000
-```
-
-The current sink matrix is:
-
-- snapshot SQLite;
-- incremental SQLite;
-- JSONL journal;
-- DuckDB.
-
-Setup time is deliberately excluded from the measured update latency. The
-experiment is about marginal mutation cost with pre-existing durable state.
-
-## Why this benchmark matters
-
-Snapshot SQLite is expected to pay for serializing/replacing the full state on
-each transaction.
-
-Dirty-tracked record sinks should trend toward cost proportional to the touched
-records, but they may still retain whole-state costs from:
-
-- UnitOfWork deepcopy;
-- database record reload;
-- journal replay;
-- record-cache invalidation;
-- backend-specific transaction overhead.
-
-The curve therefore tests the architectural hypothesis more directly than one
-fixed-size throughput number.
-
-## CI vs full workflow
-
-Ordinary CI runs:
-
-```text
-N = 10, 100
-repetitions = 1
-```
-
-to verify that every sink and the output schema remain executable.
-
-The manual/weekly benchmark workflow runs:
-
-```text
-N = 10, 100, 1,000, 10,000
-repetitions = 5
-```
-
-Timing thresholds are still not correctness gates.
-
-## Running locally
+Pull requests use reduced sizes (10 and 100 entities; 1,000 seeded commands). Manual full runs and the weekly schedule use all cardinalities (through 10,000 entities; 10,000 seeded commands). The unified report is `pytest-benchmark-results.json`.
 
 ```bash
-python benchmarks/persistence_scaling.py \
-  --sizes 10,100,1000,10000 \
-  --repetitions 5 \
-  --output persistence-scaling.json
+SOSE_BENCHMARK_MODE=full uv run pytest -o addopts= benchmarks/pytest_benchmarks \
+  --benchmark-only --benchmark-json=/tmp/sose-benchmarks.json
 ```
 
-A subset can be selected explicitly:
-
-```bash
-python benchmarks/persistence_scaling.py \
-  --sizes 100,1000 \
-  --sinks sqlite_snapshot,sqlite_incremental \
-  --repetitions 3
-```
-
-## Interpretation
-
-Useful conclusions include:
-
-- whether incremental SQLite overtakes snapshot SQLite as state grows;
-- whether dirty tracking actually flattens the marginal-update curve;
-- whether JSONL replay becomes dominant;
-- whether DuckDB's analytical orientation makes small operational writes
-  unsuitable;
-- whether the common UnitOfWork deepcopy becomes the next dominant shared cost.
-
-Do not compare one run across unrelated machines as if it were a product SLA.
-Prefer curves collected by the same workflow/environment and inspect the shape,
-not only one absolute latency.
+Timing thresholds are not correctness gates. Inspect curve shape and compare runs collected in equivalent environments.

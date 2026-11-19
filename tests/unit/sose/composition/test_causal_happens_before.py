@@ -1,7 +1,10 @@
 """Regression tests for causal order across durable boundary messages."""
 from datetime import datetime, timedelta
 import pytest
+from dataclasses import replace
+
 from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryMessage, BoundaryService
+from sose.composition.model import BoundaryDelivery
 from sose.core.events import Command
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
@@ -9,12 +12,22 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 NOW = datetime(2026, 10, 9, 12)
 
+
+def stage_untyped_child(store, child):
+    """An untyped cause (only possible in pre-0.10 durable history) whose parent is unknown."""
+    untyped = replace(child, causation_kind=None)
+    with store.transaction() as uow:
+        uow.save_boundary_message(untyped)
+        uow.save_boundary_delivery(BoundaryDelivery.pending(untyped))
+    return untyped
+
 def msg(key, *, cause=None, correlation="flow", at=NOW):
     return BoundaryMessage.create(
         contract_name="test.flow", contract_version=1,
         source_domain="warehouse", source_identity="order",
         destination_domain="logistics", occurrence_key=key,
         correlation_id=correlation, causation_id=cause, produced_at=at,
+        causation_kind=None if cause is None else "boundary",
         payload={"key": key},
     )
 
@@ -73,7 +86,9 @@ def test_reject_parent_mismatch_clock_regression_and_cycle():
     from dataclasses import replace
     self_ref = msg("self")
     with pytest.raises(ValueError, match="causal cycle"):
-        service.publish(replace(self_ref, causation_id=self_ref.message_id))
+        service.publish(replace(
+            self_ref, causation_id=self_ref.message_id, causation_kind="boundary",
+        ))
 
 
 def test_ack_rechecks_parent_that_arrives_after_child_claim():
@@ -81,8 +96,9 @@ def test_ack_rechecks_parent_that_arrives_after_child_claim():
     store = MemoryPersistence()
     service = BoundaryService(store)
     parent = msg("late-parent")
-    child = msg("early-claim", cause=parent.message_id)
-    service.publish(child)  # Source may be an external event until its boundary record arrives.
+    # Pre-0.10 untyped history: the cause looked external until its boundary record arrived.
+    # A typed child is never claimable before its parent exists (#644).
+    child = stage_untyped_child(store, msg("early-claim", cause=parent.message_id))
     registry = BoundaryConsumerRegistry()
     registry.register(destination_domain="logistics", contract_name="test.flow",
         contract_version=1, handler=lambda message, uow: "effect-" + message.message_id)
@@ -112,7 +128,7 @@ def test_reject_indirect_cycle_after_out_of_order_publication():
     child = msg("published-child", cause=parent.message_id)
     service.publish(child)
     with pytest.raises(ValueError, match="causal cycle"):
-        service.publish(replace(parent, causation_id=child.message_id))
+        service.publish(replace(parent, causation_id=child.message_id, causation_kind="boundary"))
     # External event causes are intentionally not looked up as boundary messages.
     assert service.publish(msg("external-event", cause="domain-event-123"))
 
@@ -142,8 +158,7 @@ def test_cannot_publish_ancestor_after_descendant_was_already_acknowledged():
     store = MemoryPersistence()
     service = BoundaryService(store)
     parent = msg("missing-parent")
-    child = msg("consumed-as-external", cause=parent.message_id)
-    service.publish(child)
+    stage_untyped_child(store, msg("consumed-as-external", cause=parent.message_id))
     registry = BoundaryConsumerRegistry()
     registry.register(destination_domain="logistics", contract_name="test.flow",
         contract_version=1, handler=lambda message, uow: "effect-external")

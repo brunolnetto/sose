@@ -289,15 +289,17 @@ def test_catalog_config_requires_lowercase_explicit_sqlite_namespaces():
 
 
 class _OwnershipPersistence:
+    """Job-scoped writer API only (the namespace-wide fallback was removed in 0.10)."""
+
     def __init__(self, *, failures: int = 0) -> None:
         self.epoch = 4
         self.failures = failures
         self.claim_calls = []
 
-    def writer_epoch(self) -> int:
+    def scoped_writer_epoch(self, scope: str) -> int:
         return self.epoch
 
-    def claim_writer(self, owner_id: str, *, expected_epoch: int):
+    def claim_scoped_writer(self, scope: str, owner_id: str, *, expected_epoch: int):
         self.claim_calls.append((owner_id, expected_epoch))
         if self.failures:
             self.failures -= 1
@@ -306,7 +308,7 @@ class _OwnershipPersistence:
         self.epoch += 1
         return WriterLease(owner_id, self.epoch)
 
-    def transaction(self, *, owner_epoch=None):
+    def transaction(self, *, owner_epoch=None, writer_scope=None):
         raise AssertionError("not needed by these unit tests")
 
 
@@ -338,7 +340,7 @@ def test_persistent_runner_validates_constructor(owner_id, claim_retries, messag
         )
 
 
-@pytest.mark.parametrize("missing", ["writer_epoch", "claim_writer"])
+@pytest.mark.parametrize("missing", ["scoped_writer_epoch", "claim_scoped_writer"])
 def test_persistent_runner_requires_ownership_capabilities(missing):
     persistence = _OwnershipPersistence()
     setattr(persistence, missing, None)

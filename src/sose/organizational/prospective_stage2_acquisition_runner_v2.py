@@ -33,6 +33,15 @@ class ProspectiveStage2AcquisitionRunV2:
     advancement: object
 
 
+def _require_tranche_request(captured_at: datetime, pr_numbers: tuple[int, ...]) -> None:
+    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
+        raise ValueError("captured_at must be timezone-aware")
+    if not pr_numbers:
+        raise ValueError("at least one explicit pull request number is required")
+    if len(pr_numbers) != len(set(pr_numbers)):
+        raise ValueError("duplicate pull request numbers are not allowed")
+
+
 def run_stage2_acquisition_v2(
     *,
     repository: str,
@@ -54,12 +63,7 @@ def run_stage2_acquisition_v2(
     This orchestration performs no cohort discovery, fitting, prediction, or validation.
     """
 
-    if captured_at.tzinfo is None or captured_at.utcoffset() is None:
-        raise ValueError("captured_at must be timezone-aware")
-    if not pr_numbers:
-        raise ValueError("at least one explicit pull request number is required")
-    if len(pr_numbers) != len(set(pr_numbers)):
-        raise ValueError("duplicate pull request numbers are not allowed")
+    _require_tranche_request(captured_at, pr_numbers)
 
     freeze = Path(model_freeze_path)
     previous_acquisition = Path(previous_acquisition_path)

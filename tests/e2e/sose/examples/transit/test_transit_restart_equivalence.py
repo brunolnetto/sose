@@ -15,8 +15,8 @@ from sose.examples.transit.simulation import (
     schedule_reference_block,
     seed_reference,
     trip_update_id,
-    vehicle_position_id,
 )
+from sose.examples.transit.simulation_runtime import vehicle_position_id
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 
