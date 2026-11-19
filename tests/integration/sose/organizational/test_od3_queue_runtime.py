@@ -739,6 +739,7 @@ def test_forged_contact_time_after_contact_is_rejected():
 def test_foreign_owner_effect_stub_cannot_lock_out_our_queue(
     adapter, applied_first, tmp_path,
 ):
+    """Foreign events naming our queue under their own ids are not our evidence."""
     from sose.core.events import DomainEvent
 
     store = store_for(adapter, tmp_path)
@@ -762,7 +763,7 @@ def test_foreign_owner_effect_stub_cannot_lock_out_our_queue(
 
 @pytest.mark.parametrize("adapter", ("memory", "sqlite"))
 def test_admission_never_scans_the_event_log(adapter, tmp_path, monkeypatch):
-    """Admission cost is independent of unrelated tenants' events."""
+    """Admission never enumerates or deep-copies the event log."""
     from sose.core.events import DomainEvent
 
     store = store_for(adapter, tmp_path)
@@ -959,6 +960,40 @@ def test_adopted_legacy_queue_cannot_be_rolled_back(adapter, target, tmp_path):
         _restore_snapshot(store, legacy if target == "pre_adoption" else first_new)
         with pytest.raises(ValueError, match="OD-3 charged queue"):
             apply_at(store, "again", 63)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("when", ("before_seed", "after_anchor"))
+def test_foreign_event_at_our_deterministic_id_fails_closed(adapter, when, tmp_path):
+    """Store-level limit (#545): global event ids let a foreign owner squat ours.
+
+    Not a fix: pins that the queue fails closed without writing anything.
+    """
+    from sose.core.events import DomainEvent
+    from sose.core.identity import deterministic_id
+    from sose.organizational.od3_queue_ledger import anchor_id
+
+    store = store_for(adapter, tmp_path)
+    queue_id = deterministic_id("od3-queue", OWNER, KEY)
+    squat = DomainEvent(
+        event_id=anchor_id(queue_id), name="foreign.squat", entity_type="x",
+        entity_id="y", owner_id="org:foreign", occurred_at=NOW,
+    )
+    try:
+        if when == "after_anchor":
+            seed_pair(store)
+        with store.transaction(owner_id="org:foreign") as uow:
+            uow.append_event(squat)
+        old = tuple(store.events())
+        with pytest.raises(ValueError):
+            if when == "before_seed":
+                seed_pair(store)
+            else:
+                apply_at(store, "blocked")
+        assert tuple(store.events()) == old
     finally:
         if adapter == "sqlite":
             store.close()

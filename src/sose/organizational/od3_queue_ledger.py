@@ -7,10 +7,19 @@ written afterwards links to its predecessor effect (or the anchor) and records
 running totals: cumulative paid policy time, queue version, last action time
 and a digest of the full queue items before and after the effect.
 
+Each effect also claims a deterministic per-version slot event
+(``od3.queue_version_claimed``), so a projection re-saved at an older but
+internally consistent ledger state is detected by the next slot being taken.
+
 Admission verifies only the latest effect (named by the projection's
-``ledger_head``), its paired decision and its predecessor, all fetched by
-event id. It never enumerates the event log, so its cost does not depend on
-other queues or other owners. Only events owned by this queue's owner count.
+``ledger_head``), its paired decision, its predecessor and two version slots,
+all fetched by event id: no log enumeration or deep copy of the log; the
+per-id lookup cost is the adapter's (the memory-derived unit of work scans
+its event list). Only events owned by this queue's owner count as evidence.
+
+Event ids are global per store: an event of another owner occupying one of
+this queue's deterministic ids (anchor, decision, effect, slot) makes the
+lookup fail closed. That store-level limit is not solved here (#545).
 
 This is a consistency guard against a forged *projection*, not certified
 actor time: a public writer that can append arbitrary owner-scoped events is
