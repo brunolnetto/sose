@@ -326,14 +326,3 @@ def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, EnergyEntities]
         event_key="dr-1",
     )
     return persistence, entities
-
-
-# Moved by the quality-ratchet splits (#632); importing these names from here
-# is deprecated (ADR-0011). Import them from the module named on the right.
-from sose._deprecation import deprecated_reexports as _deprecated_reexports
-
-__getattr__ = _deprecated_reexports(__name__, {
-    "deterministic_id": "sose.core.identity",
-    "opt_out_demand_response": "sose.examples.energy_utilities.simulation_demand_response",
-    "reading_id": "sose.examples.energy_utilities.simulation_runtime",
-}, since="0.9.0", removed_in="0.10.0")

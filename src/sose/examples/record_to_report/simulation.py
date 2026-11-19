@@ -242,15 +242,3 @@ def run_adjustment_path(*, owner_id: str) -> tuple[MemoryPersistence, R2REntitie
     ):
         raise RuntimeError("period close failed")
     return persistence, entities
-
-
-# Moved by the quality-ratchet splits (#632); importing these names from here
-# is deprecated (ADR-0011). Import them from the module named on the right.
-from sose._deprecation import deprecated_reexports as _deprecated_reexports
-
-__getattr__ = _deprecated_reexports(__name__, {
-    "adjustment_id": "sose.examples.record_to_report.identity",
-    "close_task_id": "sose.examples.record_to_report.identity",
-    "ensure_adjustment": "sose.examples.record_to_report.adjustments",
-    "reopen_period": "sose.examples.record_to_report.close",
-}, since="0.9.0", removed_in="0.10.0")

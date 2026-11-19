@@ -320,15 +320,3 @@ def assign_forklift(
     shipment.attributes["assigned_forklift_id"] = forklift.id
     _save(persistence, shipment)
     return True
-
-
-# Moved by the quality-ratchet splits (#632); importing these names from here
-# is deprecated (ADR-0011). Import them from the module named on the right.
-from sose._deprecation import deprecated_reexports as _deprecated_reexports
-
-__getattr__ = _deprecated_reexports(__name__, {
-    "deterministic_id": "sose.core.identity",
-    "matching_reservation": "sose.examples.warehouse_management.reservations",
-    "shipment_kpis": "sose.examples.warehouse_management.kpis",
-    "validated_consumption_request": "sose.examples.warehouse_management.reservations",
-}, since="0.9.0", removed_in="0.10.0")
