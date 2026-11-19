@@ -1,4 +1,4 @@
-"""#632 / ADR-0011: names moved by the ratchet splits warn when reached through their old module."""
+"""ADR-0011 deprecated re-export helper, and the completed #632 removal."""
 from __future__ import annotations
 
 import importlib
@@ -42,10 +42,8 @@ def test_unknown_names_still_raise_attribute_error():
     assert not hasattr(old, "missing")
 
 
-def test_from_import_of_a_real_moved_name_warns_and_resolves():
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        from sose.examples.field_service.simulation import select_technician
-    scheduling = importlib.import_module("sose.examples.field_service.scheduling")
-    assert select_technician is scheduling.select_technician
-    assert any("select_technician" in str(w.message) for w in caught)
+def test_split_reexports_were_removed_in_0_10():
+    """The 0.9 deprecation cycle (#632) completed: old paths no longer resolve."""
+    with pytest.raises(ImportError):
+        from sose.examples.field_service.simulation import select_technician  # noqa: F401
+    from sose.examples.field_service.scheduling import select_technician  # noqa: F401
