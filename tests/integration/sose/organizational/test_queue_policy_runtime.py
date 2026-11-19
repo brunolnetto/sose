@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from sose.organizational.queue_decisions import OD3Policy, QueuedWork
-from sose.organizational.od3_queue_runtime import (
+from sose.organizational.queue_policy_runtime import (
     QUEUE_KIND, apply_od3_queue_policy, seed_od3_queue,
 )
 from sose.persistence.memory import MemoryPersistence, MemoryUnitOfWork
