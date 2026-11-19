@@ -13,6 +13,7 @@ import pytest
 
 from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
+from sose.core.durable import DurableScheduledItem
 from sose.core.engine import Engine
 from sose.core.events import Command
 from sose.core.randomness import RandomSource
@@ -30,6 +31,15 @@ NOW = datetime(2026, 10, 24, 10, tzinfo=timezone.utc)
 KEY = b"0123456789abcdef0123456789abcdef"
 
 
+def _dispatch(runtime, command, *, mode: str) -> None:
+    """Direct dispatch and durable scheduled dispatch are distinct Engine paths."""
+    if mode == "direct":
+        runtime.dispatch(command)
+        return
+    work = runtime.scheduler.schedule(command)
+    runtime.dispatch_scheduled(DurableScheduledItem(work, command))
+
+
 def _engine(store):
     registry = DomainRegistry()
     registry.register(EntityType("warehouse_fulfillment_order", FulfillmentOrderChart))
@@ -44,9 +54,17 @@ def _engine(store):
     )
 
 
+@pytest.mark.parametrize("mode", ("direct", "scheduled"))
 @pytest.mark.parametrize("adapter", ("memory", "sqlite"))
-def test_unsigned_public_prestate_cannot_be_laundered_by_real_engine_ship(adapter, tmp_path):
-    """An attacker may write packed, but Engine must not certify a forged history."""
+def test_unsigned_public_prestate_cannot_be_laundered_by_real_engine_ship(
+    mode, adapter, tmp_path,
+):
+    """An attacker may write packed, but Engine must not certify a forged history.
+
+    `_dispatch_scheduled_in_uow` is a distinct production path from `dispatch`.
+    A predecessor guard that only wraps the direct path would still launder
+    a public packed entity through a durable scheduled callback.
+    """
     path = tmp_path / "prestate-forgery.sqlite"
     store = MemoryPersistence() if adapter == "memory" else SQLitePersistence(path)
     order = FulfillmentOrder(
@@ -74,7 +92,7 @@ def test_unsigned_public_prestate_cannot_be_laundered_by_real_engine_ship(adapte
             correlation_id="flow:forged-prestate",
         )
         with pytest.raises(ValueError, match="trusted predecessor|unauthenticated prestate"):
-            _engine(store).dispatch(command)
+            _dispatch(_engine(store), command, mode=mode)
 
         # Neither an untrusted packed state nor an untrusted predecessor
         # may induce an issuer-signed shipped state.
@@ -116,8 +134,11 @@ def test_legitimate_four_step_warehouse_path_remains_attestable(adapter, tmp_pat
             store.close()
 
 
+@pytest.mark.parametrize("mode", ("direct", "scheduled"))
 @pytest.mark.parametrize("adapter", ("memory", "sqlite"))
-def test_signed_final_predecessor_cannot_hide_missing_earlier_history(adapter, tmp_path):
+def test_signed_final_predecessor_cannot_hide_missing_earlier_history(
+    mode, adapter, tmp_path,
+):
     """A historical signed 'pack' alone cannot legitimize forged version 1/2.
 
     A legitimate issuer may have signed an intermediate transition in an
@@ -175,12 +196,12 @@ def test_signed_final_predecessor_cannot_hide_missing_earlier_history(adapter, t
             assert root.verify(uow=uow, event=pack_event) == signed_pack
 
         with pytest.raises(ValueError, match="trusted predecessor"):
-            _engine(store).dispatch(Command(
+            _dispatch(_engine(store), Command(
                 command_id="cmd:ship-with-historical-gap", name="ship",
                 entity_type=order.entity_type, entity_id=order.id,
                 owner_id=OWNER, due_at=NOW, issued_at=NOW,
                 correlation_id="flow:unproven-chain",
-            ))
+            ), mode=mode)
         assert store.entity(order.entity_type, order.id).state == "packed"
         assert not any(
             event.payload.get("trigger") == "ship"
