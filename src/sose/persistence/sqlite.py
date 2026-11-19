@@ -1,19 +1,26 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-from copy import deepcopy
 from pathlib import Path
 import sqlite3
 from typing import Iterator
 
 from .codec import dumps, loads
-from .memory import tracked_transaction_depth, MemoryPersistence, MemoryUnitOfWork, _State, fork_state
+from .memory import (
+    tracked_transaction_depth,
+    MemoryPersistence,
+    MemoryUnitOfWork,
+    _State,
+    fork_state,
+)
 from .sqlite_migrations import (
     CURRENT_CODEC_VERSION,
     CURRENT_SCHEMA_VERSION,
     SQLiteSchemaInfo,
+    LegacyUnownedSnapshotError,  # noqa: F401 - raised from here; public for callers
     ensure_schema,
     read_schema_info,
+    stamp_owner_qualified_codec,
 )
 
 
@@ -43,14 +50,16 @@ class SQLitePersistence(MemoryPersistence):
         self._connection.execute("BEGIN IMMEDIATE")
         try:
             ensure_schema(self._connection)
+            stamp_owner_qualified_codec(self._connection)
             self._connection.commit()
         except Exception:
             self._connection.rollback()
             raise
         self._refresh_from_db()
-        if self._connection.execute(
-            "SELECT 1 FROM sose_state WHERE singleton = 1"
-        ).fetchone() is None:
+        if (
+            self._connection.execute("SELECT 1 FROM sose_state WHERE singleton = 1").fetchone()
+            is None
+        ):
             self._write_state()
             self._connection.commit()
 
@@ -79,19 +88,16 @@ class SQLitePersistence(MemoryPersistence):
     def __exit__(self, exc_type, exc, tb) -> None:
         self.close()
 
-    def _refresh_from_db(self) -> None:
+    def _load_state_from_db(self) -> _State:
         row = self._connection.execute(
-            "SELECT schema_version, codec_version, payload "
-            "FROM sose_state WHERE singleton = 1"
+            "SELECT schema_version, codec_version, payload FROM sose_state WHERE singleton = 1"
         ).fetchone()
         if row is None:
-            self._state = _State()
-            return
+            return _State()
         schema_version, codec_version, payload = row
         if schema_version != CURRENT_SCHEMA_VERSION:
             raise RuntimeError(
-                "SQLitePersistence schema was not migrated to current version: "
-                f"{schema_version}"
+                f"SQLitePersistence schema was not migrated to current version: {schema_version}"
             )
         if codec_version > CURRENT_CODEC_VERSION:
             raise RuntimeError(
@@ -100,10 +106,16 @@ class SQLitePersistence(MemoryPersistence):
             )
         restored = loads(str(payload))
         if not isinstance(restored, _State):
-            raise TypeError(
-                "SQLitePersistence payload does not contain SOSE durable state"
-            )
-        self._state = restored
+            raise TypeError("SQLitePersistence payload does not contain SOSE durable state")
+        return restored
+
+    def _refresh_from_db(self) -> None:
+        self._state = self._load_state_from_db()
+
+    def _snapshot_state(self) -> _State:
+        # The durable state is one row, so the SELECT itself is the read
+        # snapshot. No temporary replacement of self._state is necessary.
+        return self._load_state_from_db()
 
     def _write_state(self) -> None:
         self._connection.execute(
@@ -213,6 +225,10 @@ class SQLitePersistence(MemoryPersistence):
         self._fresh()
         return super().events()
 
+    def count_events(self, *, owner_id: str) -> int:
+        self._fresh()
+        return super().count_events(owner_id=owner_id)
+
     def entity(self, entity_type: str, entity_id: str):
         self._fresh()
         return super().entity(entity_type, entity_id)
@@ -220,6 +236,10 @@ class SQLitePersistence(MemoryPersistence):
     def command(self, command_id: str):
         self._fresh()
         return super().command(command_id)
+
+    def missing_command_ids(self, command_ids):
+        self._fresh()
+        return super().missing_command_ids(command_ids)
 
     def scheduled_work(self):
         self._fresh()

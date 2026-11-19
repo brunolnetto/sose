@@ -4,6 +4,9 @@ from dataclasses import dataclass
 from math import log1p
 
 from sose.core.randomness import CounterRandomSource
+# Re-exported: the Jackson network solver lives in sose.testing._jackson.
+from sose.testing._jackson import _solve_linear_system as _solve_linear_system
+from sose.testing._jackson import jackson_visit_rates as jackson_visit_rates
 
 
 def little_law_wip(throughput: float, cycle_time: float) -> float:
@@ -36,53 +39,6 @@ def mmc_mean_system_time(arrival_rate: float, service_rate: float, servers: int)
     probability_wait = erlang_b / (1.0 - utilization + utilization * erlang_b)
     mean_wait = probability_wait / (servers * service_rate - arrival_rate)
     return mean_wait + 1.0 / service_rate
-
-
-def jackson_visit_rates(
-    *,
-    external: tuple[float, ...],
-    routing: tuple[tuple[float, ...], ...],
-    tolerance: float = 1e-12,
-    max_iterations: int = 100_000,
-) -> tuple[float, ...]:
-    size = len(external)
-    if size == 0 or len(routing) != size or any(len(row) != size for row in routing):
-        raise ValueError("routing matrix must be square and match external rates")
-    if tolerance <= 0:
-        raise ValueError("tolerance must be positive")
-    if max_iterations < 1:
-        raise ValueError("max_iterations must be at least one")
-    if any(rate < 0 for rate in external):
-        raise ValueError("external rates must be non-negative")
-    if any(probability < 0 or probability > 1 for row in routing for probability in row):
-        raise ValueError("routing probabilities must be between zero and one")
-    if any(sum(row) > 1.0 + tolerance for row in routing):
-        raise ValueError("outgoing routing probabilities cannot exceed one")
-
-    matrix = [
-        [
-            (1.0 if row == column else 0.0) - routing[column][row]
-            for column in range(size)
-        ]
-        for row in range(size)
-    ]
-    rates = _solve_linear_system(matrix, list(external), tolerance=tolerance)
-    if any(rate < -tolerance for rate in rates):
-        raise ValueError("Jackson traffic equations produced negative visit rates")
-    normalized = tuple(0.0 if abs(rate) <= tolerance else rate for rate in rates)
-
-    residual = max(
-        abs(
-            normalized[j]
-            - external[j]
-            - sum(normalized[i] * routing[i][j] for i in range(size))
-        )
-        for j in range(size)
-    )
-    scale = max(1.0, *(abs(rate) for rate in normalized), *(abs(rate) for rate in external))
-    if residual > tolerance * scale:
-        raise ValueError("Jackson traffic equations failed residual verification")
-    return normalized
 
 
 def bottleneck_throughput_bound(
@@ -193,45 +149,6 @@ def simulate_mm1(
         completion_count = customers - warmup
     throughput = completion_count / throughput_horizon
     return MM1Sample(mean_system_time=mean_system_time, throughput=throughput)
-
-
-def _solve_linear_system(
-    matrix: list[list[float]],
-    vector: list[float],
-    *,
-    tolerance: float,
-) -> list[float]:
-    size = len(vector)
-    augmented = [row[:] + [vector[index]] for index, row in enumerate(matrix)]
-
-    for column in range(size):
-        pivot_row = max(range(column, size), key=lambda row: abs(augmented[row][column]))
-        pivot = augmented[pivot_row][column]
-        row_scale = max(1.0, *(abs(value) for value in augmented[pivot_row][:-1]))
-        if abs(pivot) <= tolerance * row_scale:
-            raise ValueError("Jackson traffic equations are singular or ill-conditioned")
-        if pivot_row != column:
-            augmented[column], augmented[pivot_row] = augmented[pivot_row], augmented[column]
-
-        pivot = augmented[column][column]
-        for row in range(column + 1, size):
-            factor = augmented[row][column] / pivot
-            if factor == 0.0:
-                continue
-            for index in range(column, size + 1):
-                augmented[row][index] -= factor * augmented[column][index]
-
-    result = [0.0] * size
-    for row in range(size - 1, -1, -1):
-        rhs = augmented[row][size] - sum(
-            augmented[row][column] * result[column]
-            for column in range(row + 1, size)
-        )
-        pivot = augmented[row][row]
-        if abs(pivot) <= tolerance:
-            raise ValueError("Jackson traffic equations are singular or ill-conditioned")
-        result[row] = rhs / pivot
-    return result
 
 
 def _exponential(uniform: float, rate: float) -> float:

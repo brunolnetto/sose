@@ -1,8 +1,8 @@
 from sose.examples.hospitality.simulation import (
-    booking_id,
     reservation_id,
     run_happy_path,
 )
+from sose.examples.hospitality.foundation import booking_id
 
 
 def test_confirmed_stay_completes_and_releases_interval():

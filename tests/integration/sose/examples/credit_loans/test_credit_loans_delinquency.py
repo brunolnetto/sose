@@ -3,23 +3,24 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.credit_loans.simulation import (
     COLLECTION_FOLLOWUP,
     ORIGIN,
-    apply_restructure,
     build_runtime,
-    collection_case_id,
     cure_delinquency,
-    default_loan,
-    delinquency_case_id,
     disburse_and_schedule,
-    ensure_delinquency,
     flow_correlation_id,
     installment_id,
     loan_id,
-    payment_id,
     post_payment,
     reconcile_collection,
     reconcile_underwriting,
     schedule_overdue,
     seed_reference,
+)
+from sose.examples.credit_loans.simulation_delinquency import default_loan, ensure_delinquency
+from sose.examples.credit_loans.simulation_restructure import apply_restructure
+from sose.examples.credit_loans.simulation_runtime import (
+    collection_case_id,
+    delinquency_case_id,
+    payment_id,
 )
 from sose.persistence.memory import MemoryPersistence
 

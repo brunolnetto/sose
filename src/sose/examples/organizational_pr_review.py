@@ -151,12 +151,7 @@ def simulate_pull_request_flow(
     seed: int,
     evidence: PullRequestFlowEvidence | None = None,
 ) -> PullRequestFlowResult:
-    if not cases:
-        raise ValueError("at least one pull request is required")
-    ids = [case.pr_id for case in cases]
-    if len(set(ids)) != len(ids):
-        raise ValueError("duplicate pull request ids are not allowed")
-
+    _require_unique_cases(cases)
     spec = build_model_spec(config, evidence=evidence)
     spec_hash = spec.model_spec_hash
     rng = CounterRandomSource(seed)
@@ -168,20 +163,7 @@ def simulate_pull_request_flow(
     reviewer_available = {reviewer_id: 0.0 for reviewer_id in reviewer_ids}
     ready_queue: list[tuple[float, str, int]] = []
 
-    for case in sorted(cases, key=lambda item: (item.opened_at, item.pr_id)):
-        ci_end = case.opened_at + config.ci_time
-        events.append(
-            AccountingEvent.item(
-                event_id=f"{case.pr_id}:ci",
-                work_item_id=case.pr_id,
-                start=case.opened_at,
-                end=ci_end,
-                category=ItemCategory.PROCESSING,
-                secondary_labels=("ci",),
-                model_spec_hash=spec_hash,
-            )
-        )
-        heappush(ready_queue, (ci_end, case.pr_id, 0))
+    _run_ci(cases, config, spec_hash, events, ready_queue)
 
     while ready_queue:
         ready_at, pr_id, cycle = heappop(ready_queue)
@@ -288,6 +270,34 @@ def simulate_pull_request_flow(
         reviewer_ids=reviewer_ids,
         events=tuple(sorted(events, key=lambda event: (event.start, event.end, event.event_id))),
     )
+
+
+def _require_unique_cases(cases: tuple[PullRequestCase, ...]) -> None:
+    if not cases:
+        raise ValueError("at least one pull request is required")
+    ids = [case.pr_id for case in cases]
+    if len(set(ids)) != len(ids):
+        raise ValueError("duplicate pull request ids are not allowed")
+
+
+def _run_ci(
+    cases: tuple[PullRequestCase, ...], config: PullRequestFlowConfig, spec_hash: str,
+    events: list[AccountingEvent], ready_queue: list[tuple[float, str, int]],
+) -> None:
+    for case in sorted(cases, key=lambda item: (item.opened_at, item.pr_id)):
+        ci_end = case.opened_at + config.ci_time
+        events.append(
+            AccountingEvent.item(
+                event_id=f"{case.pr_id}:ci",
+                work_item_id=case.pr_id,
+                start=case.opened_at,
+                end=ci_end,
+                category=ItemCategory.PROCESSING,
+                secondary_labels=("ci",),
+                model_spec_hash=spec_hash,
+            )
+        )
+        heappush(ready_queue, (ci_end, case.pr_id, 0))
 
 
 def _exponential_requirement(

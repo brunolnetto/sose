@@ -5,6 +5,9 @@ import pytest
 from sose.backends.simpy import SimPyBackend
 from sose.examples.credit_loans import simulation as credit
 from sose.persistence.memory import MemoryPersistence
+from sose.examples.credit_loans.simulation_delinquency import default_loan, ensure_delinquency
+from sose.examples.credit_loans.simulation_restructure import apply_restructure
+from sose.examples.credit_loans.simulation_runtime import collection_case_id, delinquency_case_id
 
 REFERENCE_OWNER_ID = "credit-reference-organization"
 
@@ -72,7 +75,7 @@ def test_delinquency_recovery_persists_missing_case_already_referenced_by_loan()
     persistence, _, engine, _, loan_id, installment_id = _prepare_overdue()
     loan = persistence.entity("loan", loan_id)
     assert loan is not None
-    did = credit.delinquency_case_id(loan.id, installment_id)
+    did = delinquency_case_id(loan.id, installment_id)
 
     # Simulate a crash/recovery state in which the loan already records the
     # deterministic delinquency id but the delinquency entity was not committed.
@@ -82,7 +85,7 @@ def test_delinquency_recovery_persists_missing_case_already_referenced_by_loan()
 
     assert persistence.entity("delinquency_case", did) is None
 
-    case = credit.ensure_delinquency(
+    case = ensure_delinquency(
         persistence,
         engine,
         installment_id_value=installment_id,
@@ -95,12 +98,12 @@ def test_delinquency_recovery_persists_missing_case_already_referenced_by_loan()
 
 def test_collection_unavailable_withdraws_any_request_and_returns_false(monkeypatch):
     persistence, _, engine, backend, _, installment_id = _prepare_overdue()
-    delinquency = credit.ensure_delinquency(
+    delinquency = ensure_delinquency(
         persistence,
         engine,
         installment_id_value=installment_id,
     )
-    collection_id = credit.collection_case_id(delinquency.id)
+    collection_id = collection_case_id(delinquency.id)
     request_id = f"collection-agent:{collection_id}"
 
     engine.resources.request(
@@ -157,7 +160,7 @@ def test_collection_returns_pending_when_agent_capacity_is_busy():
 
     installment = persistence.entity("loan_installment", installment_id)
     assert installment is not None
-    request_id = f"collection-agent:{credit.collection_case_id(credit.delinquency_case_id(installment.attributes['loan_id'], installment_id))}"
+    request_id = f"collection-agent:{collection_case_id(delinquency_case_id(installment.attributes['loan_id'], installment_id))}"
     assert any(
         demand.request_id == request_id
         for demand in persistence.resource_demands()
@@ -166,7 +169,7 @@ def test_collection_returns_pending_when_agent_capacity_is_busy():
 
 def test_cure_requires_paid_installment():
     persistence, _, engine, _, _, installment_id = _prepare_overdue()
-    credit.ensure_delinquency(
+    ensure_delinquency(
         persistence,
         engine,
         installment_id_value=installment_id,
@@ -182,7 +185,7 @@ def test_cure_requires_paid_installment():
 
 def test_cure_resolves_collection_and_cancels_followup():
     persistence, _, engine, backend, loan_id, installment_id = _prepare_overdue()
-    delinquency = credit.ensure_delinquency(
+    delinquency = ensure_delinquency(
         persistence,
         engine,
         installment_id_value=installment_id,
@@ -195,7 +198,7 @@ def test_cure_resolves_collection_and_cancels_followup():
         promise=True,
     )
 
-    collection_id = credit.collection_case_id(delinquency.id)
+    collection_id = collection_case_id(delinquency.id)
     collection = persistence.entity("loan_collection_case", collection_id)
     assert collection is not None and collection.state == "promised"
     assert engine.scheduler.find_pending(
@@ -244,7 +247,7 @@ def test_restructure_rejects_servicing_loan_without_existing_restructure():
         RuntimeError,
         match="restructure requires delinquent loan or existing restructure",
     ):
-        credit.apply_restructure(
+        apply_restructure(
             persistence,
             engine,
             backend,
@@ -254,14 +257,14 @@ def test_restructure_rejects_servicing_loan_without_existing_restructure():
 
 def test_default_requires_delinquency_to_be_in_collection():
     persistence, _, engine, _, _, installment_id = _prepare_overdue()
-    credit.ensure_delinquency(
+    ensure_delinquency(
         persistence,
         engine,
         installment_id_value=installment_id,
     )
 
     with pytest.raises(RuntimeError, match="default requires active collection"):
-        credit.default_loan(
+        default_loan(
             persistence,
             engine,
             installment_id_value=installment_id,
@@ -270,7 +273,7 @@ def test_default_requires_delinquency_to_be_in_collection():
 
 def test_default_requires_collection_to_be_escalated():
     persistence, _, engine, backend, _, installment_id = _prepare_overdue()
-    credit.ensure_delinquency(
+    ensure_delinquency(
         persistence,
         engine,
         installment_id_value=installment_id,
@@ -285,7 +288,7 @@ def test_default_requires_collection_to_be_escalated():
 
     delinquency = persistence.entity(
         "delinquency_case",
-        credit.delinquency_case_id(
+        delinquency_case_id(
             persistence.entity("loan_installment", installment_id).attributes["loan_id"],
             installment_id,
         ),
@@ -293,12 +296,12 @@ def test_default_requires_collection_to_be_escalated():
     assert delinquency is not None and delinquency.state == "collection"
     collection = persistence.entity(
         "loan_collection_case",
-        credit.collection_case_id(delinquency.id),
+        collection_case_id(delinquency.id),
     )
     assert collection is not None and collection.state == "contacted"
 
     with pytest.raises(RuntimeError, match="default requires escalated collection"):
-        credit.default_loan(
+        default_loan(
             persistence,
             engine,
             installment_id_value=installment_id,

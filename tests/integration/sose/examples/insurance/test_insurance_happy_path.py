@@ -9,11 +9,11 @@ from sose.examples.insurance.simulation import (
     payment_id,
     queue_claim,
     reconcile_payment,
-    reserve_id,
     satisfy_documents,
     schedule_payment,
     seed_reference,
 )
+from sose.examples.insurance.foundation import reserve_id
 from sose.persistence.memory import MemoryPersistence
 
 

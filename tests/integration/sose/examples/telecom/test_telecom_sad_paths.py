@@ -3,18 +3,22 @@ import pytest
 from sose.backends.simpy import SimPyBackend
 from sose.examples.telecom.simulation import (
     ORIGIN,
-    acknowledge_incident,
-    alarm_id,
     build_runtime,
-    raise_service_alarm,
     reconcile_activation,
     record_usage,
-    restore_service,
     schedule_activation,
     seed_reference,
+)
+from sose.examples.telecom.foundation import (
+    alarm_id,
     subscription_service_id,
     trouble_ticket_id,
     usage_record_id,
+)
+from sose.examples.telecom.operations import (
+    acknowledge_incident,
+    raise_service_alarm,
+    restore_service,
 )
 from sose.persistence.memory import MemoryPersistence
 
