@@ -1,4 +1,6 @@
+import shutil
 import sqlite3
+from pathlib import Path
 
 import pytest
 
@@ -227,4 +229,45 @@ def test_migration_v1_with_existing_codec_column_skips_alter_table(tmp_path):
 
     assert info.schema_version == CURRENT_SCHEMA_VERSION
     assert "codec_version" in columns
-    assert row == (CURRENT_SCHEMA_VERSION, CURRENT_CODEC_VERSION)
+    # The structural migration keeps the payload's original codec (1); opening through
+    # SQLitePersistence decides between refusing it and stamping codec 2.
+    assert row == (CURRENT_SCHEMA_VERSION, 1)
+
+
+# Real bytes written by the SOSE 0.8.0 wheel (commit 9bf214e), not synthesized with the
+# current codec: a synthesized "legacy" payload can never catch a snapshot-shape break.
+_FIXTURES = Path(__file__).resolve().parents[3] / "fixtures" / "sqlite"
+
+
+@pytest.mark.parametrize("name", ["sose-0.8.0-seeded", "sose-0.8.0-midflight"])
+def test_real_sose_080_database_is_refused_explicitly_and_left_untouched(tmp_path, name):
+    from sose.persistence.sqlite_migrations import LegacyUnownedSnapshotError
+
+    path = tmp_path / f"{name}.sqlite3"
+    shutil.copyfile(_FIXTURES / f"{name}.sqlite3", path)
+    before = path.read_bytes()
+    with pytest.raises(LegacyUnownedSnapshotError, match="SOSE 0.8 or earlier") as caught:
+        SQLitePersistence(path)
+    message = str(caught.value)
+    assert "committed_tick" in message and "ADR-0009" in message
+    assert "was not modified" in message
+    assert path.read_bytes() == before
+
+
+def test_codec_1_owner_qualified_snapshot_is_accepted_and_stamped_codec_2(tmp_path):
+    """Databases written before the codec bump are owner-qualified already."""
+    path = tmp_path / "pre-bump.sqlite3"
+    connection = sqlite3.connect(path)
+    connection.execute(
+        "CREATE TABLE sose_state (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), "
+        "schema_version INTEGER NOT NULL, codec_version INTEGER NOT NULL, payload TEXT NOT NULL)"
+    )
+    connection.execute(
+        "INSERT INTO sose_state VALUES (1, ?, 1, ?)",
+        (CURRENT_SCHEMA_VERSION, dumps(_State(committed_ticks={"owner": 4}))),
+    )
+    connection.commit()
+    connection.close()
+    with SQLitePersistence(path) as persistence:
+        assert persistence.committed_tick(owner_id="owner") == 4
+        assert persistence.schema_info().codec_version == CURRENT_CODEC_VERSION == 2

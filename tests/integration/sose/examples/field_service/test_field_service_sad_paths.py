@@ -6,7 +6,6 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.field_service.scenarios import ORIGIN
 from sose.examples.field_service.simulation import (
     REQUIRED_PART,
-    appointment_id,
     build_runtime,
     confirm_appointment,
     propose_appointment,
@@ -15,9 +14,9 @@ from sose.examples.field_service.simulation import (
     reserve_required_part,
     seed_part_inventory,
     seed_reference,
-    select_technician,
     visit_id,
 )
+from sose.examples.field_service.scheduling import select_technician
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "field-service-reference-organization"

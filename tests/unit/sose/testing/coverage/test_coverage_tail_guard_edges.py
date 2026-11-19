@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from sose.core.runtime import _require_nonnegative_finite
+from sose.core.runtime_containers import _require_nonnegative_finite
 from sose.examples.canonical import common as canonical_common
 from sose.examples.canonical import job_shop
 from sose.examples.cards_payments import definition as cards_definition

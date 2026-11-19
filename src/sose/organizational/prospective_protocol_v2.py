@@ -91,6 +91,12 @@ def bind_pr_review_validation_protocol_v2(
 
 
 def _validate_frozen_contract(document: Mapping[str, Any]) -> None:
+    _validate_frozen_identity(document)
+    _validate_frozen_cohort(document.get("cohort"))
+    _validate_frozen_stage_rules(document.get("stage_rules"))
+
+
+def _validate_frozen_identity(document: Mapping[str, Any]) -> None:
     if document.get("protocol_version") != PROSPECTIVE_PROTOCOL_ID:
         raise ValueError(f"protocol_version must be {PROSPECTIVE_PROTOCOL_ID}")
     if document.get("study_type") != PROSPECTIVE_STUDY_TYPE:
@@ -102,7 +108,8 @@ def _validate_frozen_contract(document: Mapping[str, Any]) -> None:
     if document.get("activation_rule") != ACTIVATION_RULE:
         raise ValueError("activation_rule does not match the frozen v2 contract")
 
-    cohort = document.get("cohort")
+
+def _validate_frozen_cohort(cohort: Any) -> None:
     if not isinstance(cohort, Mapping):
         raise ValueError("cohort must be an object")
     if cohort.get("training_count") != TRAINING_COUNT:
@@ -112,7 +119,8 @@ def _validate_frozen_contract(document: Mapping[str, Any]) -> None:
     if cohort.get("selection") != SELECTION_RULE:
         raise ValueError("cohort selection does not match the frozen v2 contract")
 
-    stage_rules = document.get("stage_rules")
+
+def _validate_frozen_stage_rules(stage_rules: Any) -> None:
     if not isinstance(stage_rules, Mapping):
         raise ValueError("stage_rules must be an object")
     if stage_rules.get("holdout_enrollment_before_model_freeze") is not False:

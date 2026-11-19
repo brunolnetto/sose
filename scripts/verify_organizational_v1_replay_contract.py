@@ -14,7 +14,7 @@ import re
 import yaml
 
 PUBLISHED_PATH = Path(".github/organizational-v1-published-digests.json")
-WORKFLOW_PATH = Path(".github/workflows/historical-organizational-v1-replay.yml")
+WORKFLOW_PATH = Path(".github/workflows/organizational-v1-evidence.yml")
 ADR_PATH = "docs/architecture/decisions/adr-0007-versioned-scientific-freezes.md"
 CHECKER_PATH = "scripts/verify_organizational_v1_replay_contract.py"
 APPROVED_PUBLISHED_BLOB = "410ecb050eb3943997b184e36d6f70d73d40620c"
