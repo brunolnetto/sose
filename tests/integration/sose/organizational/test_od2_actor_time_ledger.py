@@ -355,3 +355,18 @@ def test_genuine_origin_still_enforces_after_marker_strip(adapter, tmp_path):
             _transition(store, actor_id, "exit", 2)
     finally:
         _close(store)
+
+
+@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+def test_tracked_seed_fails_clearly_when_origin_id_is_taken(adapter, tmp_path):
+    store = _store(adapter, tmp_path, "seed-collision")
+    try:
+        actor_id = deterministic_id("od2-actor", OWNER, "actor-1")
+        _squat(store, ledger.origin_event_id(actor_id))
+        before = store.events()
+        with pytest.raises(ValueError, match="origin ID already committed"):
+            _seed(store)
+        assert store.entity(ACTOR_KIND, actor_id) is None
+        assert store.events() == before
+    finally:
+        _close(store)

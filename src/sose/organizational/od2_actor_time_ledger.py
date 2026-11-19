@@ -65,6 +65,8 @@ def record_origin(uow, actor) -> None:
     meta = actor.attributes
     if meta.get("tracked_time_version") != LEDGER_VERSION:
         return
+    if uow.get_event(origin_event_id(actor.id)) is not None:
+        raise ValueError("OD-2 actor-time origin ID already committed; cannot enroll")
     uow.append_event(DomainEvent(
         event_id=origin_event_id(actor.id), name=ORIGIN_EVENT,
         entity_type=actor.entity_type, entity_id=actor.id,
