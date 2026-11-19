@@ -79,7 +79,8 @@ def _require_rsa_2048(der: bytes) -> None:
     except (OSError, subprocess.CalledProcessError) as exc:
         raise ValueError("trusted public key or OpenSSL cannot be loaded") from exc
     bits = re.search(r"Public-Key: \((\d+) bit\)", text)
-    if "Modulus:" not in text or bits is None:
+    if "Modulus:" not in text or bits is None or "PSS" in text.upper():
+        # RSA-PSS keys would turn the scheme into RSA-PSS-SHA256; only PKCS#1 v1.5 is specified.
         raise ValueError("trusted public key must be RSA (RSA-SHA256 gate)")
     if int(bits.group(1)) < _MIN_RSA_BITS:
         raise ValueError(f"trusted RSA public key must be at least {_MIN_RSA_BITS} bits")

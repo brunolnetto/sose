@@ -219,6 +219,7 @@ def _public_key(tmp_path, name, *algorithm):
 @pytest.mark.parametrize("algorithm, message", [
     (("-algorithm", "EC", "-pkeyopt", "ec_paramgen_curve:P-256"), "must be RSA"),
     (("-algorithm", "RSA", "-pkeyopt", "rsa_keygen_bits:1024"), "at least 2048 bits"),
+    (("-algorithm", "RSA-PSS", "-pkeyopt", "rsa_keygen_bits:2048"), "must be RSA"),
 ])
 def test_trust_root_must_be_rsa_of_at_least_2048_bits(tmp_path, algorithm, message):
     public = _public_key(tmp_path, "weak", *algorithm)
