@@ -23,6 +23,7 @@ from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry, EntityType
+from sose.organizational import od2_actor_time_ledger as _time_ledger
 from sose.persistence.base import Persistence
 from sose.probability import probabilistic_transitions
 
@@ -71,7 +72,6 @@ def _utc(at: datetime) -> datetime:
     if not isinstance(at, datetime) or at.tzinfo is None or at.utcoffset() is None:
         raise ValueError("actor effective time requires timezone-aware datetime")
     return at.astimezone(timezone.utc)
-
 
 
 @dataclass(frozen=True, slots=True)
@@ -230,15 +230,14 @@ def seed_actor(
     availability_calendar: ActorAvailabilityCalendar | None = None,
     tracked_time: bool = False,
 ) -> str:
-    """Enroll an actor; optional v1 original-time evidence is prospective only."""
+    """Enroll an actor; optional v1 actor-time ledger is prospective only."""
     _identity(owner_id, "owner_id")
     _identity(actor_key, "actor_key")
     _identity(model_spec_hash, "model_spec_hash")
     if type(config_epoch) is not int or config_epoch < 0:
         raise ValueError("config_epoch must be a nonnegative integer")
     now = _utc(at)
-    if type(tracked_time) is not bool:
-        raise TypeError("tracked_time must be an explicit boolean")
+    tracked = _time_ledger.tracked_attributes(tracked_time)
     if availability_calendar is not None:
         if not isinstance(availability_calendar, ActorAvailabilityCalendar):
             raise TypeError("availability_calendar must be ActorAvailabilityCalendar")
@@ -292,8 +291,7 @@ def seed_actor(
                     "paid_transition_us": 0,
                     "assigned_work_id": None, "applied_causes": {},
                     "replaces_actor_id": replaces_actor_id,
-                    "replaced_by_actor_id": None,
-                    **({"tracked_time_version": 1} if tracked_time else {}),
+                    "replaced_by_actor_id": None, **tracked,
                     **({
                         "availability_calendar": {
                             **availability_calendar.snapshot(),
@@ -319,26 +317,8 @@ def seed_actor(
                         "model_spec_hash": model_spec_hash,
                     },
                 ))
-            if tracked_time:
-                uow.append_event(DomainEvent(
-                    event_id=_actor_time_origin_event_id(identity),
-                    name="od2.actor_time_origin_recorded",
-                    entity_type=ACTOR_KIND, entity_id=identity,
-                    owner_id=owner_id, occurred_at=now,
-                    correlation_id=deterministic_id("od2-actor-flow", owner_id, identity),
-                    payload={
-                        "owner_id": owner_id,
-                        "model_spec_hash": model_spec_hash,
-                        "config_epoch": config_epoch,
-                        "replaces_actor_id": replaces_actor_id,
-                        "tracked_time_version": 1,
-                    },
-                ))
+            _time_ledger.record_origin(uow, uow.get_entity(ACTOR_KIND, identity))
     return identity
-
-
-def _actor_time_origin_event_id(actor_id: str) -> str:
-    return deterministic_id("od2-actor-time-origin-v1", actor_id)
 
 
 def _committed_work_event(
@@ -358,10 +338,8 @@ def _committed_work_event(
         ),
         name="od2.actor_work_caused",
         entity_type="organizational_actor_work_cause",
-        entity_id=command.command_id,
-        occurred_at=source.occurred_at,
-        owner_id=command.owner_id,
-        causation_id=source.event_id,
+        entity_id=command.command_id, occurred_at=source.occurred_at,
+        owner_id=command.owner_id, causation_id=source.event_id,
         correlation_id=command.correlation_id,
         payload={
             "actor_id": actor_id, "command_id": command.command_id,
@@ -371,158 +349,6 @@ def _committed_work_event(
             "config_epoch": config_epoch,
         },
     )
-
-
-
-
-def _committed_nonwork_cost_event(
-    *, command: Command, actor_id: str, cause_id: str,
-    source: DomainEvent, model_spec_hash: str, config_epoch: int,
-    cost_us: int,
-) -> DomainEvent:
-    """Versioned immutable non-work cost ledger entry in the source UoW."""
-    return DomainEvent(
-        event_id=deterministic_id(
-            "od2-nonwork-cost-v1", command.owner_id, actor_id, cause_id,
-        ),
-        name="od2.actor_nonwork_cost_caused",
-        entity_type="organizational_actor_paid_transition",
-        entity_id=command.command_id, owner_id=command.owner_id,
-        occurred_at=source.occurred_at,
-        causation_id=source.event_id, correlation_id=command.correlation_id,
-        payload={
-            "actor_id": actor_id, "command_id": command.command_id,
-            "source_event_id": source.event_id, "action": command.name,
-            "external_cause_id": cause_id,
-            "cost_us": cost_us, "model_spec_hash": model_spec_hash,
-            "config_epoch": config_epoch,
-        },
-    )
-
-
-def _verify_actor_time_projection(uow, actor: OrganizationalActor) -> None:
-    """Reconstruct bounded actor-time from original committed Command/events.
-
-    This is a consistency/fail-closed control, NOT an independent source
-    authorization or physical-capacity grant. Legacy unverifiable histories
-    must be migrated through an independently authorized cutover, not guessed
-    from mutable attributes. No persisted record is modified by this audit.
-    """
-    meta = actor.attributes
-    if not isinstance(meta, dict) or not isinstance(meta.get("applied_causes"), dict):
-        raise ValueError("OD-2 actor-time ledger lacks durable cause index")
-    events = tuple(uow.events())
-    # One snapshot/index per guard; avoid repeated shared-ledger scans for each
-    # historical actor cost receipt inside an owner-serialized transaction.
-    by_id = {}
-    for event in events:
-        by_id.setdefault(event.event_id, []).append(event)
-    source_events = tuple(event for event in events if (
-        event.entity_type == ACTOR_KIND and event.entity_id == actor.id
-        and event.name == "entity.state_transition"
-    ))
-    if len(source_events) != len(meta["applied_causes"]):
-        raise ValueError("OD-2 actor-time causal history incomplete or duplicated")
-    amounts = {state: 0 for state in ACTOR_STATES}
-    paid_us = 0
-    current_state = "admitted"
-    origins = by_id.get(_actor_time_origin_event_id(actor.id), ())
-    origin = origins[0] if len(origins) == 1 else None
-    if (
-        origin is None
-        or origin.name != "od2.actor_time_origin_recorded"
-        or origin.entity_type != ACTOR_KIND or origin.entity_id != actor.id
-        or origin.owner_id != meta.get("owner_id")
-        or origin.payload != {
-            "owner_id": meta.get("owner_id"),
-            "model_spec_hash": meta.get("model_spec_hash"),
-            "config_epoch": meta.get("config_epoch"),
-            "replaces_actor_id": meta.get("replaces_actor_id"),
-            "tracked_time_version": 1,
-        }
-        or meta.get("tracked_time_version") != 1
-        or actor.created_at != origin.occurred_at
-    ):
-        raise ValueError("OD-2 actor-time enrollment source contradicts projection")
-    last_at = _utc(origin.occurred_at)
-    assigned_work = None
-    seen_causes = set()
-    for source in source_events:
-        command = uow.get_command(source.causation_id)
-        if command is None or not isinstance(command.payload, dict):
-            raise ValueError("OD-2 actor-time missing original causal Command")
-        payload = command.payload
-        cause = payload.get("external_cause_id")
-        work_id = payload.get("work_id")
-        cost = payload.get("cost_us")
-        event_at = _utc(source.occurred_at)
-        if (
-            not isinstance(cause, str) or not cause.strip() or cause in seen_causes
-            or command.command_id != deterministic_id(
-                "od2-actor-command", source.owner_id, actor.id, cause
-            )
-            or command.owner_id != meta.get("owner_id")
-            or source.owner_id != command.owner_id
-            or command.entity_type != ACTOR_KIND or command.entity_id != actor.id
-            or command.name != source.payload.get("trigger")
-            or command.due_at != event_at or command.issued_at != event_at
-            or source.correlation_id != command.correlation_id
-            or payload.get("evidence_version") != 1
-            or payload.get("model_spec_hash") != meta.get("model_spec_hash")
-            or payload.get("config_epoch") != meta.get("config_epoch")
-            or type(cost) is not int or cost < 0
-            or source.payload.get("from_state") != current_state
-            or source.payload.get("to_state") not in ACTOR_STATES
-            or event_at < last_at
-        ):
-            raise ValueError("OD-2 actor-time causal lineage contradicts original history")
-        action = command.name
-        if action == "assign":
-            if assigned_work is not None or not isinstance(work_id, str) or not work_id.strip():
-                raise ValueError("OD-2 actor-time duplicate or unidentifiable assignment")
-            assigned_work = work_id
-        elif action == "complete":
-            if assigned_work is None or assigned_work != work_id:
-                raise ValueError("OD-2 actor-time completion does not match assignment")
-            assigned_work = None
-        elif work_id is not None:
-            raise ValueError("OD-2 actor-time work ID on non-work transition")
-        if action in ("assign", "complete"):
-            expected = _committed_work_event(
-                command=command, actor_id=actor.id, cause_id=cause,
-                source=source, model_spec_hash=meta["model_spec_hash"],
-                config_epoch=meta["config_epoch"], work_id=work_id,
-                cost_us=cost,
-            )
-        else:
-            expected = _committed_nonwork_cost_event(
-                command=command, actor_id=actor.id, cause_id=cause,
-                source=source, model_spec_hash=meta["model_spec_hash"],
-                config_epoch=meta["config_epoch"], cost_us=cost,
-            )
-        evidence = by_id.get(expected.event_id, ())
-        if len(evidence) != 1 or evidence[0] != expected:
-            raise ValueError("OD-2 actor-time original work/nonwork cost evidence missing or modified")
-        expected_cause = [
-            action, event_at.isoformat(), work_id, cost,
-        ]
-        if meta["applied_causes"].get(cause) != expected_cause:
-            raise ValueError("OD-2 actor-time projection contradicts causal history")
-        amounts[current_state] += (event_at - last_at) // timedelta(microseconds=1)
-        paid_us += cost
-        last_at = event_at
-        current_state = source.payload["to_state"]
-        seen_causes.add(cause)
-    if (
-        set(meta["applied_causes"]) != seen_causes
-        or meta.get("time_us") != amounts
-        or type(meta.get("paid_transition_us")) is not int
-        or meta["paid_transition_us"] != paid_us
-        or meta.get("last_at") != last_at.isoformat()
-        or actor.state != current_state
-        or meta.get("assigned_work_id") != assigned_work
-    ):
-        raise ValueError("OD-2 actor-time projection contradicts committed time/cost ledger")
 
 
 def transition_actor(
@@ -555,8 +381,7 @@ def transition_actor(
     command = Command(
         command_id=deterministic_id("od2-actor-command", owner_id, actor_id, cause_id),
         name=action, entity_type=ACTOR_KIND, entity_id=actor_id,
-        due_at=now, issued_at=now, owner_id=owner_id,
-        causation_id=None,
+        due_at=now, issued_at=now, owner_id=owner_id, causation_id=None,
         correlation_id=deterministic_id("od2-actor-flow", owner_id, actor_id),
         payload={
             "evidence_version": 1, "external_cause_id": cause_id,
@@ -580,9 +405,7 @@ def transition_actor(
                 raise ValueError("actor model_spec_hash changed")
             if type(meta.get("config_epoch")) is not int or meta["config_epoch"] != config_epoch:
                 raise ValueError("stale or unadmitted actor config_epoch")
-            _require_actor_calendar_start(
-                uow, actor, now, require_window=False,
-            )
+            _require_actor_calendar_start(uow, actor, now, require_window=False)
             used = meta["applied_causes"].get(cause_id)
             if used is not None:
                 if used != list(identity):
@@ -618,16 +441,10 @@ def transition_actor(
                         event for event in uow.events() if event.event_id == expected.event_id
                     )
                     if len(matches) != 1 or matches[0] != expected:
-                        raise ValueError(
-                            "actor replay lacks immutable work/cost causal evidence"
-                        )
+                        raise ValueError("actor replay lacks immutable work/cost causal evidence")
+                _time_ledger.verify_time_ledger(uow, actor)
                 return actor
-            # Preserve the stronger original replay-specific identity checks.
-            # Before any NEW native transition, refuse to launder mutable
-            # actor-time buckets or paid costs as independently reached state.
-            enrolled_time = uow.get_event(_actor_time_origin_event_id(actor_id))
-            if meta.get("tracked_time_version") is not None or enrolled_time is not None:
-                _verify_actor_time_projection(uow, actor)
+            _time_ledger.verify_time_ledger(uow, actor)  # tracked: O(1) keyed reads
             prior_at = datetime.fromisoformat(meta["last_at"])
             if now < prior_at:
                 raise ValueError("actor effective time regressed")
@@ -643,7 +460,7 @@ def transition_actor(
                 raise ValueError("work identity is only legal for assign/complete")
             if action == "begin_development" and cost_us == 0:
                 raise ValueError("development must have explicit paid cost")
-
+            # Tracked actors also append the next immutable ledger step below.
             engine = _engine(store, owner_id=owner_id, at=now)
             try:
                 chart = engine.context.statecharts.bind(actor, caused_by=command)
@@ -652,7 +469,8 @@ def transition_actor(
                 if len(emitted) != 1:
                     raise RuntimeError("actor transition must produce exactly one causal event")
                 elapsed_us = (now - prior_at) // timedelta(microseconds=1)
-                meta["time_us"][emitted[0].payload["from_state"]] += elapsed_us
+                from_state = emitted[0].payload["from_state"]
+                meta["time_us"][from_state] = meta["time_us"].get(from_state, 0) + elapsed_us
                 meta["last_at"] = now.isoformat()
                 meta["paid_transition_us"] += cost_us
                 meta["applied_causes"][cause_id] = list(identity)
@@ -673,17 +491,7 @@ def transition_actor(
                     if uow.get_event(work_evidence.event_id) is not None:
                         raise ValueError("actor work evidence ID already committed")
                     uow.append_event(work_evidence)
-                elif meta.get("tracked_time_version") == 1:
-                    # Paid and zero-cost non-work transitions both require an
-                    # immutable counterpart, preventing cost=0 downgrades.
-                    cost_evidence = _committed_nonwork_cost_event(
-                        command=command, actor_id=actor_id, cause_id=cause_id,
-                        source=emitted[0], model_spec_hash=model_spec_hash,
-                        config_epoch=config_epoch, cost_us=cost_us,
-                    )
-                    if uow.get_event(cost_evidence.event_id) is not None:
-                        raise ValueError("actor cost evidence ID already committed")
-                    uow.append_event(cost_evidence)
+                _time_ledger.record_step(uow, actor, command, emitted[0], cause_id)
                 return actor
             finally:
                 engine.context.drain_events()
