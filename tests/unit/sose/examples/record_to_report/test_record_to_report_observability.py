@@ -18,12 +18,12 @@ from sose.examples.record_to_report.simulation import (
     ORIGIN,
     build_runtime,
     reconcile_close,
-    reopen_period,
     run_adjustment_path,
     run_happy_path,
     schedule_close,
     seed_reference,
 )
+from sose.examples.record_to_report.close import reopen_period
 from sose.persistence.memory import MemoryPersistence
 
 

@@ -33,6 +33,14 @@ def _aware(value: datetime, name: str) -> None:
         raise ValueError(f"{name} must be a timezone-aware datetime")
 
 
+def _is_plain_int(value: object) -> bool:
+    """An int that is not a bool (bool subclasses int)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+_RESERVATION_STATUSES = ("reserved", "released", "preempted", "failed")
+
+
 def _nonempty(value: str, name: str) -> None:
     if not isinstance(value, str) or not value.strip() or value != value.strip():
         raise ValueError(f"{name} must be nonempty and trimmed")
@@ -60,13 +68,19 @@ class TemporalReservation:
         _aware(self.end_at, "end_at")
         if self.start_at >= self.end_at:
             raise ValueError("resource interval must have positive duration")
-        if isinstance(self.units, bool) or not isinstance(self.units, int) or self.units < 1:
+        self._validate_units_and_priority()
+        self._validate_lifecycle()
+
+    def _validate_units_and_priority(self) -> None:
+        if not _is_plain_int(self.units) or self.units < 1:
             raise ValueError("units must be a positive integer")
         if self.address.instance_id is not None and self.units != 1:
             raise ValueError("physical instances are indivisible")
-        if isinstance(self.priority, bool) or not isinstance(self.priority, int):
+        if not _is_plain_int(self.priority):
             raise ValueError("priority must be an integer")
-        if self.status not in ("reserved", "released", "preempted", "failed"):
+
+    def _validate_lifecycle(self) -> None:
+        if self.status not in _RESERVATION_STATUSES:
             raise ValueError("unrecognized reservation status")
         if self.stopped_at is not None:
             _aware(self.stopped_at, "stopped_at")
