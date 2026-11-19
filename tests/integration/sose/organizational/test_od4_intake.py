@@ -310,7 +310,7 @@ def test_replay_and_fresh_intervention_require_single_causal_identity(
     adapter, mutation, tmp_path,
 ):
     from dataclasses import replace as dc_replace
-    from sose.core.events import DomainEvent, Command
+    from sose.core.events import DomainEvent
 
     store = _store(adapter, tmp_path)
     try:
