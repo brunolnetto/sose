@@ -92,7 +92,16 @@ per-transition cost record; the guard binds only the head step back to its
 original Command. Untracked actors are skipped unless a genuine origin event
 for that actor/owner exists, so a foreign event at the predictable origin or
 step ID cannot disable them; it fails a tracked seed or transition with an
-explicit "ID already committed"/"occupied by a foreign event" error. Buckets are
+explicit "ID already committed"/"occupied by a foreign event" error.
+Whether an origin is genuine is decided only from immutable identity (event
+name/type/actor ID, and the origin's own owner + recorded `actor_key` must
+re-derive the actor ID), never from editable projection fields, so stripping
+the marker together with rewriting the claimed owner is still caught.
+**Residual store-level limit (#545):** `append_event` does not bind an event's
+`owner_id` to the writing transaction, so another owner can append a fully
+forged origin at an untracked actor's origin ID. That locks the actor: its
+transitions fail closed and write nothing, but no tracked history can be
+fabricated. Closing it needs store-level issuer authorization. Buckets are
 compared by present key with missing keys meaning zero, so adding a lifecycle
 state later does not invalidate stored actors.
 

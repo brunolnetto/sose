@@ -407,3 +407,35 @@ def test_strip_marker_and_swap_owner_cannot_bypass_guard(adapter, tmp_path):
         assert store.events() == before
     finally:
         _close(store)
+
+
+@pytest.mark.parametrize("adapter", ["memory", "sqlite"])
+def test_forged_origin_from_foreign_writer_locks_untracked_actor_fail_closed(
+    adapter, tmp_path,
+):
+    """Residual #545 limit: append_event does not bind owner_id to the writer.
+
+    A fully forged origin locks an untracked actor; it must fail closed and
+    write nothing (it cannot fabricate tracked history).
+    """
+    store = _store(adapter, tmp_path, "forged-origin")
+    try:
+        actor_id = _seed(store, tracked_time=False)
+        actor = store.entity(ACTOR_KIND, actor_id)
+        with store.transaction(owner_id=OTHER) as uow:
+            uow.append_event(DomainEvent(
+                event_id=ledger.origin_event_id(actor_id), name=ledger.ORIGIN_EVENT,
+                entity_type=ACTOR_KIND, entity_id=actor_id, owner_id=OWNER,
+                occurred_at=actor.created_at, payload={
+                    "owner_id": OWNER, "model_spec_hash": MODEL, "config_epoch": 1,
+                    "replaces_actor_id": None, "tracked_time_version": 1,
+                    "actor_key": "actor-1",
+                },
+            ))
+        before = store.events()
+        with pytest.raises(ValueError, match="OD-2 actor-time enrollment"):
+            _transition(store, actor_id, "activate", 1)
+        assert store.events() == before
+        assert store.entity(ACTOR_KIND, actor_id).state == "admitted"
+    finally:
+        _close(store)

@@ -239,7 +239,13 @@ def verify_time_ledger(uow, actor) -> None:
     predictable origin ID cannot affect them. "Genuine" is decided only from
     the immutable event and actor ID (the origin's owner + recorded key must
     re-derive the actor ID), never from editable projection fields, so
-    stripping the marker and/or rewriting the claimed owner is caught. Constant number of keyed reads; no
+    stripping the marker and/or rewriting the claimed owner is caught.
+
+    Residual (#545): the store does not bind an appended event's owner_id to
+    the writing transaction, so another owner can append a fully forged
+    origin at an untracked actor's origin ID. That locks the actor (fails
+    closed, writes nothing) but cannot fabricate tracked history; closing it
+    needs store-level issuer authorization. Constant number of keyed reads; no
     event-log enumeration or deep copy.
     """
     meta = actor.attributes
