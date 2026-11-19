@@ -1,4 +1,4 @@
-"""#637: PersistentJobRunner claims a lease scoped to its job when it can."""
+"""#637: PersistentJobRunner claims a lease scoped to its job (required since 0.10.0)."""
 from __future__ import annotations
 
 import warnings
@@ -52,15 +52,10 @@ class _GlobalOnly:
         return SimpleNamespace(owner_id=owner_id, epoch=self.epoch)
 
 
-def test_global_only_persistence_still_works_but_is_deprecated():
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        runner = PersistentJobRunner(_job(_GlobalOnly()), owner_id="w1")
-    [warning] = [w for w in caught if issubclass(w.category, DeprecationWarning)]
-    assert "without scoped writers" in str(warning.message)
-    assert "0.10.0" in str(warning.message)
-    assert warning.filename == __file__
-    assert runner._claim().epoch == 1
+def test_global_only_persistence_is_refused():
+    """The namespace-wide fallback deprecated in 0.9.0 was removed in 0.10.0."""
+    with pytest.raises(TypeError, match="scoped_writer_epoch is missing"):
+        PersistentJobRunner(_job(_GlobalOnly()), owner_id="w1")
 
 
 def test_scoped_epoch_read_failure_propagates_without_retry():
@@ -83,8 +78,8 @@ def test_scoped_epoch_read_failure_propagates_without_retry():
     assert _Broken.calls == 1
 
 
-def test_subclass_whose_transaction_lacks_writer_scope_keeps_the_global_lease(tmp_path):
-    """A user subclass overriding transaction(owner_epoch=...) must not break."""
+def test_subclass_whose_transaction_lacks_writer_scope_is_refused(tmp_path):
+    """A transaction override without writer_scope cannot carry a job-scoped lease."""
     from contextlib import contextmanager
 
     class _Legacy(SQLiteIncrementalPersistence):
@@ -94,9 +89,5 @@ def test_subclass_whose_transaction_lacks_writer_scope_keeps_the_global_lease(tm
                 yield uow
 
     with _Legacy(tmp_path / "legacy.sqlite") as store:
-        with pytest.warns(DeprecationWarning, match="without scoped writers"):
-            runner = PersistentJobRunner(_job(store), owner_id="w1")
-        lease = runner._claim()
-        assert not hasattr(lease, "scope") and lease.epoch == store.writer_epoch() == 1
-        with FencedEnginePersistence(store, lease).transaction():
-            pass
+        with pytest.raises(TypeError, match="writer_scope"):
+            PersistentJobRunner(_job(store), owner_id="w1")

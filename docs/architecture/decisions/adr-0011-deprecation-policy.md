@@ -51,3 +51,14 @@ workers. Removing a surface with no warning breaks them silently.
     PostgreSQL.
   - #637: `PersistentJobRunner` on persistence without scoped writers.
   - #632: public names reached through a module they were split out of.
+
+## Amendment (2026-11-19): extending a deprecation window
+
+A deprecation window may be **extended** by one or more minors when the removal turns out
+to cost more than its notice period justified. Each extension updates `removed_in`
+in the warning and records the reason here. It never shortens a window.
+
+- #634 (policy-less `TradingCustomerRecoveryRunner` and the SQLite path of
+  `sose composition-recovery`): extended from `0.10.0` to `0.11.0`. Removing the mode
+  moves about 75 recovery tests (15 files) from SQLite/memory to PostgreSQL with resource
+  policies, which changes their timing semantics. They are ported in dedicated PRs first.

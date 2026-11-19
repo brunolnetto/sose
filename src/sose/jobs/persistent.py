@@ -5,23 +5,19 @@ from __future__ import annotations
 import inspect
 from dataclasses import dataclass
 
-from sose._deprecation import warn_deprecated
 from sose.jobs.runner import SimulationJob
 from sose.persistence.ownership import FencedEnginePersistence, PersistentRunResult
 
 
 @dataclass(slots=True)
 class PersistentJobRunner:
-    """Claim a fenced writer lease, then run the job through a fenced view.
+    """Claim a job-scoped writer lease, then run the job through a fenced view.
 
-    The lease is scoped to ``job.job_id`` (#637) when the persistence offers
-    scoped writers, so independent jobs in one namespace no longer fence each
-    other out. Persistence that only implements the namespace-wide writer still
-    works, with a deprecation warning (removed in 0.10).
-
-    Upgrade note: global and scoped epochs do not fence each other. Stop every
-    worker of the previous version before starting workers of this version on
-    the same namespace.
+    The lease is scoped to ``job.job_id`` (#637): independent jobs in one namespace
+    never fence each other out, and a takeover within one job fences the previous
+    worker. Persistence must offer scoped writers (``scoped_writer_epoch``,
+    ``claim_scoped_writer``) and a ``transaction`` that accepts ``writer_scope``; the
+    namespace-wide-lease fallback deprecated in 0.9.0 was removed in 0.10.0.
     """
 
     job: SimulationJob
@@ -33,57 +29,28 @@ class PersistentJobRunner:
             raise ValueError("owner_id cannot be empty")
         if self.claim_retries < 1:
             raise ValueError("claim_retries must be >= 1")
-        for method in ("writer_epoch", "claim_writer"):
-            if not callable(getattr(self.job.persistence, method, None)):
+        persistence = self.job.persistence
+        for method in ("scoped_writer_epoch", "claim_scoped_writer"):
+            if not callable(getattr(persistence, method, None)):
                 raise TypeError(
-                    "persistent authoritative runner requires ownership-capable "
+                    "persistent authoritative runner requires scoped-writer "
                     f"EnginePersistence ({method} is missing)"
                 )
-        if not self._scoped():
-            # helper -> __post_init__ -> dataclass __init__ -> constructing caller
-            warn_deprecated(
-                "PersistentJobRunner on persistence without scoped writers",
-                since="0.9.0", removed_in="0.10.0",
-                instead="implement scoped_writer_epoch and claim_scoped_writer",
-                stacklevel=4,
+        if not _accepts_writer_scope(persistence):
+            raise TypeError(
+                "persistent authoritative runner requires transaction(writer_scope=...)"
             )
-
-    def _scoped(self) -> bool:
-        """Scoped leases need the claim API AND a transaction that accepts the scope.
-
-        A subclass overriding ``transaction`` without ``writer_scope`` keeps the
-        namespace-wide lease (deprecated) instead of failing at its first write.
-        """
-        persistence = self.job.persistence
-        if not all(
-            callable(getattr(persistence, method, None))
-            for method in ("scoped_writer_epoch", "claim_scoped_writer")
-        ):
-            return False
-        try:
-            parameters = inspect.signature(persistence.transaction).parameters
-        except (TypeError, ValueError):
-            return False
-        return "writer_scope" in parameters or any(
-            p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
-        )
 
     def _claim(self):
         persistence, scope = self.job.persistence, self.job.job_id
-        scoped = self._scoped()
         last_error = None
         for _ in range(self.claim_retries):
-            # As before: an epoch-read failure propagates at once; only claims retry.
-            expected = (
-                persistence.scoped_writer_epoch(scope) if scoped
-                else persistence.writer_epoch()
-            )
+            # An epoch-read failure propagates at once; only claims retry.
+            expected = persistence.scoped_writer_epoch(scope)
             try:
-                if scoped:
-                    return persistence.claim_scoped_writer(
-                        scope, self.owner_id, expected_epoch=expected,
-                    )
-                return persistence.claim_writer(self.owner_id, expected_epoch=expected)
+                return persistence.claim_scoped_writer(
+                    scope, self.owner_id, expected_epoch=expected,
+                )
             except Exception as exc:
                 last_error = exc
         assert last_error is not None
@@ -115,3 +82,13 @@ class PersistentJobRunner:
         lease = self._claim()
         result = self._fenced_job(lease).run_scheduled_trigger(**kwargs)
         return PersistentRunResult(self.owner_id, lease.epoch, result)
+
+
+def _accepts_writer_scope(persistence) -> bool:
+    try:
+        parameters = inspect.signature(persistence.transaction).parameters
+    except (TypeError, ValueError):
+        return False
+    return "writer_scope" in parameters or any(
+        p.kind is inspect.Parameter.VAR_KEYWORD for p in parameters.values()
+    )

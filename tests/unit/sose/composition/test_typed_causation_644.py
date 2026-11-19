@@ -1,7 +1,6 @@
-"""#644: current composition flows publish typed causation; untyped history stays readable."""
+"""#644: composition publishes typed causation; untyped history stays readable (0.10: required)."""
 from __future__ import annotations
 
-import warnings
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
@@ -10,7 +9,7 @@ import pytest
 from sose.composition.audit import audit_causal_history
 from sose.composition.boundary import BoundaryService
 from sose.composition.causality import matches_durable_message
-from sose.composition.model import BoundaryMessage
+from sose.composition.model import BoundaryDelivery, BoundaryMessage
 from sose.composition.trading_company_customer import run_customer_demand_path
 from sose.persistence.memory import MemoryPersistence
 
@@ -46,29 +45,34 @@ def test_untyped_record_satisfies_the_same_message_rederived_typed():
     assert not matches_durable_message(untyped, other_produced_at)   # any other field differs
 
 
+def _stage_untyped(store, value):
+    with store.transaction() as uow:
+        uow.save_boundary_message(value)
+        uow.save_boundary_delivery(BoundaryDelivery.pending(value))
+
+
 def test_republishing_typed_over_untyped_history_keeps_the_durable_record():
     store = MemoryPersistence()
     service = BoundaryService(store)
     root = _message("root")
     untyped = _message("child", cause=root.message_id, at=T0 + timedelta(seconds=1))
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", DeprecationWarning)
-        service.publish(root)
-        service.publish(untyped)
-        service.publish(replace(untyped, causation_kind="boundary"))   # recovery re-derives typed
+    service.publish(root)
+    _stage_untyped(store, untyped)                                  # recorded before 0.9
+    service.publish(replace(untyped, causation_kind="boundary"))   # recovery re-derives typed
     with store.transaction() as uow:
         assert uow.get_boundary_message(untyped.message_id).causation_kind is None
 
 
-def test_publishing_a_new_untyped_caused_message_is_deprecated():
+def test_publishing_a_new_untyped_caused_message_is_refused():
+    """Deprecated in 0.9.0, removed in 0.10.0."""
     store = MemoryPersistence()
     service = BoundaryService(store)
     root = _message("root")
-    with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)
-        service.publish(root)                                   # no cause: nothing to type
-        service.publish(_message("ok", cause=root.message_id, kind="boundary",
-                                 at=T0 + timedelta(seconds=1)))
-    with pytest.warns(DeprecationWarning, match="has no causation_kind.*0.10.0") as caught:
+    service.publish(root)                                   # no cause: nothing to type
+    service.publish(_message("ok", cause=root.message_id, kind="boundary",
+                             at=T0 + timedelta(seconds=1)))
+    with pytest.raises(ValueError, match="has a causation_id but no causation_kind"):
         service.publish(_message("child", cause=root.message_id, at=T0 + timedelta(seconds=2)))
-    assert caught[0].filename == __file__
+    with store.transaction() as uow:
+        assert uow.get_boundary_message(
+            _message("child", cause=root.message_id).message_id) is None

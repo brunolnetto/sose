@@ -274,19 +274,3 @@ def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, TransitEntities
         trip_id=trip_b.id,
     )
     return persistence, entities
-
-
-# Moved by the quality-ratchet splits (#632); importing these names from here
-# is deprecated (ADR-0011). Import them from the module named on the right.
-from sose._deprecation import deprecated_reexports as _deprecated_reexports
-
-__getattr__ = _deprecated_reexports(__name__, {
-    "cancel_service_alert": "sose.examples.transit.simulation_alerts",
-    "cancel_trip": "sose.examples.transit.simulation_alerts",
-    "deterministic_id": "sose.core.identity",
-    "ensure_trip_boundaries": "sose.examples.transit.simulation_boundaries",
-    "realtime_vehicle_view": "sose.examples.transit.simulation_vehicle_positions",
-    "schedule_service_alert": "sose.examples.transit.simulation_alerts",
-    "service_alert_id": "sose.examples.transit.simulation_runtime",
-    "vehicle_position_id": "sose.examples.transit.simulation_runtime",
-}, since="0.9.0", removed_in="0.10.0")

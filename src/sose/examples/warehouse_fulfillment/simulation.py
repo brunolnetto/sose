@@ -288,16 +288,3 @@ def run_happy_path(*, owner_id: str) -> tuple[MemoryPersistence, WarehouseEntiti
     pack_order(persistence, engine, entities=entities)
     ship_order(persistence, engine, entities=entities)
     return persistence, entities
-
-
-# Moved by the quality-ratchet splits (#632); importing these names from here
-# is deprecated (ADR-0011). Import them from the module named on the right.
-from sose._deprecation import deprecated_reexports as _deprecated_reexports
-
-__getattr__ = _deprecated_reexports(__name__, {
-    "allocation_id": "sose.examples.warehouse_fulfillment.records",
-    "correct_lot_balance": "sose.examples.warehouse_fulfillment.handling",
-    "deterministic_id": "sose.core.identity",
-    "pick_allocation": "sose.examples.warehouse_fulfillment.handling",
-    "service_task_id": "sose.examples.warehouse_fulfillment.records",
-}, since="0.9.0", removed_in="0.10.0")
