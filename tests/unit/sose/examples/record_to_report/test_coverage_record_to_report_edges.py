@@ -7,9 +7,7 @@ import pytest
 from sose.backends.simpy import SimPyBackend
 from sose.examples.record_to_report.simulation import (
     ORIGIN,
-    _entity,
     build_runtime,
-    ensure_adjustment,
     post_adjustment,
     reconcile_close,
     reconcile_item,
@@ -17,6 +15,8 @@ from sose.examples.record_to_report.simulation import (
     seed_reference,
     submit_and_post_journal,
 )
+from sose.examples.record_to_report.adjustments import ensure_adjustment
+from sose.examples.record_to_report.foundation import _entity
 from sose.persistence.memory import MemoryPersistence
 
 ORGANIZATION_ID = "record-to-report-reference-organization"

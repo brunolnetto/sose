@@ -107,14 +107,7 @@ def build_od5a_configured_worlds(
     All bounds and the seed are supplied by the *future* execution freeze,
     not opportunistically chosen inside the experiment engine.
     """
-    if set(nonload_bounds) != NONLOAD_COORDINATES:
-        missing = sorted(NONLOAD_COORDINATES - set(nonload_bounds))
-        extra = sorted(set(nonload_bounds) - NONLOAD_COORDINATES)
-        raise ValueError(f"OD-5a requires exact non-load bounds; missing={missing}; extra={extra}")
-    if isinstance(design_seed, bool) or not isinstance(design_seed, int) or design_seed < 0:
-        raise ValueError("design_seed must be a nonnegative integer")
-    if not all(isinstance(bounds, ParameterRange) for bounds in nonload_bounds.values()):
-        raise ValueError("each non-load dimension requires a valid ParameterRange")
+    _validate_design_inputs(nonload_bounds, design_seed)
     points = sample_parameter_space(
         parameter_ranges=nonload_bounds,
         design=SamplingDesign.SOBOL,
@@ -125,52 +118,48 @@ def build_od5a_configured_worlds(
         raise RuntimeError("OD-5a Sobol stratum count contradicts preregistration")
     result = []
     for stratum, point in enumerate(points):
-        if any(not isfinite(x) for x in point.values()):
-            raise RuntimeError("non-finite OD-5a exogenous coordinate")
-        shared = MappingProxyType(dict(sorted(point.items())))
-        for load_index, rho in enumerate(LOAD_GRID):
-            result.append(OD5aConfiguredWorld(
-                design_seed=design_seed,
-                stratum_index=stratum,
-                load_index=load_index,
-                rho_nominal=rho,
-                nonload_coordinates=shared,
-            ))
+        result.extend(_stratum_worlds(design_seed, stratum, point))
     if len({world.world_hash for world in result}) != N_WORLDS:
         raise RuntimeError("OD-5a configured design contains repeated worlds")
     return tuple(result)
+
+
+def _validate_design_inputs(nonload_bounds: Mapping[str, ParameterRange], design_seed: int) -> None:
+    if set(nonload_bounds) != NONLOAD_COORDINATES:
+        missing = sorted(NONLOAD_COORDINATES - set(nonload_bounds))
+        extra = sorted(set(nonload_bounds) - NONLOAD_COORDINATES)
+        raise ValueError(f"OD-5a requires exact non-load bounds; missing={missing}; extra={extra}")
+    if isinstance(design_seed, bool) or not isinstance(design_seed, int) or design_seed < 0:
+        raise ValueError("design_seed must be a nonnegative integer")
+    if not all(isinstance(bounds, ParameterRange) for bounds in nonload_bounds.values()):
+        raise ValueError("each non-load dimension requires a valid ParameterRange")
+
+
+def _stratum_worlds(design_seed: int, stratum: int, point) -> list[OD5aConfiguredWorld]:
+    """One configured world per load level, sharing the stratum's coordinates."""
+    if any(not isfinite(x) for x in point.values()):
+        raise RuntimeError("non-finite OD-5a exogenous coordinate")
+    shared = MappingProxyType(dict(sorted(point.items())))
+    return [
+        OD5aConfiguredWorld(
+            design_seed=design_seed,
+            stratum_index=stratum,
+            load_index=load_index,
+            rho_nominal=rho,
+            nonload_coordinates=shared,
+        )
+        for load_index, rho in enumerate(LOAD_GRID)
+    ]
 
 
 def iter_od5a_run_keys(
     worlds: Sequence[OD5aConfiguredWorld],
 ) -> Iterator[OD5aRunKey]:
     """Enumerate the locked 17,920 run *identities* without executing any."""
-    if len(worlds) != N_WORLDS:
-        raise ValueError("OD-5a requires exactly 224 configured worlds")
-    expected = {(stratum, i) for stratum in range(N_STRATA) for i in range(len(LOAD_GRID))}
-    actual = {(world.stratum_index, world.load_index) for world in worlds}
-    if len(actual) != len(worlds) or actual != expected:
-        raise ValueError("OD-5a design is incomplete or duplicates a stratum/load pair")
-    if tuple((world.stratum_index, world.load_index) for world in worlds) != tuple(
-        (stratum, load) for stratum in range(N_STRATA)
-        for load in range(len(LOAD_GRID))
-    ):
-        raise ValueError("OD-5a run enumeration requires canonical stratum/load order")
-    first_seed = worlds[0].design_seed
-    per_stratum: dict[int, Mapping[str, float]] = {}
-    for world in worlds:
-        if world.design_seed != first_seed:
-            raise ValueError("OD-5a design mixes unrelated Sobol seeds")
-        if (set(world.nonload_coordinates) != NONLOAD_COORDINATES
-                or any(isinstance(value, bool)
-                       or not isinstance(value, (int, float)) or not isfinite(value)
-                       for value in world.nonload_coordinates.values())):
-            raise ValueError("OD-5a run matrix contains invalid non-load coordinates")
-        if world.rho_nominal != LOAD_GRID[world.load_index]:
-            raise ValueError("OD-5a load coordinate differs from preregistered grid")
-        prior = per_stratum.setdefault(world.stratum_index, world.nonload_coordinates)
-        if prior != world.nonload_coordinates:
-            raise ValueError("OD-5a stratum changes non-load exogenous coordinates")
+    # Validation stays inside the generator: it runs on the first next(),
+    # exactly as before the extraction.
+    _validate_world_grid(worlds)
+    _validate_world_coordinates(worlds)
     for world in worlds:
         for arm in ARMS:
             for replication in range(N_REPLICATIONS):
@@ -180,3 +169,39 @@ def iter_od5a_run_keys(
                     arm_id=arm,
                     replication_index=replication,
                 )
+
+
+def _validate_world_grid(worlds: Sequence[OD5aConfiguredWorld]) -> None:
+    if len(worlds) != N_WORLDS:
+        raise ValueError("OD-5a requires exactly 224 configured worlds")
+    canonical = tuple(
+        (stratum, load) for stratum in range(N_STRATA) for load in range(len(LOAD_GRID))
+    )
+    observed = tuple((world.stratum_index, world.load_index) for world in worlds)
+    actual = set(observed)
+    if len(actual) != len(worlds) or actual != set(canonical):
+        raise ValueError("OD-5a design is incomplete or duplicates a stratum/load pair")
+    if observed != canonical:
+        raise ValueError("OD-5a run enumeration requires canonical stratum/load order")
+
+
+def _valid_nonload_coordinates(coordinates: Mapping[str, float]) -> bool:
+    return set(coordinates) == NONLOAD_COORDINATES and all(
+        not isinstance(value, bool) and isinstance(value, (int, float)) and isfinite(value)
+        for value in coordinates.values()
+    )
+
+
+def _validate_world_coordinates(worlds: Sequence[OD5aConfiguredWorld]) -> None:
+    first_seed = worlds[0].design_seed
+    per_stratum: dict[int, Mapping[str, float]] = {}
+    for world in worlds:
+        if world.design_seed != first_seed:
+            raise ValueError("OD-5a design mixes unrelated Sobol seeds")
+        if not _valid_nonload_coordinates(world.nonload_coordinates):
+            raise ValueError("OD-5a run matrix contains invalid non-load coordinates")
+        if world.rho_nominal != LOAD_GRID[world.load_index]:
+            raise ValueError("OD-5a load coordinate differs from preregistered grid")
+        prior = per_stratum.setdefault(world.stratum_index, world.nonload_coordinates)
+        if prior != world.nonload_coordinates:
+            raise ValueError("OD-5a stratum changes non-load exogenous coordinates")

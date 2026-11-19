@@ -11,16 +11,18 @@ from sose.examples.transit.simulation import (
     TRIP_A_START,
     _entity,
     build_runtime,
-    cancel_service_alert,
-    cancel_trip,
-    ensure_trip_boundaries,
     record_trip_update,
     record_vehicle_position,
-    realtime_vehicle_view,
     reconcile_vehicle_for_trip,
-    schedule_service_alert,
     seed_reference,
 )
+from sose.examples.transit.simulation_alerts import (
+    cancel_service_alert,
+    cancel_trip,
+    schedule_service_alert,
+)
+from sose.examples.transit.simulation_boundaries import ensure_trip_boundaries
+from sose.examples.transit.simulation_vehicle_positions import realtime_vehicle_view
 from sose.persistence.memory import MemoryPersistence
 
 ORGANIZATION_ID = "transit-reference-organization"

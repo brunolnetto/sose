@@ -4,12 +4,12 @@ from sose.backends.simpy import SimPyBackend
 from sose.examples.record_to_report.simulation import (
     ORIGIN,
     build_runtime,
-    ensure_adjustment,
     reconcile_close,
     reconcile_item,
-    reopen_period,
     seed_reference,
 )
+from sose.examples.record_to_report.adjustments import ensure_adjustment
+from sose.examples.record_to_report.close import reopen_period
 from sose.persistence.memory import MemoryPersistence
 
 
