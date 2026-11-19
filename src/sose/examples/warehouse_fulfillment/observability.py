@@ -48,18 +48,7 @@ def warehouse_fulfillment_projection(
     if order is None:
         raise RuntimeError("warehouse fulfillment order was not persisted")
 
-    allocation_ids = tuple(
-        str(value) for value in order.attributes.get("allocation_ids", ())
-    )
-    allocations = []
-    for allocation_id in allocation_ids:
-        allocation = persistence.entity("warehouse_allocation", allocation_id)
-        if allocation is None:
-            raise RuntimeError(
-                "warehouse fulfillment allocation index references missing durable allocation"
-            )
-        allocations.append(allocation)
-
+    allocations = _durable_allocations(persistence, order)
     requested_quantity = float(order.attributes["requested_quantity"])
     allocated_quantity = sum(
         float(allocation.attributes["quantity"])
@@ -74,12 +63,7 @@ def warehouse_fulfillment_projection(
         str(value) for value in order.attributes.get("occurrence_ids", ())
     )
     completed = order.state == "shipped"
-    lead_time_seconds = None
-    if completed and order.created_at is not None and order.updated_at is not None:
-        lead_time_seconds = max(
-            0.0,
-            (order.updated_at - order.created_at).total_seconds(),
-        )
+    lead_time_seconds = _lead_time_seconds(order) if completed else None
 
     return WarehouseFulfillmentProjection(
         order_id=order.id,
@@ -134,3 +118,25 @@ def warehouse_fulfillment_kpis(
         substitution_count=projection.substitution_allocation_count,
         correction_count=correction_count,
     )
+
+
+def _durable_allocations(persistence: Persistence, order) -> list:
+    """Resolve the order's allocation index; a dangling reference is fatal."""
+    allocation_ids = tuple(
+        str(value) for value in order.attributes.get("allocation_ids", ())
+    )
+    allocations = []
+    for allocation_id in allocation_ids:
+        allocation = persistence.entity("warehouse_allocation", allocation_id)
+        if allocation is None:
+            raise RuntimeError(
+                "warehouse fulfillment allocation index references missing durable allocation"
+            )
+        allocations.append(allocation)
+    return allocations
+
+
+def _lead_time_seconds(order) -> float | None:
+    if order.created_at is None or order.updated_at is None:
+        return None
+    return max(0.0, (order.updated_at - order.created_at).total_seconds())

@@ -8,8 +8,6 @@ from sose.examples.insurance.simulation import (
     claim_next_for_assessment,
     complete_assessment,
     ensure_document_request,
-    ensure_fraud_investigation,
-    ensure_payment,
     ensure_reserve,
     queue_claim,
     reconcile_fraud,
@@ -17,6 +15,8 @@ from sose.examples.insurance.simulation import (
     satisfy_documents,
     seed_reference,
 )
+from sose.examples.insurance.fraud import ensure_fraud_investigation
+from sose.examples.insurance.payments import ensure_payment
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "insurance-reference-organization"

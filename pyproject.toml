@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "sose"
-version = "0.8.0"
+version = "0.10.0"
 description = "Synthetic Operational System Engine"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -44,11 +44,13 @@ dev = [
   "duckdb>=2,<3",
   "psycopg[binary]>=3.3.6,<4",
   "pytest>=8,<10",
+  "pytest-benchmark>=5.3.1,<6",
   "pytest-cov>=7,<8",
+  "pytest-json-report>=1.5.0,<2",
   "coverage>=7.16,<8",
   "ruff>=0.11,<1",
   "mypy>=2.3,<3",
-  "codebase-stats>=0.0.3",
+  "codebase-stats>=0.1,<0.2",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -61,6 +63,19 @@ markers = [
     "slow: marks tests as slow-running (deselect with '-m \"not slow\"')",
 ]
 addopts = "-p tests.support.pytest_auto_postgres"
+filterwarnings = [
+    # Existing suites still exercise policy-less recovery until its 0.11 removal (#634);
+    # tests/unit/sose/composition/test_recovery_deprecation.py asserts the warning itself.
+    "ignore:TradingCustomerRecoveryRunner without resource_policies:DeprecationWarning",
+]
+[tool.codebase-stats.gates]
+# Quality ratchet (ADR-0010): no new violation and no worse existing one.
+# Known violations live in the baseline and may only shrink.
+max-cc = 10
+max-lines = 400
+min-mi = 20
+baseline = ".codebase-stats-baseline.json"
+
 [tool.ruff]
 target-version = "py312"
 line-length = 100
@@ -69,9 +84,10 @@ line-length = 100
 dev = [
     "duckdb>=2,<3",
     "psycopg[binary]>=3.3.6,<4",
-    "codebase-stats>=0.0.3",
+    "codebase-stats>=0.1,<0.2",
     "simpy>=4.1.1,<5",
     "pytest-json-report>=1.5.0",
+    "pytest-benchmark>=5.3.1,<6",
     "pytest-cov>=7.1.0",
     "test-containers[postgres]>=0.1.10",
 ]

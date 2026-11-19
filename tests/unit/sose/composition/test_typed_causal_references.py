@@ -9,7 +9,7 @@ import pytest
 
 from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
 from sose.composition.causality import CausalReference
-from sose.composition.model import BoundaryMessage
+from sose.composition.model import BoundaryDelivery, BoundaryMessage
 from sose.core.events import DomainEvent
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
@@ -109,10 +109,17 @@ def test_typed_domain_event_must_exist_and_match_trace_and_time():
     assert lease is not None
 
 
+def _stage_untyped(store, value):
+    """Untyped caused messages can no longer be published (0.10); they exist only durably."""
+    with store.transaction() as uow:
+        uow.save_boundary_message(value)
+        uow.save_boundary_delivery(BoundaryDelivery.pending(value))
+
+
 def test_legacy_external_causation_remains_compatible():
     store = MemoryPersistence()
     service = BoundaryService(store)
-    service.publish(message("legacy", "external-not-indexed"))
+    _stage_untyped(store, message("legacy", "external-not-indexed"))
     assert service.claim_next(
         owner_id="legacy-worker", now=NOW,
         lease_duration=timedelta(minutes=1),
@@ -134,13 +141,14 @@ def test_typed_causal_reference_rejects_invalid_kinds_and_ids():
 def test_legacy_prefixed_cause_survives_upgrade_without_reinterpretation():
     from sose.persistence.codec import dumps, loads
 
-    service = BoundaryService(MemoryPersistence())
+    store = MemoryPersistence()
+    service = BoundaryService(store)
     for cause in ("event:external-id", "boundary:external-id"):
         legacy = message("legacy-" + cause, cause)
         serialized = dumps(legacy)
         assert '"causation_kind"' not in serialized
         assert loads(serialized) == legacy
-        service.publish(legacy)
+        _stage_untyped(store, legacy)
         assert service.claim_next(
             owner_id="legacy-worker", now=NOW,
             lease_duration=timedelta(minutes=1),

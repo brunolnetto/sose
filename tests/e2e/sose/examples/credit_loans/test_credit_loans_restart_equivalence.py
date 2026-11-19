@@ -3,20 +3,22 @@ from sose.examples.credit_loans.entities import Payment
 from sose.examples.credit_loans.simulation import (
     ORIGIN,
     build_runtime,
-    collection_case_id,
-    credit_decision_id,
-    delinquency_case_id,
     disburse_and_schedule,
-    ensure_delinquency,
     flow_correlation_id,
     installment_id,
     loan_id,
-    payment_id,
     post_payment,
     reconcile_collection,
     reconcile_underwriting,
     schedule_overdue,
     seed_reference,
+)
+from sose.examples.credit_loans.simulation_delinquency import ensure_delinquency
+from sose.examples.credit_loans.simulation_runtime import (
+    collection_case_id,
+    credit_decision_id,
+    delinquency_case_id,
+    payment_id,
 )
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime

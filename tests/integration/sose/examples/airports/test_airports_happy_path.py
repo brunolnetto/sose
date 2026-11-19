@@ -149,7 +149,7 @@ def test_baggage_delay_blocks_departure_queue_until_recovered():
 
 
 def test_gate_reallocation_releases_old_capacity_and_reassigns_turnaround():
-    from sose.examples.airports.simulation import reallocate_gate
+    from sose.examples.airports.simulation_gates import reallocate_gate
 
     persistence = MemoryPersistence()
     entities = seed_reference(persistence, owner_id=AIRPORT_OWNER_ID)
