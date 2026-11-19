@@ -1008,3 +1008,42 @@ def test_seed_rejects_non_integer_service_time(bad):
     with pytest.raises(ValueError, match="foreign or future"):
         seed_od3_queue(store, owner_id=OWNER, queue_key=KEY, items=(item,), at=NOW)
     assert not store.events()
+
+
+def _rename_one(queue):
+    applied = queue.attributes["applied_observations"]
+    applied["renamed"] = applied.pop("one")
+
+
+def _drop_add(queue):
+    applied = queue.attributes["applied_observations"]
+    applied["ghost"] = dict(applied.pop("one"))
+
+
+def _swap_request(queue):
+    queue.attributes["applied_observations"]["one"]["request_id"] = "forged-request"
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("tamper", ("rename", "drop_add", "swap_request"))
+def test_rewritten_applied_observations_cannot_recharge(adapter, tamper, tmp_path):
+    """Count-preserving edits of applied observations must not let one be paid twice."""
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_pair(store)
+        apply_at(store, "one")
+        apply_at(store, "two", 21)
+        mutate = {"rename": _rename_one, "drop_add": _drop_add,
+                  "swap_request": _swap_request}[tamper]
+        tamper_queue(store, queue_id, mutate)
+        old = snapshot(store, queue_id)
+        # swap_request is also caught earlier by the replay-conflict guard.
+        with pytest.raises(ValueError, match="OD-3 (charged queue|observation replay)"):
+            apply_at(store, "one", 42)
+        with pytest.raises(ValueError, match="OD-3 charged queue"):
+            apply_at(store, "three", 42)
+        assert snapshot(store, queue_id) == old
+        assert old[0]["paid_policy_us"] == 6
+    finally:
+        if adapter == "sqlite":
+            store.close()

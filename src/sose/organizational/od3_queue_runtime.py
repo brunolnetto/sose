@@ -253,6 +253,10 @@ def apply_od3_queue_policy(
             if decision.action != "NOOP":
                 queue.attributes["last_action_at"] = now.isoformat()
             effect_id = deterministic_id("od3-queue-effect", queue_id, decided_event.event_id)
+            # Recorded before the effect so its applied digest covers this entry.
+            applied[observation_id] = {
+                "request_id": request_id, "effect_event_id": effect_id,
+            }
             effect = DomainEvent(
                 event_id=effect_id, name="od3.queue_effect_applied",
                 entity_type=QUEUE_KIND, entity_id=queue_id, owner_id=owner_id,
@@ -271,9 +275,6 @@ def apply_od3_queue_policy(
             )
             if uow.get_event(effect_id) is not None:
                 raise ValueError("OD-3 operational effect identity already exists")
-            applied[observation_id] = {
-                "request_id": request_id, "effect_event_id": effect_id,
-            }
             queue.attributes["ledger_head"] = effect_id
             queue.touch(now)
             uow.save_entity(queue)

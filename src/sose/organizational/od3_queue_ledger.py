@@ -48,8 +48,12 @@ def _fail(reason: str) -> None:
     raise ValueError(f"OD-3 charged queue {reason}")
 
 
-def items_digest(records: list) -> str:
-    """Bind every durable item attribute (and order) in one canonical digest."""
+def items_digest(records) -> str:
+    """Bind every durable attribute (and order) of a JSON value in one digest.
+
+    Used for the queue items and for the applied-observation map (keys,
+    request ids and effect ids), so neither can be rewritten in place.
+    """
     canonical = json.dumps(records, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
@@ -73,6 +77,7 @@ def anchor_event(queue: Entity, *, owner_id: str, origin: str) -> DomainEvent:
         occurred_at=at, causation_id=None, correlation_id=queue.id,
         payload={
             "origin": origin, "items_digest": items_digest(attrs["items"]),
+            "applied_digest": items_digest(attrs["applied_observations"]),
             "paid_policy_us": attrs["paid_policy_us"],
             "queue_version": queue.version,
             "last_action_at": attrs["last_action_at"],
@@ -99,6 +104,7 @@ def _state(event: DomainEvent, *, anchor: bool) -> dict:
     observed = payload.get("last_observed_at") if anchor else _utc(event.occurred_at).isoformat()
     return {
         "items_digest": payload.get("items_digest"),
+        "applied_digest": payload.get("applied_digest"),
         "paid_policy_us": payload.get("paid_policy_us"),
         "queue_version": payload.get("queue_version"),
         "last_action_at": payload.get("last_action_at"),
@@ -170,6 +176,7 @@ def _check_projection(queue: Entity, state: dict) -> None:
         or attrs["last_observed_at"] != state["last_observed_at"]
         or queue.updated_at is None or _utc(queue.updated_at) != state["at"]
         or items_digest(attrs["items"]) != state["items_digest"]
+        or items_digest(attrs["applied_observations"]) != state["applied_digest"]
     ):
         _fail("projection contradicts durable effects")
 
@@ -261,6 +268,7 @@ def ledger_fields(queue: Entity, before_items: list) -> dict:
         "previous_effect_id": queue.attributes["ledger_head"],
         "before_items_digest": items_digest(before_items),
         "items_digest": items_digest(queue.attributes["items"]),
+        "applied_digest": items_digest(queue.attributes["applied_observations"]),
         "last_action_at": queue.attributes["last_action_at"],
     }
 

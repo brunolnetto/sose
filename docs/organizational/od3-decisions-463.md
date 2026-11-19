@@ -26,8 +26,10 @@ Implemented in `sose.organizational.od3_queue_ledger`. What is enforced:
   requires integer `service_us`, so the digest cannot drift through a
   float/JSON round-trip.
 - **Linked effects.** Each `od3.queue_effect_applied` additionally records
-  `previous_effect_id`, `before_items_digest`, `items_digest` (after) and the
-  running `last_action_at`, beside the existing cumulative `paid_policy_us`
+  `previous_effect_id`, `before_items_digest`, `items_digest` (after),
+  `applied_digest` (digest of the whole applied-observation map: observation
+  ids, request ids and effect ids, after the effect) and the running
+  `last_action_at`, beside the existing cumulative `paid_policy_us`
   and `queue_version`. The projection keeps the latest effect id in
   `ledger_head`. Each effect also appends one `od3.queue_version_claimed`
   slot event whose id is derived from the queue id and its version.
@@ -39,8 +41,8 @@ Implemented in `sose.organizational.od3_queue_ledger`. What is enforced:
   cost fields), that version and paid time advance by exactly one step and
   `cost_us` from the predecessor, that `before_items_digest` equals the
   predecessor's digest, and that the projection's paid time, version,
-  observation count, last action/observation times, `updated_at`, item order
-  and full items digest equal the head's (or the anchor's before the first
+  observation count and applied-observation digest, last action/observation
+  times, `updated_at`, item order and full items digest equal the head's (or the anchor's before the first
   application). A CONTACT head must also match the selected item's
   `last_contact_at`.
 - **Latest, not just consistent.** The head must hold the slot of the
@@ -61,7 +63,8 @@ Implemented in `sose.organizational.od3_queue_ledger`. What is enforced:
 
 **Pre-ledger queues (compatibility).** A queue seeded by earlier code has no
 anchor and no `ledger_head`. Its first application after upgrade *adopts*
-the projection as it stands (`origin: "adopted"` anchor, only if the number
+the projection as it stands, including its applied-observation map
+(`origin: "adopted"` anchor, only if the number
 of applied observations equals the entity version) and verification starts
 from that anchor; history before adoption is trusted, not verified. Once an
 anchor exists, a projection without `ledger_head` is rejected (no downgrade).
