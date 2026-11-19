@@ -1,12 +1,31 @@
-"""Crash-falsification tests for final PC6 R2R journal consumer."""
+"""Crash-falsification tests for final PC6 R2R journal consumer.
+
+PostgreSQL policy-mode port of the deprecated SQLite recovery (#634); restart
+is a fresh PostgresPersistence connection on the same namespace.
+"""
 from datetime import timedelta
+import os
+from uuid import uuid4
 
 import pytest
 
 from sose.composition import trading_company_customer as customer
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.examples.order_to_cash import simulation as o2c
-from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+from sose.core.resource_identity import ResourcePoolContract
+from sose.persistence.postgres import PostgresPersistence
+
+DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
+pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
+
+# Certified, but never issued by the customer demand path: every customer
+# effect keeps its historical (unmapped) admission semantics (#634).
+NEUTRAL_POLICY = {
+    "composition.post_replenishment_journal": ResourcePoolContract(
+        resource_type="journal_clerk", pool_id="r2r-recovery-neutral",
+        scope="shared", capacity=1,
+    ),
+}
 
 
 @pytest.mark.parametrize(
@@ -19,13 +38,13 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
     ],
 )
 def test_restarted_r2r_consumer_resumes_committed_journal_without_duplicate(
-    tmp_path, monkeypatch, cut, initial_state,
+    monkeypatch, cut, initial_state,
 ):
-    path = tmp_path / "pc6-r2r.sqlite"
+    namespace = "r2r_recovery_" + uuid4().hex[:12]
     opened = []
 
     def factory():
-        store = SQLiteIncrementalPersistence(path)
+        store = PostgresPersistence(DSN, namespace=namespace)
         opened.append(store)
         return store
 
@@ -41,7 +60,8 @@ def test_restarted_r2r_consumer_resumes_committed_journal_without_duplicate(
         ):
             raise RuntimeError("R2R worker died")
         return original_execute(
-            persistence, effect_id=effect_id, fixtures=fixtures, correlation_id=correlation_id, organization_id=organization_id,
+            persistence, effect_id=effect_id, fixtures=fixtures,
+            correlation_id=correlation_id, organization_id=organization_id,
         )
 
     def interrupted_dispatch(*args, **kwargs):
@@ -70,7 +90,7 @@ def test_restarted_r2r_consumer_resumes_committed_journal_without_duplicate(
     monkeypatch.setattr(customer.r2r, "submit_and_post_journal", original_submit)
     opened[-1].close()
 
-    with SQLiteIncrementalPersistence(path) as store:
+    with PostgresPersistence(DSN, namespace=namespace) as store:
         journal = next(
             e for e in store.entities() if e.entity_type == "journal_entry"
         )
@@ -85,6 +105,8 @@ def test_restarted_r2r_consumer_resumes_committed_journal_without_duplicate(
         owner_bindings = {next(iter(correlations)): "test-org-r2r-durable-recovery"}
         worker = TradingCustomerRecoveryRunner(
             organization_owners=owner_bindings,
+            resource_policies=NEUTRAL_POLICY,
+            resource_organizations=owner_bindings,
             persistence=store, owner_id="r2r-restart",
             job_id="r2r-recovery", max_actions=16,
         )
