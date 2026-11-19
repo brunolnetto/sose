@@ -3,7 +3,6 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from sose.persistence.base import Persistence
 from sose.persistence.jsonl_journal import JSONLJournalPersistence

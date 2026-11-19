@@ -5,13 +5,13 @@ from sose.examples.manufacturing.simulation import (
     reconcile_material_issue,
     reconcile_quality_hold,
     reconcile_quality_pass,
-    reconcile_rework,
     reconcile_setup_resources,
     reconcile_wip_output,
     release_setup_resources,
     seed_happy_path,
     seed_material,
 )
+from sose.examples.manufacturing.simulation_output import reconcile_rework
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "manufacturing-reference-organization"

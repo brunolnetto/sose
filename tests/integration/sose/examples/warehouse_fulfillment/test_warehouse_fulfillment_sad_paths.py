@@ -3,12 +3,11 @@ import pytest
 from sose.examples.warehouse_fulfillment.simulation import (
     allocate_order,
     build_runtime,
-    correct_lot_balance,
     occurrence_id,
     pack_order,
-    pick_allocation,
     seed_reference,
 )
+from sose.examples.warehouse_fulfillment.handling import correct_lot_balance, pick_allocation
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "warehouse-fulfillment-test-organization"

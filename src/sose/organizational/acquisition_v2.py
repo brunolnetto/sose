@@ -43,13 +43,7 @@ class GitHubEndpointCaptureV2(BaseModel):
     def validate_pagination(self) -> "GitHubEndpointCaptureV2":
         canonical_urls = tuple(sorted(set(self.source_urls)))
         if self.pages_fetched == 0:
-            if (
-                self.endpoint != "workflow_jobs"
-                or self.record_count != 0
-                or canonical_urls
-                or not self.complete
-                or self.next_page_url is not None
-            ):
+            if not self._is_complete_empty_workflow_jobs(canonical_urls):
                 raise ValueError(
                     "zero-page capture is permitted only for complete empty workflow_jobs"
                 )
@@ -64,6 +58,15 @@ class GitHubEndpointCaptureV2(BaseModel):
             raise ValueError("incomplete acquisition requires next_page_url")
         object.__setattr__(self, "source_urls", canonical_urls)
         return self
+
+    def _is_complete_empty_workflow_jobs(self, canonical_urls) -> bool:
+        return (
+            self.endpoint == "workflow_jobs"
+            and self.record_count == 0
+            and not canonical_urls
+            and self.complete
+            and self.next_page_url is None
+        )
 
     def canonical_payload(self) -> dict[str, object]:
         return {

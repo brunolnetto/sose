@@ -8,7 +8,6 @@ from sose.examples.energy_utilities.simulation import (
     cancel_demand_response,
     dr_event_id,
     dr_participation_id,
-    opt_out_demand_response,
     reconcile_demand_response,
     record_meter_reading,
     report_outage,
@@ -16,6 +15,7 @@ from sose.examples.energy_utilities.simulation import (
     schedule_demand_response,
     seed_reference,
 )
+from sose.examples.energy_utilities.simulation_demand_response import opt_out_demand_response
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "energy-utilities-reference-organization"

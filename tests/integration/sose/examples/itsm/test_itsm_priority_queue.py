@@ -3,11 +3,11 @@ from sose.examples.itsm.simulation import (
     ORIGIN,
     build_runtime,
     claim_next_incident,
-    create_incident,
     release_incident_owner,
     seed_reference,
     triage_and_queue,
 )
+from sose.examples.itsm.foundation import create_incident
 from sose.persistence.memory import MemoryPersistence
 
 
