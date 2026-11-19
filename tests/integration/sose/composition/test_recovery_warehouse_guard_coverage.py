@@ -13,6 +13,7 @@ import pytest
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.domain.entity import Entity
 from sose.examples.warehouse_fulfillment import simulation as warehouse
+from sose.examples.warehouse_fulfillment.records import service_task_id
 from sose.examples.warehouse_fulfillment.entities import (
     FulfillmentServiceTask, InventoryOccurrence,
 )
@@ -293,7 +294,7 @@ def test_durable_service_task_cannot_change_resource_identity_or_duration(
 ):
     store, entities, engine = _composed()
     subject_id = "subject:1"
-    task_id = warehouse.service_task_id(stage, subject_id)
+    task_id = service_task_id(stage, subject_id)
     prior = FulfillmentServiceTask(
         id=task_id, state="queued",
         attributes={
