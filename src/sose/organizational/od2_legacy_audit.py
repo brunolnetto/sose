@@ -10,11 +10,10 @@ from __future__ import annotations
 
 from sose._deprecation import warn_deprecated
 
-# Attributed to this module: import-time frames below it belong to importlib.
+# helper -> this module body -> the importing statement (importlib's own frames are skipped)
 warn_deprecated(
     "the sose.organizational.od2_legacy_audit module", since="0.11.0", removed_in="0.12.0",
     instead="enroll actors with seed_actor(tracked_time=True); there is no replacement audit",
-    stacklevel=2,
 )
 
 from collections.abc import Mapping
