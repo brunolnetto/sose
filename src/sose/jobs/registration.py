@@ -31,48 +31,65 @@ def _sqlite_job_guard(store: Persistence, job_id: str) -> Iterator[None]:
         yield
         return
 
-    namespace = getattr(store, "namespace", "sose")
-    digest = sha256(f"{namespace}\x00{job_id}".encode("utf-8")).hexdigest()
-    database = Path(store.path).resolve()
-    lock_path = database.with_name(database.name + ".registration." + digest + ".lock")
+    lock_path = _registration_lock_path(store, job_id)
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o600)
     acquired = False
     try:
-        if os.name == "posix":
-            import fcntl
-            fcntl.flock(fd, fcntl.LOCK_EX)
-        elif os.name == "nt":
-            import errno
-            import msvcrt
-            from time import sleep
-
-            # LK_LOCK retries only ~10 times, then raises, even when another
-            # healthy process simply needs longer to finish registration.
-            # Retry only lock-contention errors; fail closed on real IO errors.
-            while True:
-                try:
-                    os.lseek(fd, 0, os.SEEK_SET)
-                    msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-                    break
-                except OSError as exc:
-                    if (getattr(exc, "winerror", None) not in {33, 36}
-                        and exc.errno not in {errno.EACCES, errno.EAGAIN}):
-                        raise
-                    sleep(0.05)
-        else:
-            raise RuntimeError("no OS-process-safe SQLite job registration lock")
+        _lock_exclusive(fd)
         acquired = True
         yield
     finally:
         if acquired:
-            if os.name == "posix":
-                import fcntl
-                fcntl.flock(fd, fcntl.LOCK_UN)
-            else:
-                import msvcrt
-                os.lseek(fd, 0, os.SEEK_SET)
-                msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+            _unlock(fd)
         os.close(fd)
+
+
+def _registration_lock_path(store: Persistence, job_id: str) -> Path:
+    namespace = getattr(store, "namespace", "sose")
+    digest = sha256(f"{namespace}\x00{job_id}".encode("utf-8")).hexdigest()
+    database = Path(store.path).resolve()
+    return database.with_name(database.name + ".registration." + digest + ".lock")
+
+
+def _lock_exclusive(fd: int) -> None:
+    """Block until this process holds the OS-level registration lock."""
+    if os.name == "posix":
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    elif os.name == "nt":
+        _lock_windows(fd)
+    else:
+        raise RuntimeError("no OS-process-safe SQLite job registration lock")
+
+
+def _lock_windows(fd: int) -> None:
+    import errno
+    import msvcrt
+    from time import sleep
+
+    # LK_LOCK retries only ~10 times, then raises, even when another
+    # healthy process simply needs longer to finish registration.
+    # Retry only lock-contention errors; fail closed on real IO errors.
+    while True:
+        try:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+            break
+        except OSError as exc:
+            if (getattr(exc, "winerror", None) not in {33, 36}
+                and exc.errno not in {errno.EACCES, errno.EAGAIN}):
+                raise
+            sleep(0.05)
+
+
+def _unlock(fd: int) -> None:
+    if os.name == "posix":
+        import fcntl
+        fcntl.flock(fd, fcntl.LOCK_UN)
+    else:
+        import msvcrt
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
 
 
 @contextmanager

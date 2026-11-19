@@ -1,37 +1,21 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from enum import StrEnum
 from math import isclose, isfinite
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-
-_TIMESTAMP_ABS_TOL = 1e-12
-_CAPACITY_ABS_TOL = 1e-12
-
-
-class ItemCategory(StrEnum):
-    PROCESSING = "processing"
-    REWORK = "rework"
-    COORDINATION = "coordination"
-    RECOVERY = "recovery"
-    WAITING_CALENDAR = "waiting_calendar"
-    WAITING_DECISION = "waiting_decision"
-    WAITING_INFORMATION = "waiting_information"
-    BLOCKED_DEPENDENCY = "blocked_dependency"
-    QUEUE = "queue"
-    OTHER_WAIT = "other_wait"
-
-
-class ActorCategory(StrEnum):
-    UNAVAILABLE = "unavailable"
-    IDLE = "idle"
-    EXECUTION = "execution"
-    COORDINATION = "coordination"
-    ADAPTATION = "adaptation"
-    DEVELOPMENT = "development"
-    GOVERNANCE = "governance"
+from .ledger_support import (  # noqa: F401 - moved, re-exported public surface
+    _CAPACITY_ABS_TOL,
+    _NON_CAPACITY,
+    ActorCategory,
+    ItemCategory,
+    _check_config_epochs,
+    _check_segment_capacity,
+    _require_finite,
+    _time_equal,
+    _union_duration,
+)
 
 
 class ItemLedgerInterval(BaseModel):
@@ -138,7 +122,7 @@ class ActorLedgerInterval(BaseModel):
             raise ValueError("ledger interval end must be greater than start")
         if self.config_epoch is not None and not self.model_spec_hash:
             raise ValueError("config_epoch requires model_spec_hash provenance")
-        if self.category in {ActorCategory.UNAVAILABLE, ActorCategory.IDLE} and not isclose(
+        if self.category in _NON_CAPACITY and not isclose(
             self.allocation,
             1.0,
             rel_tol=0.0,
@@ -153,7 +137,7 @@ class ActorLedgerInterval(BaseModel):
 
     @property
     def actor_time(self) -> float:
-        if self.category in {ActorCategory.UNAVAILABLE, ActorCategory.IDLE}:
+        if self.category in _NON_CAPACITY:
             return 0.0
         return self.duration * self.allocation
 
@@ -172,22 +156,7 @@ class ActorLedger(BaseModel):
         # Fractionally allocated actor intervals may nest: comparing only
         # adjacent sorted intervals misses long-lived allocations spanning
         # multiple configuration revisions.
-        committed_epochs: dict[int, str] = {}
-        for index, current in enumerate(ordered):
-            if current.config_epoch is None:
-                continue  # Older historical actor ledgers have no epoch evidence.
-            previous_hash = committed_epochs.setdefault(
-                current.config_epoch, current.model_spec_hash,
-            )
-            if previous_hash != current.model_spec_hash:
-                raise ValueError("same actor config_epoch cannot change ModelSpec identity")
-            for previous in ordered[:index]:
-                if previous.config_epoch is None:
-                    continue
-                if current.start < previous.end and current.config_epoch != previous.config_epoch:
-                    raise ValueError("actor capacity spans conflicting config epochs")
-                if current.start >= previous.end and current.config_epoch < previous.config_epoch:
-                    raise ValueError("actor config_epoch cannot regress")
+        _check_config_epochs(ordered)
         if self.fractional_multitasking:
             self._validate_fractional_capacity()
         else:
@@ -203,45 +172,28 @@ class ActorLedger(BaseModel):
         for start, end in zip(boundaries, boundaries[1:], strict=False):
             if start == end:
                 continue
-            active = [
+            _check_segment_capacity([
                 interval
                 for interval in self.intervals
                 if interval.start < end and interval.end > start
-            ]
-            if not active:
-                continue
-            if any(
-                interval.category in {ActorCategory.UNAVAILABLE, ActorCategory.IDLE}
-                for interval in active
-            ) and len(active) > 1:
-                raise ValueError("idle or unavailable time cannot overlap actor capacity use")
-            allocation = sum(
-                interval.allocation
-                for interval in active
-                if interval.category not in {ActorCategory.UNAVAILABLE, ActorCategory.IDLE}
-            )
-            if allocation > 1.0 + _CAPACITY_ABS_TOL:
-                raise ValueError("fractional allocation exceeds actor capacity")
+            ])
 
     @property
     def allocated_actor_time(self) -> float:
         return sum(interval.actor_time for interval in self.intervals)
 
-    @property
-    def unavailable_time(self) -> float:
+    def _wall_time(self, category: ActorCategory) -> float:
         return sum(
-            interval.duration
-            for interval in self.intervals
-            if interval.category is ActorCategory.UNAVAILABLE
+            interval.duration for interval in self.intervals if interval.category is category
         )
 
     @property
+    def unavailable_time(self) -> float:
+        return self._wall_time(ActorCategory.UNAVAILABLE)
+
+    @property
     def idle_time(self) -> float:
-        return sum(
-            interval.duration
-            for interval in self.intervals
-            if interval.category is ActorCategory.IDLE
-        )
+        return self._wall_time(ActorCategory.IDLE)
 
     @property
     def available_time(self) -> float:
@@ -282,27 +234,3 @@ class ActorLedger(BaseModel):
             raise ValueError("actor ledger does not cover the observation interval")
         if not _time_equal(covered, end - start):
             raise ValueError("actor ledger violates calendar-time conservation")
-
-
-def _union_duration(intervals: list[tuple[float, float]]) -> float:
-    if not intervals:
-        return 0.0
-    ordered = sorted(intervals)
-    total = 0.0
-    start, end = ordered[0]
-    for next_start, next_end in ordered[1:]:
-        if next_start < end or _time_equal(next_start, end):
-            end = max(end, next_end)
-        else:
-            total += end - start
-            start, end = next_start, next_end
-    return total + end - start
-
-
-def _time_equal(left: float, right: float) -> bool:
-    return isclose(left, right, rel_tol=0.0, abs_tol=_TIMESTAMP_ABS_TOL)
-
-
-def _require_finite(value: float, name: str) -> None:
-    if not isfinite(value):
-        raise ValueError(f"{name} must be finite")

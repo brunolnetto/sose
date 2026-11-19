@@ -18,12 +18,10 @@ from sose.examples.cards_payments.simulation import (
     reconcile_refund,
     reconcile_reversal,
     reconcile_settlement,
-    run_dispute_path,
-    run_refund_path,
-    run_retry_path,
     seed_reference,
     start_dispute,
 )
+from sose.examples.cards_payments.paths import run_dispute_path, run_refund_path, run_retry_path
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "cards-payments-reference-organization"

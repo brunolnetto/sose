@@ -6,15 +6,15 @@ from sose.examples.aviation.simulation import (
     land_flight,
     maintenance_work_order_id,
     part_demand_id,
-    preemption_result_for,
     reconcile_aog_maintenance,
     reconcile_departure,
     reconcile_inspection,
     reconcile_part_issue,
-    schedule_rotation,
     seed_reference,
     seed_spare_part,
 )
+from sose.examples.aviation.simulation_departures import schedule_rotation
+from sose.examples.aviation.simulation_maintenance import preemption_result_for
 from sose.persistence.memory import MemoryPersistence
 
 AVIATION_OWNER_ID = "aviation-aog-test-organization"

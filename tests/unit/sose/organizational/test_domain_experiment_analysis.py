@@ -258,10 +258,14 @@ def test_analysis_rejects_duplicate_regime_reference_before_mapping() -> None:
 import pytest
 
 from sose.organizational.domain_experiment_analysis import (
-    ComparisonEligibility, ExperimentEffect,
-    _build_effect, _runs_by_world, _worlds_by_key,
-    _student_t_cdf, _student_t_critical, _regularized_incomplete_beta,
+    ComparisonEligibility,
+    ExperimentEffect,
+    _build_effect,
+    _runs_by_world,
+    _worlds_by_key,
+    _student_t_critical,
 )
+from sose.organizational.student_t import _student_t_cdf, _regularized_incomplete_beta
 
 
 @pytest.fixture(scope="module")

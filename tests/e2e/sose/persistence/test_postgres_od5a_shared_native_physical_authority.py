@@ -31,6 +31,7 @@ from sose.organizational.od5a_durable import _ORIGIN, od5a_durable_state
 from sose.persistence.postgres import PostgresPersistence
 from sose.persistence.memory import MemoryPersistence
 from tests.integration.sose.organizational.test_od5a_recurring_postgres import _arm
+from sose.organizational.od5a_shared_wait_alignment import _aligned_physical_start
 
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
@@ -900,11 +901,11 @@ def test_pg_aligned_start_intersects_exact_intervals_not_individual_earliest_sta
                 req, not_before=start, latest_start=start + timedelta(seconds=1),
             ) for req in requests
         ] == [start, start + timedelta(seconds=0.2)]
-        assert od5a_recurring._aligned_physical_start(
+        assert _aligned_physical_start(
             ledger, requests, not_before=start,
             latest_start=start + timedelta(seconds=1),
         ) == start + timedelta(seconds=0.45)
-        assert od5a_recurring._aligned_physical_start(
+        assert _aligned_physical_start(
             ledger, requests, not_before=start,
             latest_start=start + timedelta(seconds=0.4),
         ) is None

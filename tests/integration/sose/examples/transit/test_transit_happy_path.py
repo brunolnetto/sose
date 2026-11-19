@@ -2,8 +2,8 @@ REFERENCE_OWNER_ID = "transit-integration-reference"
 
 from sose.examples.transit.simulation import (
     run_happy_path,
-    vehicle_position_id,
 )
+from sose.examples.transit.simulation_runtime import vehicle_position_id
 
 
 def test_two_trip_block_runs_with_one_vehicle_and_position_evidence():
