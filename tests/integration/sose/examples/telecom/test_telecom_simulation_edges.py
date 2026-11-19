@@ -9,19 +9,21 @@ from sose.examples.telecom import simulation as telecom_simulation
 from sose.examples.telecom.simulation import (
     ORIGIN,
     _entity,
-    acknowledge_incident,
     build_runtime,
     ensure_fulfillment_entities,
-    raise_service_alarm,
     reconcile_activation,
     record_usage,
-    restore_service,
     schedule_activation,
     seed_reference,
-    service_order_id,
-    subscription_service_id,
+)
+from sose.examples.telecom.foundation import service_order_id, subscription_service_id
+from sose.examples.telecom.operations import (
+    acknowledge_incident,
+    raise_service_alarm,
+    restore_service,
 )
 from sose.persistence.memory import MemoryPersistence
+from sose.examples.telecom.operations import _drop_open_incident_if_resolved
 
 ORGANIZATION_ID = "telecom-reference-organization"
 
@@ -506,7 +508,7 @@ def test_drop_open_incident_returns_service_when_resolution_is_incomplete():
     alarm = type("Alarm", (), {"state": "active"})()
     ticket = type("Ticket", (), {"state": "open"})()
 
-    result = telecom_simulation._drop_open_incident_if_resolved(
+    result = _drop_open_incident_if_resolved(
         persistence,
         service=service,
         incident_key="incident-x",

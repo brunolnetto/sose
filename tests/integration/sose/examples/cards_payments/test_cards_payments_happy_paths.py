@@ -1,10 +1,8 @@
 from sose.examples.cards_payments.simulation import (
-    dispute_entity_id,
-    run_dispute_path,
     run_happy_path,
-    run_refund_path,
-    run_retry_path,
 )
+from sose.examples.cards_payments.paths import run_dispute_path, run_refund_path, run_retry_path
+from sose.examples.cards_payments.records import dispute_entity_id
 
 
 REFERENCE_OWNER_ID = "cards-payments-reference-organization"

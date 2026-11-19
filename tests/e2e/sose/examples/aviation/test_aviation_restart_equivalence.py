@@ -11,10 +11,10 @@ from sose.examples.aviation.simulation import (
     reconcile_inspection,
     reconcile_part_issue,
     schedule_departure,
-    schedule_rotation,
     seed_reference,
     seed_spare_part,
 )
+from sose.examples.aviation.simulation_departures import schedule_rotation
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
 

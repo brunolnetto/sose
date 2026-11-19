@@ -2,9 +2,9 @@ from sose.examples.energy_utilities.scenarios import ORIGIN
 from sose.examples.energy_utilities.simulation import (
     dr_event_id,
     dr_participation_id,
-    reading_id,
     run_happy_path,
 )
+from sose.examples.energy_utilities.simulation_runtime import reading_id
 
 
 def test_energy_happy_path_commits_reading_and_completes_dr_event():

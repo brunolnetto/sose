@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import partial
 from datetime import datetime, timedelta, timezone
 from math import isfinite
 
@@ -52,12 +53,16 @@ class OD5aWorkItem:
         for station, duration in self.service_by_station:
             if not station or station in names:
                 raise ValueError("station IDs must be nonempty and distinct")
-            if isinstance(duration, bool) or not isinstance(duration, (int, float)):
-                raise ValueError("service demand must be numeric")
-            if not isfinite(duration) or duration <= 0:
-                raise ValueError("service demand must be finite and positive")
-            _require_microsecond_time(duration, name="service demand")
+            _validate_service_demand(duration)
             names.add(station)
+
+
+def _validate_service_demand(duration) -> None:
+    if isinstance(duration, bool) or not isinstance(duration, (int, float)):
+        raise ValueError("service demand must be numeric")
+    if not isfinite(duration) or duration <= 0:
+        raise ValueError("service demand must be finite and positive")
+    _require_microsecond_time(duration, name="service demand")
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,32 +97,77 @@ def run_od5a_pilot(
     """Run small deterministic falsification cases; NEVER confirmatory DOE."""
     if arm.arm_id not in ALL_ARMS:
         raise ValueError("pilot requires one of the five registered treatments")
+    _validate_pilot_horizon(horizon)
+    if not items or len({item.item_id for item in items}) != len(items):
+        raise ValueError("pilot requires nonempty distinct work items")
+    model = arm.model
+    station_ids = tuple(sorted(model.stations))
+    _validate_station_demands(items, station_ids)
+    raw_slots = _validated_execution_slots(model)
+    coordination_latency = _validated_coordination_latency(model)
+    incoming, outgoing = _dependency_graph(model, station_ids)
+    # The admission compiler verifies DAG acyclicity, so no edge can deadlock.
+
+    transition_time = arm.charged_cost.transition_time if arm.charged_cost else 0.0
+    _require_microsecond_time(transition_time, name="transition time")
+    run = _PilotRun(
+        model=model, items=items, station_ids=station_ids, raw_slots=raw_slots,
+        coordination_latency=coordination_latency, incoming=incoming, outgoing=outgoing,
+    )
+    run.schedule_arrivals(items, transition_time=transition_time, horizon=horizon)
+    backend = run.backend
+    backend.run_until(_at(horizon))
+    assert len(run.available_slots) == raw_slots - backend.resource_snapshot("execution").in_use
+    ordered_events = _ordered_checked_events(run.events)
+    completed_at = run.completed_at
+    return OD5aPilotResult(
+        arm_id=arm.arm_id,
+        events=ordered_events,
+        completed_at=tuple(sorted(completed_at.items())),
+        incomplete_item_ids=tuple(sorted(
+            item.item_id for item in items if item.item_id not in completed_at
+        )),
+    )
+
+
+def _validate_pilot_horizon(horizon) -> None:
     if isinstance(horizon, bool) or not isinstance(horizon, (int, float)):
         raise ValueError("horizon must be numeric")
     if not isfinite(horizon) or horizon <= 0:
         raise ValueError("pilot horizon must be finite and positive")
     _require_microsecond_time(horizon, name="pilot horizon")
-    if not items or len({item.item_id for item in items}) != len(items):
-        raise ValueError("pilot requires nonempty distinct work items")
-    model = arm.model
-    station_ids = tuple(sorted(model.stations))
+
+
+def _validate_station_demands(
+    items: tuple[OD5aWorkItem, ...], station_ids: tuple[str, ...],
+) -> None:
     if not station_ids:
         raise ValueError("operational graph requires physical stations")
     if any({s for s, _ in item.service_by_station} != set(station_ids)
            or len(item.service_by_station) != len(station_ids) for item in items):
         raise ValueError("every item requires exactly one demand per configured station")
 
+
+def _validated_execution_slots(model) -> int:
     raw_slots = model.parameters["execution_slots"]
     if isinstance(raw_slots, bool) or not isinstance(raw_slots, int) or raw_slots < 1:
         raise ValueError("physical execution_slots must be a positive integer")
+    return raw_slots
+
+
+def _validated_coordination_latency(model) -> float:
     raw_latency = model.parameters["coordination_latency"]
     if isinstance(raw_latency, bool) or not isinstance(raw_latency, (float, int)):
         raise ValueError("coordination_latency must be numeric")
     if not isfinite(raw_latency) or raw_latency < 0:
         raise ValueError("coordination_latency must be finite and nonnegative")
     _require_microsecond_time(raw_latency, name="coordination latency")
-    coordination_latency = float(raw_latency)
+    return float(raw_latency)
 
+
+def _dependency_graph(
+    model, station_ids: tuple[str, ...],
+) -> tuple[dict[str, set[str]], dict[str, list[str]]]:
     incoming: dict[str, set[str]] = {station: set() for station in station_ids}
     outgoing: dict[str, list[str]] = {station: [] for station in station_ids}
     edges = model.routing.get("dependency_edges", ())
@@ -128,120 +178,140 @@ def run_od5a_pilot(
             raise ValueError("duplicate dependency edge")
         incoming[target].add(source)
         outgoing[source].append(target)
-    # The admission compiler verifies DAG acyclicity, so no edge can deadlock.
+    return incoming, outgoing
 
-    transition_time = arm.charged_cost.transition_time if arm.charged_cost else 0.0
-    _require_microsecond_time(transition_time, name="transition time")
-    backend = SimPyBackend(origin=_ORIGIN)
-    backend.create_resource("execution", capacity=raw_slots)
-    backend.create_resource("coordination", capacity=1)
 
-    available_slots = set(range(raw_slots))
-    requested: set[tuple[str, str]] = set()
-    finished: set[tuple[str, str]] = set()
-    received: dict[tuple[str, str], set[str]] = defaultdict(set)
-    events: list[OD5aMechanismEvent] = []
-    completed_at: dict[str, float] = {}
-    values = {
-        item.item_id: dict(item.service_by_station)
-        for item in items
-    }
-    model_hash = model.model_spec_hash
+def _at(seconds: float) -> datetime:
+    return _ORIGIN + timedelta(seconds=seconds)
 
-    def now() -> float:
-        return (backend.now - _ORIGIN).total_seconds()
 
-    def at(seconds: float) -> datetime:
-        return _ORIGIN + timedelta(seconds=seconds)
+class _PilotRun:
+    """Mutable SimPy execution state of one pilot run (formerly its closures)."""
 
-    def start_stage(item_id: str, station: str) -> None:
+    def __init__(
+        self, *, model, items: tuple[OD5aWorkItem, ...], station_ids: tuple[str, ...],
+        raw_slots: int, coordination_latency: float,
+        incoming: dict[str, set[str]], outgoing: dict[str, list[str]],
+    ) -> None:
+        self.station_ids = station_ids
+        self.coordination_latency = coordination_latency
+        self.incoming = incoming
+        self.outgoing = outgoing
+        self.backend = SimPyBackend(origin=_ORIGIN)
+        self.backend.create_resource("execution", capacity=raw_slots)
+        self.backend.create_resource("coordination", capacity=1)
+
+        self.available_slots = set(range(raw_slots))
+        self.requested: set[tuple[str, str]] = set()
+        self.finished: set[tuple[str, str]] = set()
+        self.received: dict[tuple[str, str], set[str]] = defaultdict(set)
+        self.events: list[OD5aMechanismEvent] = []
+        self.completed_at: dict[str, float] = {}
+        self.values = {
+            item.item_id: dict(item.service_by_station)
+            for item in items
+        }
+        self.model_hash = model.model_spec_hash
+
+    def now(self) -> float:
+        return (self.backend.now - _ORIGIN).total_seconds()
+
+    def start_stage(self, item_id: str, station: str) -> None:
         identity = (item_id, station)
-        if identity in requested:
+        if identity in self.requested:
             raise RuntimeError("physical work stage requested more than once")
-        requested.add(identity)
-
-        def granted(lease) -> None:
-            if not available_slots:
-                raise RuntimeError("double physical executor allocation")
-            slot = min(available_slots)
-            available_slots.remove(slot)
-            started = now()
-            duration = values[item_id][station]
-
-            def complete() -> None:
-                ending = now()
-                events.append(OD5aMechanismEvent(
-                    kind="execution", item_id=item_id, source=station, target=station,
-                    start=started, end=ending, resource_instance=f"execution:{slot}",
-                    cause=deterministic_id("od5a-work-cause", item_id, station),
-                    model_spec_hash=model_hash,
-                ))
-                available_slots.add(slot)
-                backend.release_resource(lease)
-                finished.add(identity)
-                if all((item_id, node) in finished for node in station_ids):
-                    completed_at[item_id] = ending
-                for target in sorted(outgoing[station]):
-                    start_handoff(item_id, station, target)
-
-            backend.schedule_at(
-                at(started + duration), complete,
-                key=("od5a-work", item_id, station),
-            )
-
-        backend.request_resource(
+        self.requested.add(identity)
+        self.backend.request_resource(
             "execution",
             request_id=deterministic_id("od5a-execution-request", item_id, station),
-            on_acquired=granted,
+            on_acquired=partial(self._stage_granted, item_id, station),
         )
 
-    def start_handoff(item_id: str, source: str, target: str) -> None:
-        def granted(lease) -> None:
-            started = now()
+    def _stage_granted(self, item_id: str, station: str, lease) -> None:
+        if not self.available_slots:
+            raise RuntimeError("double physical executor allocation")
+        slot = min(self.available_slots)
+        self.available_slots.remove(slot)
+        started = self.now()
+        duration = self.values[item_id][station]
+        self.backend.schedule_at(
+            _at(started + duration),
+            partial(self._stage_complete, item_id, station, lease, slot, started),
+            key=("od5a-work", item_id, station),
+        )
 
-            def complete() -> None:
-                ending = now()
-                events.append(OD5aMechanismEvent(
-                    kind="coordination", item_id=item_id, source=source, target=target,
-                    start=started, end=ending, resource_instance="coordination:0",
-                    cause=deterministic_id("od5a-handoff-cause", item_id, source, target),
-                    model_spec_hash=model_hash,
-                ))
-                backend.release_resource(lease)
-                signals = received[(item_id, target)]
-                if source in signals:
-                    raise RuntimeError("dependency signal delivered more than once")
-                signals.add(source)
-                if signals == incoming[target]:
-                    start_stage(item_id, target)
+    def _stage_complete(
+        self, item_id: str, station: str, lease, slot: int, started: float,
+    ) -> None:
+        identity = (item_id, station)
+        ending = self.now()
+        self.events.append(OD5aMechanismEvent(
+            kind="execution", item_id=item_id, source=station, target=station,
+            start=started, end=ending, resource_instance=f"execution:{slot}",
+            cause=deterministic_id("od5a-work-cause", item_id, station),
+            model_spec_hash=self.model_hash,
+        ))
+        self.available_slots.add(slot)
+        self.backend.release_resource(lease)
+        self.finished.add(identity)
+        if all((item_id, node) in self.finished for node in self.station_ids):
+            self.completed_at[item_id] = ending
+        for target in sorted(self.outgoing[station]):
+            self.start_handoff(item_id, station, target)
 
-            backend.schedule_at(
-                at(started + coordination_latency), complete,
-                key=("od5a-handoff", item_id, source, target),
-            )
-
-        backend.request_resource(
+    def start_handoff(self, item_id: str, source: str, target: str) -> None:
+        self.backend.request_resource(
             "coordination",
             request_id=deterministic_id("od5a-handoff-request", item_id, source, target),
-            on_acquired=granted,
+            on_acquired=partial(self._handoff_granted, item_id, source, target),
         )
 
-    for item in items:
-        start = max(float(item.arrival_at), transition_time)
-        if start > horizon:
-            continue
-
-        def arrive(work_item: OD5aWorkItem = item) -> None:
-            for root in station_ids:
-                if not incoming[root]:
-                    start_stage(work_item.item_id, root)
-
-        backend.schedule_at(
-            at(start), arrive, key=("od5a-arrival", item.item_id),
+    def _handoff_granted(self, item_id: str, source: str, target: str, lease) -> None:
+        started = self.now()
+        self.backend.schedule_at(
+            _at(started + self.coordination_latency),
+            partial(self._handoff_complete, item_id, source, target, lease, started),
+            key=("od5a-handoff", item_id, source, target),
         )
 
-    backend.run_until(at(horizon))
-    assert len(available_slots) == raw_slots - backend.resource_snapshot("execution").in_use
+    def _handoff_complete(
+        self, item_id: str, source: str, target: str, lease, started: float,
+    ) -> None:
+        ending = self.now()
+        self.events.append(OD5aMechanismEvent(
+            kind="coordination", item_id=item_id, source=source, target=target,
+            start=started, end=ending, resource_instance="coordination:0",
+            cause=deterministic_id("od5a-handoff-cause", item_id, source, target),
+            model_spec_hash=self.model_hash,
+        ))
+        self.backend.release_resource(lease)
+        signals = self.received[(item_id, target)]
+        if source in signals:
+            raise RuntimeError("dependency signal delivered more than once")
+        signals.add(source)
+        if signals == self.incoming[target]:
+            self.start_stage(item_id, target)
+
+    def schedule_arrivals(
+        self, items: tuple[OD5aWorkItem, ...], *, transition_time: float, horizon: float,
+    ) -> None:
+        for item in items:
+            start = max(float(item.arrival_at), transition_time)
+            if start > horizon:
+                continue
+            self.backend.schedule_at(
+                _at(start), partial(self._arrive, item), key=("od5a-arrival", item.item_id),
+            )
+
+    def _arrive(self, work_item: OD5aWorkItem) -> None:
+        for root in self.station_ids:
+            if not self.incoming[root]:
+                self.start_stage(work_item.item_id, root)
+
+
+def _ordered_checked_events(
+    events: list[OD5aMechanismEvent],
+) -> tuple[OD5aMechanismEvent, ...]:
     ordered_events = tuple(sorted(
         events, key=lambda e: (e.start, e.end, e.resource_instance, e.item_id, e.kind),
     ))
@@ -254,11 +324,4 @@ def run_od5a_pilot(
         for left, right in zip(occupancy, occupancy[1:]):
             if left[1] > right[0]:
                 raise RuntimeError("double allocation of a physical resource")
-    return OD5aPilotResult(
-        arm_id=arm.arm_id,
-        events=ordered_events,
-        completed_at=tuple(sorted(completed_at.items())),
-        incomplete_item_ids=tuple(sorted(
-            item.item_id for item in items if item.item_id not in completed_at
-        )),
-    )
+    return ordered_events

@@ -17,8 +17,10 @@ from .sqlite_migrations import (
     CURRENT_CODEC_VERSION,
     CURRENT_SCHEMA_VERSION,
     SQLiteSchemaInfo,
+    LegacyUnownedSnapshotError,  # noqa: F401 - raised from here; public for callers
     ensure_schema,
     read_schema_info,
+    stamp_owner_qualified_codec,
 )
 
 
@@ -48,6 +50,7 @@ class SQLitePersistence(MemoryPersistence):
         self._connection.execute("BEGIN IMMEDIATE")
         try:
             ensure_schema(self._connection)
+            stamp_owner_qualified_codec(self._connection)
             self._connection.commit()
         except Exception:
             self._connection.rollback()
