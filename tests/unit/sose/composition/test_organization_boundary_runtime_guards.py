@@ -358,3 +358,53 @@ def test_consume_rejects_lease_for_unknown_message():
     )
     with pytest.raises(KeyError, match="unknown organization boundary message"):
         service.consume(lease=lease, now=NOW)
+
+
+# -- generic boundary paths keep v2 messages behind the router ---------------
+
+
+def _v1_message() -> BoundaryMessage:
+    return BoundaryMessage.create(
+        contract_name=CONTRACT,
+        contract_version=1,
+        source_domain="warehouse_fulfillment",
+        source_identity="order:42",
+        destination_domain="warehouse_management",
+        occurrence_key="reservation:1",
+        correlation_id="flow:42",
+        causation_id=None,
+        produced_at=NOW,
+        payload={},
+    )
+
+
+def test_generic_publish_rejects_scoped_validator_for_v1_message():
+    from sose.composition.boundary import BoundaryService
+
+    service = BoundaryService(MemoryPersistence())
+    with pytest.raises(ValueError, match="requires a v2 scoped message"):
+        service.publish(_v1_message(), scoped_validator=lambda _message, _uow: None)
+    assert service.publish(_v1_message()).message_id == _v1_message().message_id
+
+
+def test_claim_scope_selects_only_the_exact_v2_consumer():
+    from sose.composition.boundary_scope import message_in_claim_scope
+
+    definition, _registry = _runtime()
+    scoped = _message(definition)
+    exact = (definition.organization_id, "warehouse", "owner:warehouse")
+    assert message_in_claim_scope(_v1_message(), None)
+    assert not message_in_claim_scope(_v1_message(), exact)
+    assert not message_in_claim_scope(scoped, None)
+    assert message_in_claim_scope(scoped, exact)
+    assert not message_in_claim_scope(
+        scoped, (definition.organization_id, "warehouse", "owner:other"),
+    )
+
+
+def test_domain_registry_refuses_to_dispatch_scoped_message():
+    contracts, _registry = _unregistered_registry()
+    definition = _definition()
+    assert contracts.resolve(_v1_message())
+    with pytest.raises(UnsupportedBoundaryContractError, match="organization router"):
+        contracts.resolve(_message(definition))
