@@ -47,9 +47,6 @@ class SQLiteIncrementalPersistence(
 ):
     """SQLite adapter that persists only changed durable records per transaction."""
 
-    # Its writer leases live in the database: authoritative fencing (#637).
-    durable_writer_fencing = True
-
     def __init__(self, path: str | Path, *, namespace: str = "sose") -> None:
         super().__init__()
         self._validate_namespace(namespace)

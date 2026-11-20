@@ -52,9 +52,6 @@ class PostgresPersistence(
     overwrite each other. Same-record conflicts are currently last-writer-wins.
     """
 
-    # Its writer leases live in the database: authoritative fencing (#637).
-    durable_writer_fencing = True
-
     def __init__(
         self,
         dsn: str,
