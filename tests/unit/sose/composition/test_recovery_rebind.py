@@ -248,3 +248,14 @@ def test_cli_run_preflight(overrides, error):
 def test_cli_run_preflight_returns_the_anchor():
     args = _args(resource_policies="p.json", start_at=T0.isoformat(), interval_seconds=60)
     assert recovery_run_start(args) == T0
+
+
+def test_history_trigger_ids_of_a_job_without_completions_is_empty():
+    from sose.composition.recovery_rebind import _history_trigger_ids
+
+    state = SimulationJobState(
+        job_id=JOB, domain_name="trading_company_composition", config_json="{}",
+        config_revision=1, status="ready", initialized=True, logical_time=T0, next_tick=0,
+    )
+    assert _history_trigger_ids(state) == []
+    assert _history_trigger_ids(replace(state, last_completed_trigger_id="t")) == ["t"]
