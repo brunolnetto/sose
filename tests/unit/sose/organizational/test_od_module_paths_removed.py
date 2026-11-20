@@ -28,18 +28,15 @@ def test_removed_module_paths_no_longer_import(old):
         importlib.import_module(f"sose.organizational.{old}")
 
 
-@pytest.mark.parametrize(("paths", "name"), sorted(PERSISTED.items()))
-def test_persisted_paths_serve_only_their_entity_class(paths, name):
-    old, new = paths
+@pytest.mark.parametrize(("old", "name", "former_api"), [
+    ("od2_actor", "OrganizationalActor", "seed_actor"),
+    ("od4_intake", "ManagementWork", "admit_work"),
+])
+def test_persisted_paths_serve_only_their_entity_class(old, name, former_api):
     module = importlib.import_module(f"sose.organizational.{old}")
     assert module.__all__ == [name]
-    new_module = importlib.import_module(f"sose.organizational.{new}")
-    other = next(
-        attr for attr in vars(new_module)
-        if not attr.startswith("_") and attr != name and callable(getattr(new_module, attr))
-    )
     with pytest.raises(ImportError):
-        exec(f"from sose.organizational.{old} import {other}", {})
+        exec(f"from sose.organizational.{old} import {former_api}", {})
 
 
 @pytest.mark.parametrize(("paths", "name"), sorted(PERSISTED.items()))
