@@ -395,5 +395,6 @@ def run_customer_demand_path(
 __all__ = [
     "CustomerDemandPathResult", "DurableResourceWait", "pickup_resource_due_at",
     "reconcile_completed_logistics_egress", "reconcile_invoiced_o2c_egress",
-    "reconcile_settled_payment_egress", "run_customer_demand_path",
+    "reconcile_settled_payment_egress", "reconcile_shipped_fulfillment_egress",
+    "run_customer_demand_path",
 ]
