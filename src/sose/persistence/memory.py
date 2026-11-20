@@ -38,6 +38,13 @@ from sose.jobs.model import SimulationJobState
 from sose.sinks.model import SinkCheckpoint, SinkDelivery
 
 
+from .memory_fencing import (
+    MemoryWriterFencingMixin,
+    ScopedWriterLease,
+    StaleWriterError,
+    WriterLease,
+    hide_inherited_fencing,
+)
 from .memory_reads import MemoryCommittedReadsMixin
 from .memory_uow_boundary import BoundaryRecordsUnitOfWorkMixin
 from .memory_uow_core import CoreRecordsUnitOfWorkMixin
@@ -118,9 +125,12 @@ class MemoryUnitOfWork(
     ResourceRecordsUnitOfWorkMixin,
     StoreContainerRecordsUnitOfWorkMixin,
 ):
-    def __init__(self, working: _State, owner: "MemoryPersistence") -> None:
+    def __init__(self, working: _State, owner: "MemoryPersistence", *, fence=None) -> None:
         self._working = working
         self._owner = owner
+        # Set by fenced MemoryPersistence transactions: re-checks the writer epoch
+        # while the working state is published (memory_fencing._CommitFence).
+        self._fence = fence
         self._closed = False
         self._dirty_records: set[tuple[str, object]] = set()
 
@@ -148,7 +158,11 @@ class MemoryUnitOfWork(
             raise ValueError(
                 f"container operation identity cannot be pending and completed: {request_id}"
             )
-        self._owner._state = self._working
+        if self._fence is None:
+            self._owner._state = self._working
+        else:
+            with self._fence.publishing():
+                self._owner._state = self._working
         self._closed = True
 
     def rollback(self) -> None:
@@ -200,7 +214,30 @@ def tracked_transaction_depth(factory):
     return scope
 
 
-class MemoryPersistence(MemoryCommittedReadsMixin):
+__all__ = [
+    "MemoryPersistence",
+    "MemoryUnitOfWork",
+    "ScopedWriterLease",
+    "StaleWriterError",
+    "WriterLease",
+    "fork_state",
+    "tracked_transaction_depth",
+]
+
+
+class MemoryPersistence(MemoryWriterFencingMixin, MemoryCommittedReadsMixin):
+    """In-process persistence with process-local writer fencing (#637).
+
+    ``claim_writer``/``claim_scoped_writer`` and ``transaction(owner_epoch=...,
+    writer_scope=...)`` follow the SQLite/PostgreSQL contract; see
+    ``memory_fencing``. A subclass that replaces ``transaction`` does not inherit
+    this fencing unless it provides its own.
+    """
+
+    def __init_subclass__(cls, **kwargs) -> None:
+        super().__init_subclass__(**kwargs)
+        hide_inherited_fencing(cls, MemoryPersistence)
+
     def __init__(self) -> None:
         self._state = _State()
         # Queryable per async/thread context. Memory UoW forks must never be
@@ -250,12 +287,19 @@ class MemoryPersistence(MemoryCommittedReadsMixin):
 
     @tracked_transaction_depth
     @contextmanager
-    def transaction(self, *, owner_id: str | None = None) -> Iterator[MemoryUnitOfWork]:
+    def transaction(
+        self,
+        *,
+        owner_epoch: int | None = None,
+        writer_scope: str | None = None,
+        owner_id: str | None = None,
+    ) -> Iterator[MemoryUnitOfWork]:
         if self._read_only:
             raise RuntimeError("read snapshot is read-only")
         if owner_id is not None and not owner_id:
             raise ValueError("owner_id must not be empty")
-        uow = MemoryUnitOfWork(fork_state(self._state), self)
+        fence = self._commit_fence(owner_epoch, writer_scope)
+        uow = MemoryUnitOfWork(fork_state(self._state), self, fence=fence)
         try:
             yield uow
             if not uow._closed:

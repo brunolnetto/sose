@@ -1,7 +1,7 @@
-"""#637: job-scoped writer leases have one contract on SQLite and PostgreSQL.
+"""#637: job-scoped writer leases have one contract on memory, SQLite and PostgreSQL.
 
-Every scenario runs against SQLiteIncrementalPersistence and, when
-SOSE_TEST_POSTGRES_DSN is set, PostgresPersistence. Messages, error types and
+Every scenario runs against MemoryPersistence, SQLiteIncrementalPersistence and,
+when SOSE_TEST_POSTGRES_DSN is set, PostgresPersistence. Messages, error types and
 epoch arithmetic must match, because callers branch on them.
 """
 from __future__ import annotations
@@ -19,6 +19,12 @@ DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 T0 = datetime(2026, 11, 18, tzinfo=timezone.utc)
 
 
+def _memory(tmp_path):
+    from sose.persistence.memory import MemoryPersistence, StaleWriterError
+
+    return MemoryPersistence(), StaleWriterError
+
+
 def _sqlite(tmp_path):
     from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence, StaleWriterError
 
@@ -32,6 +38,7 @@ def _postgres(tmp_path):
 
 
 BACKENDS = [
+    pytest.param(_memory, id="memory"),
     pytest.param(_sqlite, id="sqlite"),
     pytest.param(
         _postgres, id="postgres",
@@ -46,7 +53,9 @@ def backend(request, tmp_path):
     try:
         yield store, stale
     finally:
-        store.close()
+        close = getattr(store, "close", None)
+        if close is not None:
+            close()
 
 
 def _job(job_id="job-a", domain="domain", config="{}"):
