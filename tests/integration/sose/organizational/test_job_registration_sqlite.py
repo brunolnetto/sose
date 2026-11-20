@@ -9,9 +9,25 @@ from __future__ import annotations
 from multiprocessing import get_context
 import pytest
 
+from sose.core.resource_identity import ResourcePoolContract
 from sose.jobs.registration import job_registration_guard
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+
+
+# Neutral certified policy (#634). These tests fence job identity and writer
+# claims only: the recovery pass is patched out or the worker dies at the
+# claim, so no PostgreSQL intent coordinator is ever built and SQLite stays.
+# The crashed and recovered runners share this config, hence one job identity.
+RECOVERY_POLICY_MODE = {
+    "resource_policies": {
+        "composition.settle_customer_payment": ResourcePoolContract(
+            resource_type="settlement_slot", pool_id="neutral-job-registration",
+            scope="shared", capacity=1,
+        ),
+    },
+    "resource_organizations": {"neutral-correlation": "neutral-organization"},
+}
 
 
 _ADAPTERS = {
@@ -96,6 +112,7 @@ def _sqlite_recovery_claim_racer(path, reached_claim, release_claim, results):
         store.claim_writer_and_register = delayed_claim
         runner = TradingCustomerRecoveryRunner(
             persistence=store, job_id="race:job", owner_id="recovery",
+            **RECOVERY_POLICY_MODE,
         )
         try:
             with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
@@ -154,7 +171,9 @@ def test_sqlite_recovery_claim_and_generic_registration_share_one_cross_process_
         assert generic_ready.wait(timeout=25)
         # A competing creator must remain excluded until the original
         # recovery commits its domain identity, not just its preflight read.
-        assert not generic_done.wait(timeout=0.5), "foreign creator bypassed shared job registration guard"
+        assert not generic_done.wait(timeout=0.5), (
+            "foreign creator bypassed shared job registration guard"
+        )
         release_claim.set()
         for process in processes:
             process.join(timeout=35)
@@ -196,6 +215,7 @@ def _die_after_global_writer_claim(path):
         store.claim_writer_and_register = committed_claim
         runner = TradingCustomerRecoveryRunner(
             persistence=store, job_id="crash:job", owner_id="worker:dead",
+            **RECOVERY_POLICY_MODE,
         )
         runner.run_trigger(
             trigger_id="stable-occurrence",
@@ -228,6 +248,7 @@ def test_sqlite_worker_death_after_writer_claim_preserves_domain_identity(tmp_pa
         assert prior.initialized and prior.next_tick == 0
         runner = TradingCustomerRecoveryRunner(
             persistence=store, job_id="crash:job", owner_id="worker:recovered",
+            **RECOVERY_POLICY_MODE,
         )
         with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
             result = runner.run_trigger(

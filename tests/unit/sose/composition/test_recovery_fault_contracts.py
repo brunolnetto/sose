@@ -1,6 +1,8 @@
 """Adversarial validation of domain-scoped, durably fenced PC6 recovery."""
+import os
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 
@@ -9,11 +11,22 @@ from sose.composition.model import (
 )
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.core.events import Command
+from sose.core.resource_identity import ResourcePoolContract
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
 NOW = datetime(2026, 10, 9, 12, tzinfo=timezone.utc)
+# Neutral certified policy (#634): no test here exercises the mapped intent.
+POLICY_MODE = {
+    "resource_policies": {
+        "composition.settle_customer_payment": ResourcePoolContract(
+            resource_type="settlement_slot", pool_id="neutral-fault-contracts",
+            scope="shared", capacity=1,
+        ),
+    },
+    "resource_organizations": {"corr-1": "test-organization"},
+}
 
 
 def message(name="accounting.entry_requested", source="cards_payments",
@@ -64,7 +77,9 @@ def test_registry_only_claims_expected_domain_contract(msg, domain, contract):
 ])
 def test_recovery_fails_closed_for_unknown_registry_routes(message_value, reason):
     with pytest.raises(ValueError, match=reason):
-        TradingCustomerRecoveryRunner._registry_for(message_value, organization_id="test-organization")
+        TradingCustomerRecoveryRunner._registry_for(
+            message_value, organization_id="test-organization",
+        )
 
 
 @pytest.mark.parametrize("options,reason", [
@@ -78,14 +93,14 @@ def test_runner_rejects_invalid_configuration(tmp_path, options, reason):
     with SQLiteIncrementalPersistence(tmp_path / "invalid.sqlite") as persistence:
         with pytest.raises(ValueError, match=reason):
             TradingCustomerRecoveryRunner(
-                **{"persistence": persistence, "owner_id": "worker", **options}
+                **{"persistence": persistence, "owner_id": "worker", **POLICY_MODE, **options}
             )
 
 
 def test_runner_refuses_unfenced_authority():
     with pytest.raises(TypeError, match="authoritative writer fencing"):
         TradingCustomerRecoveryRunner(
-            persistence=MemoryPersistence(), owner_id="worker",
+            persistence=MemoryPersistence(), owner_id="worker", **POLICY_MODE,
         )
 
 
@@ -149,10 +164,19 @@ def test_pending_effects_skips_already_acknowledged_unowned_contract():
     assert TradingCustomerRecoveryRunner._pending_effects(store) == ()
 
 
-def test_run_trigger_rejects_empty_identity_and_time_rewind(tmp_path):
-    with SQLiteIncrementalPersistence(tmp_path / "trigger.sqlite") as store:
+def test_run_trigger_rejects_empty_identity_and_time_rewind():
+    # Policy mode runs the real recovery pass through the PostgreSQL intent
+    # coordinator (#634), so this trigger-contract test needs PostgreSQL.
+    dsn = os.getenv("SOSE_TEST_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("requires real PostgreSQL DSN")
+    from sose.persistence.postgres import PostgresPersistence
+
+    namespace = "fault_trigger_" + uuid4().hex[:12]
+    with PostgresPersistence(dsn, namespace=namespace) as store:
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker", job_id="fault-contract-test",
+            **POLICY_MODE,
         )
         with pytest.raises(ValueError, match="trigger_id"):
             runner.run_trigger(trigger_id="", now=NOW)
