@@ -4,6 +4,8 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import TYPE_CHECKING
 
+from sose.persistence.ownership import has_durable_writer_fencing
+
 if TYPE_CHECKING:
     from sose.composition.recovery import TradingCustomerRecoveryRunner
 
@@ -23,7 +25,7 @@ def _validate_scoped_writer(runner: TradingCustomerRecoveryRunner) -> None:
     if runner.scoped_writer:
         if runner.correlation_id is None:
             raise ValueError("scoped recovery requires one explicit correlation_id")
-        if not callable(getattr(runner.persistence, "claim_scoped_writer", None)):
+        if not has_durable_writer_fencing(runner.persistence, "claim_scoped_writer"):
             raise TypeError("scoped recovery requires PostgreSQL scoped fencing")
 
 
@@ -70,9 +72,8 @@ def _validate_owned_correlation(runner: TradingCustomerRecoveryRunner) -> None:
 
 
 def _validate_writer_fencing(runner: TradingCustomerRecoveryRunner) -> None:
-    if not runner.scoped_writer and (
-        not callable(getattr(runner.persistence, "writer_epoch", None))
-        or not callable(getattr(runner.persistence, "claim_writer", None))
+    if not runner.scoped_writer and not has_durable_writer_fencing(
+        runner.persistence, "writer_epoch", "claim_writer",
     ):
         raise TypeError("composition runner requires authoritative writer fencing")
 

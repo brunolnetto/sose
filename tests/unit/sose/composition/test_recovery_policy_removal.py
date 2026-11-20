@@ -6,7 +6,7 @@ from argparse import Namespace
 
 import pytest
 
-from sose.cli import build_parser
+from sose.cli import build_parser, run_cli
 from sose.cli_validation import _recovery_resource_policies
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.core.resource_identity import ResourcePoolContract
@@ -39,17 +39,23 @@ def test_runner_with_policies_still_constructs_without_postgres(tmp_path):
     assert runner.resource_policies == policy
 
 
-@pytest.mark.parametrize("omitted", ["--postgres-dsn", "--resource-policies"])
-def test_cli_requires_postgres_and_a_policy_file(omitted, capsys):
-    options = {"--postgres-dsn": "postgresql://x", "--resource-policies": "p.json"}
-    argv = ["composition-recovery", *REQUIRED]
-    for flag, value in options.items():
-        if flag != omitted:
-            argv += [flag, value]
+def test_cli_requires_postgres(capsys):
     with pytest.raises(SystemExit) as exited:
-        build_parser().parse_args(argv)
+        build_parser().parse_args(
+            ["composition-recovery", *REQUIRED, "--resource-policies", "p.json"],
+        )
     assert exited.value.code == 2
-    assert omitted in capsys.readouterr().err
+    assert "--postgres-dsn" in capsys.readouterr().err
+
+
+def test_cli_run_requires_a_policy_file_before_connecting(capsys):
+    """#637: optional at parse time (``--rebind-scoped`` needs none), required to run."""
+    argv = [
+        "composition-recovery", *REQUIRED,
+        "--postgres-dsn", "postgresql://unreachable.invalid/db",
+    ]
+    assert run_cli(argv) == 2
+    assert "--resource-policies" in capsys.readouterr().err
 
 
 def test_cli_sqlite_option_was_removed(capsys):

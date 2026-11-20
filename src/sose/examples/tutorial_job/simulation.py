@@ -7,12 +7,12 @@ from sose.api import (
     Engine,
     EntityType,
     MemoryPersistence,
-    RandomSource,
     Scheduler,
     SimulationClock,
     SimulationContext,
 )
 from sose.backends.simpy import SimPyBackend
+from sose.core.randomness import CounterRandomSource
 
 from .entities import TutorialJob
 from .statecharts import TutorialJobChart
@@ -32,7 +32,7 @@ def build_runtime(
 ):
     context = SimulationContext(
         clock=SimulationClock(now=now, step=step, tick=tick),
-        random=RandomSource(root_seed=random_seed),
+        random=CounterRandomSource(root_seed=random_seed),
         scheduler=Scheduler(),
     )
     registry = DomainRegistry()

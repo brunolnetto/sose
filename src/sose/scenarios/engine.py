@@ -7,7 +7,7 @@ from typing import Any, Callable
 
 from sose.core.events import DomainEvent
 from sose.core.identity import deterministic_id
-from sose.core.randomness import RandomSource
+from sose.core.randomness import AnyRandomSource, draw_uniform
 
 from .model import (
     AttributeEffect,
@@ -34,7 +34,7 @@ class ScenarioEngine:
     def __init__(
         self,
         *,
-        random_source: RandomSource,
+        random_source: AnyRandomSource,
         now: Callable[[], datetime],
         tick: Callable[[], int],
         context: Callable[[], Any],
@@ -153,11 +153,13 @@ class ScenarioEngine:
         attempt_id: str,
         trigger_key: tuple[object, ...],
     ) -> tuple[bool, float, str, str | None]:
-        draw = self._random.for_scope(
-            "scenario-activation",
-            scenario.name,
-            *trigger_key,
-        ).random()
+        draw = draw_uniform(
+            self._random,
+            stream="scenario-activation",
+            entity_id=tuple(trigger_key),
+            mechanism=scenario.name,
+            legacy_scope=("scenario-activation", scenario.name, *trigger_key),
+        )
         activated = draw < scenario.activation_probability
         if not activated:
             return False, draw, "probability_miss", None

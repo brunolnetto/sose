@@ -14,6 +14,10 @@ class PostgresWriterFencingMixin:
     The concrete adapter provides ``transaction``.
     """
 
+    # The leases live in the database: authoritative fencing (#637). Precedes
+    # MemoryPersistence (durable_writer_fencing = False) in the adapter's MRO.
+    durable_writer_fencing = True
+
     namespace: str
     _connection: psycopg.Connection
     _meta_table: sql.Identifier

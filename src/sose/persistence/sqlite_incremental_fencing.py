@@ -43,6 +43,10 @@ class SQLiteIncrementalWriterFencingMixin:
     The adapter supplies the connection, revision and record-diff machinery.
     """
 
+    # The leases live in the database: authoritative fencing (#637). Precedes
+    # MemoryPersistence (durable_writer_fencing = False) in the adapter's MRO.
+    durable_writer_fencing = True
+
     _connection: sqlite3.Connection
     _scoped_writers_table: str
     _correlation_owners_table: str

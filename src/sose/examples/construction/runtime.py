@@ -7,7 +7,7 @@ from sose.core.clock import SimulationClock
 from sose.core.context import SimulationContext
 from sose.core.engine import Engine
 from sose.core.identity import deterministic_id
-from sose.core.randomness import RandomSource
+from sose.core.randomness import CounterRandomSource
 from sose.core.runtime import ContainerDefinition, ResourceDefinition, StoreDefinition
 from sose.core.scheduler import Scheduler
 from sose.domain.registry import DomainRegistry, EntityType
@@ -67,7 +67,7 @@ def build_runtime(
 ) -> tuple[SimulationContext, Engine]:
     context = SimulationContext(
         clock=SimulationClock(now=now, step=step, tick=tick),
-        random=RandomSource(root_seed=random_seed),
+        random=CounterRandomSource(root_seed=random_seed),
         scheduler=Scheduler(),
     )
     registry = DomainRegistry()
