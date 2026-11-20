@@ -94,6 +94,35 @@ class CounterRandomSource:
         )
 
 
+AnyRandomSource = RandomSource | CounterRandomSource
+"""Either RNG model; runtimes accept both so domains can migrate one at a time (#631)."""
+
+
+def draw_uniform(
+    source: AnyRandomSource,
+    *,
+    stream: str,
+    entity_id: object,
+    mechanism: str,
+    draw_index: int = 0,
+    legacy_scope: tuple[object, ...],
+) -> float:
+    """Draw one U[0, 1) value from either RNG model.
+
+    ``CounterRandomSource`` keys the draw by logical stochastic identity.
+    ``RandomSource`` keeps its historical stream: the first ``random()`` of the
+    ``legacy_scope`` generator, bit-for-bit as before.
+    """
+    if isinstance(source, CounterRandomSource):
+        return source.uniform(
+            stream=stream,
+            entity_id=entity_id,
+            mechanism=mechanism,
+            draw_index=draw_index,
+        )
+    return source.for_scope(*legacy_scope).random()
+
+
 def make_random_source(
     root_seed: int,
     *,

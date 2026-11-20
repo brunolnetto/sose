@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 from typing import Any, Callable
 
-from sose.core.randomness import RandomSource
+from sose.core.randomness import AnyRandomSource, draw_uniform
 from sose.domain.entity import Entity
 
 from .graph import ProbabilisticTransitionGraph
@@ -17,7 +17,7 @@ class ProbabilisticTransitionRuntime:
     def __init__(
         self,
         *,
-        random_source: RandomSource,
+        random_source: AnyRandomSource,
         tick: Callable[[], int],
     ) -> None:
         self._random = random_source
@@ -48,15 +48,23 @@ class ProbabilisticTransitionRuntime:
                 None,
             ),
         )
-        rng = self._random.for_scope(
-            "transition",
-            self._tick(),
-            entity.entity_type,
-            entity.id,
-            *configuration.states,
-            *scope,
+        tick = self._tick()
+        draw = draw_uniform(
+            self._random,
+            stream="transition",
+            entity_id=(entity.entity_type, entity.id, configuration.states, tuple(scope)),
+            mechanism="statechart-transition",
+            draw_index=tick,
+            legacy_scope=(
+                "transition",
+                tick,
+                entity.entity_type,
+                entity.id,
+                *configuration.states,
+                *scope,
+            ),
         )
-        return graph.sample(distribution, rng=rng, configuration=configuration)
+        return graph.sample_draw(distribution, draw=draw, configuration=configuration)
 
 
 def _configuration_values(chart) -> Iterable[str]:

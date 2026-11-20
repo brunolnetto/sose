@@ -119,8 +119,19 @@ class ProbabilisticTransitionGraph:
     ) -> TransitionDecision:
         if not distribution:
             raise NoProbabilisticTransition("cannot sample an empty distribution")
+        return self.sample_draw(distribution, draw=rng.random(), configuration=configuration)
 
-        draw = rng.random()
+    def sample_draw(
+        self,
+        distribution: tuple[TransitionOption, ...],
+        *,
+        draw: float,
+        configuration: StateConfiguration,
+    ) -> TransitionDecision:
+        """Select the option whose cumulative probability first exceeds ``draw``."""
+        if not distribution:
+            raise NoProbabilisticTransition("cannot sample an empty distribution")
+
         cumulative = 0.0
         selected = distribution[-1]
         for option in distribution:
