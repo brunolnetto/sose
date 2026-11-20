@@ -67,6 +67,39 @@ The operator must supply the real durable correlation and its authoritative orga
 Or use the long-running worker with `--serve --poll-seconds 5`. The
 `--now` override exists for controlled one-shot replay/testing only.
 
+### Moving to the scoped lease (#637)
+
+By default the command runs under the namespace-wide (global) writer lease and
+stores the job identity `{}`. `--scoped-writer` runs the job under its own
+job-scoped lease instead, which never fences other jobs, and stores the identity
+`{correlation_id, organization_id}`. A scoped worker refuses a job that a global
+run created ("durable organizational binding changed"). To move such a job, stop
+or let finish its global worker and run once:
+
+```sh
+sose composition-recovery --rebind-scoped \
+  --postgres-dsn postgresql://user@host/db --namespace trading \
+  --owner-id pc6-rebind-operator \
+  --correlation-id <durable-flow-correlation-id> \
+  --organization-id <authoritative-organization-id>
+```
+
+The operation (also `sose.composition.recovery_rebind.rebind_recovery_job_to_scope`)
+claims the global writer lease, which fences any still-running global worker (its
+next transaction fails with `StaleWriterError`). In one transaction fenced by that
+lease it checks the job, reserves the correlation for the job's scope and rewrites
+the identity to the scoped form. The `job_id`, `run_count` and completed-trigger
+history stay the same, so the scoped worker continues with the next slot and never
+repeats a completed one. The global lease is then left unused: scoped claims and
+scoped transactions never consult it. It prints a JSON report; running it again
+reports `"status": "already_scoped"` and changes nothing.
+
+It refuses a missing job, a job of another domain, a job bound to another scoped
+identity, an occurrence still in flight, a correlation already reserved by another
+job, and a job whose resource-intent links (admitted by its own triggers) name
+another correlation or organization. Then run the worker with `--scoped-writer`.
+The global mode stays the default in 0.12; it is deprecated in 0.13.0.
+
 ## ADR: time, causality and the recovery boundary
 
 - **Chosen:** stable scheduled slots, persisted job checkpoint, writer fencing,

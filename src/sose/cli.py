@@ -6,6 +6,7 @@ import sys
 # Names that lived here before the split stay importable from ``sose.cli``.
 
 from sose.jobs.storage import build_storage_plan  # noqa: F401
+from sose.cli_recovery import add_composition_recovery_parser
 from sose.cli_commands import (
     _cmd_apply,
     _cmd_composition_recovery,
@@ -38,27 +39,7 @@ def build_parser() -> argparse.ArgumentParser:
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    recovery = subparsers.add_parser(
-        "composition-recovery",
-        help="Run deterministic PC6 catch-up once (cron) or as a recurring worker.",
-    )
-    recovery.add_argument("--postgres-dsn", required=True, help="Authoritative PostgreSQL DSN.")
-    recovery.add_argument("--namespace", default="sose", help="PostgreSQL namespace.")
-    recovery.add_argument(
-        "--resource-policies", required=True,
-        help="JSON file mapping intent names to resource pool contracts.",
-    )
-    recovery.add_argument("--owner-id", required=True, help="Worker lease identity, not the organization.")
-    recovery.add_argument("--correlation-id", required=True, help="Durable flow correlation handled by this worker.")
-    recovery.add_argument("--organization-id", required=True, help="Authoritative organizational owner of the flow runtime.")
-    recovery.add_argument("--start-at", required=True, help="ISO 8601 timezone-aware anchor.")
-    recovery.add_argument("--interval-seconds", type=int, required=True)
-    recovery.add_argument("--max-slots", type=int, default=16)
-    recovery.add_argument("--max-actions", type=int, default=16)
-    recovery.add_argument("--now", help="ISO 8601 test/replay time (one-shot only).")
-    recovery.add_argument("--serve", action="store_true", help="Poll continuously.")
-    recovery.add_argument("--poll-seconds", type=float, default=5.0)
-    recovery.set_defaults(handler=_cmd_composition_recovery)
+    add_composition_recovery_parser(subparsers, _cmd_composition_recovery)
 
     migrate = subparsers.add_parser(
         "migrate-owners",
