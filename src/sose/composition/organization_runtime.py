@@ -203,26 +203,25 @@ class OrganizationBoundaryService:
         *,
         recovery_job_id: str | None = None,
     ) -> BoundaryDelivery:
-        source = self.registry.validate_message(message)
+        self.registry.validate_message(message)
         if message.causation_kind not in {"event", "boundary"}:
             raise ValueError(
                 "organization boundary requires typed event or boundary causation"
             )
-
-        # Events and boundary publications are immutable append-only facts.
-        # Validate their owner/component ancestry before delegating the
-        # idempotent publisher; BoundaryService rechecks causal identity/time
-        # in the transaction that commits publication and delivery.
-        with self.persistence.transaction() as uow:
-            if message.causation_kind == "event":
-                _require_owned_source_event(uow, message, source, self.registry)
-            else:
-                _require_terminating_predecessor(uow, message, self.registry)
-
+        # Owner/component ancestry is checked inside the same (advisory-locked)
+        # boundary transaction that commits the publication and delivery.
         return self._protocol.publish(
             message,
             recovery_job_id=recovery_job_id,
+            scoped_validator=self._require_owned_ancestry,
         )
+
+    def _require_owned_ancestry(self, message: BoundaryMessage, uow: "UnitOfWork") -> None:
+        source = self.registry.validate_message(message)
+        if message.causation_kind == "event":
+            _require_owned_source_event(uow, message, source, self.registry)
+        else:
+            _require_terminating_predecessor(uow, message, self.registry)
 
     def claim(
         self,
@@ -249,6 +248,11 @@ class OrganizationBoundaryService:
             }),
             message_id=message_id,
             correlation_id=message.correlation_id,
+            organization_scope=(
+                message.organization_id or "",
+                message.destination_component_id or "",
+                message.destination_owner_id or "",
+            ),
         )
 
     def delivery(self, delivery_id: str) -> BoundaryDelivery | None:
