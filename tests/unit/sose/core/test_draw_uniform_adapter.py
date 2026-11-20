@@ -88,3 +88,36 @@ def test_transition_runtime_keeps_legacy_stream() -> None:
         "transition", 2, "work_order", entity.id, "released", "lane"
     ).random()
     assert decision.draw == expected
+
+
+def _tick_decision(random_source, *, tick: int):
+    from sose.scenarios.engine import ScenarioEngine
+    from sose.scenarios.model import Scenario, TickTrigger, TransitionWeightEffect
+
+    engine = ScenarioEngine(
+        random_source=random_source,
+        now=lambda: datetime(2026, 1, 1, tzinfo=timezone.utc),
+        tick=lambda: tick,
+        context=lambda: None,
+    )
+    engine.register(Scenario(
+        "surge", TickTrigger(), (TransitionWeightEffect(event="approve", multiplier=2.0),),
+        activation_probability=0.5,
+    ))
+    (decision,) = engine.on_tick()
+    return decision
+
+
+def test_scenario_engine_uses_counter_identity() -> None:
+    counter = CounterRandomSource(11)
+    decision = _tick_decision(counter, tick=4)
+    assert decision.draw == counter.uniform(
+        stream="scenario-activation", entity_id=("tick", 4), mechanism="surge",
+    )
+    assert _tick_decision(CounterRandomSource(11), tick=4).draw == decision.draw
+
+
+def test_scenario_engine_keeps_legacy_stream() -> None:
+    decision = _tick_decision(RandomSource(11), tick=4)
+    expected = RandomSource(11).for_scope("scenario-activation", "surge", "tick", 4).random()
+    assert decision.draw == expected
