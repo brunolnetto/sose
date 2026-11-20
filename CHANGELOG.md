@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.12.0 — 2026-11-20
+
+Release note: `docs/releases/v0.12.0.md`. Completes the deprecation cycle
+announced in 0.11.0 and adds owner-qualified organizational boundary routing.
+
+### Added
+
+- Owner-qualified organizational boundary routing (P496-A): v2 boundary messages
+  bound to an admitted organization and producer/consumer component and owner,
+  routed through `OrganizationBoundaryService`. Generic `BoundaryService` paths
+  refuse or skip v2 messages; v1 message ids and codec bytes are unchanged
+  (#496, #603).
+
 ### Removed (deprecated in 0.11.0)
 
 - `ScenarioRule` (the `sose.scenarios.rules` module), `Engine(rules_for=...)` and
@@ -21,6 +36,10 @@
 - `make_random_source` defaults to `RNGMode.COUNTER` (order-independent draws).
   Pass `mode=RNGMode.LEGACY` to reproduce streams recorded with the legacy RNG;
   `RandomSource` itself is unchanged (#631).
+- `BoundaryMessage` rejects a non-integer `contract_version` (bool/float) with
+  "contract_version must be a positive integer (not bool/float)"; no in-tree
+  producer ever wrote one (#603).
+- CI runs PostgreSQL 19 (#658).
 
 ## 0.11.0 — 2026-11-20
 
