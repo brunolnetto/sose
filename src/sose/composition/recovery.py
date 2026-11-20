@@ -11,7 +11,6 @@ from dataclasses import dataclass  # noqa: F401
 from datetime import datetime, timedelta
 from typing import Mapping
 
-from sose._deprecation import warn_deprecated
 from sose.core.resource_identity import ResourcePoolContract
 from sose.core.resource_reservations import TemporalReservation  # noqa: F401
 from sose.composition.resource_intents import IntentResourceCoordinator
@@ -77,16 +76,6 @@ class TradingCustomerRecoveryRunner:
 
     def __post_init__(self) -> None:
         validate_recovery_runner(self)
-        if self.resource_policies is None:
-            # #634: recovery without a physical resource ledger goes away in 0.11.
-            # helper -> __post_init__ -> dataclass __init__ -> constructing caller
-            warn_deprecated(
-                "TradingCustomerRecoveryRunner without resource_policies",
-                since="0.9.0", removed_in="0.11.0",
-                instead=("pass resource_policies and resource_organizations "
-                         "(PostgreSQL-backed recovery)"),
-                stacklevel=4,
-            )
 
     def _egress_organization_owners(self) -> dict[str, str]:
         """Bind every known correlation to its stable operational owner."""
@@ -123,20 +112,17 @@ class TradingCustomerRecoveryRunner:
         self, store: Persistence, *, now: datetime, logical_now: datetime | None = None,
     ) -> int:
         service = BoundaryService(store)
-        resource_intents = (
-            IntentResourceCoordinator(
-                self.resource_persistence or self.persistence, self.resource_policies,
-                slot_duration=self.resource_slot_duration,
-                retry_delay=self.resource_retry_delay,
-                owner_epoch=getattr(getattr(store, "lease", None), "epoch", None),
-                writer_scope=getattr(getattr(store, "lease", None), "scope", None),
-                fencing_persistence=self.persistence,
-                effect_scope=(
-                    self.persistence.namespace if self.resource_persistence is not None
-                    else None
-                ),
-            )
-            if self.resource_policies is not None else None
+        resource_intents = IntentResourceCoordinator(
+            self.resource_persistence or self.persistence, self.resource_policies,
+            slot_duration=self.resource_slot_duration,
+            retry_delay=self.resource_retry_delay,
+            owner_epoch=getattr(getattr(store, "lease", None), "epoch", None),
+            writer_scope=getattr(getattr(store, "lease", None), "scope", None),
+            fencing_persistence=self.persistence,
+            effect_scope=(
+                self.persistence.namespace if self.resource_persistence is not None
+                else None
+            ),
         )
         return run_bounded_pass(
             self, store, service, resource_intents, now=now, logical_now=logical_now,
@@ -177,11 +163,6 @@ class TradingCustomerRecoveryRunner:
                     return RecoveryTriggerResult(self.job_id, trigger_id, 0)
 
         lease_clock = observed_at if observed_at is not None else now
-        if self.resource_policies is None:
-            # Deprecated policy-less mode (#634, removed in 0.11): overrides of this
-            # older hook accept only 'now'; keep their call contract until then.
-            actions = self._run_bounded(store, now=lease_clock)
-        else:
-            actions = self._run_bounded(store, now=lease_clock, logical_now=now)
+        actions = self._run_bounded(store, now=lease_clock, logical_now=now)
         complete_trigger(self, store, trigger_id=trigger_id, now=now)
         return RecoveryTriggerResult(self.job_id, trigger_id, actions)

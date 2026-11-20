@@ -42,16 +42,11 @@ def build_parser() -> argparse.ArgumentParser:
         "composition-recovery",
         help="Run deterministic PC6 catch-up once (cron) or as a recurring worker.",
     )
-    store = recovery.add_mutually_exclusive_group(required=True)
-    store.add_argument(
-        "--sqlite",
-        help="Authoritative SQLite DB path (deprecated: policy-less recovery, removed in 0.11).",
-    )
-    store.add_argument("--postgres-dsn", help="Authoritative PostgreSQL DSN.")
+    recovery.add_argument("--postgres-dsn", required=True, help="Authoritative PostgreSQL DSN.")
     recovery.add_argument("--namespace", default="sose", help="PostgreSQL namespace.")
     recovery.add_argument(
-        "--resource-policies",
-        help="JSON file mapping intent names to resource pool contracts (PostgreSQL only).",
+        "--resource-policies", required=True,
+        help="JSON file mapping intent names to resource pool contracts.",
     )
     recovery.add_argument("--owner-id", required=True, help="Worker lease identity, not the organization.")
     recovery.add_argument("--correlation-id", required=True, help="Durable flow correlation handled by this worker.")

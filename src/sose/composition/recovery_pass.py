@@ -42,7 +42,7 @@ class _Pass:
     runner: TradingCustomerRecoveryRunner
     store: Persistence
     service: BoundaryService
-    resource_intents: IntentResourceCoordinator | None
+    resource_intents: IntentResourceCoordinator
     now: datetime
     logical_now: datetime | None
     active_trigger: str | None = None
@@ -141,17 +141,14 @@ def _is_unmapped_enrolled_effect(tick: _Pass, command: Any) -> bool:
     runner = tick.runner
     return (
         tick.active_trigger is not None
-        and (runner.resource_policies is None
-             or command.name not in runner.resource_policies)
+        and command.name not in runner.resource_policies
     )
 
 
 def _booked_pickup(tick: _Pass, effect_id: str, command: Any) -> TemporalReservation | None:
-    resource_intents = tick.resource_intents
     return (
-        resource_intents.booking_for(effect_id, command.name)
-        if resource_intents is not None
-        and command.name == "composition.deliver_shipment"
+        tick.resource_intents.booking_for(effect_id, command.name)
+        if command.name == "composition.deliver_shipment"
         and command.name in tick.runner.resource_policies
         else None
     )
@@ -159,16 +156,14 @@ def _booked_pickup(tick: _Pass, effect_id: str, command: Any) -> TemporalReserva
 
 def _run_pending_effect(tick: _Pass, source: BoundaryMessage, effect_id: str) -> int:
     """Replay one accepted effect; return 1 when executed, 0 when deferred."""
-    runner, store, resource_intents = tick.runner, tick.store, tick.resource_intents
+    runner, store = tick.runner, tick.store
     organization_id = runner._organization_for(source.correlation_id)
     command = store.command(effect_id)
     if command is None:
         raise RuntimeError("accepted effect disappeared before execution")
-    if resource_intents is not None:
-        admitted = _admit(tick, source, effect_id, command)
-        if not admitted:
-            tick.deferred_this_tick.add(effect_id)
-            return 0
+    if not _admit(tick, source, effect_id, command):
+        tick.deferred_this_tick.add(effect_id)
+        return 0
     # Every non-physical business action is durably enrolled in
     # the owning trigger BEFORE the real domain transition. On
     # restart its immutable certificate consumes the same slot.
@@ -184,8 +179,7 @@ def _run_pending_effect(tick: _Pass, source: BoundaryMessage, effect_id: str) ->
         # The immutable Command stays durable for another slot.
         tick.deferred_this_tick.add(effect_id)
         return 0
-    if resource_intents is not None:
-        resource_intents.complete(effect_id)
+    tick.resource_intents.complete(effect_id)
     return 1
 
 
@@ -310,7 +304,7 @@ def _work_loop(tick: _Pass, actions: int) -> int:
 
 def run_bounded_pass(
     runner: TradingCustomerRecoveryRunner, store: Persistence,
-    service: BoundaryService, resource_intents: IntentResourceCoordinator | None,
+    service: BoundaryService, resource_intents: IntentResourceCoordinator,
     *, now: datetime, logical_now: datetime | None,
 ) -> int:
     """Charge committed work, reconcile certified releases, then spend the budget."""
@@ -318,7 +312,7 @@ def run_bounded_pass(
     actions, tick.active_trigger = charge_committed_work(runner, store)
     # Reconcile a crash after immutable domain certification but before
     # release of its authoritative temporal reservation.
-    if resource_intents is not None and actions < runner.max_actions:
+    if actions < runner.max_actions:
         actions = _reconcile_certified(tick, actions)
     if actions >= runner.max_actions:
         return actions

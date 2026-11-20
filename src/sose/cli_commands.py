@@ -324,10 +324,8 @@ def _cmd_composition_recovery(args: argparse.Namespace) -> int:
             correlation_id=args.correlation_id,
             organization_owners={args.correlation_id: args.organization_id},
             max_actions=args.max_actions,
-            **({} if policies is None else {
-                "resource_policies": policies,
-                "resource_organizations": {args.correlation_id: args.organization_id},
-            }),
+            resource_policies=policies,
+            resource_organizations={args.correlation_id: args.organization_id},
         )
         scheduler = RecoverySchedule(
             runner=runner,

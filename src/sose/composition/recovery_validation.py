@@ -29,8 +29,6 @@ def _validate_scoped_writer(runner: TradingCustomerRecoveryRunner) -> None:
 
 def _validate_resource_persistence(runner: TradingCustomerRecoveryRunner) -> None:
     if runner.resource_persistence is not None:
-        if runner.resource_policies is None:
-            raise ValueError("shared resource persistence requires explicit policies")
         if (not hasattr(runner.persistence, "dsn")
             or runner.persistence.dsn != getattr(runner.resource_persistence, "dsn", None)):
             raise ValueError("domain and physical resource ledgers must share PostgreSQL")
@@ -46,21 +44,27 @@ def _validate_organization_owners(runner: TradingCustomerRecoveryRunner) -> None
 
 
 def _validate_resource_policies(runner: TradingCustomerRecoveryRunner) -> None:
-    if runner.resource_policies is not None:
-        if (runner.resource_slot_duration <= timedelta(0)
-                or runner.resource_retry_delay <= timedelta(0)):
-            raise ValueError("resource slot and retry delay must be positive")
-        if not runner.resource_organizations or any(
-            not correlation or not organization
-            for correlation, organization in runner.resource_organizations.items()
-        ):
-            raise ValueError(
-                "resource policies require explicit correlation-to-organization bindings"
-            )
+    if runner.resource_policies is None:
+        # #634: deprecated in 0.9.0, removed in 0.11.0 (ADR-0011).
+        raise TypeError(
+            "TradingCustomerRecoveryRunner requires resource_policies and "
+            "resource_organizations (PostgreSQL-backed recovery); policy-less "
+            "recovery was removed in SOSE 0.11.0"
+        )
+    if (runner.resource_slot_duration <= timedelta(0)
+            or runner.resource_retry_delay <= timedelta(0)):
+        raise ValueError("resource slot and retry delay must be positive")
+    if not runner.resource_organizations or any(
+        not correlation or not organization
+        for correlation, organization in runner.resource_organizations.items()
+    ):
+        raise ValueError(
+            "resource policies require explicit correlation-to-organization bindings"
+        )
 
 
 def _validate_owned_correlation(runner: TradingCustomerRecoveryRunner) -> None:
-    if runner.resource_policies is not None and runner.correlation_id is not None:
+    if runner.correlation_id is not None:
         if runner.correlation_id not in runner.resource_organizations:
             raise ValueError("resource mapping lacks the owned correlation_id")
 
