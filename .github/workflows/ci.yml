@@ -98,7 +98,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:18
+        image: postgres:19
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -322,7 +322,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:18
+        image: postgres:19
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -381,7 +381,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:18
+        image: postgres:19
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -437,7 +437,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:18
+        image: postgres:19
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
@@ -475,7 +475,8 @@ jobs:
 
       - name: Discover PostgreSQL service container
         run: |
-          cid="$(docker ps --filter ancestor=postgres:18 --format '{{.ID}}' | head -n1)"
+          # The service's own id: independent of the image tag Renovate bumps.
+          cid="${{ job.services.postgres.id }}"
           test -n "$cid"
           echo "SOSE_POSTGRES_CONTAINER_ID=$cid" >> "$GITHUB_ENV"
 
@@ -592,7 +593,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:18
+        image: postgres:19
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
