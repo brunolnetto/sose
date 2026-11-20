@@ -1,6 +1,8 @@
 """Falsify persisted causal graphs, not merely ordering of in-memory stages."""
+import os
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from uuid import uuid4
 
 import pytest
 
@@ -13,6 +15,7 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
 T0 = datetime(2026, 10, 9, 12, tzinfo=timezone.utc)
+DAG_OWNER = "test-org-causal-dag-audit"
 
 
 def msg(label: str, *, at=T0, cause=None, kind=None, flow="order-A"):
@@ -157,21 +160,30 @@ def test_audit_snapshot_is_stable_after_sqlite_restart(tmp_path, monkeypatch):
     ],
 )
 def test_worker_death_and_restart_preserves_normalized_causal_dag(
-    tmp_path, monkeypatch, cut,
+    monkeypatch, cut,
 ):
     import sose.composition.trading_company_customer as customer
     from sose.composition.effects import BusinessEffectService
     from sose.composition.recovery import TradingCustomerRecoveryRunner
+    from sose.core.resource_identity import ResourcePoolContract
     from sose.examples.order_to_cash import simulation as o2c
     from sose.persistence.ownership import FencedEnginePersistence
+    from sose.persistence.postgres import PostgresPersistence
     from sose.persistence.sqlite_incremental import WriterLease
 
-    uninterrupted = audit_causal_history(customer.run_customer_demand_path(organization_id="test-org-causal-dag-audit").persistence)
-    path = tmp_path / "independent-replay.sqlite"
+    # Policy mode (#634) runs the real pass through the PostgreSQL intent
+    # coordinator, so the replayed store is PostgreSQL rather than SQLite.
+    dsn = os.getenv("SOSE_TEST_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("requires real PostgreSQL DSN")
+    uninterrupted = audit_causal_history(
+        customer.run_customer_demand_path(organization_id=DAG_OWNER).persistence,
+    )
+    namespace = "causal_dag_" + uuid4().hex[:12]
     opened = []
 
     def storage():
-        store = SQLiteIncrementalPersistence(path)
+        store = PostgresPersistence(dsn, namespace=namespace)
         opened.append(store)
         return store
 
@@ -186,10 +198,10 @@ def test_worker_death_and_restart_preserves_normalized_causal_dag(
 
     monkeypatch.setattr(BusinessEffectService, "complete", interrupt)
     with pytest.raises(RuntimeError, match="injected worker death"):
-        customer.run_customer_demand_path(organization_id="test-org-causal-dag-audit")
+        customer.run_customer_demand_path(organization_id=DAG_OWNER)
     monkeypatch.setattr(BusinessEffectService, "complete", original)
     opened[-1].close()
-    with SQLiteIncrementalPersistence(path) as store:
+    with PostgresPersistence(dsn, namespace=namespace) as store:
         # Reconstitute the flow from persisted delivery evidence, but take its
         # owning organization from the explicit fixture identity.
         with store.transaction() as uow:
@@ -203,9 +215,19 @@ def test_worker_death_and_restart_preserves_normalized_causal_dag(
         runner = TradingCustomerRecoveryRunner(
             persistence=store,
             owner_id="causal-dag-restart",
-            organization_owners={flow_id: "test-org-causal-dag-audit"},
+            organization_owners={flow_id: DAG_OWNER},
             job_id="causal-equivalence",
             max_actions=32,
+            # Neutral certified policy: replenishment journals never occur on
+            # this customer path, so every replayed intent keeps the
+            # historical (unmapped) admission semantics.
+            resource_policies={
+                "composition.post_replenishment_journal": ResourcePoolContract(
+                    resource_type="journal_slot", pool_id="neutral-causal-dag",
+                    scope="shared", capacity=1,
+                ),
+            },
+            resource_organizations={flow_id: DAG_OWNER},
         )
         resumed = runner.run_trigger(
             trigger_id="resume-after-crash",
@@ -218,12 +240,18 @@ def test_worker_death_and_restart_preserves_normalized_causal_dag(
                 owner_id=runner.owner_id, epoch=store.writer_epoch(),
             ))
 
-        assert audit_causal_history(authorized_view()).semantic_digest == uninterrupted.semantic_digest
+        assert (
+            audit_causal_history(authorized_view()).semantic_digest
+            == uninterrupted.semantic_digest
+        )
         assert runner.run_trigger(
             trigger_id="second-check",
             now=o2c.ORIGIN + timedelta(days=2, minutes=1),
         ).actions == 0
-        assert audit_causal_history(authorized_view()).semantic_digest == uninterrupted.semantic_digest
+        assert (
+            audit_causal_history(authorized_view()).semantic_digest
+            == uninterrupted.semantic_digest
+        )
 
 
 def test_causal_audit_handles_deep_linear_chains_without_recursion_failure():
@@ -245,7 +273,7 @@ def test_causal_audit_handles_deep_linear_chains_without_recursion_failure():
 
 
 def test_consumer_receipt_cannot_exist_without_consummed_delivery():
-    from sose.composition.boundary import BoundaryConsumerRegistry, BoundaryService
+    from sose.composition.boundary import BoundaryService
     from sose.composition.model import BoundaryConsumption
 
     store = MemoryPersistence()
@@ -302,7 +330,17 @@ def test_certificate_cannot_be_reused_under_different_correlation():
 def test_unlinked_business_certificate_cannot_disappear_from_audit_digest():
     result = run_customer_demand_path(organization_id="test-org-causal-dag-audit")
     store = result.persistence
-    proof = next(x for x in store.business_effects() if x.entity_type == "shipment")
+    with store.transaction() as uow:
+        parents = {
+            uow.get_boundary_message(d.message_id).causation_id
+            for d in uow.boundary_deliveries()
+        }
+    # Use a certificate whose message parents no other message: removing a typed parent
+    # (#644) is caught earlier as "missing typed boundary parent"; this test targets the
+    # orphaned-certificate check itself.
+    proof = next(
+        x for x in store.business_effects() if x.boundary_message_id not in parents
+    )
     with store.transaction() as uow:
         owned = next(
             delivery for delivery in uow.boundary_deliveries()

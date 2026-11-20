@@ -1,67 +1,71 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta  # noqa: F401
 
-from sose.core.clock import SimulationClock
-from sose.core.context import SimulationContext
+from sose.core.clock import SimulationClock  # noqa: F401
+from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
-from sose.core.identity import deterministic_id
-from sose.core.randomness import RandomSource
-from sose.core.scheduler import Scheduler
-from sose.domain.registry import DomainRegistry, EntityType
+from sose.core.randomness import RandomSource  # noqa: F401
+from sose.core.scheduler import Scheduler  # noqa: F401
+from sose.domain.registry import DomainRegistry, EntityType  # noqa: F401
 from sose.persistence.base import Persistence
 
 from .entities import Dock, Forklift, Shipment, StockPosition, Truck, WarehouseSite
-from .statecharts import DockChart, ForkliftChart, ShipmentChart, TruckChart, WarehouseSiteChart
-
-
-ORIGIN = datetime(2026, 1, 1, tzinfo=timezone.utc)
-REFERENCE_SKU = "widget-a"
-
-REGISTERED_ENTITY_TYPES = (
-    EntityType("warehouse_management_site", WarehouseSiteChart),
-    EntityType("warehouse_management_dock", DockChart),
-    EntityType("warehouse_management_truck", TruckChart),
-    EntityType("warehouse_management_forklift", ForkliftChart),
-    EntityType("warehouse_management_shipment", ShipmentChart),
+from .statecharts import (  # noqa: F401 - historical import location
+    DockChart,
+    ForkliftChart,
+    ShipmentChart,
+    TruckChart,
+    WarehouseSiteChart,
+)
+from .records import (  # noqa: F401 - historical import location
+    ORIGIN,
+    REFERENCE_SKU,
+    REGISTERED_ENTITY_TYPES,
+    WarehouseManagementEntities,
+    _dispatch,
+    _entity,
+    _save,
+    build_runtime,
+)
+from .external_stock import (  # noqa: F401 - historical import location
+    consume_external_reservation,
+    receive_external_replenishment,
+    reserve_external_stock,
+)
+from .unloading import (  # noqa: F401 - historical import location
+    _release_completed_resources,
+    complete_unload,
 )
 
 
-@dataclass(frozen=True, slots=True)
-class WarehouseManagementEntities:
-    origin_site_id: str
-    destination_site_id: str
-    dock_ids: tuple[str, ...]
-    forklift_ids: tuple[str, ...]
-    truck_id: str
-    origin_stock_id: str
-    destination_stock_id: str
-    shipment_id: str
-
-
-def _flow_id(shipment_id: str) -> str:
-    return deterministic_id("warehouse-management-flow", shipment_id)
-
-
-def build_runtime(
-    persistence: Persistence,
+def _validate_seed_arguments(
     *,
-    owner_id: str,
-    now: datetime = ORIGIN,
-    tick: int = 0,
-    step: timedelta = timedelta(hours=1),
-    random_seed: int = 5505,
-) -> tuple[SimulationContext, Engine]:
-    context = SimulationContext(
-        clock=SimulationClock(now=now, step=step, tick=tick),
-        random=RandomSource(root_seed=random_seed),
-        scheduler=Scheduler(),
-    )
-    registry = DomainRegistry()
-    for entity_type in REGISTERED_ENTITY_TYPES:
-        registry.register(entity_type)
-    return context, Engine(context=context, registry=registry, persistence=persistence, owner_id=owner_id)
+    origin_on_hand: float,
+    transfer_quantity: float,
+    sku: str,
+    dock_count: int,
+    forklift_count: int,
+    planned_completion_hours: float,
+    instance_key: str | None,
+) -> None:
+    if origin_on_hand < 0:
+        raise ValueError("origin_on_hand cannot be negative")
+    if not sku:
+        raise ValueError("sku cannot be empty")
+    if transfer_quantity <= 0:
+        raise ValueError("transfer_quantity must be positive")
+    if dock_count < 1:
+        raise ValueError("dock_count must be at least one")
+    if forklift_count < 1:
+        raise ValueError("forklift_count must be at least one")
+    if planned_completion_hours <= 0:
+        raise ValueError("planned_completion_hours must be positive")
+
+    if instance_key is not None and (
+        not isinstance(instance_key, str) or not instance_key.strip()
+    ):
+        raise ValueError("instance_key must be a nonempty string")
 
 
 def seed_reference(
@@ -77,21 +81,15 @@ def seed_reference(
     planned_completion_hours: float = 4.0,
     instance_key: str | None = None,
 ) -> WarehouseManagementEntities:
-    if origin_on_hand < 0:
-        raise ValueError("origin_on_hand cannot be negative")
-    if not sku:
-        raise ValueError("sku cannot be empty")
-    if transfer_quantity <= 0:
-        raise ValueError("transfer_quantity must be positive")
-    if dock_count < 1:
-        raise ValueError("dock_count must be at least one")
-    if forklift_count < 1:
-        raise ValueError("forklift_count must be at least one")
-    if planned_completion_hours <= 0:
-        raise ValueError("planned_completion_hours must be positive")
-
-    if instance_key is not None and (not isinstance(instance_key, str) or not instance_key.strip()):
-        raise ValueError("instance_key must be a nonempty string")
+    _validate_seed_arguments(
+        origin_on_hand=origin_on_hand,
+        transfer_quantity=transfer_quantity,
+        sku=sku,
+        dock_count=dock_count,
+        forklift_count=forklift_count,
+        planned_completion_hours=planned_completion_hours,
+        instance_key=instance_key,
+    )
     prefix = ("warehouse-management",) if instance_key is None else ("warehouse-management", instance_key)
     context, _ = build_runtime(persistence, owner_id=owner_id, now=now)
     origin_site = context.entities.create(
@@ -199,251 +197,6 @@ def seed_reference(
         destination_stock_id=destination_stock.id,
         shipment_id=shipment.id,
     )
-
-
-def _entity(persistence: Persistence, entity_type: str, entity_id: str):
-    entity = persistence.entity(entity_type, entity_id)
-    if entity is None:
-        raise RuntimeError(f"{entity_type} was not persisted: {entity_id}")
-    return entity
-
-
-def _save(persistence: Persistence, *entities) -> None:
-    with persistence.transaction() as uow:
-        for entity in entities:
-            uow.save_entity(entity)
-
-
-def receive_external_replenishment(
-    persistence: Persistence,
-    engine: Engine,
-    *,
-    stock_id: str,
-    quantity: float,
-    sku: str,
-    receipt_reference: str,
-    caused_by=None,
-    correlation_id: str | None = None,
-) -> bool:
-    """Idempotently apply a foreign procurement receipt to WM-owned stock truth."""
-
-    if quantity <= 0:
-        raise ValueError("replenishment quantity must be positive")
-    if not sku:
-        raise ValueError("replenishment sku cannot be empty")
-    if not receipt_reference:
-        raise ValueError("receipt_reference cannot be empty")
-
-    stock = _entity(persistence, "warehouse_management_stock", stock_id)
-    stock_sku = str(stock.attributes.get("sku", ""))
-    if stock_sku != sku:
-        raise ValueError(
-            f"replenishment SKU mismatch: stock={stock_sku!r}, receipt={sku!r}"
-        )
-    receipts = dict(stock.attributes.get("external_receipts", {}))
-    existing = receipts.get(receipt_reference)
-    if existing is not None:
-        if float(existing) != float(quantity):
-            raise ValueError(
-                f"receipt replay conflict: {receipt_reference}"
-            )
-        return False
-
-    stock.attributes["on_hand"] = float(stock.attributes["on_hand"]) + float(quantity)
-    receipts[receipt_reference] = float(quantity)
-    stock.attributes["external_receipts"] = receipts
-
-    event = engine.context.events.create(
-        "warehouse_management.replenishment_received",
-        entity=stock,
-        caused_by=caused_by,
-        correlation_id=correlation_id,
-        key=("warehouse-management", stock.id, "external-receipt", receipt_reference),
-        receipt_reference=receipt_reference,
-        sku=sku,
-        quantity=float(quantity),
-    )
-    with persistence.transaction() as uow:
-        uow.save_entity(stock)
-        uow.append_event(event)
-    return True
-
-
-
-def reserve_external_stock(
-    persistence: Persistence,
-    engine: Engine,
-    *,
-    stock_id: str,
-    quantity: float,
-    sku: str,
-    reservation_reference: str,
-    caused_by=None,
-    correlation_id: str | None = None,
-) -> bool:
-    """Idempotently reserve WM-owned stock for a foreign process.
-
-    The foreign process receives only the reservation/stock references. Warehouse
-    Management remains authoritative for on-hand and reserved quantities.
-    """
-
-    if quantity <= 0:
-        raise ValueError("reservation quantity must be positive")
-    normalized_quantity = round(float(quantity), 6)
-    if normalized_quantity <= 0:
-        raise ValueError("reservation quantity is below supported precision")
-    if not sku:
-        raise ValueError("reservation sku cannot be empty")
-    if not reservation_reference:
-        raise ValueError("reservation_reference cannot be empty")
-
-    stock = _entity(persistence, "warehouse_management_stock", stock_id)
-    stock_sku = str(stock.attributes.get("sku", ""))
-    if stock_sku != sku:
-        raise ValueError(
-            f"reservation SKU mismatch: stock={stock_sku!r}, request={sku!r}"
-        )
-
-    reservations = dict(stock.attributes.get("external_reservations", {}))
-    existing = reservations.get(reservation_reference)
-    expected = {
-        "sku": sku,
-        "quantity": normalized_quantity,
-        "consumed": False,
-        "consumption_reference": None,
-    }
-    if existing is not None:
-        existing_record = dict(existing)
-        if (
-            str(existing_record.get("sku")) != sku
-            or float(existing_record.get("quantity", 0.0)) != normalized_quantity
-        ):
-            raise ValueError(
-                f"reservation replay conflict: {reservation_reference}"
-            )
-        return False
-
-    on_hand = float(stock.attributes.get("on_hand", 0.0))
-    reserved = float(stock.attributes.get("reserved", 0.0))
-    if on_hand - reserved + 1e-9 < normalized_quantity:
-        return False
-
-    stock.attributes["reserved"] = round(reserved + normalized_quantity, 6)
-    reservations[reservation_reference] = expected
-    stock.attributes["external_reservations"] = reservations
-
-    event = engine.context.events.create(
-        "warehouse_management.inventory_reserved",
-        entity=stock,
-        caused_by=caused_by,
-        correlation_id=correlation_id,
-        key=("warehouse-management", stock.id, "external-reservation", reservation_reference),
-        reservation_reference=reservation_reference,
-        sku=sku,
-        quantity=normalized_quantity,
-    )
-    with persistence.transaction() as uow:
-        uow.save_entity(stock)
-        uow.append_event(event)
-    return True
-
-
-def consume_external_reservation(
-    persistence: Persistence,
-    engine: Engine,
-    *,
-    stock_id: str,
-    quantity: float,
-    sku: str,
-    reservation_reference: str,
-    consumption_reference: str,
-    caused_by=None,
-    correlation_id: str | None = None,
-) -> bool:
-    """Idempotently consume a previously reserved foreign-process quantity."""
-
-    if quantity <= 0:
-        raise ValueError("consumption quantity must be positive")
-    normalized_quantity = round(float(quantity), 6)
-    if normalized_quantity <= 0:
-        raise ValueError("consumption quantity is below supported precision")
-    if not sku:
-        raise ValueError("consumption sku cannot be empty")
-    if not reservation_reference:
-        raise ValueError("reservation_reference cannot be empty")
-    if not consumption_reference:
-        raise ValueError("consumption_reference cannot be empty")
-
-    stock = _entity(persistence, "warehouse_management_stock", stock_id)
-    stock_sku = str(stock.attributes.get("sku", ""))
-    if stock_sku != sku:
-        raise ValueError(
-            f"consumption SKU mismatch: stock={stock_sku!r}, request={sku!r}"
-        )
-
-    reservations = dict(stock.attributes.get("external_reservations", {}))
-    existing = reservations.get(reservation_reference)
-    if existing is None:
-        raise ValueError(f"unknown external reservation: {reservation_reference}")
-
-    record = dict(existing)
-    if (
-        str(record.get("sku")) != sku
-        or float(record.get("quantity", 0.0)) != normalized_quantity
-    ):
-        raise ValueError(
-            f"reservation consumption conflict: {reservation_reference}"
-        )
-
-    if bool(record.get("consumed", False)):
-        if record.get("consumption_reference") != consumption_reference:
-            raise ValueError(
-                f"consumption replay conflict: {reservation_reference}"
-            )
-        return False
-
-    on_hand = float(stock.attributes.get("on_hand", 0.0))
-    reserved = float(stock.attributes.get("reserved", 0.0))
-    if reserved + 1e-9 < normalized_quantity or on_hand + 1e-9 < normalized_quantity:
-        raise RuntimeError("reserved stock projection cannot satisfy consumption")
-
-    stock.attributes["on_hand"] = round(on_hand - normalized_quantity, 6)
-    stock.attributes["reserved"] = round(reserved - normalized_quantity, 6)
-    record["consumed"] = True
-    record["consumption_reference"] = consumption_reference
-    reservations[reservation_reference] = record
-    stock.attributes["external_reservations"] = reservations
-
-    event = engine.context.events.create(
-        "warehouse_management.inventory_consumed",
-        entity=stock,
-        caused_by=caused_by,
-        correlation_id=correlation_id,
-        key=(
-            "warehouse-management",
-            stock.id,
-            "external-consumption",
-            consumption_reference,
-        ),
-        reservation_reference=reservation_reference,
-        consumption_reference=consumption_reference,
-        sku=sku,
-        quantity=normalized_quantity,
-    )
-    with persistence.transaction() as uow:
-        uow.save_entity(stock)
-        uow.append_event(event)
-    return True
-
-def _dispatch(engine: Engine, entity, event: str, *, key: tuple[object, ...]) -> None:
-    command = engine.context.commands.create(
-        event,
-        target=entity,
-        correlation_id=_flow_id(str(entity.attributes.get("shipment_id") or entity.id)),
-        key=key,
-    )
-    engine.dispatch(command)
-
 
 def start_transfer(
     persistence: Persistence,
@@ -567,123 +320,3 @@ def assign_forklift(
     shipment.attributes["assigned_forklift_id"] = forklift.id
     _save(persistence, shipment)
     return True
-
-
-def _release_completed_resources(
-    persistence: Persistence,
-    engine: Engine,
-    *,
-    entities: WarehouseManagementEntities,
-) -> bool:
-    shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
-    if shipment.state != "completed":
-        return False
-    if bool(shipment.attributes.get("resources_released", False)):
-        return True
-
-    forklift_id = shipment.attributes.get("assigned_forklift_id")
-    dock_id = shipment.attributes.get("assigned_dock_id")
-    if not forklift_id or not dock_id:
-        raise RuntimeError("completed shipment is missing durable handling ownership")
-
-    forklift = _entity(persistence, "warehouse_management_forklift", str(forklift_id))
-    if forklift.state == "assigned":
-        _dispatch(engine, forklift, "release", key=("forklift", forklift.id, shipment.id, "release"))
-
-    dock = _entity(persistence, "warehouse_management_dock", str(dock_id))
-    if dock.state in {"occupied", "reserved"}:
-        _dispatch(engine, dock, "release", key=("dock", dock.id, shipment.id, "release"))
-
-    truck = _entity(persistence, "warehouse_management_truck", entities.truck_id)
-    if truck.state == "docked":
-        _dispatch(engine, truck, "release", key=("truck", truck.id, "release"))
-
-    forklift = _entity(persistence, "warehouse_management_forklift", str(forklift_id))
-    dock = _entity(persistence, "warehouse_management_dock", str(dock_id))
-    truck = _entity(persistence, "warehouse_management_truck", entities.truck_id)
-    released = (
-        forklift.state == "available"
-        and dock.state == "available"
-        and truck.state == "released"
-    )
-    if released:
-        shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
-        shipment.attributes["resources_released"] = True
-        _save(persistence, shipment)
-    return released
-
-
-def complete_unload(
-    persistence: Persistence,
-    engine: Engine,
-    *,
-    entities: WarehouseManagementEntities,
-) -> bool:
-    shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
-    if shipment.state == "completed":
-        return _release_completed_resources(persistence, engine, entities=entities)
-    if shipment.state != "handling":
-        return False
-
-    dock_id = shipment.attributes.get("assigned_dock_id")
-    forklift_id = shipment.attributes.get("assigned_forklift_id")
-    if not dock_id or not forklift_id:
-        raise RuntimeError("handling shipment is missing dock or forklift ownership")
-
-    if not bool(shipment.attributes.get("stock_moved", False)):
-        origin_stock = _entity(persistence, "warehouse_management_stock", entities.origin_stock_id)
-        destination_stock = _entity(persistence, "warehouse_management_stock", entities.destination_stock_id)
-        quantity = float(shipment.attributes["quantity"])
-        reserved = float(origin_stock.attributes.get("reserved", 0.0))
-        on_hand = float(origin_stock.attributes["on_hand"])
-        if reserved < quantity or on_hand < quantity:
-            raise RuntimeError("reserved transfer stock is inconsistent with shipment quantity")
-
-        origin_stock.attributes["reserved"] = reserved - quantity
-        origin_stock.attributes["on_hand"] = on_hand - quantity
-        destination_stock.attributes["on_hand"] = float(destination_stock.attributes["on_hand"]) + quantity
-        shipment.attributes["stock_moved"] = True
-        if shipment.attributes.get("completed_at") is None:
-            shipment.attributes["completed_at"] = engine.context.clock.now.isoformat()
-        _save(persistence, origin_stock, destination_stock, shipment)
-        shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
-
-    if shipment.state == "handling":
-        _dispatch(engine, shipment, "complete", key=("shipment", shipment.id, "complete"))
-
-    return _release_completed_resources(persistence, engine, entities=entities)
-
-
-def shipment_kpis(
-    persistence: Persistence,
-    *,
-    entities: WarehouseManagementEntities,
-) -> dict[str, object]:
-    shipment = _entity(persistence, "warehouse_management_shipment", entities.shipment_id)
-    departed_raw = shipment.attributes.get("departed_at")
-    completed_raw = shipment.attributes.get("completed_at")
-    planned_raw = shipment.attributes.get("planned_completion_at")
-
-    departed_at = datetime.fromisoformat(str(departed_raw)) if departed_raw else None
-    completed_at = datetime.fromisoformat(str(completed_raw)) if completed_raw else None
-    planned_at = datetime.fromisoformat(str(planned_raw)) if planned_raw else None
-    completed = shipment.state == "completed" and completed_at is not None
-    lead_time = (
-        (completed_at - departed_at).total_seconds()
-        if completed_at is not None and departed_at is not None
-        else None
-    )
-    lateness = (
-        max(0.0, (completed_at - planned_at).total_seconds())
-        if completed_at is not None and planned_at is not None
-        else None
-    )
-    return {
-        "shipment_state": shipment.state,
-        "completed": completed,
-        "on_time": completed_at <= planned_at if completed_at is not None and planned_at is not None else None,
-        "lead_time_seconds": lead_time,
-        "lateness_seconds": lateness,
-        "assigned_dock_id": shipment.attributes.get("assigned_dock_id"),
-        "assigned_forklift_id": shipment.attributes.get("assigned_forklift_id"),
-    }

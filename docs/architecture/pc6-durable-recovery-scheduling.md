@@ -41,7 +41,8 @@ on every invocation):
 
 ```sh
 sose composition-recovery \
-  --sqlite state/trading.sqlite3 \
+  --postgres-dsn postgresql://user@host/db --namespace trading \
+  --resource-policies policies.json \
   --owner-id pc6-recovery-1 \
   --correlation-id <durable-flow-correlation-id> \
   --organization-id <authoritative-organization-id> \
@@ -50,6 +51,16 @@ sose composition-recovery \
   --max-slots 16 \
   --max-actions 16
 ```
+
+`policies.json` maps each resource-backed intent to a pool contract, for example
+`{"composition.deliver_shipment": {"resource_type": "pickup_courier", "pool_id": "couriers",
+"scope": "shared", "capacity": 2}}`.
+
+> **Removed in 0.11.0 (ADR-0011, #634):** the policy-less recovery mode and the
+> `--sqlite` option, deprecated since 0.9.0. Composition recovery requires PostgreSQL
+> (`--postgres-dsn`) and a resource-policy file (`--resource-policies`), because the
+> physical resource ledger (`IntentResourceCoordinator`) is PostgreSQL-backed.
+> `TradingCustomerRecoveryRunner` raises `TypeError` without `resource_policies`.
 
 The operator must supply the real durable correlation and its authoritative organizational owner. `--owner-id` identifies the worker lease only; it must never be reused to infer Engine ownership. This command handles one correlation per invocation.
 

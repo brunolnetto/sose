@@ -17,6 +17,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v7
+        with:
+          # The upgrade gate builds the previous minor from its release commit.
+          fetch-depth: 0
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v7
@@ -55,6 +58,14 @@ jobs:
           assert set(sose.api.__all__)
           print(f"release artifact import smoke passed: {sose.__version__}")
           PY
+
+      - name: Upgrade gate from the previous minor
+        env:
+          # Previous minor's release tag.
+          PREVIOUS_MINOR_REF: v0.10.0
+        run: |
+          python scripts/check_release_upgrade.py \
+            --previous-ref "$PREVIOUS_MINOR_REF" --wheel dist/*.whl
 
       - name: Upload release candidate artifacts
         uses: actions/upload-artifact@v7

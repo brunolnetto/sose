@@ -30,7 +30,7 @@ def _message(*, amount: int = 3, occurrence_key: str = "1") -> BoundaryMessage:
         destination_domain="warehouse_fulfillment",
         occurrence_key=occurrence_key,
         correlation_id="corr-42",
-        causation_id="event-41",
+        causation_id=None,
         produced_at=NOW,
         payload={"sku": "A", "qty": amount, "nested": {"b": 2, "a": 1}},
     )
@@ -46,7 +46,7 @@ def test_boundary_message_identity_and_payload_are_canonical() -> None:
         destination_domain="warehouse_fulfillment",
         occurrence_key="1",
         correlation_id="corr-42",
-        causation_id="event-41",
+        causation_id=None,
         produced_at=NOW,
         payload={"nested": {"a": 1, "b": 2}, "qty": 3, "sku": "A"},
     )

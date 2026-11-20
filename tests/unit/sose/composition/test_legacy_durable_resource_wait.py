@@ -1,5 +1,7 @@
 """A durable transient resource demand is never a terminal business failure."""
+import os
 from datetime import datetime, timezone
+from uuid import uuid4
 
 import pytest
 
@@ -7,16 +9,31 @@ from sose.composition import trading_company_customer as customer
 from sose.composition.model import BoundaryMessage
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.core.events import Command
-from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+from sose.core.resource_identity import ResourcePoolContract
 
 
 NOW = datetime(2026, 10, 10, 12, tzinfo=timezone.utc)
 TRANSFER_OWNER = "pc6-transfer-recovery-organization"
+REFERENCE_OWNER = "test-org-legacy-durable-resource-wait"
+# Neutral certified policy (#634): deliver_shipment stays unmapped, so the
+# runner's own DurableResourceWait deferral is what this test exercises.
+NEUTRAL_POLICIES = {
+    "composition.settle_customer_payment": ResourcePoolContract(
+        resource_type="settlement_slot", pool_id="neutral-durable-wait",
+        scope="shared", capacity=1,
+    ),
+}
 
 
 def test_recovery_defers_a_transient_physical_wait_to_the_next_recurring_tick(
-    tmp_path, monkeypatch,
+    monkeypatch,
 ):
+    # Policy mode runs the real pass through the PostgreSQL intent coordinator.
+    dsn = os.getenv("SOSE_TEST_POSTGRES_DSN")
+    if not dsn:
+        pytest.skip("requires real PostgreSQL DSN")
+    from sose.persistence.postgres import PostgresPersistence
+
     source = BoundaryMessage.create(
         contract_name="warehouse.dispatch_ready", contract_version=1,
         source_domain="warehouse_fulfillment", source_identity="order",
@@ -50,13 +67,15 @@ def test_recovery_defers_a_transient_physical_wait_to_the_next_recurring_tick(
         TradingCustomerRecoveryRunner, "_execute_pending", staticmethod(process),
     )
 
-    database = tmp_path / "durable-pickup.sqlite"
-    with SQLiteIncrementalPersistence(database) as store:
+    namespace = "durable_pickup_" + uuid4().hex[:12]
+    with PostgresPersistence(dsn, namespace=namespace) as store:
         with store.transaction() as uow:
             uow.save_command(cmd)
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker-before-death", max_actions=3,
             organization_owners={"flow-a": "organization-a"},
+            resource_policies=NEUTRAL_POLICIES,
+            resource_organizations={"flow-a": "organization-a"},
         )
         first = runner.run_scheduled_trigger(scheduled_for=NOW)
         assert first.actions == 0
@@ -64,10 +83,12 @@ def test_recovery_defers_a_transient_physical_wait_to_the_next_recurring_tick(
         assert attempts == [cmd.command_id]
     # A different worker and a new persistence object replay the original
     # durable Command on a different recurring slot.
-    with SQLiteIncrementalPersistence(database) as restored:
+    with PostgresPersistence(dsn, namespace=namespace) as restored:
         runner = TradingCustomerRecoveryRunner(
             persistence=restored, owner_id="worker-after-restart", max_actions=3,
             organization_owners={"flow-a": "organization-a"},
+            resource_policies=NEUTRAL_POLICIES,
+            resource_organizations={"flow-a": "organization-a"},
         )
         second = runner.run_scheduled_trigger(scheduled_for=NOW.replace(minute=1))
         assert second.actions == 1
@@ -98,7 +119,7 @@ def test_synchronous_reference_path_retries_only_typed_temporary_capacity_wait(
         )
 
     monkeypatch.setattr(customer, "_execute_intent", transient_once)
-    result = customer.run_customer_demand_path(organization_id="test-org-legacy-durable-resource-wait")
+    result = customer.run_customer_demand_path(organization_id=REFERENCE_OWNER)
     assert len(attempts) == 2
     assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
 
@@ -126,7 +147,7 @@ def test_real_logistics_origin_dock_contention_is_durable_wait(monkeypatch):
         )
 
     monkeypatch.setattr(customer.logistics, "reconcile_origin_hub", contend_once)
-    result = customer.run_customer_demand_path(organization_id="test-org-legacy-durable-resource-wait")
+    result = customer.run_customer_demand_path(organization_id=REFERENCE_OWNER)
     assert len(calls) >= 2
     assert result.persistence.entity("shipment", result.shipment_id).state == "delivered"
     assert result.persistence.business_effects()

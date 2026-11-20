@@ -14,6 +14,12 @@ Engine and verifier, not derived from model metadata or stored in the UoW.
 Anyone with Python-process memory access to the key remains trusted; do not
 expose it in persisted config, JSON, logs or to an untrusted plugin.
 
+Receipt ids are owner-independent (`entity_type`, `entity_id`, version), matching
+the entity identity space. Once any owner has attested a version of an entity, no
+other owner can advance that entity under an authority: there is no ownership
+hand-off and no re-anchoring between owners, nor for entities whose history
+predates the authority. Such dispatches fail closed.
+
 This increment does **not** certify #545: key-rotation and writer-role separation,
 stale PostgreSQL fencing epochs, durable cross-worker issuer authority,
 receipt transport/verification in executable organization #496, physical

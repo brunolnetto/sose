@@ -64,11 +64,45 @@ def inspect_selected_boundary_protocol(
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
     )
+    _require_canonical_message_ids(message_ids)
+    admitted_edges = _admitted_edges(definition)
+    selected = set(message_ids)
+    messages, deliveries, consumptions = _read_protocol_records(persistence)
+
+    by_message = _selected_messages(messages, selected)
+    missing = selected - set(by_message)
+    if missing:
+        raise ValueError("selected durable boundary message missing")
+    selected_delivery_ids, selected_consumption_ids = _selected_identities(by_message)
+    by_delivery = _selected_deliveries(
+        deliveries, selected, selected_delivery_ids, by_message,
+    )
+    by_receipt = _selected_receipts(
+        consumptions, selected, selected_delivery_ids, selected_consumption_ids,
+        by_delivery,
+    )
+    output = [
+        _selected_receipt_evidence(
+            by_message[message_id], admitted_edges, by_delivery, by_receipt,
+        )
+        for message_id in sorted(selected)
+    ]
+    return SelectedBoundaryProtocolEvidence(
+        organization_id=definition.organization_id,
+        definition_fingerprint=fingerprint,
+        records=tuple(output),
+    )
+
+
+def _require_canonical_message_ids(message_ids) -> None:
     if not isinstance(message_ids, tuple) or any(
         not isinstance(value, str) or not value or value != value.strip()
         for value in message_ids
     ) or len(message_ids) != len(set(message_ids)):
         raise ValueError("selected boundary message IDs must be unique canonical strings")
+
+
+def _admitted_edges(definition: OrganizationDefinition) -> dict:
     by_component = {c.component_id: c for c in definition.components}
     admitted_edges = {}
     for edge in definition.boundaries:
@@ -78,44 +112,54 @@ def inspect_selected_boundary_protocol(
         if key in admitted_edges:
             raise ValueError("ambiguous admitted boundary edge")
         admitted_edges[key] = edge
+    return admitted_edges
 
-    selected = set(message_ids)
-    # Read all three protocol families from one authoritative UoW. No global
-    # snapshot of other owners' jobs, clocks or shared physical reservations.
+
+def _read_protocol_records(persistence):
+    """Read all three protocol families from one authoritative UoW.
+
+    No global snapshot of other owners' jobs, clocks or shared physical
+    reservations.
+    """
     reader = getattr(persistence, "boundary_protocol_snapshot", None)
     if callable(reader):
         # PostgreSQL: one repeatable-read read-only snapshot. No writer
         # lease/epoch is required, even when global fencing is active.
-        messages, deliveries, consumptions = reader()
-    else:
-        with persistence.transaction() as uow:
-            messages, deliveries, consumptions = (
-                uow.boundary_messages(),
-                uow.boundary_deliveries(),
-                uow.boundary_consumptions(),
-            )
+        return reader()
+    with persistence.transaction() as uow:
+        return (
+            uow.boundary_messages(),
+            uow.boundary_deliveries(),
+            uow.boundary_consumptions(),
+        )
 
+
+def _has_integer_contract_version(record) -> bool:
+    return type(record.contract_version) is int and record.contract_version >= 1
+
+
+def _selected_messages(messages, selected: set) -> dict:
     by_message = {}
     for message in messages:
-        if message.message_id in selected:
-            if type(message.contract_version) is not int or message.contract_version < 1:
-                raise ValueError("selected boundary publication requires integer contract version")
-            identity = deterministic_id(
-                "boundary-message", message.source_domain, message.source_identity,
-                message.contract_name, message.contract_version,
-                message.destination_domain, message.occurrence_key,
-            )
-            if message.message_id != identity:
-                raise ValueError("selected boundary publication has forged deterministic identity")
-            if message.message_id in by_message:
-                raise ValueError("duplicate selected durable boundary message")
-            by_message[message.message_id] = message
+        if message.message_id not in selected:
+            continue
+        if not _has_integer_contract_version(message):
+            raise ValueError("selected boundary publication requires integer contract version")
+        identity = deterministic_id(
+            "boundary-message", message.source_domain, message.source_identity,
+            message.contract_name, message.contract_version,
+            message.destination_domain, message.occurrence_key,
+        )
+        if message.message_id != identity:
+            raise ValueError("selected boundary publication has forged deterministic identity")
+        if message.message_id in by_message:
+            raise ValueError("duplicate selected durable boundary message")
+        by_message[message.message_id] = message
+    return by_message
 
-    missing = selected - set(by_message)
-    if missing:
-        raise ValueError("selected durable boundary message missing")
 
-    by_delivery = {}
+def _selected_identities(by_message: dict) -> tuple[set, set]:
+    """Expected delivery and consumption IDs of the selected publications."""
     selected_delivery_ids = set()
     selected_consumption_ids = set()
     for message in by_message.values():
@@ -126,133 +170,160 @@ def inspect_selected_boundary_protocol(
             expected.destination_domain, expected.contract_name,
             expected.contract_version,
         ))
-    for delivery in deliveries:
-        if delivery.message_id in selected or delivery.delivery_id in selected_delivery_ids:
-            if type(delivery.contract_version) is not int or delivery.contract_version < 1:
-                raise ValueError("selected boundary delivery requires integer contract version")
-            # A second delivery with the same message_id but a forged ID
-            # must not disappear merely because the correct delivery exists.
-            if delivery.message_id not in by_message:
-                raise ValueError("selected delivery references another durable message")
-            expected = BoundaryDelivery.pending(by_message[delivery.message_id])
-            if delivery.delivery_id != expected.delivery_id:
-                raise ValueError("selected delivery identity contradicts publication")
-            if delivery.delivery_id in by_delivery:
-                raise ValueError("duplicate selected durable boundary delivery")
-            by_delivery[delivery.delivery_id] = delivery
+    return selected_delivery_ids, selected_consumption_ids
 
+
+def _selected_deliveries(deliveries, selected: set, selected_delivery_ids: set, by_message: dict) -> dict:
+    by_delivery = {}
+    for delivery in deliveries:
+        if delivery.message_id not in selected and delivery.delivery_id not in selected_delivery_ids:
+            continue
+        if not _has_integer_contract_version(delivery):
+            raise ValueError("selected boundary delivery requires integer contract version")
+        # A second delivery with the same message_id but a forged ID
+        # must not disappear merely because the correct delivery exists.
+        if delivery.message_id not in by_message:
+            raise ValueError("selected delivery references another durable message")
+        expected = BoundaryDelivery.pending(by_message[delivery.message_id])
+        if delivery.delivery_id != expected.delivery_id:
+            raise ValueError("selected delivery identity contradicts publication")
+        if delivery.delivery_id in by_delivery:
+            raise ValueError("duplicate selected durable boundary delivery")
+        by_delivery[delivery.delivery_id] = delivery
+    return by_delivery
+
+
+def _selected_receipts(
+    consumptions, selected: set, selected_delivery_ids: set,
+    selected_consumption_ids: set, by_delivery: dict,
+) -> dict:
     by_receipt = {}
     for receipt in consumptions:
-        if (
+        if not (
             receipt.message_id in selected
             or receipt.delivery_id in selected_delivery_ids
             or receipt.consumption_id in selected_consumption_ids
         ):
-            if type(receipt.contract_version) is not int or receipt.contract_version < 1:
-                raise ValueError("selected boundary ACK requires integer contract version")
-            if receipt.delivery_id not in selected_delivery_ids:
-                raise ValueError("selected ACK identity references foreign delivery")
-            delivery = by_delivery.get(receipt.delivery_id)
-            if delivery is None or receipt.message_id != delivery.message_id:
-                raise ValueError("selected ACK contradicts durable delivery identity")
-            if receipt.delivery_id in by_receipt:
-                raise ValueError("duplicate selected durable boundary ACK")
-            by_receipt[receipt.delivery_id] = receipt
+            continue
+        if not _has_integer_contract_version(receipt):
+            raise ValueError("selected boundary ACK requires integer contract version")
+        if receipt.delivery_id not in selected_delivery_ids:
+            raise ValueError("selected ACK identity references foreign delivery")
+        delivery = by_delivery.get(receipt.delivery_id)
+        if delivery is None or receipt.message_id != delivery.message_id:
+            raise ValueError("selected ACK contradicts durable delivery identity")
+        if receipt.delivery_id in by_receipt:
+            raise ValueError("duplicate selected durable boundary ACK")
+        by_receipt[receipt.delivery_id] = receipt
+    return by_receipt
 
-    output = []
-    for message_id in sorted(selected):
-        message = by_message[message_id]
-        edge = admitted_edges.get((
-            message.source_domain, message.destination_domain,
-            message.contract_name, message.contract_version,
-        ))
-        if edge is None:
-            raise ValueError("selected boundary message has no exact admitted edge")
-        expected = BoundaryDelivery.pending(message)
-        delivery = by_delivery.get(expected.delivery_id)
-        if delivery is None:
-            raise ValueError("selected published message lacks durable delivery")
-        if (
-            delivery != expected and (
-                delivery.delivery_id != expected.delivery_id
-                or delivery.message_id != message.message_id
-                or delivery.destination_domain != message.destination_domain
-                or delivery.contract_name != message.contract_name
-                or delivery.contract_version != message.contract_version
-            )
-        ):
-            raise ValueError("selected delivery contradicts immutable publication")
-        receipt = by_receipt.get(delivery.delivery_id)
-        if delivery.consumer_effect_id is not None and (
-            not isinstance(delivery.consumer_effect_id, str)
-            or not delivery.consumer_effect_id.strip()
-        ):
-            raise ValueError("selected delivery has invalid consumer effect identity")
-        if receipt is not None and (
-            not isinstance(receipt.consumer_effect_id, str)
-            or not receipt.consumer_effect_id.strip()
-        ):
-            raise ValueError("selected ACK has invalid consumer effect identity")
-        if not isinstance(delivery.status, DeliveryStatus):
-            raise ValueError("selected delivery has invalid status")
-        if delivery.status is DeliveryStatus.PENDING and (
-            type(delivery.attempts) is not int
-            or type(delivery.claim_epoch) is not int
-            or delivery.attempts != 0
-            or delivery.claim_epoch != 0
-        ):
-            raise ValueError("pending selected delivery carries impossible claim history")
-        if delivery.status in (DeliveryStatus.CLAIMED, DeliveryStatus.CONSUMED):
-            if (
-                type(delivery.attempts) is not int
-                or type(delivery.claim_epoch) is not int
-                or delivery.attempts < 1
-                or delivery.claim_epoch != delivery.attempts
-                or not isinstance(delivery.claim_owner_id, str)
-                or not delivery.claim_owner_id.strip()
-                or delivery.claimed_at is None
-                or delivery.lease_expires_at is None
-                # Production has independent logical source time and lease
-                # wall time. They must not be compared across clock domains.
-                or not (delivery.claimed_at < delivery.lease_expires_at)
-            ):
-                raise ValueError("selected delivery lacks original claim provenance")
-        if delivery.status is DeliveryStatus.CONSUMED:
-            if (
-                delivery.consumed_at is None
-                or not (delivery.claimed_at <= delivery.consumed_at
-                        < delivery.lease_expires_at)
-            ):
-                raise ValueError("consumed selected delivery violates claim time fence")
-            if receipt is None:
-                raise ValueError("consumed selected delivery lacks durable ACK")
-            expected_receipt = BoundaryConsumption.create(
-                delivery=delivery, consumer_effect_id=delivery.consumer_effect_id,
-                consumed_at=delivery.consumed_at,
-            )
-            if receipt != expected_receipt:
-                raise ValueError("durable selected ACK contradicts delivery")
-        elif receipt is not None:
-            raise ValueError("unconsumed selected delivery unexpectedly has ACK")
-        output.append(SelectedBoundaryReceipt(
-            message_id=message_id,
-            declared_producer_component_id=edge.producer_id,
-            declared_consumer_component_id=edge.consumer_id,
-            contract_name=message.contract_name,
-            contract_version=message.contract_version,
-            correlation_id=message.correlation_id,
-            causation_id=message.causation_id,
-            causation_kind=message.causation_kind,
-            delivery_id=delivery.delivery_id,
-            status=delivery.status,
-            attempts=delivery.attempts,
-            claim_epoch=delivery.claim_epoch,
-            claim_worker_id=delivery.claim_owner_id,
-            consumption_id=receipt.consumption_id if receipt else None,
-            consumer_effect_id=delivery.consumer_effect_id,
-        ))
-    return SelectedBoundaryProtocolEvidence(
-        organization_id=definition.organization_id,
-        definition_fingerprint=fingerprint,
-        records=tuple(output),
+
+def _selected_receipt_evidence(message, admitted_edges, by_delivery, by_receipt):
+    edge = admitted_edges.get((
+        message.source_domain, message.destination_domain,
+        message.contract_name, message.contract_version,
+    ))
+    if edge is None:
+        raise ValueError("selected boundary message has no exact admitted edge")
+    expected = BoundaryDelivery.pending(message)
+    delivery = by_delivery.get(expected.delivery_id)
+    if delivery is None:
+        raise ValueError("selected published message lacks durable delivery")
+    if delivery != expected and _delivery_contradicts(delivery, expected, message):
+        raise ValueError("selected delivery contradicts immutable publication")
+    receipt = by_receipt.get(delivery.delivery_id)
+    _verify_effect_identities(delivery, receipt)
+    _verify_claim_history(delivery)
+    _verify_ack(delivery, receipt)
+    return SelectedBoundaryReceipt(
+        message_id=message.message_id,
+        declared_producer_component_id=edge.producer_id,
+        declared_consumer_component_id=edge.consumer_id,
+        contract_name=message.contract_name,
+        contract_version=message.contract_version,
+        correlation_id=message.correlation_id,
+        causation_id=message.causation_id,
+        causation_kind=message.causation_kind,
+        delivery_id=delivery.delivery_id,
+        status=delivery.status,
+        attempts=delivery.attempts,
+        claim_epoch=delivery.claim_epoch,
+        claim_worker_id=delivery.claim_owner_id,
+        consumption_id=receipt.consumption_id if receipt else None,
+        consumer_effect_id=delivery.consumer_effect_id,
     )
+
+
+def _delivery_contradicts(delivery, expected, message) -> bool:
+    return (
+        delivery.delivery_id != expected.delivery_id
+        or delivery.message_id != message.message_id
+        or delivery.destination_domain != message.destination_domain
+        or delivery.contract_name != message.contract_name
+        or delivery.contract_version != message.contract_version
+    )
+
+
+def _is_nonblank_str(value) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _verify_effect_identities(delivery, receipt) -> None:
+    if delivery.consumer_effect_id is not None and not _is_nonblank_str(delivery.consumer_effect_id):
+        raise ValueError("selected delivery has invalid consumer effect identity")
+    if receipt is not None and not _is_nonblank_str(receipt.consumer_effect_id):
+        raise ValueError("selected ACK has invalid consumer effect identity")
+    if not isinstance(delivery.status, DeliveryStatus):
+        raise ValueError("selected delivery has invalid status")
+
+
+def _verify_claim_history(delivery) -> None:
+    if delivery.status is DeliveryStatus.PENDING and (
+        type(delivery.attempts) is not int
+        or type(delivery.claim_epoch) is not int
+        or delivery.attempts != 0
+        or delivery.claim_epoch != 0
+    ):
+        raise ValueError("pending selected delivery carries impossible claim history")
+    if (
+        delivery.status in (DeliveryStatus.CLAIMED, DeliveryStatus.CONSUMED)
+        and _lacks_claim_provenance(delivery)
+    ):
+        raise ValueError("selected delivery lacks original claim provenance")
+
+
+def _lacks_claim_provenance(delivery) -> bool:
+    return (
+        type(delivery.attempts) is not int
+        or type(delivery.claim_epoch) is not int
+        or delivery.attempts < 1
+        or delivery.claim_epoch != delivery.attempts
+        or not isinstance(delivery.claim_owner_id, str)
+        or not delivery.claim_owner_id.strip()
+        or delivery.claimed_at is None
+        or delivery.lease_expires_at is None
+        # Production has independent logical source time and lease
+        # wall time. They must not be compared across clock domains.
+        or not (delivery.claimed_at < delivery.lease_expires_at)
+    )
+
+
+def _verify_ack(delivery, receipt) -> None:
+    if delivery.status is not DeliveryStatus.CONSUMED:
+        if receipt is not None:
+            raise ValueError("unconsumed selected delivery unexpectedly has ACK")
+        return
+    if (
+        delivery.consumed_at is None
+        or not (delivery.claimed_at <= delivery.consumed_at
+                < delivery.lease_expires_at)
+    ):
+        raise ValueError("consumed selected delivery violates claim time fence")
+    if receipt is None:
+        raise ValueError("consumed selected delivery lacks durable ACK")
+    expected_receipt = BoundaryConsumption.create(
+        delivery=delivery, consumer_effect_id=delivery.consumer_effect_id,
+        consumed_at=delivery.consumed_at,
+    )
+    if receipt != expected_receipt:
+        raise ValueError("durable selected ACK contradicts delivery")

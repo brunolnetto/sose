@@ -14,12 +14,22 @@ import pytest
 
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.composition.scheduler import RecoverySchedule
+from sose.core.resource_identity import ResourcePoolContract
 from sose.persistence.ownership import FencedEnginePersistence
 from sose.persistence.postgres import PostgresPersistence, StaleWriterError
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
 T0 = datetime(2026, 10, 11, tzinfo=timezone.utc)
+# #634 policy mode: certified, but never issued by these jobs (they run
+# synthetic passes or the logistics deliver_shipment boundary), so every
+# effect keeps its historical (unmapped) admission semantics.
+NEUTRAL_POLICY = {
+    "composition.post_replenishment_journal": ResourcePoolContract(
+        resource_type="journal_clerk", pool_id="pc6-recurring-neutral",
+        scope="shared", capacity=1,
+    ),
+}
 
 
 def _namespace():
@@ -82,6 +92,7 @@ def test_crash_during_recurrence_replays_only_its_job_slot(monkeypatch):
             runner=TradingCustomerRecoveryRunner(
                 persistence=store, owner_id=owner, job_id=job_id,
                 correlation_id=org, organization_owners={org: org}, scoped_writer=True,
+                resource_policies=NEUTRAL_POLICY, resource_organizations={org: org},
             ),
             start_at=slots[org], interval=timedelta(minutes=5),
             max_slots=2,
@@ -153,6 +164,8 @@ def test_two_distinct_job_scopes_can_be_in_flight_together(monkeypatch):
                 persistence=store, owner_id=f"worker-{key}",
                 job_id=f"job-{key}", scoped_writer=True, correlation_id=f"org-{key}",
                 organization_owners={f"org-{key}": f"org-{key}"},
+                resource_policies=NEUTRAL_POLICY,
+                resource_organizations={f"org-{key}": f"org-{key}"},
             )
             return runner.run_scheduled_trigger(
                 scheduled_for=T0 + timedelta(minutes=5 if key == "b" else 0),
@@ -196,6 +209,7 @@ def test_recurring_jobs_claim_only_their_own_causal_boundary(monkeypatch):
             runner = TradingCustomerRecoveryRunner(
                 persistence=store, owner_id=f"worker-{org}", job_id=job_id,
                 correlation_id=org, organization_owners={org: org}, scoped_writer=True, max_actions=1,
+                resource_policies=NEUTRAL_POLICY, resource_organizations={org: org},
             )
             completed = runner.run_scheduled_trigger(scheduled_for=logical_time)
             assert completed.actions == 1
@@ -378,6 +392,7 @@ def test_scoped_job_cannot_silently_rebind_another_organization():
         a = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker-a", job_id="shared-job",
             scoped_writer=True, correlation_id="organization-a", organization_owners={"organization-a": "organization-a"}, max_actions=1,
+            resource_policies=NEUTRAL_POLICY, resource_organizations={"organization-a": "organization-a"},
         )
         a.run_scheduled_trigger(scheduled_for=T0)
         original = store.job_state("shared-job")
@@ -386,6 +401,7 @@ def test_scoped_job_cannot_silently_rebind_another_organization():
             job_id="shared-job", scoped_writer=True,
             correlation_id="organization-a",
             organization_owners={"organization-a": "foreign-organization"},
+            resource_policies=NEUTRAL_POLICY, resource_organizations={"organization-a": "foreign-organization"},
             max_actions=1,
         )
         with pytest.raises(ValueError, match="organizational binding changed"):
@@ -394,6 +410,7 @@ def test_scoped_job_cannot_silently_rebind_another_organization():
         b = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker-b", job_id="shared-job",
             scoped_writer=True, correlation_id="organization-b", organization_owners={"organization-b": "organization-b"}, max_actions=1,
+            resource_policies=NEUTRAL_POLICY, resource_organizations={"organization-b": "organization-b"},
         )
         with pytest.raises(ValueError, match="organizational binding changed"):
             b.run_scheduled_trigger(scheduled_for=T0 + timedelta(minutes=5))
@@ -404,6 +421,7 @@ def test_scoped_job_cannot_silently_rebind_another_organization():
             persistence=store, owner_id="worker-b-legitimate",
             job_id="independent-job-b", scoped_writer=True,
             correlation_id="organization-b", organization_owners={"organization-b": "organization-b"}, max_actions=1,
+            resource_policies=NEUTRAL_POLICY, resource_organizations={"organization-b": "organization-b"},
         )
         owned_b.run_scheduled_trigger(scheduled_for=T0)
         assert store.job_state("independent-job-b").run_count == 1
@@ -419,12 +437,14 @@ def test_correlation_cannot_be_claimed_by_two_distinct_recurring_jobs():
         first = TradingCustomerRecoveryRunner(
             persistence=a, owner_id="worker-a", job_id="company-a-job",
             scoped_writer=True, correlation_id="shared-correlation", organization_owners={"shared-correlation": "company-a"},
+            resource_policies=NEUTRAL_POLICY, resource_organizations={"shared-correlation": "company-a"},
             max_actions=1,
         )
         first.run_scheduled_trigger(scheduled_for=T0)
         different = TradingCustomerRecoveryRunner(
             persistence=b, owner_id="worker-b", job_id="other-job",
             scoped_writer=True, correlation_id="shared-correlation", organization_owners={"shared-correlation": "company-a"},
+            resource_policies=NEUTRAL_POLICY, resource_organizations={"shared-correlation": "company-a"},
             max_actions=1,
         )
         with pytest.raises(ValueError, match="already owned by another job"):
@@ -449,6 +469,7 @@ def _child_die_during_scoped_trigger(namespace):
         runner = _KilledAfterCheckpoint(
             persistence=store, owner_id="killed-process",
             job_id="job-a", scoped_writer=True, correlation_id="org-a", organization_owners={"org-a": "org-a"},
+            resource_policies=NEUTRAL_POLICY, resource_organizations={"org-a": "org-a"},
             max_actions=1,
         )
         runner.run_scheduled_trigger(scheduled_for=T0)
@@ -478,6 +499,7 @@ def test_actual_sigkill_restarts_a_job_while_another_advances():
             persistence=other, owner_id="unaffected-worker",
             job_id="job-b", scoped_writer=True,
             correlation_id="org-b", organization_owners={"org-b": "org-b"}, max_actions=1,
+            resource_policies=NEUTRAL_POLICY, resource_organizations={"org-b": "org-b"},
         )
         other_runner.run_scheduled_trigger(scheduled_for=T0 + timedelta(hours=2))
         assert other.job_state("job-b").run_count == 1
@@ -488,6 +510,7 @@ def test_actual_sigkill_restarts_a_job_while_another_advances():
             persistence=restored, owner_id="replacement-worker",
             job_id="job-a", scoped_writer=True,
             correlation_id="org-a", organization_owners={"org-a": "org-a"}, max_actions=1,
+            resource_policies=NEUTRAL_POLICY, resource_organizations={"org-a": "org-a"},
         )
         slot = runner.run_scheduled_trigger(scheduled_for=T0)
         assert slot.actions == 0

@@ -10,7 +10,7 @@ from sose.domain.entity_store import WarehouseBackedEntityStore
 from sose.core.identity import deterministic_id
 from sose.persistence.base import Persistence
 from sose.scenarios.model import Scenario
-from sose.scenarios.rules import ScenarioRule
+from sose.scenarios.rules import ScenarioRule, warn_rule_hook
 
 from .context import SimulationContext
 from .durable import (
@@ -62,6 +62,8 @@ class Engine:
             if domain_warehouse is not None
             else None
         )
+        if rules_for is not None:
+            warn_rule_hook("Engine(rules_for=...)")
         self.rules_for = rules_for or (lambda _: ())
         self.resources = DurableResourceManager(persistence)
         self.preemptive_resources = DurablePreemptiveResourceManager(persistence)
@@ -92,6 +94,35 @@ class Engine:
             from sose.domain.delivery import DomainDelivery
             uow.save_domain_delivery(DomainDelivery(mutation))
 
+    def _apply_transition(self, uow, entity: Entity, command: Command) -> None:
+        """Run one StateChart command and record (and optionally attest) it."""
+        authority = self.transition_authority
+        if authority is not None and self.context.pending_events:
+            raise ValueError("cannot attest preexisting pending source events")
+        before_transition = deepcopy(entity)
+        chart = self.context.statecharts.bind(entity, caused_by=command)
+        predecessor = None
+        if authority is not None:
+            predecessor = authority.validate_prestate(
+                uow=uow, before=before_transition, chart=chart, owner_id=self.owner_id,
+            )
+        chart.send(command.name, **dict(command.payload))
+        self._save_entity(uow, entity)
+        emitted = self.context.drain_events()
+        if authority is not None and (
+            len(emitted) != 1 or emitted[0].name != "entity.state_transition"
+        ):
+            raise ValueError("attested dispatch requires exactly one recorder-produced transition")
+        for event in emitted:
+            uow.append_event(event)
+            if authority is not None:
+                uow.append_event(authority.seal(
+                    before=before_transition, after=entity, event=event,
+                    command=command, predecessor=predecessor,
+                ))
+            self.context.scenarios.on_event(event)
+        uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
+
     def dispatch(self, command: Command) -> None:
         if command.owner_id != self.owner_id:
             raise PermissionError("command belongs to a different or missing owner")
@@ -105,26 +136,7 @@ class Engine:
                 if self.context.statecharts is None:  # pragma: no cover - constructor invariant
                     raise RuntimeError("statechart factory is not configured")
 
-                if self.transition_authority is not None and self.context.pending_events:
-                    raise ValueError("cannot attest preexisting pending source events")
-                before_transition = deepcopy(entity)
-                chart = self.context.statecharts.bind(entity, caused_by=command)
-                chart.send(command.name, **dict(command.payload))
-                self._save_entity(uow, entity)
-                emitted = self.context.drain_events()
-                if self.transition_authority is not None and (
-                    len(emitted) != 1 or emitted[0].name != "entity.state_transition"
-                ):
-                    raise ValueError("attested dispatch requires exactly one recorder-produced transition")
-                for event in emitted:
-                    uow.append_event(event)
-                    if self.transition_authority is not None and event.name == "entity.state_transition":
-                        uow.append_event(self.transition_authority.seal(
-                            before=before_transition, after=entity,
-                            event=event, command=command,
-                        ))
-                    self.context.scenarios.on_event(event)
-                uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
+                self._apply_transition(uow, entity, command)
         except Exception:
             self.context.scenarios.restore_state(scenario_before)
             raise
@@ -159,26 +171,7 @@ class Engine:
         if self.context.statecharts is None:  # pragma: no cover - constructor invariant
             raise RuntimeError("statechart factory is not configured")
 
-        if self.transition_authority is not None and self.context.pending_events:
-            raise ValueError("cannot attest preexisting pending source events")
-        before_transition = deepcopy(entity)
-        chart = self.context.statecharts.bind(entity, caused_by=command)
-        chart.send(command.name, **dict(command.payload))
-        self._save_entity(uow, entity)
-        emitted = self.context.drain_events()
-        if self.transition_authority is not None and (
-            len(emitted) != 1 or emitted[0].name != "entity.state_transition"
-        ):
-            raise ValueError("attested dispatch requires exactly one recorder-produced transition")
-        for event in emitted:
-            uow.append_event(event)
-            if self.transition_authority is not None and event.name == "entity.state_transition":
-                uow.append_event(self.transition_authority.seal(
-                    before=before_transition, after=entity,
-                    event=event, command=command,
-                ))
-            self.context.scenarios.on_event(event)
-        uow.set_scenario_state(self.context.scenarios.snapshot_state(), owner_id=self.owner_id)
+        self._apply_transition(uow, entity, command)
 
         uow.delete_scheduled_work(work.work_id)
         uow.delete_command(command.command_id)
@@ -322,7 +315,9 @@ class Engine:
         """Evaluate scenario policies and dispatch resulting commands.
 
         Scenario rules choose valid intentions; they never mutate entity state directly.
+        Deprecated with ``ScenarioRule`` in 0.11.0, removed in 0.12.0.
         """
+        warn_rule_hook("Engine.evaluate_entity")
         for rule in self.rules_for(entity.entity_type):
             command_name = rule.evaluate(entity, self.context)
             if command_name:
@@ -357,9 +352,6 @@ class Engine:
         position_before = self.persistence.simulation_position(owner_id=self.owner_id)
         execution_sequence = (
             0 if position_before is None else position_before.execution_sequence
-        )
-        committed_sequence = (
-            0 if position_before is None else position_before.committed_sequence
         )
 
         try:

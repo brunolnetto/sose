@@ -1,0 +1,1049 @@
+"""Operational OD-3 queue effects, exact replay and paid-decision accounting (#463)."""
+from __future__ import annotations
+
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
+from sose.organizational.queue_decisions import OD3Policy, QueuedWork
+from sose.organizational.queue_policy_runtime import (
+    QUEUE_KIND, apply_od3_queue_policy, seed_od3_queue,
+)
+from sose.persistence.memory import MemoryPersistence, MemoryUnitOfWork
+from sose.persistence.sqlite import SQLitePersistence
+
+NOW = datetime(2026, 10, 22, 10, tzinfo=timezone.utc)
+OWNER = "org:od3"
+KEY = "workstream:orders"
+
+
+def policy(name, **overrides):
+    return OD3Policy(**{
+        **dict(name=name, delay_threshold_us=5, cooldown_us=10,
+               decision_cost_us=3, starvation_bound_us=20),
+        **overrides,
+    })
+
+
+def work(name, wait_us, effort, *, last_contact_us=None, blocked=False):
+    return QueuedWork(
+        item_id=name, owner_id=OWNER,
+        arrived_at=NOW - timedelta(microseconds=wait_us),
+        service_us=effort,
+        last_contact_at=(
+            NOW - timedelta(microseconds=last_contact_us)
+            if last_contact_us is not None else None
+        ),
+        blocked=blocked,
+    )
+
+
+def store_for(adapter, tmp_path):
+    return (MemoryPersistence() if adapter == "memory" else
+            SQLitePersistence(tmp_path / (adapter + ".sqlite")))
+
+
+def snapshot(store, queue_id):
+    row = store.entity(QUEUE_KIND, queue_id)
+    assert row is not None
+    return row.attributes, row.version, store.events()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_cherry_picking_changes_durable_rank_while_paid_sham_does_not(adapter, tmp_path):
+    store = store_for(adapter, tmp_path)
+    queue = (work("slow", 15, 70), work("fast", 8, 1))
+    p = policy("cherry_picking")
+    sham = policy("sham", matched_policy="cherry_picking")
+    try:
+        active_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key="active", items=queue, at=NOW,
+        )
+        sham_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key="sham", items=queue, at=NOW,
+        )
+        active = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key="active", observation_id="paired:1",
+            policy=p, observed_at=NOW,
+        )
+        placebo = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key="sham", observation_id="paired:1",
+            policy=sham, matched_active_policy=p, observed_at=NOW,
+        )
+        attrs_active, version_active, _ = snapshot(store, active_id)
+        attrs_sham, version_sham, _ = snapshot(store, sham_id)
+        assert active.name == placebo.name == "od3.queue_effect_applied"
+        assert active.payload["action"] == "PRIORITIZE"
+        assert placebo.payload["action"] == "SHAM"
+        assert active.payload["selected_item_id"] == placebo.payload["selected_item_id"] == "fast"
+        assert [x["item_id"] for x in attrs_active["items"]] == ["fast", "slow"]
+        assert [x["item_id"] for x in attrs_sham["items"]] == ["slow", "fast"]
+        assert attrs_active["paid_policy_us"] == attrs_sham["paid_policy_us"] == 3
+        assert version_active == version_sham == 1
+        assert len(store.events()) == 8  # 2 x (seed anchor, decision, effect, slot)
+        assert {ev.name for ev in store.events()} == {
+            "od3.queue_anchored", "od3.policy_decided", "od3.queue_effect_applied",
+            "od3.queue_version_claimed",
+        }
+        # A replay is harmless even after the queue was already modified.
+        assert apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key="active", observation_id="paired:1",
+            policy=p, observed_at=NOW,
+        ) == active
+        with pytest.raises(ValueError, match="replay conflicts"):
+            apply_od3_queue_policy(
+                store, owner_id=OWNER, queue_key="active", observation_id="paired:1",
+                policy=replace(p, decision_cost_us=8), observed_at=NOW,
+            )
+        assert snapshot(store, active_id)[1] == 1
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(tmp_path / "sqlite.sqlite") as recovered:
+            assert apply_od3_queue_policy(
+                recovered, owner_id=OWNER, queue_key="active",
+                observation_id="paired:1", policy=p, observed_at=NOW,
+            ) == active
+            assert snapshot(recovered, active_id)[0]["paid_policy_us"] == 3
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_follow_up_updates_contact_and_cooldown_without_inventing_service(adapter, tmp_path):
+    store = store_for(adapter, tmp_path)
+    p = policy("adaptive_follow_up")
+    queue = (work("old", 15, 80), work("later", 10, 1))
+    try:
+        queue_id = seed_od3_queue(store, owner_id=OWNER, queue_key=KEY, items=queue, at=NOW)
+        first = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY,
+            observation_id="contact:1", policy=p, observed_at=NOW,
+        )
+        state, _, _ = snapshot(store, queue_id)
+        assert first.payload["action"] == "CONTACT"
+        assert first.payload["selected_item_id"] == "old"
+        assert state["items"][0]["last_contact_at"] == NOW.isoformat()
+        assert [x["item_id"] for x in state["items"]] == ["old", "later"]
+        assert state["paid_policy_us"] == 3
+        noop = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY,
+            observation_id="contact:2", policy=p,
+            observed_at=NOW + timedelta(microseconds=2),
+        )
+        assert noop.payload["action"] == "NOOP" and noop.payload["cost_us"] == 0
+        # Last action remains the paid contact, not the null observation.
+        assert snapshot(store, queue_id)[0]["last_action_at"] == NOW.isoformat()
+        next_action = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY,
+            observation_id="contact:3", policy=p,
+            observed_at=NOW + timedelta(microseconds=12),
+        )
+        assert next_action.payload["action"] == "CONTACT"
+        assert next_action.payload["selected_item_id"] == "later"
+        assert snapshot(store, queue_id)[0]["paid_policy_us"] == 6
+        assert len(store.events()) == 10  # seed anchor + 3 x (decision/effect/slot)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_starvation_guard_and_replay_conflict_fail_closed(adapter, tmp_path):
+    store = store_for(adapter, tmp_path)
+    try:
+        qid = seed_od3_queue(
+            store, owner_id=OWNER, queue_key=KEY,
+            items=(work("old", 21, 80), work("fast", 8, 1)), at=NOW,
+        )
+        first = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY, observation_id="starvation",
+            policy=policy("cherry_picking"), observed_at=NOW,
+        )
+        assert first.payload["selected_item_id"] == "old"
+        assert first.payload["after"] == ["old", "fast"]
+        before = snapshot(store, qid)
+        with pytest.raises(ValueError, match="replay conflicts"):
+            apply_od3_queue_policy(
+                store, owner_id=OWNER, queue_key=KEY, observation_id="starvation",
+                policy=policy("adaptive_follow_up"), observed_at=NOW,
+            )
+        # A later NOOP is still a durable observation. An out-of-order
+        # observation must not silently rewrite the queue history.
+        second = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY, observation_id="later",
+            policy=policy("cherry_picking"),
+            observed_at=NOW + timedelta(microseconds=2),
+        )
+        assert second.payload["action"] == "NOOP"
+        before = snapshot(store, qid)
+        with pytest.raises(ValueError, match="regressed"):
+            apply_od3_queue_policy(
+                store, owner_id=OWNER, queue_key=KEY, observation_id="past",
+                policy=policy("cherry_picking"),
+                observed_at=NOW + timedelta(microseconds=1),
+            )
+        with pytest.raises(KeyError, match="not admitted"):
+            apply_od3_queue_policy(
+                store, owner_id=OWNER, queue_key="missing", observation_id="missing",
+                policy=policy("cherry_picking"), observed_at=NOW,
+            )
+        assert snapshot(store, qid) == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_queue_effect_and_paid_ledger_roll_back_on_late_append_failure(
+    adapter, tmp_path, monkeypatch,
+):
+    store = store_for(adapter, tmp_path)
+    qid = seed_od3_queue(
+        store, owner_id=OWNER, queue_key=KEY,
+        items=(work("slow", 15, 30), work("fast", 8, 1)), at=NOW,
+    )
+    original_append = MemoryUnitOfWork.append_event
+
+    def fail_effect(self, event):
+        if event.name == "od3.queue_effect_applied":
+            raise OSError("injected failure after diagnostic append")
+        return original_append(self, event)
+
+    before = snapshot(store, qid)
+    try:
+        with monkeypatch.context() as mp:
+            mp.setattr(MemoryUnitOfWork, "append_event", fail_effect)
+            with pytest.raises(OSError, match="injected failure"):
+                apply_od3_queue_policy(
+                    store, owner_id=OWNER, queue_key=KEY,
+                    observation_id="atomic", policy=policy("cherry_picking"),
+                    observed_at=NOW,
+                )
+        assert snapshot(store, qid) == before
+        effect = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY, observation_id="atomic",
+            policy=policy("cherry_picking"), observed_at=NOW,
+        )
+        assert effect.name == "od3.queue_effect_applied"
+        assert snapshot(store, qid)[0]["paid_policy_us"] == 3
+    finally:
+        if adapter == "sqlite":
+            store.close()
+    if adapter == "sqlite":
+        with SQLitePersistence(tmp_path / "sqlite.sqlite") as recovered:
+            assert snapshot(recovered, qid)[0]["paid_policy_us"] == 3
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_reject_queue_admission_conflicts_and_foreign_work(adapter, tmp_path):
+    store = store_for(adapter, tmp_path)
+    try:
+        qid = seed_od3_queue(
+            store, owner_id=OWNER, queue_key=KEY, items=(work("good", 8, 2),), at=NOW,
+        )
+        with pytest.raises(ValueError, match="already been admitted"):
+            seed_od3_queue(
+                store, owner_id=OWNER, queue_key=KEY,
+                items=(work("other", 8, 2),), at=NOW,
+            )
+        with pytest.raises(ValueError, match="foreign or future"):
+            seed_od3_queue(
+                store, owner_id=OWNER, queue_key="other",
+                items=(replace(work("good", 8, 2), owner_id="foreign"),), at=NOW,
+            )
+        with pytest.raises(ValueError, match="foreign or future"):
+            seed_od3_queue(
+                store, owner_id=OWNER, queue_key="future",
+                items=(work("future", -1, 2),), at=NOW,
+            )
+        with pytest.raises(ValueError, match="foreign or future"):
+            seed_od3_queue(
+                store, owner_id=OWNER, queue_key="duplicate",
+                items=(work("same", 8, 2), work("same", 7, 3)), at=NOW,
+            )
+        with pytest.raises(KeyError, match="not admitted"):
+            apply_od3_queue_policy(
+                store, owner_id="foreign", queue_key=KEY, observation_id="foreign",
+                policy=policy("cherry_picking"), observed_at=NOW,
+            )
+        assert snapshot(store, qid)[1] == 0
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_distinct_identical_queues_and_diagnostic_observations_cannot_collide(
+    adapter, tmp_path,
+):
+    from sose.organizational.queue_decisions import (
+        decide_od3, persist_od3_decision,
+    )
+
+    store = store_for(adapter, tmp_path)
+    queue = (work("same", 15, 1),)
+    p = policy("adaptive_follow_up")
+    try:
+        # This preexisting pure diagnostic has the external observation ID.
+        diagnostic = decide_od3(
+            owner_id=OWNER, queue=queue, policy=p, observed_at=NOW,
+            observation_id="same:observation",
+        )
+        persist_od3_decision(store, diagnostic)
+        first_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key="q:first", items=queue, at=NOW,
+        )
+        second_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key="q:second", items=queue, at=NOW,
+        )
+        first = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key="q:first",
+            observation_id="same:observation", policy=p, observed_at=NOW,
+        )
+        second = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key="q:second",
+            observation_id="same:observation", policy=p, observed_at=NOW,
+        )
+        assert first.event_id != second.event_id
+        assert first.causation_id != second.causation_id
+        assert first.causation_id != diagnostic.decision_id
+        assert second.causation_id != diagnostic.decision_id
+        assert snapshot(store, first_id)[0]["paid_policy_us"] == 3
+        assert snapshot(store, second_id)[0]["paid_policy_us"] == 3
+        # pure diagnostic + 2 x (seed anchor, decision, effect, slot)
+        assert len(store.events()) == 9
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+def test_memory_nested_transaction_rejected_before_any_queue_mutation(tmp_path):
+    store = MemoryPersistence()
+    queue = (work("slow", 15, 30), work("fast", 8, 1))
+    qid = seed_od3_queue(
+        store, owner_id=OWNER, queue_key=KEY, items=queue, at=NOW,
+    )
+    before = snapshot(store, qid)
+    assert store.transaction_depth == 0
+    with store.transaction(owner_id=OWNER) as outer:
+        assert store.transaction_depth == 1
+        with pytest.raises(RuntimeError, match="nested transaction"):
+            apply_od3_queue_policy(
+                store, owner_id=OWNER, queue_key=KEY,
+                observation_id="no-nesting", policy=policy("cherry_picking"),
+                observed_at=NOW,
+            )
+        with pytest.raises(RuntimeError, match="nested transaction"):
+            seed_od3_queue(
+                store, owner_id=OWNER, queue_key="nested",
+                items=queue, at=NOW,
+            )
+        assert outer.get_entity(QUEUE_KIND, qid).attributes["paid_policy_us"] == 0
+    assert store.transaction_depth == 0
+    assert snapshot(store, qid) == before
+    with pytest.raises(OSError, match="outer rollback"):
+        with store.transaction(owner_id=OWNER):
+            assert store.transaction_depth == 1
+            raise OSError("outer rollback")
+    assert store.transaction_depth == 0
+    effect = apply_od3_queue_policy(
+        store, owner_id=OWNER, queue_key=KEY, observation_id="no-nesting",
+        policy=policy("cherry_picking"), observed_at=NOW,
+    )
+    assert effect.payload["paid_policy_us"] == 3
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite", "jsonl", "duckdb"))
+def test_every_memory_derived_adapter_rejects_nested_queue_mutation(
+    adapter, tmp_path,
+):
+    from sose.core.events import DomainEvent
+    from sose.persistence.jsonl_journal import JSONLJournalPersistence
+    from sose.persistence.duckdb import DuckDBPersistence
+
+    constructors = {
+        "memory": lambda: MemoryPersistence(),
+        "sqlite": lambda: SQLitePersistence(tmp_path / "nested.sqlite"),
+        "jsonl": lambda: JSONLJournalPersistence(tmp_path / "nested.jsonl"),
+        "duckdb": lambda: DuckDBPersistence(tmp_path / "nested.duckdb"),
+    }
+    store = constructors[adapter]()
+    queue = (work("old", 15, 100), work("short", 8, 1))
+    qid = seed_od3_queue(
+        store, owner_id=OWNER, queue_key=KEY, items=queue, at=NOW,
+    )
+    marker = DomainEvent(
+        event_id="outer:event", name="outer.preserved",
+        entity_type="test", entity_id="marker",
+        occurred_at=NOW, owner_id=OWNER,
+    )
+    try:
+        with store.transaction(owner_id=OWNER) as outer:
+            outer.append_event(marker)
+            assert store.transaction_depth == 1
+            with pytest.raises(RuntimeError, match="nested transaction"):
+                apply_od3_queue_policy(
+                    store, owner_id=OWNER, queue_key=KEY,
+                    observation_id="nested:policy",
+                    policy=policy("cherry_picking"), observed_at=NOW,
+                )
+            with pytest.raises(RuntimeError, match="nested transaction"):
+                seed_od3_queue(
+                    store, owner_id=OWNER, queue_key="nested:new",
+                    items=queue, at=NOW,
+                )
+        assert store.transaction_depth == 0
+        assert snapshot(store, qid)[0]["paid_policy_us"] == 0
+        assert tuple(event.name for event in store.events()) == (
+            "od3.queue_anchored", "outer.preserved",
+        )
+        effect = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY,
+            observation_id="nested:policy",
+            policy=policy("cherry_picking"), observed_at=NOW,
+        )
+        assert effect.payload["paid_policy_us"] == 3
+    finally:
+        close = getattr(store, "close", None)
+        if callable(close):
+            close()
+    if adapter == "jsonl":
+        recovered = JSONLJournalPersistence(tmp_path / "nested.jsonl")
+        assert snapshot(recovered, qid)[0]["paid_policy_us"] == 3
+        assert tuple(event.name for event in recovered.events()) == (
+            "od3.queue_anchored", "outer.preserved",
+            "od3.policy_decided", "od3.queue_effect_applied",
+            "od3.queue_version_claimed",
+        )
+
+
+@pytest.mark.parametrize("bad_id", ("", " ", "  \t", "  padded", None, 42))
+def test_invalid_work_identity_is_rejected_before_any_queue_is_admitted(bad_id):
+    with pytest.raises(ValueError, match="canonical nonblank"):
+        QueuedWork(
+            item_id=bad_id, owner_id=OWNER,
+            arrived_at=NOW, service_us=1,
+        )
+
+
+@pytest.mark.parametrize("adapter", ("memory", "jsonl"))
+def test_inherited_async_transaction_context_expires_after_parent_exit(adapter, tmp_path):
+    import asyncio
+    from sose.persistence.jsonl_journal import JSONLJournalPersistence
+
+    store = (MemoryPersistence() if adapter == "memory"
+             else JSONLJournalPersistence(tmp_path / "async-context.jsonl"))
+
+    async def exercise():
+        async def child_created_under_parent():
+            # The task inherited the parent's context, but must not inherit
+            # a permanently live transaction after its parent has committed.
+            assert store.transaction_depth == 0
+            seed_od3_queue(
+                store, owner_id=OWNER, queue_key="async:child",
+                items=(work("child-item", 8, 1),), at=NOW,
+            )
+            return store.transaction_depth
+
+        with store.transaction(owner_id=OWNER):
+            assert store.transaction_depth == 1
+            child = asyncio.create_task(child_created_under_parent())
+        assert store.transaction_depth == 0
+        return await child
+
+    assert asyncio.run(exercise()) == 0
+    child_id = seed_od3_queue(
+        store, owner_id=OWNER, queue_key="async:other",
+        items=(work("other", 8, 1),), at=NOW,
+    )
+    assert snapshot(store, child_id)[1] == 0
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("corruption, expected", (
+    ("queue_shape", "provenance/shape mismatch"),
+    ("owner", "provenance/shape mismatch"),
+    ("wrong_schema", "provenance/shape mismatch"),
+    ("negative_paid", "provenance/shape mismatch"),
+    ("string_last_action", "timestamp malformed"),
+    ("malformed_last_observed", "Invalid isoformat string"),
+    ("item_shape", "item schema mismatch"),
+    ("non_boolean_blocked", "non-boolean blocked"),
+    ("malformed_item_timestamp", "item is invalid"),
+    ("duplicate_item", "duplicate or foreign"),
+    ("foreign_item", "duplicate or foreign"),
+    ("future_creation", "precedes queue admission"),
+))
+def test_durable_queue_rejects_corrupt_provenance_without_new_effects(
+    adapter, corruption, expected, tmp_path,
+):
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key=KEY,
+            items=(work("first", 15, 40), work("second", 8, 1)), at=NOW,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            entity = uow.get_entity(QUEUE_KIND, queue_id)
+            attrs = entity.attributes
+            if corruption == "queue_shape":
+                attrs["unknown"] = True
+            elif corruption == "owner":
+                attrs["owner_id"] = "owner:forged"
+            elif corruption == "wrong_schema":
+                attrs["schema_version"] = 999
+            elif corruption == "negative_paid":
+                attrs["paid_policy_us"] = -1
+            elif corruption == "string_last_action":
+                attrs["last_action_at"] = 12
+            elif corruption == "malformed_last_observed":
+                attrs["last_observed_at"] = "invalid-time"
+            elif corruption == "item_shape":
+                attrs["items"][0]["unexpected"] = 1
+            elif corruption == "non_boolean_blocked":
+                attrs["items"][0]["blocked"] = 1
+            elif corruption == "malformed_item_timestamp":
+                attrs["items"][0]["arrived_at"] = "malformed"
+            elif corruption == "duplicate_item":
+                attrs["items"][1]["item_id"] = attrs["items"][0]["item_id"]
+            elif corruption == "foreign_item":
+                attrs["items"][0]["owner_id"] = "owner:wrong"
+            elif corruption == "future_creation":
+                entity.created_at = NOW + timedelta(seconds=1)
+            uow.save_entity(entity)
+        before = store.events()
+        with pytest.raises(ValueError, match=expected):
+            apply_od3_queue_policy(
+                store, owner_id=OWNER, queue_key=KEY,
+                observation_id="corruption-check",
+                policy=policy("cherry_picking"), observed_at=NOW,
+            )
+        assert store.events() == before
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("corruption", ("missing_effect", "altered_effect"))
+def test_queue_replay_rejects_missing_or_altered_durable_effect(
+    adapter, corruption, tmp_path,
+):
+    from dataclasses import replace as dataclass_replace
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key=KEY,
+            items=(work("long", 15, 100), work("short", 8, 1)), at=NOW,
+        )
+        effect = apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY,
+            observation_id="real", policy=policy("cherry_picking"), observed_at=NOW,
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            match = next(e for e in uow.events() if e.event_id == effect.event_id)
+            uow._working.events.remove(match)
+            if corruption == "altered_effect":
+                uow.append_event(dataclass_replace(match, entity_id="not-our-queue"))
+        with pytest.raises(ValueError, match="lacks durable effect"):
+            apply_od3_queue_policy(
+                store, owner_id=OWNER, queue_key=KEY,
+                observation_id="real", policy=policy("cherry_picking"), observed_at=NOW,
+            )
+        assert store.entity(QUEUE_KIND, queue_id).attributes["paid_policy_us"] == 3
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("reservation", ("decision", "effect"))
+def test_queue_refuses_preoccupied_deterministic_evidence_identity(
+    adapter, reservation, tmp_path,
+):
+    from sose.core.events import DomainEvent
+    from sose.core.identity import deterministic_id
+    from sose.organizational.queue_decisions import decide_od3
+
+    store = store_for(adapter, tmp_path)
+    initial = (work("long", 15, 100), work("short", 8, 1))
+    try:
+        queue_id = seed_od3_queue(
+            store, owner_id=OWNER, queue_key=KEY, items=initial, at=NOW,
+        )
+        selected_policy = policy("cherry_picking")
+        decision = decide_od3(
+            owner_id=OWNER, queue=initial, policy=selected_policy,
+            observed_at=NOW,
+            observation_id=deterministic_id(
+                "od3-operational-observation", queue_id, "claimed",
+            ),
+        )
+        identity = (
+            decision.decision_id if reservation == "decision" else
+            deterministic_id("od3-queue-effect", queue_id, decision.decision_id)
+        )
+        with store.transaction(owner_id=OWNER) as uow:
+            uow.append_event(DomainEvent(
+                event_id=identity, name="adversarial.reserved",
+                entity_type="test", entity_id=queue_id,
+                owner_id=OWNER, occurred_at=NOW,
+            ))
+        old = tuple(store.events())
+        with pytest.raises(ValueError, match=(
+            "decision identity already used" if reservation == "decision"
+            else "operational effect identity already exists"
+        )):
+            apply_od3_queue_policy(
+                store, owner_id=OWNER, queue_key=KEY,
+                observation_id="claimed", policy=selected_policy, observed_at=NOW,
+            )
+        assert tuple(store.events()) == old
+        assert store.entity(QUEUE_KIND, queue_id).attributes["paid_policy_us"] == 0
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+def test_policy_rejects_invalid_external_requests_before_transaction():
+    store = MemoryPersistence()
+    with pytest.raises(ValueError, match="canonical nonblank"):
+        seed_od3_queue(store, owner_id=" ", queue_key=KEY, items=(), at=NOW)
+    with pytest.raises(ValueError, match="canonical nonblank"):
+        apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=" ", observation_id="id",
+            policy=policy("cherry_picking"), observed_at=NOW,
+        )
+    with pytest.raises(TypeError, match="tuple"):
+        seed_od3_queue(store, owner_id=OWNER, queue_key=KEY, items=[], at=NOW)
+    with pytest.raises(TypeError, match="typed policy"):
+        apply_od3_queue_policy(
+            store, owner_id=OWNER, queue_key=KEY, observation_id="id",
+            policy=None, observed_at=NOW,
+        )
+    assert not store.events()
+
+
+# --- #463 durable effect/cost ledger -------------------------------------
+
+def seed_pair(store, key=KEY):
+    return seed_od3_queue(
+        store, owner_id=OWNER, queue_key=key,
+        items=(work("slow", 15, 70), work("fast", 8, 1)), at=NOW,
+    )
+
+
+def apply_at(store, observation_id, offset_us=0, *, name="cherry_picking", key=KEY):
+    return apply_od3_queue_policy(
+        store, owner_id=OWNER, queue_key=key, observation_id=observation_id,
+        policy=policy(name), observed_at=NOW + timedelta(microseconds=offset_us),
+    )
+
+
+def tamper_queue(store, queue_id, mutate):
+    with store.transaction(owner_id=OWNER) as uow:
+        queue = uow.get_entity(QUEUE_KIND, queue_id)
+        mutate(queue)
+        uow.save_entity(queue)
+
+
+def _item(index, field, value):
+    def mutate(queue):
+        queue.attributes["items"][index][field] = value
+    return mutate
+
+
+def _attr(field, value):
+    def mutate(queue):
+        queue.attributes[field] = value
+    return mutate
+
+
+def _bump_paid(queue):
+    queue.attributes["paid_policy_us"] += 5
+
+
+def _ghost(queue):
+    queue.attributes["applied_observations"]["ghost"] = {
+        "request_id": "forged", "effect_event_id": "forged",
+    }
+
+
+def _reverse(queue):
+    queue.attributes["items"].reverse()
+
+
+def _bump_version(queue):
+    queue.version += 1
+
+
+def _drop_head(queue):
+    del queue.attributes["ledger_head"]
+
+
+LATER = (NOW + timedelta(microseconds=1)).isoformat()
+PROJECTION_FORGERIES = {
+    "paid_cost": _bump_paid,
+    "last_action": _attr("last_action_at", LATER),
+    "fake_observation": _ghost,
+    "rank": _reverse,
+    "service_us": _item(0, "service_us", 999),
+    "blocked": _item(0, "blocked", True),
+    "last_contact_at": _item(1, "last_contact_at", NOW.isoformat()),
+    "arrived_at": _item(1, "arrived_at", (NOW - timedelta(seconds=9)).isoformat()),
+    "queue_version": _bump_version,
+    "drop_ledger_head": _drop_head,
+    "foreign_ledger_head": _attr("ledger_head", "not-an-effect"),
+}
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("applied_first", (True, False), ids=("after_apply", "seed_only"))
+@pytest.mark.parametrize("tamper", sorted(PROJECTION_FORGERIES))
+def test_durable_od3_policy_refuses_forged_projection(
+    adapter, applied_first, tamper, tmp_path,
+):
+    """#463: a forged projection cannot mint paid time, rank or item attributes."""
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_pair(store)
+        if applied_first:
+            apply_at(store, "first")
+        elif tamper == "foreign_ledger_head":
+            pytest.skip("seed-only head is None; covered after an apply")
+        tamper_queue(store, queue_id, PROJECTION_FORGERIES[tamper])
+        old = snapshot(store, queue_id)
+        with pytest.raises(ValueError, match="OD-3 charged queue"):
+            apply_at(store, "next", 21)
+        assert snapshot(store, queue_id) == old
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+def test_forged_contact_time_after_contact_is_rejected():
+    store = MemoryPersistence()
+    queue_id = seed_od3_queue(
+        store, owner_id=OWNER, queue_key=KEY,
+        items=(work("old", 15, 80), work("later", 10, 1)), at=NOW,
+    )
+    assert apply_at(store, "contact", name="adaptive_follow_up").payload["action"] == "CONTACT"
+    tamper_queue(store, queue_id, _item(0, "last_contact_at", None))
+    with pytest.raises(ValueError, match="OD-3 charged queue"):
+        apply_at(store, "next", 2, name="adaptive_follow_up")
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("applied_first", (True, False))
+def test_foreign_owner_effect_stub_cannot_lock_out_our_queue(
+    adapter, applied_first, tmp_path,
+):
+    """Foreign events naming our queue under their own ids are not our evidence."""
+    from sose.core.events import DomainEvent
+
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_pair(store)
+        if applied_first:
+            apply_at(store, "first")
+        with store.transaction(owner_id="org:foreign") as uow:
+            uow.append_event(DomainEvent(
+                event_id="foreign:stub", name="od3.queue_effect_applied",
+                entity_type=QUEUE_KIND, entity_id=queue_id,
+                owner_id="org:foreign", occurred_at=NOW,
+                payload={"observation_id": "stub", "cost_us": 99},
+            ))
+        effect = apply_at(store, "ours", 21)
+        assert effect.payload["paid_policy_us"] == (6 if applied_first else 3)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+def test_admission_never_scans_the_event_log(adapter, tmp_path, monkeypatch):
+    """Admission never enumerates or deep-copies the event log."""
+    from sose.core.events import DomainEvent
+
+    store = store_for(adapter, tmp_path)
+    try:
+        with store.transaction(owner_id="org:noise") as uow:
+            for index in range(300):
+                uow.append_event(DomainEvent(
+                    event_id=f"noise:{index}", name="noise.happened",
+                    entity_type="noise", entity_id=str(index),
+                    owner_id="org:noise", occurred_at=NOW,
+                ))
+        scans = []
+        original = MemoryUnitOfWork.events
+
+        def spy(self):
+            scans.append(1)
+            return original(self)
+
+        monkeypatch.setattr(MemoryUnitOfWork, "events", spy)
+        queue_id = seed_pair(store)
+        for index in range(4):
+            apply_at(store, f"obs:{index}", 21 * index)
+        assert scans == []
+        with store.transaction(owner_id=OWNER) as uow:
+            uow.events()
+        assert scans == [1]  # the spy is live on this adapter's UoW
+        assert store.entity(QUEUE_KIND, queue_id).attributes["paid_policy_us"] == 12
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+def _forge_event(store, event_id, **changes):
+    """Rewrite a durable event in place (memory-derived adapters only)."""
+    from dataclasses import replace as dataclass_replace
+
+    with store.transaction(owner_id=OWNER) as uow:
+        events = uow._working.events
+        index = next(i for i, e in enumerate(events) if e.event_id == event_id)
+        payload = {**events[index].payload, **changes.pop("payload", {})}
+        events[index] = dataclass_replace(events[index], payload=payload, **changes)
+        uow._mark_dirty("events", index)
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("forgery", (
+    "cost_with_consistent_total", "decision_pairing", "decision_missing",
+    "broken_chain", "effect_queue_version",
+))
+def test_forged_durable_effect_evidence_is_rejected(adapter, forgery, tmp_path):
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_pair(store)
+        apply_at(store, "one")
+        head = apply_at(store, "two", 21)
+        if forgery == "cost_with_consistent_total":
+            # cost and cumulative paid agree with each other and the projection,
+            # but not with the paired durable decision.
+            _forge_event(store, head.event_id, payload={"cost_us": 8, "paid_policy_us": 11})
+            tamper_queue(store, queue_id, _attr("paid_policy_us", 11))
+        elif forgery == "decision_pairing":
+            _forge_event(store, head.event_id, causation_id="some:other:decision")
+        elif forgery == "decision_missing":
+            _forge_event(store, head.causation_id, owner_id="org:foreign")
+        elif forgery == "broken_chain":
+            _forge_event(store, head.event_id, payload={"previous_effect_id": "nowhere"})
+        else:
+            _forge_event(store, head.event_id, payload={"queue_version": 7})
+        with pytest.raises(ValueError, match="OD-3 charged queue"):
+            apply_at(store, "three", 42)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+def test_reconciled_od3_policy_cost_accumulates_after_restart(tmp_path):
+    path = tmp_path / "sqlite.sqlite"
+    with SQLitePersistence(path) as store:
+        queue_id = seed_pair(store)
+        apply_at(store, "one")
+        apply_at(store, "two", 21)
+        attrs, version, _ = snapshot(store, queue_id)
+    assert (version, attrs["paid_policy_us"]) == (2, 6)
+    with SQLitePersistence(path) as reopened:
+        assert snapshot(reopened, queue_id)[0] == attrs
+        effect = apply_at(reopened, "three", 42)
+        assert effect.payload["paid_policy_us"] == 9
+        attrs, version, _ = snapshot(reopened, queue_id)
+        assert (version, attrs["paid_policy_us"]) == (3, 9)
+
+
+def _legacy_queue(store, *, version=0, paid=0, applied=None):
+    """A queue exactly as seeded/applied by pre-ledger code: no anchor event."""
+    from sose.core.identity import deterministic_id
+    from sose.domain.entity import Entity
+
+    queue_id = deterministic_id("od3-queue", OWNER, KEY)
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_entity(Entity(
+            id=queue_id, entity_type=QUEUE_KIND, state="ready",
+            created_at=NOW, updated_at=NOW, version=version,
+            attributes={
+                "schema_version": 1, "owner_id": OWNER, "queue_key": KEY,
+                "items": [
+                    {"item_id": "slow", "owner_id": OWNER,
+                     "arrived_at": (NOW - timedelta(microseconds=15)).isoformat(),
+                     "service_us": 70, "last_contact_at": None, "blocked": False},
+                    {"item_id": "fast", "owner_id": OWNER,
+                     "arrived_at": (NOW - timedelta(microseconds=8)).isoformat(),
+                     "service_us": 1, "last_contact_at": None, "blocked": False},
+                ],
+                "paid_policy_us": paid,
+                "last_action_at": None if not version else NOW.isoformat(),
+                "last_observed_at": None if not version else NOW.isoformat(),
+                "applied_observations": applied or {},
+            },
+        ))
+    return queue_id
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("history", (False, True), ids=("fresh", "with_history"))
+def test_pre_ledger_queue_is_adopted_then_protected(adapter, history, tmp_path):
+    """Compatibility: a queue seeded before the ledger is adopted on first use."""
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = _legacy_queue(
+            store, version=int(history), paid=3 * int(history),
+            applied={"legacy": {"request_id": "r", "effect_event_id": "e"}}
+            if history else None,
+        )
+        first = apply_at(store, "adopt", 21)
+        assert first.payload["paid_policy_us"] == 3 * int(history) + 3
+        assert first.payload["previous_effect_id"] is None
+        anchors = [e for e in store.events() if e.name == "od3.queue_anchored"]
+        assert [e.payload["origin"] for e in anchors] == ["adopted"]
+        assert snapshot(store, queue_id)[0]["ledger_head"] == first.event_id
+        tamper_queue(store, queue_id, _reverse)
+        with pytest.raises(ValueError, match="OD-3 charged queue"):
+            apply_at(store, "after", 42)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+def test_inconsistent_legacy_projection_is_not_adopted():
+    store = MemoryPersistence()
+    _legacy_queue(store, version=0, paid=0, applied={
+        "ghost": {"request_id": "r", "effect_event_id": "e"},
+    })
+    with pytest.raises(ValueError, match="legacy projection inconsistent"):
+        apply_at(store, "adopt")
+    assert not store.events()
+
+
+def _restore_snapshot(store, saved):
+    with store.transaction(owner_id=OWNER) as uow:
+        uow.save_entity(saved)
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("target", ("seed", "first_effect"))
+def test_rollback_to_an_older_consistent_projection_is_rejected(adapter, target, tmp_path):
+    """An entity-only writer cannot re-save an earlier valid snapshot and fork the chain."""
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_pair(store)
+        if target == "seed":
+            saved = store.entity(QUEUE_KIND, queue_id)
+        apply_at(store, "one")
+        if target == "first_effect":
+            saved = store.entity(QUEUE_KIND, queue_id)
+        apply_at(store, "two", 21)
+        _restore_snapshot(store, saved)
+        old = snapshot(store, queue_id)
+        with pytest.raises(ValueError, match="rolled back behind a later durable effect"):
+            apply_at(store, "three", 42)
+        assert snapshot(store, queue_id) == old
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("target", ("adoption_head", "pre_adoption"))
+def test_adopted_legacy_queue_cannot_be_rolled_back(adapter, target, tmp_path):
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = _legacy_queue(store)
+        legacy = store.entity(QUEUE_KIND, queue_id)
+        apply_at(store, "adopt", 21)
+        first_new = store.entity(QUEUE_KIND, queue_id)
+        apply_at(store, "next", 42)
+        _restore_snapshot(store, legacy if target == "pre_adoption" else first_new)
+        with pytest.raises(ValueError, match="OD-3 charged queue"):
+            apply_at(store, "again", 63)
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("when", ("before_seed", "after_anchor"))
+def test_foreign_event_at_our_deterministic_id_fails_closed(adapter, when, tmp_path):
+    """Store-level limit (#545): global event ids let a foreign owner squat ours.
+
+    Not a fix: pins that the queue fails closed without writing anything.
+    """
+    from sose.core.events import DomainEvent
+    from sose.core.identity import deterministic_id
+    from sose.organizational.queue_policy_ledger import anchor_id
+
+    store = store_for(adapter, tmp_path)
+    queue_id = deterministic_id("od3-queue", OWNER, KEY)
+    squat = DomainEvent(
+        event_id=anchor_id(queue_id), name="foreign.squat", entity_type="x",
+        entity_id="y", owner_id="org:foreign", occurred_at=NOW,
+    )
+    try:
+        if when == "after_anchor":
+            seed_pair(store)
+        with store.transaction(owner_id="org:foreign") as uow:
+            uow.append_event(squat)
+        old = tuple(store.events())
+        with pytest.raises(ValueError):
+            if when == "before_seed":
+                seed_pair(store)
+            else:
+                apply_at(store, "blocked")
+        assert tuple(store.events()) == old
+    finally:
+        if adapter == "sqlite":
+            store.close()
+
+
+@pytest.mark.parametrize("bad", (70.0, True))
+def test_seed_rejects_non_integer_service_time(bad):
+    """The seed digest must not drift through a float/JSON round-trip."""
+    item = work("slow", 15, 70)
+    object.__setattr__(item, "service_us", bad)
+    store = MemoryPersistence()
+    with pytest.raises(ValueError, match="foreign or future"):
+        seed_od3_queue(store, owner_id=OWNER, queue_key=KEY, items=(item,), at=NOW)
+    assert not store.events()
+
+
+def _rename_one(queue):
+    applied = queue.attributes["applied_observations"]
+    applied["renamed"] = applied.pop("one")
+
+
+def _drop_add(queue):
+    applied = queue.attributes["applied_observations"]
+    applied["ghost"] = dict(applied.pop("one"))
+
+
+def _swap_request(queue):
+    queue.attributes["applied_observations"]["one"]["request_id"] = "forged-request"
+
+
+@pytest.mark.parametrize("adapter", ("memory", "sqlite"))
+@pytest.mark.parametrize("tamper", ("rename", "drop_add", "swap_request"))
+def test_rewritten_applied_observations_cannot_recharge(adapter, tamper, tmp_path):
+    """Count-preserving edits of applied observations must not let one be paid twice."""
+    store = store_for(adapter, tmp_path)
+    try:
+        queue_id = seed_pair(store)
+        apply_at(store, "one")
+        apply_at(store, "two", 21)
+        mutate = {"rename": _rename_one, "drop_add": _drop_add,
+                  "swap_request": _swap_request}[tamper]
+        tamper_queue(store, queue_id, mutate)
+        old = snapshot(store, queue_id)
+        # swap_request is also caught earlier by the replay-conflict guard.
+        with pytest.raises(ValueError, match="OD-3 (charged queue|observation replay)"):
+            apply_at(store, "one", 42)
+        with pytest.raises(ValueError, match="OD-3 charged queue"):
+            apply_at(store, "three", 42)
+        assert snapshot(store, queue_id) == old
+        assert old[0]["paid_policy_us"] == 6
+    finally:
+        if adapter == "sqlite":
+            store.close()

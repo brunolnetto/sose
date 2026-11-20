@@ -14,6 +14,51 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  quality:
+    name: quality gate (codebase-stats)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install quality tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+          python -m pip check
+
+      - name: Enforce complexity, size and maintainability ratchet (ADR-0010)
+        run: |
+          set -o pipefail
+          # Limits and baseline come from [tool.codebase-stats.gates] in
+          # pyproject.toml. --strict-baseline also fails on stale entries, so
+          # a fixed offender must be removed from the baseline (ratchet).
+          codebase-stats --root src/sose --only cc,size,mi --strict-baseline \
+            | tee quality-gate-report.txt
+
+      - name: Publish quality summary
+        if: always()
+        run: |
+          codebase-stats --root src/sose --only cc,size,mi --format summary-md \
+            >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Upload quality report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: quality-gate-report
+          path: quality-gate-report.txt
+          if-no-files-found: warn
+          retention-days: 14
+
   pytest:
     name: pytest (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
@@ -44,7 +89,7 @@ jobs:
           python -m pip check
 
       - name: Run pytest
-        run: python -m pytest -q
+        run: python -m pytest -q -m "not slow"
 
   coverage:
     name: coverage
@@ -108,10 +153,17 @@ jobs:
 
       - name: Analyze codebase quality
         run: |
-          codebase-stats coverage.json \
+          # Coverage gap x complexity ranking (ADR-0010), informational only:
+          # the quality job owns the ratchet, and the coverage floor is
+          # enforced below. With --coverage, codebase-stats 0.1.0 resolves a
+          # file without functions (persistence/engine.py) to another file of
+          # the same basename (core/engine.py) and reports phantom violations,
+          # so this step must not gate on its exit status (no pipefail: tee's
+          # status is the step's).
+          codebase-stats \
+            --coverage coverage.json \
             --report pytest-report.json \
-            --source-root src/sose \
-            --show all \
+            --root src/sose \
             --threshold 100 \
             --top 0 \
             --show-lines \
@@ -207,21 +259,18 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip check
 
-      - name: Execute reduced benchmark suite
+      - name: Execute reduced pytest-benchmark suite
+        env:
+          SOSE_BENCHMARK_MODE: quick
         run: |
-          python benchmarks/runtime_baseline.py --quick --output benchmark-results.json
-          python benchmarks/persistence_scaling.py \
-            --sizes 10,100 \
-            --repetitions 1 \
-            --output persistence-scaling-smoke.json
+          python -m pytest -o addopts= benchmarks/pytest_benchmarks \
+            --benchmark-only --benchmark-json=pytest-benchmark-smoke.json
 
       - name: Upload benchmark smoke report
         uses: actions/upload-artifact@v7
         with:
           name: benchmark-smoke-report
-          path: |
-            benchmark-results.json
-            persistence-scaling-smoke.json
+          path: pytest-benchmark-smoke.json
           if-no-files-found: error
           retention-days: 14
 
@@ -582,6 +631,11 @@ jobs:
           python -m pip install -e ".[dev]"
           python -m pip check
 
+      - name: Run PostgreSQL batch command-existence integration test
+        run: |
+          python -m pytest -q \
+            tests/e2e/sose/persistence/test_postgres_batch_command_existence.py
+
       - name: Run PostgreSQL conformance, restart, and concurrency tests
         run: |
           python -m pytest -q \
@@ -594,10 +648,10 @@ jobs:
             tests/e2e/sose/persistence/test_postgres_pc6_concurrent_real_statecharts.py \
             tests/e2e/sose/persistence/test_postgres_pc6_logistics_transfer_contention.py \
             tests/e2e/sose/persistence/test_postgres_pc6_uncertain_effect_commit.py \
-            tests/e2e/sose/persistence/test_postgres_od2_actor_concurrency.py \
-            tests/e2e/sose/persistence/test_postgres_od4_management_race.py \
+            tests/e2e/sose/persistence/test_postgres_actor_lifecycle_concurrency.py \
+            tests/e2e/sose/persistence/test_postgres_work_intake_race.py \
             tests/e2e/sose/persistence/test_postgres_trusted_transition_receipts.py \
-            tests/e2e/sose/persistence/test_postgres_od2_actor_replacement.py \
+            tests/e2e/sose/persistence/test_postgres_actor_lifecycle_replacement.py \
             tests/e2e/sose/persistence/test_postgres_pc6_scoped_organizational_fixtures.py \
             tests/e2e/sose/persistence/test_postgres_resource_identity.py \
             tests/e2e/sose/persistence/test_postgres_temporal_resource_ledger.py \
@@ -614,7 +668,8 @@ jobs:
             tests/e2e/sose/persistence/test_postgres_pc6_same_org_fencing.py \
             tests/e2e/sose/persistence/test_postgres_owner_position_cas_interleaving.py \
             tests/e2e/sose/persistence/test_postgres_pc6_recurring_organization_recovery.py \
-            tests/e2e/sose/persistence/test_postgres_pc6_recurring_causal_equivalence.py
+            tests/e2e/sose/persistence/test_postgres_pc6_recurring_causal_equivalence.py \
+            tests/e2e/sose/persistence/test_postgres_read_snapshot.py
       - name: Certify real isolated PostgreSQL postmaster SIGKILL/restart
         env:
           SOSE_RUN_PG_SERVER_RESTART: "1"

@@ -248,6 +248,7 @@ def test_whole_postgres_outage_and_restart_recovers_control_state(
     name,
     phase,
     _control_cache,
+    isolated_postgres_service,
 ):
     if not DSN:
         pytest.skip("SOSE_TEST_POSTGRES_DSN is required")
@@ -298,8 +299,9 @@ def test_whole_postgres_outage_and_restart_recovers_control_state(
                 )
             assert worker.returncode != 0
         finally:
-            _docker("start", CONTAINER_ID)
-            _wait_postgres(DSN)
+            if isolated_postgres_service is None:
+                raise AssertionError("physical outage requires isolated PostgreSQL service")
+            isolated_postgres_service.restart()
 
         actual = _recover(definition, DSN, namespace)
     else:
@@ -397,34 +399,36 @@ def test_network_interruption_through_tcp_proxy_recovers_control_state(
     port = _free_port()
     proxy_marker = tmp_path / f"{name}-{phase}-proxy-ready"
     proxy, proxied_dsn = _start_proxy(DSN, port=port, marker=proxy_marker)
-
-    worker_marker = tmp_path / f"{name}-{phase}-network-paused"
-    continue_file = tmp_path / f"{name}-{phase}-network-continue"
-    worker = _paused_worker(
-        name=name,
-        dsn=proxied_dsn,
-        namespace=namespace,
-        boundary=boundary,
-        phase=phase,
-        marker=worker_marker,
-        continue_file=continue_file,
-    )
-    wait_for_marker_text(
-        worker_marker,
-        worker,
-        timeout=MARKER_WAIT_TIMEOUT_SECONDS,
-        premature_exit_label="worker exited before chaos pause",
-        timeout_label="worker did not reach chaos pause",
-        termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
-    )
-
-    proxy.kill()
-    wait_for_process_exit(
-        proxy,
-        timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
-        label="network proxy",
-        termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
-    )
+    try:
+        worker_marker = tmp_path / f"{name}-{phase}-network-paused"
+        continue_file = tmp_path / f"{name}-{phase}-network-continue"
+        worker = _paused_worker(
+            name=name,
+            dsn=proxied_dsn,
+            namespace=namespace,
+            boundary=boundary,
+            phase=phase,
+            marker=worker_marker,
+            continue_file=continue_file,
+        )
+        wait_for_marker_text(
+            worker_marker,
+            worker,
+            timeout=MARKER_WAIT_TIMEOUT_SECONDS,
+            premature_exit_label="worker exited before chaos pause",
+            timeout_label="worker did not reach chaos pause",
+            termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+        )
+    finally:
+        # The cut is part of the scenario; on any earlier failure the proxy
+        # must still die so it cannot outlive this test (#598 isolation).
+        proxy.kill()
+        wait_for_process_exit(
+            proxy,
+            timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+            label="network proxy",
+            termination_timeout=PROCESS_TERMINATION_TIMEOUT_SECONDS,
+        )
     continue_file.write_text("continue", encoding="utf-8")
     timed_out, stdout, stderr = wait_for_process_exit_or_kill(
         worker,

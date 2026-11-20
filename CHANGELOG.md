@@ -2,7 +2,132 @@
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.11.0 — 2026-11-20
+
+Release note: `docs/releases/v0.11.0.md`. Completes the extended #634 removal,
+announces the next deprecation cycle (removed in 0.12.0) and hardens the
+organizational and transition-authority guards.
+
+### Removed (deprecated in 0.9.0)
+
+- Policy-less `TradingCustomerRecoveryRunner`: it raises `TypeError` without
+  `resource_policies`. `sose composition-recovery` requires `--postgres-dsn` and
+  `--resource-policies`; `--sqlite` is gone. Composition recovery is
+  PostgreSQL-backed (#634, #659; tests ported in #656, #657).
+
+### Deprecated (removed in 0.12.0)
+
+- `ScenarioRule`, `Engine(rules_for=...)` and `Engine.evaluate_entity`; use
+  `Scenario`/`ScenarioEngine` (#634, #654).
+- The `sose.organizational.od2_legacy_audit` module (#634, #654).
+- `make_random_source(...)` without an explicit `mode`; the implicit default
+  becomes `RNGMode.COUNTER` in 0.12.0 (#631, #654).
+- The OD-2/3/4 module paths, renamed to domain names: `od2_actor` →
+  `actor_lifecycle`, `od2_actor_time_ledger` → `actor_time_ledger`,
+  `od3_decisions` → `queue_decisions`, `od3_queue_runtime` →
+  `queue_policy_runtime`, `od3_queue_ledger` → `queue_policy_ledger`,
+  `od4_intake` → `work_intake`, `od4_command_lineage` → `work_command_lineage`
+  (#629, #655). The persisted class paths
+  `sose.organizational.od2_actor:OrganizationalActor` and
+  `sose.organizational.od4_intake:ManagementWork` are **kept permanently** so
+  existing data decodes.
+
+### Security and integrity
+
+- Opt-in `TransitionAuthority`: chained, owner-independent attested receipts
+  with an attributes digest, a constant number of lookups per dispatch, and
+  fail-closed handling of rollback and cross-owner forks (#545; #580, #602).
+- OD-2 tracked actors: incremental actor-time ledger (#462, #587).
+- OD-3 queues: owner-scoped durable ledger with seed anchor, items and
+  applied-observation digests, and per-version slots against rollback; queues
+  created by earlier versions are adopted on their first application (#463, #588).
+- OD-4 intake: each new intervention re-verifies the original Command of every
+  earlier paid decision, anchored to the work flow (#464, #589).
+- OD-5a #477 bundles: detached RSA-SHA256 attestation verifier, RSA ≥2048,
+  RSA-PSS refused (#585).
+
+### Tests and tooling
+
+- Coverage back above the 95% floor (95.5% on main): #591–#597, #599 (#590).
+- Benchmarks: persistence, engine and temporal-backend tranches (#610; #611, #612).
+- The release upgrade gate now starts from `v0.10.0`.
+
+## 0.10.0 — 2026-11-19
+
+Release note: `docs/releases/v0.10.0.md`. This release completes the ADR-0011
+deprecation cycle started in 0.9.0. One window was extended instead.
+
+### Removed (deprecated in 0.9.0)
+
+- Names moved by the quality-ratchet splits can no longer be imported from the
+  module they were split out of. Import them from the module that defines them,
+  which each 0.9 warning named (#632, #649).
+- `PersistentJobRunner` requires job-scoped writers: `scoped_writer_epoch`,
+  `claim_scoped_writer` and `transaction(writer_scope=...)`. Persistence without
+  them raises `TypeError`. SQLite and PostgreSQL provide them (#637, #650).
+- Publishing a new boundary message that has a `causation_id` but no
+  `causation_kind` raises `ValueError`. Untyped messages already durable stay
+  readable and still satisfy re-derivation (#644, #652).
+
+### Changed
+
+- The #634 deprecation window is **extended to 0.11.0**: policy-less
+  `TradingCustomerRecoveryRunner` and the SQLite path of `sose composition-recovery`.
+  The roughly 75 recovery tests that use it are ported to PostgreSQL first.
+  ADR-0011 gains an amendment allowing (never shortening) extensions (#651).
+- The release upgrade gate works for any previous minor: it migrates unowned
+  databases and opens owner-qualified ones directly. It now starts from `v0.9.0`.
+
+## 0.9.0 — 2026-11-18
+
+Release note and compatibility contract: `docs/releases/v0.9.0.md`.
+
+### Breaking changes
+
+- **Owner-qualified durable runtime only (ADR-0009).** Every live runtime is
+  explicitly owned:
+  - `Engine(..., owner_id=...)` is required;
+  - the `Persistence` / `UnitOfWork` position, committed-tick and scenario-state
+    methods take `owner_id=`;
+  - `ScheduledWork`, `Command` and `DomainEvent` carry the owner;
+  - the builtin domains' runtime factories (`build_runtime`, `seed_*`) take `owner_id`.
+- **SOSE 0.8 SQLite databases are refused, not adopted.** Opening one raises
+  `LegacyUnownedSnapshotError` and leaves the file untouched (SQLite snapshot codec
+  2, #643). Migrate it offline into a new database with
+  `sose migrate-owners --sqlite <old> --output <new> --owner <owner>` (#646). The
+  release workflow proves this upgrade path from the real 0.8.0 wheel.
+
+### Deprecated (removed in 0.10.0, ADR-0011)
+
+- `TradingCustomerRecoveryRunner` without `resource_policies`, and with it the
+  `--sqlite` path of `sose composition-recovery`. From 0.10, composition recovery
+  requires PostgreSQL; use `--postgres-dsn` and `--resource-policies` (#634, #638).
+- `PersistentJobRunner` on persistence without scoped writers, including subclasses
+  whose `transaction()` lacks `writer_scope` (#637, #640).
+- Importing a name from a module it was split out of during the quality-ratchet
+  refactors. Each warning names the module to import from instead (#632, #642).
+- Publishing a boundary message that has a `causation_id` but no `causation_kind`
+  (#644, #647).
+
 ### Added
+
+- `sose migrate-owners` / `sose.persistence.owner_migration` (#646):
+  - offline, exclusive-lock owner migration of SOSE 0.8 SQLite databases;
+  - keeps every identity, records a semantic digest and keeps a rollback copy;
+  - verifies the result with the runtime diagnostics.
+- Release upgrade gate (`scripts/check_release_upgrade.py`, `release.yml`):
+  previous-minor wheel → migration → this release's runtime.
+- Job-scoped writer leases on the SQLite backend, with the same contract as
+  PostgreSQL. `PersistentJobRunner` claims a lease per job, so independent jobs in
+  one namespace no longer fence each other out (#637, #639, #640).
+- `sose composition-recovery --postgres-dsn/--namespace/--resource-policies` (#638).
+- Deprecation policy and the `sose._deprecation` helpers (ADR-0011, #638).
+- Codebase quality ratchet in CI (ADR-0010).
+- Organizational composition and admission (ADR-0008), cross-domain boundary
+  messages (ADR-0006), PC6 durable recovery, versioned scientific freezes (ADR-0007),
+  and the OD-5a preregistered-experiment machinery.
 
 - end-to-end recurring product contract covering domain configuration, persistent scheduler triggers, config revision, process reopen, and analytical sink delivery;
 
@@ -96,6 +221,18 @@
   stable consistency issue codes;
 - transactional SQLite schema migrations with independent schema/codec
   versioning and a tested v1 -> v2 path.
+
+### Changed
+
+- Composition flows publish typed causation (`causation_kind="boundary"`), so the
+  causal audit sees no opaque links for current flows. New messages in those flows
+  persist the discriminator. Messages recorded untyped are kept as written and
+  still satisfy re-derivation (#644, #647).
+- Structural refactors driven by the quality ratchet (#615–#628, #636) take the
+  baseline from 244 to 24 violations without behaviour change. Moved names stay
+  importable from their old modules, with a deprecation warning.
+- Live single-instance and untyped modes are no longer labelled "legacy" in the
+  code (#633, #645).
 
 ## 0.8.0 — 2026-09-28
 

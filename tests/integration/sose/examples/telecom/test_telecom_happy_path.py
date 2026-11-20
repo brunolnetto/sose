@@ -2,6 +2,8 @@ REFERENCE_OWNER_ID = "telecom-integration-reference"
 
 from sose.examples.telecom.simulation import (
     run_happy_path,
+)
+from sose.examples.telecom.foundation import (
     service_order_id,
     subscription_service_id,
     usage_record_id,
