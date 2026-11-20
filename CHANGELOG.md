@@ -8,6 +8,13 @@
   `Engine.evaluate_entity`. Model external interventions with `Scenario` and
   `ScenarioEngine` (#634).
 - The `sose.organizational.od2_legacy_audit` module (#634).
+- The OD-2/3/4 module paths renamed in 0.11.0: `od2_actor_time_ledger`,
+  `od3_decisions`, `od3_queue_runtime`, `od3_queue_ledger` and
+  `od4_command_lineage` are gone; import from `actor_time_ledger`,
+  `queue_decisions`, `queue_policy_runtime`, `queue_policy_ledger` and
+  `work_command_lineage`. `od2_actor` and `od4_intake` remain only as the
+  persisted class paths of `OrganizationalActor` and `ManagementWork`; import
+  everything else from `actor_lifecycle` and `work_intake` (#629).
 
 ### Changed
 
