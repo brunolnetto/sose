@@ -4,6 +4,56 @@
 
 Nothing yet.
 
+## 0.11.0 — 2026-11-20
+
+Release note: `docs/releases/v0.11.0.md`. Completes the extended #634 removal,
+announces the next deprecation cycle (removed in 0.12.0) and hardens the
+organizational and transition-authority guards.
+
+### Removed (deprecated in 0.9.0)
+
+- Policy-less `TradingCustomerRecoveryRunner`: it raises `TypeError` without
+  `resource_policies`. `sose composition-recovery` requires `--postgres-dsn` and
+  `--resource-policies`; `--sqlite` is gone. Composition recovery is
+  PostgreSQL-backed (#634, #659; tests ported in #656, #657).
+
+### Deprecated (removed in 0.12.0)
+
+- `ScenarioRule`, `Engine(rules_for=...)` and `Engine.evaluate_entity`; use
+  `Scenario`/`ScenarioEngine` (#634, #654).
+- The `sose.organizational.od2_legacy_audit` module (#634, #654).
+- `make_random_source(...)` without an explicit `mode`; the implicit default
+  becomes `RNGMode.COUNTER` in 0.12.0 (#631, #654).
+- The OD-2/3/4 module paths, renamed to domain names: `od2_actor` →
+  `actor_lifecycle`, `od2_actor_time_ledger` → `actor_time_ledger`,
+  `od3_decisions` → `queue_decisions`, `od3_queue_runtime` →
+  `queue_policy_runtime`, `od3_queue_ledger` → `queue_policy_ledger`,
+  `od4_intake` → `work_intake`, `od4_command_lineage` → `work_command_lineage`
+  (#629, #655). The persisted class paths
+  `sose.organizational.od2_actor:OrganizationalActor` and
+  `sose.organizational.od4_intake:ManagementWork` are **kept permanently** so
+  existing data decodes.
+
+### Security and integrity
+
+- Opt-in `TransitionAuthority`: chained, owner-independent attested receipts
+  with an attributes digest, a constant number of lookups per dispatch, and
+  fail-closed handling of rollback and cross-owner forks (#545; #580, #602).
+- OD-2 tracked actors: incremental actor-time ledger (#462, #587).
+- OD-3 queues: owner-scoped durable ledger with seed anchor, items and
+  applied-observation digests, and per-version slots against rollback; queues
+  created by earlier versions are adopted on their first application (#463, #588).
+- OD-4 intake: each new intervention re-verifies the original Command of every
+  earlier paid decision, anchored to the work flow (#464, #589).
+- OD-5a #477 bundles: detached RSA-SHA256 attestation verifier, RSA ≥2048,
+  RSA-PSS refused (#585).
+
+### Tests and tooling
+
+- Coverage back above the 95% floor (95.5% on main): #591–#597, #599 (#590).
+- Benchmarks: persistence, engine and temporal-backend tranches (#610; #611, #612).
+- The release upgrade gate now starts from `v0.10.0`.
+
 ## 0.10.0 — 2026-11-19
 
 Release note: `docs/releases/v0.10.0.md`. This release completes the ADR-0011
