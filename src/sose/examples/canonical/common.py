@@ -8,9 +8,10 @@ from pydantic import Field
 
 from sose.api import (
     DomainConfig, DomainRegistry, Engine, Entity, EntityType,
-    RandomSource, Scheduler, SimulationClock, SimulationContext,
+    Scheduler, SimulationClock, SimulationContext,
     probabilistic_transitions,
 )
+from sose.core.randomness import CounterRandomSource
 from sose.core.runtime import StoreDefinition
 from sose.core.stores import DurableStoreManager
 
@@ -53,7 +54,7 @@ def build_runtime(
     now = config.start_at if now is None else now
     context = SimulationContext(
         clock=SimulationClock(now=now, step=config.tick_step, tick=tick),
-        random=RandomSource(root_seed=config.random_seed),
+        random=CounterRandomSource(root_seed=config.random_seed),
         scheduler=Scheduler(),
     )
     registry = DomainRegistry()
