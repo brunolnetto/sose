@@ -1,21 +1,16 @@
 from __future__ import annotations
 
-from datetime import datetime  # noqa: F401
+from datetime import datetime
 
 from sose.backends.simpy import SimPyBackend
-from sose.core.clock import SimulationClock  # noqa: F401
-from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
 from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import ResourceDefinition, StoreDefinition
-from sose.core.scheduler import Scheduler  # noqa: F401
-from sose.domain.registry import DomainRegistry, EntityType  # noqa: F401
 from sose.persistence.memory import MemoryPersistence
 
 from .entities import Escalation, Incident
 from .scenarios import ORIGIN
-from .statecharts import EscalationChart, IncidentChart  # noqa: F401
-from .foundation import (  # noqa: F401
+from .foundation import (
     ITSMEntities,
     _dispatch,
     _escalation,
@@ -25,10 +20,7 @@ from .foundation import (  # noqa: F401
     flow_correlation_id,
     release_incident_owner,
 )
-from .queueing import (  # noqa: F401
-    claim_next_incident,
-    triage_and_queue,
-)
+from .queueing import claim_next_incident, triage_and_queue
 
 
 def seed_reference(

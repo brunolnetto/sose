@@ -13,10 +13,13 @@ from .runtime import (
     inspection,
     measurement_id,
 )
-from .execution_resources import (  # noqa: F401 - historical import location
-    finish_execution,
-    request_execution_resources,
-)
+from .execution_resources import finish_execution, request_execution_resources
+
+__all__ = [
+    "complete_activity", "complete_predecessor", "ensure_inspection", "finish_execution",
+    "reconcile_dependency", "reconcile_inspection", "record_measurement",
+    "request_execution_resources",
+]
 
 
 def reconcile_dependency(

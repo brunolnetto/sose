@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from sose.core.resources import DurableResourceManager
 from sose.core.runtime import ResourceDefinition
 from sose.domain.config import DomainDefinition
 

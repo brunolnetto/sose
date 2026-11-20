@@ -4,44 +4,25 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sose.backends.simpy import SimPyBackend
-from sose.core.clock import SimulationClock  # noqa: F401
-from sose.core.context import SimulationContext  # noqa: F401
 from sose.core.engine import Engine
 from sose.core.randomness import RandomSource  # noqa: F401
-from sose.core.scheduler import Scheduler  # noqa: F401
-from sose.domain.registry import DomainRegistry, EntityType  # noqa: F401
 from sose.persistence.memory import MemoryPersistence
 
-from .entities import (
-    ScheduledTrip,
-    ServiceAlert,  # noqa: F401
-    TripUpdateOccurrence,
-    Vehicle,
-    VehiclePositionOccurrence,  # noqa: F401
-)
+from .entities import ScheduledTrip, TripUpdateOccurrence, Vehicle
 from .scenarios import ORIGIN
-from .statecharts import (
-    ScheduledTripChart,  # noqa: F401
-    ServiceAlertChart,  # noqa: F401
-    TripUpdateOccurrenceChart,  # noqa: F401
-    VehicleChart,  # noqa: F401
-    VehiclePositionOccurrenceChart,  # noqa: F401
-)
-from .simulation_runtime import (  # noqa: F401 - re-exported, historical import location
+from .simulation_runtime import (
     TRIP_A_START,
-    flow_correlation_id, trip_update_id, build_runtime,
-    _entity, _trip, _dispatch, _at,
+    flow_correlation_id,
+    trip_update_id,
+    build_runtime,
+    _entity,
+    _trip,
+    _dispatch,
+    _at,
 )
-from .simulation_boundaries import (  # noqa: F401 - re-exported, historical import location
-    schedule_reference_block,
-    reconcile_vehicle_for_trip,
-)
-from .simulation_trip_projection import (  # noqa: F401 - re-exported, historical import location
-    _reconcile_trip_update_projection,
-)
-from .simulation_vehicle_positions import (  # noqa: F401 - re-exported, historical import location
-    record_vehicle_position,
-)
+from .simulation_boundaries import schedule_reference_block, reconcile_vehicle_for_trip
+from .simulation_trip_projection import _reconcile_trip_update_projection
+from .simulation_vehicle_positions import record_vehicle_position
 
 
 @dataclass(frozen=True, slots=True)
