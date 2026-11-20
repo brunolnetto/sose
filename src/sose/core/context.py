@@ -12,14 +12,14 @@ from sose.scenarios.engine import ScenarioEngine
 
 from .clock import SimulationClock
 from .events import DomainEvent
-from .randomness import RandomSource
+from .randomness import AnyRandomSource
 from .scheduler import Scheduler
 
 
 @dataclass(slots=True)
 class SimulationContext:
     clock: SimulationClock
-    random: RandomSource
+    random: AnyRandomSource
     scheduler: Scheduler
     pending_events: list[DomainEvent] = field(default_factory=list)
     entities: EntityFactory = field(init=False)
