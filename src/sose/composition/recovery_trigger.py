@@ -16,14 +16,26 @@ if TYPE_CHECKING:
     from sose.composition.recovery import TradingCustomerRecoveryRunner
 
 
-def trigger_config_json(runner: TradingCustomerRecoveryRunner) -> str:
-    config = {}
-    if runner.scoped_writer:
-        config['correlation_id'] = runner.correlation_id
-        # Persist the operational organization even without physical
-        # resource policies. A restarted job cannot silently rebind it.
-        config['organization_id'] = runner._organization_for(runner.correlation_id)
+def _config_json(config: dict[str, str]) -> str:
     return json.dumps(config, sort_keys=True, separators=(',', ':'))
+
+
+GLOBAL_CONFIG_JSON = _config_json({})
+
+
+def scoped_config_json(correlation_id: str, organization_id: str) -> str:
+    """The durable identity of a job that runs under its job-scoped writer lease."""
+    return _config_json({'correlation_id': correlation_id, 'organization_id': organization_id})
+
+
+def trigger_config_json(runner: TradingCustomerRecoveryRunner) -> str:
+    if not runner.scoped_writer:
+        return GLOBAL_CONFIG_JSON
+    # Persist the operational organization even without physical
+    # resource policies. A restarted job cannot silently rebind it.
+    return scoped_config_json(
+        runner.correlation_id, runner._organization_for(runner.correlation_id),
+    )
 
 
 def check_job_identity(state: SimulationJobState | None, config_json: str) -> None:
