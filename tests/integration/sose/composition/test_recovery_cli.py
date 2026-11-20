@@ -14,20 +14,11 @@ from sose.jobs.runner import scheduled_trigger_id
 START = datetime(2026, 10, 9, 12, tzinfo=timezone.utc)
 
 
-@pytest.mark.skipif(
-    not os.environ.get("SOSE_TEST_POSTGRES_DSN"), reason="SOSE_TEST_POSTGRES_DSN required",
-)
 def test_composition_recovery_cli_rejects_naive_anchor(tmp_path, capsys):
-    policies = tmp_path / "policies.json"
-    policies.write_text(json.dumps({
-        "composition.deliver_shipment": {
-            "resource_type": "pickup_courier", "pool_id": "cli-naive",
-            "scope": "shared", "capacity": 1,
-        },
-    }), encoding="utf-8")
+    """Rejected before any store is opened: the DSN is never contacted."""
     result = run_cli([
-        "composition-recovery", "--postgres-dsn", os.environ["SOSE_TEST_POSTGRES_DSN"],
-        "--namespace", f"cli_{uuid4().hex[:12]}", "--resource-policies", str(policies),
+        "composition-recovery", "--postgres-dsn", "postgresql://unreachable.invalid/db",
+        "--resource-policies", str(tmp_path / "never-read.json"),
         "--owner-id", "cron",
         "--correlation-id", "test-customer-correlation",
         "--organization-id", "test-trading-organization",
