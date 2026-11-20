@@ -14,7 +14,6 @@ from .event import EventFactory
 
 if TYPE_CHECKING:
     from sose.core.context import SimulationContext
-    from sose.statecharts.base import TransitionRecorder
 
 Cause = Command | DomainEvent
 
