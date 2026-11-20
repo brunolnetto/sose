@@ -18,23 +18,22 @@ from psycopg import sql
 
 from sose.core.resource_identity import ResourceAddress
 
-from .codec import loads  # noqa: F401
-from .memory import (
-    tracked_transaction_depth,
-    MemoryPersistence,  # noqa: F401
-    MemoryUnitOfWork,
-    _State,
-    fork_state,
-)
+from .memory import tracked_transaction_depth, MemoryUnitOfWork, _State, fork_state
 from .postgres_fencing import PostgresWriterFencingMixin
-from .postgres_leases import ScopedWriterLease, StaleWriterError, WriterLease  # noqa: F401
+from .postgres_leases import ScopedWriterLease, StaleWriterError, WriterLease
 from .postgres_reads import PostgresFreshReadsMixin
 from .postgres_schema import (
     bootstrap_schema,
     committed_schema_is_current,
 )
 from .postgres_writes import PostgresRecordWritesMixin
-from .records import StateRecord, changes_for_dirty_records, records_to_state  # noqa: F401
+from .records import StateRecord, records_to_state
+
+# Re-exported classes here keep this module as their __module__ (codec and
+# deterministic_id class paths), so they must stay importable from it.
+__all__ = [
+    "PostgresPersistence", "ScopedWriterLease", "StaleWriterError", "WriterLease",
+]
 
 
 _NAMESPACE_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,39}$")
