@@ -192,7 +192,7 @@ jobs:
           persist-credentials: false
 
       - name: Set up locked uv interpreter
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
 
       - name: Install frozen historical environment
         working-directory: historical-source
@@ -300,7 +300,7 @@ jobs:
           cache: pip
 
       - name: Install exact locked experiment dependencies
-        uses: astral-sh/setup-uv@v10.3.3
+        uses: astral-sh/setup-uv@v10.4.0
         with:
           enable-cache: true
 
@@ -400,7 +400,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
       - name: Check official runner syntax only; never run worlds on a PR
         run: |
           uv sync --frozen --extra dev
@@ -429,7 +429,7 @@ jobs:
         with:
           ref: 3c356fea6adba2d27f583d3a1469e5df1c0b651b
           persist-credentials: false
-      - uses: astral-sh/setup-uv@v10.3.3
+      - uses: astral-sh/setup-uv@v10.4.0
       - name: Verify approved historical source identity
         run: test "$(git rev-parse HEAD)" = "3c356fea6adba2d27f583d3a1469e5df1c0b651b"
       - name: Install exact locked dependencies
