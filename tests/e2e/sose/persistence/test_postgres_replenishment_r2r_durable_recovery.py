@@ -1,12 +1,32 @@
-"""Replenishment shares the R2R contract but uses a distinct durable intent."""
+"""Replenishment shares the R2R contract but uses a distinct durable intent.
+
+PostgreSQL policy-mode port of the deprecated SQLite recovery (#634); restart
+is a fresh PostgresPersistence connection on the same namespace.
+"""
 from datetime import timedelta
+import os
+from uuid import uuid4
 
 import pytest
 
 from sose.composition import trading_company_replenishment as replenishment
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.examples.p2p import simulation as p2p
-from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+from sose.core.resource_identity import ResourcePoolContract
+from sose.persistence.postgres import PostgresPersistence
+
+DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
+pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
+
+# The replenishment path issues post_replenishment_journal, so the neutral
+# mapping uses a certified customer intent this path never issues: every
+# replenishment effect keeps its historical (unmapped) admission semantics (#634).
+NEUTRAL_POLICY = {
+    "composition.deliver_shipment": ResourcePoolContract(
+        resource_type="pickup_courier", pool_id="replenishment-r2r-neutral",
+        scope="shared", capacity=1,
+    ),
+}
 
 
 REPLENISHMENT_OWNER_ID = "trading-company-replenishment-reference"
@@ -20,13 +40,13 @@ REPLENISHMENT_OWNER_ID = "trading-company-replenishment-reference"
     ],
 )
 def test_replenishment_r2r_accepted_effect_resumes_after_worker_death(
-    tmp_path, monkeypatch, cut, expected,
+    monkeypatch, cut, expected,
 ):
-    path = tmp_path / "replenishment-r2r.sqlite"
+    namespace = "replenishment_r2r_" + uuid4().hex[:12]
     opened = []
 
     def factory():
-        store = SQLiteIncrementalPersistence(path)
+        store = PostgresPersistence(DSN, namespace=namespace)
         opened.append(store)
         return store
 
@@ -55,7 +75,7 @@ def test_replenishment_r2r_accepted_effect_resumes_after_worker_death(
     monkeypatch.setattr(replenishment.r2r, "_dispatch", original_dispatch)
     opened[-1].close()
 
-    with SQLiteIncrementalPersistence(path) as store:
+    with PostgresPersistence(DSN, namespace=namespace) as store:
         journal = next(e for e in store.entities() if e.entity_type == "journal_entry")
         assert journal.state == expected
         # Reconstitute the flow from persisted delivery evidence, but take its
@@ -71,6 +91,8 @@ def test_replenishment_r2r_accepted_effect_resumes_after_worker_death(
         worker = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="replenishment-r2r-restart",
             organization_owners={flow_id: "trading-company-replenishment-reference"},
+            resource_policies=NEUTRAL_POLICY,
+            resource_organizations={flow_id: "trading-company-replenishment-reference"},
             job_id="replenishment-r2r-recovery", max_actions=16,
         )
         result = worker.run_trigger(

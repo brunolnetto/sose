@@ -5,6 +5,11 @@ reads a real MemoryPersistence transaction snapshot. We deliberately inject
 corrupt durable records through its UoW to falsify one enrollment invariant
 at a time. The runner's constructor-only fencing surface does not certify a
 PostgreSQL writer claim; worker/OS-death fencing has separate acceptance gates.
+
+#634: the runner is in policy mode (explicit resource_policies and
+resource_organizations). Its PostgreSQL-only resource coordinator is replaced
+by a surface that fails if touched: every preflight here refuses, or exhausts
+the step budget, before any resource coordination.
 """
 from __future__ import annotations
 
@@ -17,8 +22,10 @@ from sose.composition.effects import BusinessEffectApplied
 from sose.composition.model import (
     BoundaryConsumption, BoundaryDelivery, BoundaryMessage, DeliveryStatus,
 )
+from sose.composition import recovery
 from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.core.events import Command
+from sose.core.resource_identity import ResourcePoolContract
 from sose.jobs.model import SimulationJobState
 from sose.persistence.memory import MemoryPersistence
 
@@ -27,6 +34,15 @@ NOW = datetime(2026, 1, 1, tzinfo=timezone.utc)
 JOB = "recover:causality:audit"
 OWNER = "worker:recovery-audit"
 EFFECT = "effect:accepted"
+# Certified, but never issued by these fixtures: the deliver_shipment command
+# keeps its historical (unmapped) admission semantics.
+NEUTRAL_POLICY = {
+    "composition.post_replenishment_journal": ResourcePoolContract(
+        resource_type="journal_clerk", pool_id="enrollment-audit-neutral",
+        scope="shared", capacity=1,
+    ),
+}
+ORGANIZATIONS = {"correlation:one": "test-org-recovery-enrollment"}
 
 
 class _ConstructorFencingSurface:
@@ -37,6 +53,21 @@ class _ConstructorFencingSurface:
 
     def claim_writer(self, *_args, **_kwargs):
         raise AssertionError("fencing is not exercised by this preflight unit")
+
+
+class _UntouchedResourceCoordinator:
+    """Stand in for the PostgreSQL-only coordinator; any use is a test failure."""
+
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def __getattr__(self, name):
+        raise AssertionError(f"resource coordination ({name}) is not exercised here")
+
+
+@pytest.fixture(autouse=True)
+def _memory_preflight_coordinator(monkeypatch):
+    monkeypatch.setattr(recovery, "IntentResourceCoordinator", _UntouchedResourceCoordinator)
 
 
 def _message(n: int = 1):
@@ -78,6 +109,8 @@ def _scenario(*, publications=(), acks=(), effects=(), max_actions=1):
         owner_id=OWNER,
         job_id=JOB,
         max_actions=max_actions,
+        resource_policies=NEUTRAL_POLICY,
+        resource_organizations=ORGANIZATIONS,
     )
     return store, runner
 

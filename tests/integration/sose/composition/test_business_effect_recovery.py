@@ -1,14 +1,10 @@
-"""End-to-end and crash/restart evidence for applied-effect certificates."""
-from datetime import timedelta
+"""End-to-end evidence for applied-effect certificates.
 
-import pytest
-
+The crash/restart recovery evidence lives in
+tests/e2e/sose/persistence/test_postgres_business_effect_recovery.py (#634).
+"""
 from sose.composition import trading_company_customer as customer
 from sose.composition import trading_company_replenishment as replenishment
-from sose.composition.effects import BusinessEffectService
-from sose.composition.recovery import TradingCustomerRecoveryRunner
-from sose.examples.order_to_cash import simulation as o2c
-from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
 REPLENISHMENT_OWNER_ID = "trading-company-replenishment-reference"
@@ -45,80 +41,3 @@ def test_replenishment_journal_uses_same_receipt_contract():
     assert effects[0].entity_id == result.journal_id
     assert effects[0].terminal_state == "posted"
     assert effects[0].correlation_id == result.correlation_id
-
-
-@pytest.mark.parametrize(
-    "effect_name,expected_type,expected_state",
-    [
-        ("composition.deliver_shipment", "shipment", "delivered"),
-        ("composition.complete_external_fulfillment", "sales_order", "invoiced"),
-        ("composition.settle_customer_payment", "card_payment", "settled"),
-        ("composition.post_customer_journal", "journal_entry", "posted"),
-    ],
-)
-def test_worker_death_after_business_effect_before_proof_is_idempotent(
-    tmp_path, monkeypatch, effect_name, expected_type, expected_state,
-):
-    db = tmp_path / "crash-between-business-and-certificate.sqlite"
-    opened = []
-
-    def factory():
-        store = SQLiteIncrementalPersistence(db)
-        opened.append(store)
-        return store
-
-    monkeypatch.setattr(customer, "MemoryPersistence", factory)
-    original_complete = BusinessEffectService.complete
-
-    def crash_before_certificate(self, *, effect_id, completed_at):
-        command = self.persistence.command(effect_id)
-        if command is not None and command.name == effect_name:
-            raise RuntimeError("worker killed before certificate commit")
-        return original_complete(self, effect_id=effect_id, completed_at=completed_at)
-
-    monkeypatch.setattr(BusinessEffectService, "complete", crash_before_certificate)
-    with pytest.raises(RuntimeError, match="worker killed before certificate commit"):
-        customer.run_customer_demand_path(organization_id="test-org-business-effect-recovery")
-    monkeypatch.setattr(BusinessEffectService, "complete", original_complete)
-    opened[-1].close()
-
-    with SQLiteIncrementalPersistence(db) as store:
-        target = next(
-            e for e in store.entities() if e.entity_type == expected_type
-        )
-        assert target.state == expected_state
-        before_version = target.version
-        assert not any(
-            x.entity_type == expected_type for x in store.business_effects()
-        )
-        # Reconstitute the flow from persisted delivery evidence, but take its
-        # owning organization from the explicit fixture identity.
-        with store.transaction() as uow:
-            correlations = {
-                message.correlation_id
-                for delivery in uow.boundary_deliveries()
-                if (message := uow.get_boundary_message(delivery.message_id)) is not None
-            }
-        assert len(correlations) == 1
-        flow_id = next(iter(correlations))
-        worker = TradingCustomerRecoveryRunner(
-            persistence=store, owner_id="recover-business-proof",
-            organization_owners={flow_id: "test-org-business-effect-recovery"},
-            job_id="business-proof-recovery", max_actions=16,
-        )
-        first = worker.run_trigger(
-            trigger_id="resume-effects", now=o2c.ORIGIN + timedelta(days=2),
-        )
-        assert first.actions >= 1
-        evidence = [
-            x for x in store.business_effects()
-            if x.entity_type == expected_type and x.entity_id == target.id
-        ]
-        assert len(evidence) == 1
-        assert evidence[0].terminal_state == expected_state
-        assert store.entity(expected_type, target.id).version == before_version
-        second = worker.run_trigger(
-            trigger_id="retry-effects", now=o2c.ORIGIN + timedelta(days=2, minutes=1),
-        )
-        assert second.actions == 0
-        assert store.business_effect(evidence[0].effect_id) == evidence[0]
