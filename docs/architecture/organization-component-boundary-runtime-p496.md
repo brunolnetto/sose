@@ -74,12 +74,21 @@ causation, not every acceptance criterion in #496.
   participating in active boundaries because the audited process-manifest
   contract catalogue remains domain-keyed. The v2 router is component/owner
   qualified after admission; it does not silently waive that existing guard.
-- A handler is still trusted domain code operating through the existing UoW.
-  This route envelope is not a protected writer-role/key boundary and does
-  not replace #545 authority hardening.
-- It does not prove PostgreSQL multi-worker/restart equivalence, finite shared
-  pool arbitration or #477 physical-causal admission. Those remain separate
-  gates, not inferred from these unit tests.
+- Generic boundary paths refuse or skip v2 messages: `BoundaryService.publish`
+  refuses a v2 message without a `scoped_validator`, `claim_next` never leases
+  a v2 delivery without an `organization_scope`, and `BoundaryConsumerRegistry`
+  will not resolve a v2 message. Only the organization facade supplies those
+  hooks; the validator runs inside the advisory-locked `boundary_transaction`.
+- **Trust contract:** `scoped_validator` and `organization_scope` are hooks for
+  trusted in-process code, not a security boundary. Code that calls them with a
+  permissive validator or another component's scope bypasses the router, just
+  as it could write through the unit of work directly. A handler is likewise
+  trusted domain code. This route envelope is not a protected writer-role/key
+  boundary and does not replace #545 authority hardening.
+- Routing isolation (scoped publish/claim/consume, end-to-end boundary chains)
+  is tested on memory, SQLite and PostgreSQL. It does not prove PostgreSQL
+  multi-worker/restart equivalence, finite shared pool arbitration or #477
+  physical-causal admission; those remain separate gates.
 
 The next P496 increment must bind each declared job to its exact organization,
 component and owner through durable execution evidence, then compose a
