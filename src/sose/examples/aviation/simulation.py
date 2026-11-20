@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import (
     PreemptiveResourceDefinition,
     ResourceDefinition,

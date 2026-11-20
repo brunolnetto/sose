@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from sose.core.engine import Engine
-from sose.core.randomness import RandomSource  # noqa: F401
 from sose.persistence.base import Persistence
 
 from .entities import Dock, Forklift, Shipment, StockPosition, Truck, WarehouseSite

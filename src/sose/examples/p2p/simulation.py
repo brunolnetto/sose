@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import timedelta
 
 from sose.backends.simpy import SimPyBackend
-from sose.core.randomness import RandomSource  # noqa: F401
 from sose.persistence.memory import MemoryPersistence
 
 from .foundation import (

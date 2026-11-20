@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.engine import Engine
-from sose.core.randomness import RandomSource  # noqa: F401 - historical import location
 from sose.core.runtime import ResourceDefinition
 from sose.persistence.memory import MemoryPersistence
 
