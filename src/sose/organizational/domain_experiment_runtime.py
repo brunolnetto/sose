@@ -9,12 +9,8 @@ from pydantic import BaseModel
 
 from sose.core.randomness import scoped_seed
 
-from .domain_experiment import (
-    AgencyConfiguration,  # noqa: F401 - legacy module surface
-    ExperimentWorld,
-    build_experiment_worlds,
-)
-from .domain_experiment_records import (  # noqa: F401 - re-exported public/legacy surface
+from .domain_experiment import AgencyConfiguration, ExperimentWorld, build_experiment_worlds
+from .domain_experiment_records import (
     DomainEvidenceRecord,
     DomainExecutionRequest,
     DomainExecutionResult,
@@ -35,8 +31,15 @@ from .domain_reference import (
     GroundTruthComparisonKind,
     GroundTruthTargetKind,
 )
-from .experiment import ExperimentProtocol  # noqa: F401 - legacy module surface
+from .experiment import ExperimentProtocol
 from .model_spec import ModelIntervention, ModelSpec
+
+__all__ = [
+    "AgencyConfiguration", "DomainExecutionRequest", "DomainExecutionResult",
+    "DomainExperimentPlan", "DomainExperimentResult", "ExperimentObservation",
+    "ExperimentProtocol", "ExperimentRunRecord", "GroundTruthAssessment", "RegimeReference",
+    "WorldReferenceRecord", "evidence_hash", "run_domain_experiment",
+]
 
 
 class _RuntimeDomainReference(Protocol):

@@ -5,7 +5,7 @@ from statistics import fmean, stdev
 
 from .agency import AgencyLevel
 from .domain_experiment import ExperimentWorld
-from .domain_experiment_analysis_models import (  # noqa: F401 - re-exported public surface
+from .domain_experiment_analysis_models import (
     ComparisonContext,
     ComparisonEligibility,
     ComparisonKind,
@@ -19,12 +19,17 @@ from .domain_experiment_runtime import (
     ExperimentRunRecord,
     RegimeReference,
 )
-from .domain_reference import DomainReferenceDescriptor  # noqa: F401 - legacy module surface
+from .domain_reference import DomainReferenceDescriptor
 from .experiment import MetricDirection
 from .domain_experiment_pairing import _paired_values, _runs_by_world, _worlds_by_key
-from .student_t import (  # noqa: F401 - re-exported for callers and tests
-    _student_t_critical,
-)
+from .student_t import _student_t_critical
+
+# Re-exported classes here keep this module as their __module__ (codec and
+# deterministic_id class paths), so they must stay importable from it.
+__all__ = [
+    "ComparisonContext", "ComparisonEligibility", "ComparisonKind", "DomainReferenceDescriptor",
+    "ExperimentEffect", "analyze_domain_experiment", "recompute_domain_experiment_result_hash",
+]
 
 
 def analyze_domain_experiment(

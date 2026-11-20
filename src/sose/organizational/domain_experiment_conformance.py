@@ -9,7 +9,7 @@ from typing import Protocol
 from pydantic import BaseModel, ConfigDict, Field, InstanceOf
 
 from .domain_experiment import ExperimentWorld, build_experiment_worlds
-from .domain_experiment_conformance_checks import (  # noqa: F401 - moved, legacy surface
+from .domain_experiment_conformance_checks import (
     ConformanceCheck,
     _claims_valid,
     _deterministic_world_construction,
@@ -21,11 +21,11 @@ from .domain_experiment_runtime import (
     ExperimentObservation,
     RegimeReference,
 )
-from .domain_reference import (
-    DomainReferenceDescriptor,
-    GroundTruthClaim,
-    GroundTruthTargetKind,  # noqa: F401 - legacy module surface
-)
+from .domain_reference import DomainReferenceDescriptor, GroundTruthClaim, GroundTruthTargetKind
+
+__all__ = [
+    "DomainExperimentConformance", "GroundTruthTargetKind", "run_domain_experiment_conformance",
+]
 
 
 class _ConformanceReference(Protocol):

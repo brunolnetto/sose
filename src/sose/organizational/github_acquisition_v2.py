@@ -14,7 +14,7 @@ from .acquisition_v2 import (
     GitHubPRAcquisitionManifestV2,
     build_complete_github_pr_evidence_v2,
 )
-from .github_acquisition_v2_parsing import (  # noqa: F401 - moved, legacy surface
+from .github_acquisition_v2_parsing import (
     _iso_datetime,
     _known_and_different,
     _next_link,

@@ -8,12 +8,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from .ledger import ActorCategory, ActorLedgerInterval
-from .synthetic_mechanics import (  # noqa: F401 - shared with the A0 runner
-    _draw_service,
-    _lead_statistics,
-    _ServiceDraw,
-    _throughput_and_wip,
-)
 
 
 @dataclass(slots=True)

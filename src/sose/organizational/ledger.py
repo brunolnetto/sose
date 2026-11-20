@@ -5,7 +5,7 @@ from math import isclose, isfinite
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from .ledger_support import (  # noqa: F401 - moved, re-exported public surface
+from .ledger_support import (
     _CAPACITY_ABS_TOL,
     _NON_CAPACITY,
     ActorCategory,
@@ -16,6 +16,13 @@ from .ledger_support import (  # noqa: F401 - moved, re-exported public surface
     _time_equal,
     _union_duration,
 )
+
+# ActorCategory/ItemCategory keep this module as their __module__ (codec and
+# deterministic_id class paths), so they stay importable from here.
+__all__ = [
+    "ActorCategory", "ActorLedger", "ActorLedgerInterval", "ItemCategory", "ItemLedger",
+    "ItemLedgerInterval",
+]
 
 
 class ItemLedgerInterval(BaseModel):

@@ -13,12 +13,12 @@ from copy import deepcopy
 from typing import Any, Callable
 
 from sose.core.events import DomainEvent
-from sose.core.runtime import ResourceDefinition, ResourceReservation  # noqa: F401
+from sose.core.runtime import ResourceDefinition
 from sose.domain.entity import Entity
 from sose.persistence.base import Persistence
 
 from .od5a_admission import OD5aCompiledArm
-from .od5a_durable_actions import (  # noqa: F401 - moved, re-exported module surface
+from .od5a_durable_actions import (
     _KIND,
     _ORIGIN,
     _canonical_hash,
@@ -26,7 +26,6 @@ from .od5a_durable_actions import (  # noqa: F401 - moved, re-exported module su
     _finish_idle,
     _grant,
     _has_physical_work,
-    _key,
     _NativePhysicalArbiter,
     _on_dependency_delivered,
     _on_stage_executed,
@@ -35,7 +34,7 @@ from .od5a_durable_actions import (  # noqa: F401 - moved, re-exported module su
     _schedule,
     _time,
 )
-from .od5a_durable_inputs import _time_us, validated_od5a_pilot  # noqa: F401
+from .od5a_durable_inputs import validated_od5a_pilot
 from .od5a_mechanisms import OD5aWorkItem
 
 
