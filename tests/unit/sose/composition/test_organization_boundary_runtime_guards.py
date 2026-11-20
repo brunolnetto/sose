@@ -78,7 +78,9 @@ def _unregistered_registry():
 @pytest.mark.parametrize("version", [True, 1.0])
 def test_message_rejects_non_integer_contract_version(version):
     definition, _registry = _runtime()
-    with pytest.raises(ValueError, match="contract_version must be positive"):
+    with pytest.raises(
+        ValueError, match=r"contract_version must be a positive integer \(not bool/float\)"
+    ):
         replace(_message(definition), contract_version=version)
 
 
