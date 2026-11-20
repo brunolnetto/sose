@@ -115,6 +115,20 @@ def _encode_enum(value: object) -> object | None:
     }
 
 
+# Optional BoundaryMessage fields that did not exist in legacy v1 records.
+# A None value is omitted so legacy tagged JSON stays byte-identical.
+_LEGACY_OMITTED_BOUNDARY_FIELDS = frozenset({
+    "causation_kind",
+    "organization_id",
+    "definition_fingerprint",
+    "config_epoch",
+    "source_component_id",
+    "source_owner_id",
+    "destination_component_id",
+    "destination_owner_id",
+})
+
+
 def _encode_dataclass_value(value: object) -> object | None:
     if not (is_dataclass(value) and not isinstance(value, type)):
         return None
@@ -129,16 +143,7 @@ def _encode_dataclass_value(value: object) -> object | None:
             # tagged JSON bytes.
             if not (
                 _class_path(value) == "sose.composition.model:BoundaryMessage"
-                and field.name in {
-                    "causation_kind",
-                    "organization_id",
-                    "definition_fingerprint",
-                    "config_epoch",
-                    "source_component_id",
-                    "source_owner_id",
-                    "destination_component_id",
-                    "destination_owner_id",
-                }
+                and field.name in _LEGACY_OMITTED_BOUNDARY_FIELDS
                 and getattr(value, field.name) is None
             )
         },

@@ -123,25 +123,8 @@ class OrganizationBoundaryConsumerRegistry:
             raise TypeError("organization boundary requires BoundaryMessage")
         if not message.organization_scoped:
             raise ValueError("organization boundary requires a v2 scoped message")
-        if (
-            message.organization_id != self.definition.organization_id
-            or message.definition_fingerprint != self.definition_fingerprint
-            or message.config_epoch != self.definition.config_epoch
-        ):
-            raise ValueError("boundary message belongs to a different organization definition")
-
-        source = self._components.get(message.source_component_id or "")
-        destination = self._components.get(message.destination_component_id or "")
-        if source is None or destination is None:
-            raise ValueError("boundary message references an unknown component")
-        if (
-            message.source_domain != source.domain
-            or message.source_owner_id != source.owner_id
-            or message.destination_domain != destination.domain
-            or message.destination_owner_id != destination.owner_id
-        ):
-            raise PermissionError("boundary message component owner/domain binding mismatch")
-
+        self._require_definition(message)
+        source, destination = self._bound_components(message)
         route = (
             source.component_id,
             destination.component_id,
@@ -155,6 +138,30 @@ class OrganizationBoundaryConsumerRegistry:
                 "organization component route has no registered handler"
             )
         return source
+
+    def _require_definition(self, message: BoundaryMessage) -> None:
+        if (
+            message.organization_id != self.definition.organization_id
+            or message.definition_fingerprint != self.definition_fingerprint
+            or message.config_epoch != self.definition.config_epoch
+        ):
+            raise ValueError("boundary message belongs to a different organization definition")
+
+    def _bound_components(
+        self, message: BoundaryMessage,
+    ) -> tuple[ProcessComponent, ProcessComponent]:
+        source = self._components.get(message.source_component_id or "")
+        destination = self._components.get(message.destination_component_id or "")
+        if source is None or destination is None:
+            raise ValueError("boundary message references an unknown component")
+        if (
+            message.source_domain != source.domain
+            or message.source_owner_id != source.owner_id
+            or message.destination_domain != destination.domain
+            or message.destination_owner_id != destination.owner_id
+        ):
+            raise PermissionError("boundary message component owner/domain binding mismatch")
+        return source, destination
 
     def source_entity_types(self, component_id: str) -> frozenset[str]:
         try:
@@ -208,35 +215,9 @@ class OrganizationBoundaryService:
         # in the transaction that commits publication and delivery.
         with self.persistence.transaction() as uow:
             if message.causation_kind == "event":
-                cause = uow.get_event(message.causation_id or "")
-                if cause is None:
-                    raise ValueError("organization boundary source event is missing")
-                if cause.owner_id != source.owner_id:
-                    raise PermissionError("source event belongs to a different component owner")
-                if cause.entity_type not in self.registry.source_entity_types(
-                    source.component_id
-                ):
-                    raise PermissionError("source event entity type is not owned by source component")
-                if cause.correlation_id != message.correlation_id:
-                    raise ValueError("source event correlation contradicts boundary message")
-                if cause.occurred_at > message.produced_at:
-                    raise ValueError("boundary publication precedes its source event")
+                _require_owned_source_event(uow, message, source, self.registry)
             else:
-                parent = uow.get_boundary_message(message.causation_id or "")
-                if parent is None:
-                    raise ValueError("organization boundary predecessor is missing")
-                self.registry.validate_message(parent)
-                if (
-                    parent.destination_component_id != message.source_component_id
-                    or parent.destination_owner_id != message.source_owner_id
-                ):
-                    raise PermissionError(
-                        "causal boundary predecessor does not terminate at source component owner"
-                    )
-                if parent.correlation_id != message.correlation_id:
-                    raise ValueError("boundary predecessor correlation mismatch")
-                if parent.produced_at > message.produced_at:
-                    raise ValueError("boundary publication precedes its boundary predecessor")
+                _require_terminating_predecessor(uow, message, self.registry)
 
         return self._protocol.publish(
             message,
@@ -307,3 +288,46 @@ class OrganizationBoundaryService:
             registry=self.registry,
             now=now,
         )
+
+
+def _require_owned_source_event(
+    uow: "UnitOfWork",
+    message: BoundaryMessage,
+    source: ProcessComponent,
+    registry: OrganizationBoundaryConsumerRegistry,
+) -> None:
+    cause = uow.get_event(message.causation_id or "")
+    if cause is None:
+        raise ValueError("organization boundary source event is missing")
+    if cause.owner_id != source.owner_id:
+        raise PermissionError("source event belongs to a different component owner")
+    if cause.entity_type not in registry.source_entity_types(source.component_id):
+        raise PermissionError(
+            "source event entity type is not owned by source component"
+        )
+    if cause.correlation_id != message.correlation_id:
+        raise ValueError("source event correlation contradicts boundary message")
+    if cause.occurred_at > message.produced_at:
+        raise ValueError("boundary publication precedes its source event")
+
+
+def _require_terminating_predecessor(
+    uow: "UnitOfWork",
+    message: BoundaryMessage,
+    registry: OrganizationBoundaryConsumerRegistry,
+) -> None:
+    parent = uow.get_boundary_message(message.causation_id or "")
+    if parent is None:
+        raise ValueError("organization boundary predecessor is missing")
+    registry.validate_message(parent)
+    if (
+        parent.destination_component_id != message.source_component_id
+        or parent.destination_owner_id != message.source_owner_id
+    ):
+        raise PermissionError(
+            "causal boundary predecessor does not terminate at source component owner"
+        )
+    if parent.correlation_id != message.correlation_id:
+        raise ValueError("boundary predecessor correlation mismatch")
+    if parent.produced_at > message.produced_at:
+        raise ValueError("boundary publication precedes its boundary predecessor")
