@@ -3,7 +3,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 
-from sose.backends.simpy import SimPyBackend  # noqa: F401
 from sose.core.events import Command
 from sose.core.identity import deterministic_id
 from sose.persistence.memory import MemoryPersistence
@@ -13,10 +12,8 @@ from sose.examples.warehouse_management import simulation as wm
 from sose.examples.record_to_report import simulation as r2r
 
 from .boundary import BoundaryConsumerRegistry, BoundaryService
-from .effects import BusinessEffectService  # noqa: F401
 from .model import BoundaryMessage
-from .trading_company_replenishment_effects import (  # noqa: F401 - historical import location
-    _CausalCommandFactory,
+from .trading_company_replenishment_effects import (
     _Fixtures,
     _execute_accounting,
     _execute_procurement,

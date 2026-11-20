@@ -19,19 +19,24 @@ from pydantic import (
 
 from .agency import AgencyLevel
 from .domain_reference import (
-    AgencyCapabilitySpec,  # noqa: F401 - legacy module surface
+    AgencyCapabilitySpec,
     DomainReferenceDescriptor,
     DomainReferenceIdentity,
 )
 from .experiment import ExperimentProtocol
 from .model_spec import InterventionClass, ModelIntervention, ModelSpec
-from .domain_experiment_validation import (  # noqa: F401 - moved helpers, legacy surface
+from .domain_experiment_validation import (
     _interventions_by_id,
     _validate_agency_configurations,
     _validate_built_model,
     _validate_protocol_parameter_space,
 )
 from .sampling import sample_parameter_space
+
+__all__ = [
+    "AgencyCapabilitySpec", "AgencyConfiguration", "ExperimentWorld", "NonBlankString",
+    "build_experiment_worlds",
+]
 
 
 NonBlankString = Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]

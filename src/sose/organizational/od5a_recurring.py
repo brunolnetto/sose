@@ -54,16 +54,17 @@ from .od5a_shared_wait import (
     suggest_od5a_shared_wait_slots,
 )
 
-# Former module-level internals, kept importable from their historical home
-# after the split (tests and sibling modules reference several of them).
-from .od5a_native_arbiter import (  # noqa: F401,E402
+# Former module-level internals, kept importable from their historical home after
+# the split: tests reach them through this module, and od5a_integrated imports
+# _assert_active_claimed_lease from here.
+from .od5a_native_arbiter import (  # noqa: F401 - test seam (test_od5a_wait_fence_coverage.py, postgres OD-5a physical tests)
     _PhysicalStepPreview,
     _RecurringNativePhysicalArbiter,
 )
-from .od5a_recurring_fence import (  # noqa: F401,E402
+from .od5a_recurring_fence import (  # noqa: F401 - seam for od5a_integrated.py and test_od5a_wait_fence_coverage.py
     _assert_active_claimed_lease,
 )
-from .od5a_shared_wait import (  # noqa: F401,E402
+from .od5a_shared_wait import (  # noqa: F401 - test seam for test_od5a_wait_fence_coverage.py
     _require_shared_wait_marker,
     _validate_shared_wait_record,
 )

@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass  # noqa: F401
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable, Generic
 
 from sose.domain.config import ConfigT, DomainDefinition, SeedT
 from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.storage import DomainPersistence
-from sose.domain.warehouse import DomainMutation
 from sose.domain.warehouse import DomainWarehouse
 from sose.jobs.model import CompletedJobTrigger, SimulationJobState
 from sose.jobs.runner_batch import _BatchTriggerMixin

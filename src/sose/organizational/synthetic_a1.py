@@ -10,13 +10,8 @@ from .agency import A1Policy, A1PolicyName, AgencyLevel
 from .experiment import ExperimentProtocol
 from .ledger import ActorCategory, ActorLedger
 from .synthetic_runner import SyntheticItemRecord
-from .synthetic_a1_support import (
-    _ActorTrack,
-    _draw_service,
-    _lead_statistics,
-    _measured_time,
-    _throughput_and_wip,
-)
+from .synthetic_a1_support import _ActorTrack, _measured_time
+from .synthetic_mechanics import _draw_service, _lead_statistics, _throughput_and_wip
 from .synthetic_study import SyntheticWorldSpec
 
 

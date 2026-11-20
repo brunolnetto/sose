@@ -11,10 +11,10 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sose.core.randomness import CounterRandomSource
 
 from .dataset import ObservedPRKey
-from .model_spec import EvidenceClass, ModelSpec  # noqa: F401 - legacy module surface
+from .model_spec import EvidenceClass, ModelSpec
 from .prospective_cohort_v2 import ProspectiveCohortStatus
 from .prospective_model_freeze_v2 import REQUIRED_TAIL_METRICS_V2
-from .prospective_stage1_models_v2 import (  # noqa: F401 - moved, re-exported public surface
+from .prospective_stage1_models_v2 import (
     DelayAnalogV2,
     NonBlankString,
     PRReviewV2Case,
@@ -24,6 +24,13 @@ from .prospective_stage1_models_v2 import (  # noqa: F401 - moved, re-exported p
 from .prospective_state_v2 import ProspectiveEvidenceStateV2
 from .source_evidence_v2 import GitHubPREvidenceRecordV2
 from .validation import LeadTimeValidationCriteria
+
+__all__ = [
+    "DelayAnalogV2", "EvidenceClass", "PRReviewV2Case", "PRReviewV2TailModel",
+    "REQUIRED_STAGE2_TAIL_METRICS_V2", "STAGE1_FIT_VERSION_V2", "Stage1PRReviewFitV2",
+    "derive_stage2_acceptance_criteria_v2", "fit_stage1_pr_review_v2", "predict_pr_review_v2",
+    "workflow_active_seconds_v2",
+]
 
 
 STAGE1_FIT_VERSION_V2 = "pr-review-prospective-stage1-fit/v2"

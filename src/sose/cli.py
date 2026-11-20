@@ -5,7 +5,6 @@ import sys
 
 # Names that lived here before the split stay importable from ``sose.cli``.
 
-from sose.jobs.storage import build_storage_plan  # noqa: F401
 from sose.cli_recovery import add_composition_recovery_parser
 from sose.cli_commands import (
     _cmd_apply,

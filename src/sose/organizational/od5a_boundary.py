@@ -20,7 +20,9 @@ from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
 from sose.persistence.base import Persistence, UnitOfWork
 
-from .od5a_durable import _event_id, _key, _time_us
+from .od5a_durable import _event_id
+from .od5a_durable_actions import _key
+from .od5a_durable_inputs import _time_us
 
 
 _KIND = "od5a_durable_pilot"

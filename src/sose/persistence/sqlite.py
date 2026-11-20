@@ -17,11 +17,16 @@ from .sqlite_migrations import (
     CURRENT_CODEC_VERSION,
     CURRENT_SCHEMA_VERSION,
     SQLiteSchemaInfo,
-    LegacyUnownedSnapshotError,  # noqa: F401 - raised from here; public for callers
+    LegacyUnownedSnapshotError,
     ensure_schema,
     read_schema_info,
     stamp_owner_qualified_codec,
 )
+
+__all__ = [
+    "CURRENT_CODEC_VERSION", "CURRENT_SCHEMA_VERSION", "LegacyUnownedSnapshotError",
+    "SQLitePersistence",
+]
 
 
 class SQLitePersistence(MemoryPersistence):

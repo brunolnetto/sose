@@ -17,13 +17,14 @@ from .memory import (
 )
 from .records import StateRecord, changes_for_dirty_records, records_to_state
 from .sqlite_incremental_reads import SQLiteIncrementalFreshReadsMixin
-from .sqlite_incremental_fencing import (
-    ScopedWriterLease,  # noqa: F401 - public lease type of claim_scoped_writer
-    SQLiteIncrementalWriterFencingMixin,
-)
+from .sqlite_incremental_fencing import ScopedWriterLease, SQLiteIncrementalWriterFencingMixin
 from .sqlite_incremental_schema import (
     SQLiteIncrementalSchemaMixin,
 )
+
+__all__ = [
+    "SQLiteIncrementalPersistence", "ScopedWriterLease", "StaleWriterError", "WriterLease",
+]
 
 
 _NAMESPACE_RE = re.compile(r"^[a-z_][a-z0-9_]{0,39}$")

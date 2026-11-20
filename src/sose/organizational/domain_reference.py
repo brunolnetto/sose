@@ -9,7 +9,7 @@ from typing import Protocol, runtime_checkable
 from pydantic import BaseModel, ConfigDict, Field, InstanceOf, field_serializer, field_validator, model_validator
 
 from .agency import AgencyLevel
-from .domain_reference_ground_truth import (  # noqa: F401 - moved, re-exported public surface
+from .domain_reference_ground_truth import (
     GroundTruthClaim,
     GroundTruthComparisonKind,
     GroundTruthComparisonRule,
@@ -21,6 +21,15 @@ from .domain_reference_ground_truth import (  # noqa: F401 - moved, re-exported 
 )
 from .experiment import ParameterRange
 from .model_spec import EvidenceClass
+
+# Re-exported classes here keep this module as their __module__ (codec and
+# deterministic_id class paths), so they must stay importable from it.
+__all__ = [
+    "AgencyCapabilitySpec", "DomainReference", "DomainReferenceDescriptor",
+    "DomainReferenceIdentity", "ExperimentObservation", "GroundTruthClaim",
+    "GroundTruthComparisonKind", "GroundTruthComparisonRule", "GroundTruthKind",
+    "GroundTruthTargetKind", "ParameterDefinition", "ParameterSpaceSpec",
+]
 
 
 class DomainReferenceIdentity(BaseModel):

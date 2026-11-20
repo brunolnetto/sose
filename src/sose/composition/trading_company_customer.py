@@ -2,25 +2,34 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from collections.abc import Mapping
-from time import monotonic, sleep  # noqa: F401 - resolved via this module
+from time import monotonic  # noqa: F401 - patch seam for test_legacy_durable_resource_wait.py
+from time import sleep  # noqa: F401 - read via this module by trading_company_customer_run.py
 
-from sose.backends.simpy import SimPyBackend  # noqa: F401
 from sose.core.events import Command
 from sose.core.identity import deterministic_id
 from sose.core.resource_reservations import ResourceConflictError, TemporalReservation, authoritative_effect_reservation_id
 from sose.persistence.memory import MemoryPersistence
 
 from sose.examples.order_to_cash import simulation as o2c
-from sose.examples.warehouse_fulfillment import simulation as fulfillment  # noqa: F401
-from sose.examples.logistics import simulation as logistics  # noqa: F401
-from sose.examples.cards_payments import simulation as payments  # noqa: F401
-from sose.examples.record_to_report import simulation as r2r  # noqa: F401
-from sose.examples.warehouse_management import simulation as wm  # noqa: F401
+from sose.examples.warehouse_fulfillment import (  # noqa: F401 - patch seam: tests patch this domain module via it
+    simulation as fulfillment,
+)
+from sose.examples.logistics import (  # noqa: F401 - patch seam: tests patch this domain module via it
+    simulation as logistics,
+)
+from sose.examples.cards_payments import (  # noqa: F401 - patch seam: tests patch this domain module via it
+    simulation as payments,
+)
+from sose.examples.record_to_report import (  # noqa: F401 - patch seam: tests patch this domain module via it
+    simulation as r2r,
+)
 
-from .boundary import BoundaryConsumerRegistry, BoundaryService  # noqa: F401
-from .effects import BusinessEffectService  # noqa: F401
+from .boundary import BoundaryConsumerRegistry
+from .boundary import (  # noqa: F401 - read via this module by trading_company_customer_run.py
+    BoundaryService,
+)
 from .bindings import CustomerSettlementBinding, SettlementBindingService
-from .model import BoundaryMessage, DeliveryStatus  # noqa: F401
+from .model import BoundaryMessage
 from .trading_company_customer_stages import (
     _delivery_completed_stage,
     _demand_origin,
@@ -34,41 +43,39 @@ from .trading_company_customer_stages import (
     _seed_customer_fixtures,
 )
 from .trading_company_customer_run import _DemandPathRun
-from .trading_company_customer_support import (  # noqa: F401 - historical import location
+from .trading_company_customer_support import (
     DurableResourceWait,
-    _CausalCommandFactory,
     _CustomerFixtures,
     _IntentExecution,
-    _causal_command_scope,
     _complete_intent,
-    _consume_next,
     _intent_handler,
+    _publish,
+)
+from .trading_company_customer_support import (  # noqa: F401 - test seam for test_customer_causal_guard_coverage.py
+    _causal_command_scope,
     _next_logical_time,
     _operational_owner,
-    _publish,
     _raise_delivery_dispatch_failure_or_wait,
     _recovery_time,
 )
-from .trading_company_delivery_intent import (  # noqa: F401 - historical import location
-    _execute_deliver_shipment,
-    pickup_resource_due_at,
+from .trading_company_customer_support import (  # noqa: F401 - patch seam for test_postgres_pc6_full_real_domain_recovery.py
+    _consume_next,
 )
+from .trading_company_delivery_intent import _execute_deliver_shipment, pickup_resource_due_at
 from .trading_company_finance_intents import (
     _execute_complete_external_fulfillment,
     _execute_post_journal,
     _execute_settle_customer_payment,
 )
 from .trading_company_fulfillment_egress import _reconcile_shipped_fulfillment_egress
-from .trading_company_fulfillment_intents import (  # noqa: F401 - historical import location
+from .trading_company_fulfillment_intents import (
     _execute_accept_inventory_reservation,
     _execute_consume_fulfillment_inventory,
     _execute_request_fulfillment_inventory,
     _execute_reserve_fulfillment_inventory,
 )
-from .trading_company_logistics_egress import (  # noqa: F401 - historical import location
-    reconcile_completed_logistics_egress,
-)
-from .trading_company_settlement_egress import (  # noqa: F401 - historical import location
+from .trading_company_logistics_egress import reconcile_completed_logistics_egress
+from .trading_company_settlement_egress import (
     reconcile_invoiced_o2c_egress,
     reconcile_settled_payment_egress,
 )
@@ -385,4 +392,9 @@ def run_customer_demand_path(
     )
 
 
-__all__ = ["CustomerDemandPathResult", "run_customer_demand_path"]
+__all__ = [
+    "CustomerDemandPathResult", "DurableResourceWait", "pickup_resource_due_at",
+    "reconcile_completed_logistics_egress", "reconcile_invoiced_o2c_egress",
+    "reconcile_settled_payment_egress", "reconcile_shipped_fulfillment_egress",
+    "run_customer_demand_path",
+]
