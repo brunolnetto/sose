@@ -192,7 +192,7 @@ def test_engine_dispatch_scheduled_input_guards():
             engine._dispatch_scheduled_in_uow(item, uow)
 
 
-def test_engine_dispatch_probabilistic_and_evaluate_entity_edges(monkeypatch):
+def test_engine_dispatch_probabilistic_edges(monkeypatch):
     engine, _, _, entity = _build_engine()
     decision = SimpleNamespace(
         event="start",
@@ -210,22 +210,6 @@ def test_engine_dispatch_probabilistic_and_evaluate_entity_edges(monkeypatch):
     )
     assert chosen is decision
     assert dispatched and dispatched[0].name == "start"
-
-    class _Rule:
-        def __init__(self, name, result):
-            self.name = name
-            self._result = result
-
-        def evaluate(self, entity, context):
-            return self._result
-
-    engine.rules_for = lambda entity_type: (_Rule("n1", None), _Rule("n2", "release"))
-    dispatched.clear()
-    with pytest.warns(DeprecationWarning, match="Engine.evaluate_entity is deprecated"):
-        engine.evaluate_entity(entity)
-    assert len(dispatched) == 1
-    assert dispatched[0].name == "release"
-
 
 def test_engine_advance_tick_refuses_unowned_in_memory_callbacks():
     engine, persistence, context, entity = _build_engine()

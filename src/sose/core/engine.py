@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable
+from collections.abc import Iterable
 from copy import deepcopy
 
 from sose.domain.entity import Entity
@@ -10,7 +10,6 @@ from sose.domain.entity_store import WarehouseBackedEntityStore
 from sose.core.identity import deterministic_id
 from sose.persistence.base import Persistence
 from sose.scenarios.model import Scenario
-from sose.scenarios.rules import ScenarioRule, warn_rule_hook
 
 from .context import SimulationContext
 from .durable import (
@@ -38,7 +37,6 @@ class Engine:
         context: SimulationContext,
         registry: DomainRegistry,
         persistence: Persistence,
-        rules_for: Callable[[str], Iterable[ScenarioRule]] | None = None,
         scenarios: Iterable[Scenario] = (),
         store_filters=None,
         domain_warehouse: DomainWarehouse | None = None,
@@ -62,9 +60,6 @@ class Engine:
             if domain_warehouse is not None
             else None
         )
-        if rules_for is not None:
-            warn_rule_hook("Engine(rules_for=...)")
-        self.rules_for = rules_for or (lambda _: ())
         self.resources = DurableResourceManager(persistence)
         self.preemptive_resources = DurablePreemptiveResourceManager(persistence)
         self.stores = DurableStoreManager(persistence, filters=store_filters)
@@ -310,31 +305,6 @@ class Engine:
         )
         self.dispatch(command)
         return decision
-
-    def evaluate_entity(self, entity: Entity) -> None:
-        """Evaluate scenario policies and dispatch resulting commands.
-
-        Scenario rules choose valid intentions; they never mutate entity state directly.
-        Deprecated with ``ScenarioRule`` in 0.11.0, removed in 0.12.0.
-        """
-        warn_rule_hook("Engine.evaluate_entity")
-        for rule in self.rules_for(entity.entity_type):
-            command_name = rule.evaluate(entity, self.context)
-            if command_name:
-                self.dispatch(
-                    self.context.commands.create(
-                        command_name,
-                        target=entity,
-                        due_at=self.context.clock.now,
-                        key=(
-                            "scenario",
-                            self.context.clock.tick,
-                            rule.name,
-                            entity.entity_type,
-                            entity.id,
-                        ),
-                    )
-                )
 
     def advance_tick(self) -> None:
         """Evaluate and atomically commit one fixed logical-time interval."""

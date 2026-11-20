@@ -46,7 +46,6 @@ from sose.scenarios.model import (
     TransitionWeightEffect,
     iter_leaf_effects,
 )
-from sose.scenarios.rules import ScenarioRule
 from sose.sinks.base import SinkBinding
 from sose.sinks.model import AnalyticalBatch, SinkCheckpoint, SinkDelivery
 from sose.statecharts.topology import (
@@ -427,26 +426,6 @@ def test_scenario_effect_and_scenario_validation():
     scenario = Scenario("name", trigger, [effect], activation_probability=0.5)
     assert scenario.effects == (effect,)
     assert scenario.activation_probability == 0.5
-
-
-def test_legacy_scenario_rule_short_circuits_and_decides():
-    calls = []
-    with pytest.warns(DeprecationWarning, match="ScenarioRule is deprecated"):
-        false_rule = ScenarioRule(
-            "false",
-            lambda entity, context: False,
-            lambda entity, context: calls.append("decide") or "go",
-        )
-    assert false_rule.evaluate(ENTITY, SimpleNamespace()) is None
-    assert calls == []
-
-    with pytest.warns(DeprecationWarning, match="ScenarioRule is deprecated"):
-        true_rule = ScenarioRule(
-            "true",
-            lambda entity, context: True,
-            lambda entity, context: "go",
-        )
-    assert true_rule.evaluate(ENTITY, SimpleNamespace()) == "go"
 
 
 def _batch(**overrides) -> AnalyticalBatch:
