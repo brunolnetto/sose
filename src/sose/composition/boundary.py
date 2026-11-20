@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Callable
 
 from sose.persistence.base import Persistence
 
-from .boundary_causation import _BoundaryCausationMixin
+from .boundary_causation import _BoundaryCausationMixin, _require_typed_cause
 from .causality import matches_durable_message
 from .boundary_claims import (
     charge_recovery_publication,
@@ -14,6 +14,13 @@ from .boundary_claims import (
     require_same_delivery,
     typed_predecessor_certified,
     validate_claim_request,
+)
+from .boundary_scope import (
+    OrganizationClaimScope,
+    ScopedPublicationValidator,
+    message_in_claim_scope,
+    require_scoped_publication,
+    reject_organization_scoped,
 )
 from .model import (
     BoundaryConsumption,
@@ -88,6 +95,9 @@ class BoundaryConsumerRegistry:
         )
 
     def resolve(self, message: BoundaryMessage) -> BoundaryHandler:
+        # Domain-level handlers never consume organization-scoped (v2)
+        # messages; only the organization router may dispatch them (#496).
+        reject_organization_scoped(message)
         key = (
             message.source_domain, message.destination_domain,
             message.contract_name, message.contract_version,
@@ -133,9 +143,13 @@ class BoundaryService(_BoundaryCausationMixin):
 
     def publish(
         self, message: BoundaryMessage, *, recovery_job_id: str | None = None,
+        scoped_validator: ScopedPublicationValidator | None = None,
     ) -> BoundaryDelivery:
+        """Publish idempotently; a v2 message needs the facade's in-transaction
+        ``scoped_validator`` (#496)."""
         delivery = BoundaryDelivery.pending(message)
         with self._transaction() as uow:
+            require_scoped_publication(message, uow, scoped_validator)
             self._validate_causation(message, uow)
             existing_message = uow.get_boundary_message(message.message_id)
             if existing_message is not None and not matches_durable_message(
@@ -179,11 +193,14 @@ class BoundaryService(_BoundaryCausationMixin):
         accepted_contracts: frozenset[tuple[str, int]] | None = None,
         message_id: str | None = None,
         correlation_id: str | None = None,
+        organization_scope: OrganizationClaimScope | None = None,
     ) -> BoundaryLease | None:
         """Lease only a worker-owned destination when requested.
 
         The default None preserves the existing global deterministic claim
-        order for old single-worker composition references.
+        order for old single-worker composition references and never leases
+        an organization-scoped (v2) delivery; only the organization facade
+        passes ``organization_scope`` to lease one (#496).
         """
         validate_claim_request(
             owner_id=owner_id, destination_domain=destination_domain,
@@ -206,6 +223,8 @@ class BoundaryService(_BoundaryCausationMixin):
                         f"boundary delivery missing message: {delivery.delivery_id}"
                     )
                 if correlation_id is not None and message.correlation_id != correlation_id:
+                    continue
+                if not message_in_claim_scope(message, organization_scope):
                     continue
                 if not self._causal_predecessor_applied(message, uow):
                     continue
@@ -379,15 +398,3 @@ __all__ = [
     "UnsupportedBoundaryContractError",
 ]
 
-
-def _require_typed_cause(message: BoundaryMessage) -> None:
-    """A new message with a cause must say whether it is a boundary message or event.
-
-    Untyped caused publishing was deprecated in 0.9.0 and removed in 0.10.0 (#644).
-    Untyped messages already durable stay readable and still satisfy re-derivation.
-    """
-    if message.causation_id is not None and message.causation_kind is None:
-        raise ValueError(
-            "boundary message has a causation_id but no causation_kind; "
-            'pass causation_kind="boundary" or "event" (see CausalReference)'
-        )

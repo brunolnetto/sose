@@ -435,6 +435,13 @@ def test_boundary_writer_rejects_ack_before_same_lease_claim_clock(adapter, tmp_
 
 
 
+def _bypass_validation(message, **changes):
+    corrupt = object.__new__(BoundaryMessage)
+    for name in BoundaryMessage.__slots__:
+        object.__setattr__(corrupt, name, changes.get(name, getattr(message, name)))
+    return corrupt
+
+
 @pytest.mark.parametrize("record", ("message", "delivery", "ack"))
 @pytest.mark.parametrize("wrong_version", (True, 1.0))
 def test_selected_protocol_rejects_boolean_and_float_contract_versions(
@@ -446,7 +453,9 @@ def test_selected_protocol_rejects_boolean_and_float_contract_versions(
     source = message()
     service = BoundaryService(store)
     if record == "message":
-        invalid_message = replace(source, contract_version=wrong_version)
+        # BoundaryMessage itself now rejects non-int versions (#496), so
+        # model a corrupt durable row by bypassing __post_init__.
+        invalid_message = _bypass_validation(source, contract_version=wrong_version)
         with store.transaction() as uow:
             uow.save_boundary_message(invalid_message)
             uow.save_boundary_delivery(BoundaryDelivery.pending(invalid_message))

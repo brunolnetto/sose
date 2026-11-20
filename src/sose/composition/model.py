@@ -7,6 +7,11 @@ from hashlib import sha256
 import json
 from typing import Any, Mapping
 
+from sose.composition.organization_binding import (
+    is_organization_scoped,
+    organization_message_id,
+    validate_organization_binding,
+)
 from sose.core.identity import deterministic_id
 
 
@@ -33,6 +38,18 @@ def _canonical_payload(payload: Mapping[str, Any]) -> tuple[str, str]:
     return encoded, digest
 
 
+def _require_canonical_payload(payload_json: str, payload_hash: str) -> None:
+    try:
+        decoded = json.loads(payload_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError("payload_json must contain valid JSON") from exc
+    canonical, digest = _canonical_payload(decoded)
+    if canonical != payload_json:
+        raise ValueError("payload_json must use canonical encoding")
+    if digest != payload_hash:
+        raise ValueError("payload_hash does not match payload_json")
+
+
 @dataclass(frozen=True, slots=True)
 class BoundaryMessage:
     message_id: str
@@ -48,6 +65,15 @@ class BoundaryMessage:
     payload_json: str
     payload_hash: str
     causation_kind: str | None = None  # None preserves opaque frozen v1 IDs.
+    # Optional v2 organizational route binding. All fields are absent on
+    # historical/domain-scoped v1 messages; partial bindings fail closed.
+    organization_id: str | None = None
+    definition_fingerprint: str | None = None
+    config_epoch: int | None = None
+    source_component_id: str | None = None
+    source_owner_id: str | None = None
+    destination_component_id: str | None = None
+    destination_owner_id: str | None = None
 
     @classmethod
     def create(
@@ -64,17 +90,45 @@ class BoundaryMessage:
         produced_at: datetime,
         causation_kind: str | None = None,
         payload: Mapping[str, Any],
+        organization_id: str | None = None,
+        definition_fingerprint: str | None = None,
+        config_epoch: int | None = None,
+        source_component_id: str | None = None,
+        source_owner_id: str | None = None,
+        destination_component_id: str | None = None,
+        destination_owner_id: str | None = None,
     ) -> "BoundaryMessage":
         payload_json, payload_hash = _canonical_payload(payload)
-        message_id = deterministic_id(
-            "boundary-message",
-            source_domain,
-            source_identity,
-            contract_name,
-            contract_version,
-            destination_domain,
-            occurrence_key,
+        organizational_binding = (
+            organization_id,
+            definition_fingerprint,
+            config_epoch,
+            source_component_id,
+            source_owner_id,
+            destination_component_id,
+            destination_owner_id,
         )
+        if is_organization_scoped(organizational_binding):
+            message_id = organization_message_id(
+                source_domain=source_domain,
+                source_identity=source_identity,
+                contract_name=contract_name,
+                contract_version=contract_version,
+                destination_domain=destination_domain,
+                occurrence_key=occurrence_key,
+                binding=organizational_binding,
+            )
+        else:
+            # Preserve the exact historical v1 identity derivation.
+            message_id = deterministic_id(
+                "boundary-message",
+                source_domain,
+                source_identity,
+                contract_name,
+                contract_version,
+                destination_domain,
+                occurrence_key,
+            )
         return cls(
             message_id=message_id,
             contract_name=contract_name,
@@ -89,6 +143,13 @@ class BoundaryMessage:
             causation_kind=causation_kind,
             payload_json=payload_json,
             payload_hash=payload_hash,
+            organization_id=organization_id,
+            definition_fingerprint=definition_fingerprint,
+            config_epoch=config_epoch,
+            source_component_id=source_component_id,
+            source_owner_id=source_owner_id,
+            destination_component_id=destination_component_id,
+            destination_owner_id=destination_owner_id,
         )
 
     def __post_init__(self) -> None:
@@ -105,21 +166,19 @@ class BoundaryMessage:
         ):
             if not getattr(self, field_name):
                 raise ValueError(f"{field_name} cannot be empty")
-        if self.contract_version <= 0:
-            raise ValueError("contract_version must be positive")
+        if type(self.contract_version) is not int or self.contract_version < 1:
+            raise ValueError("contract_version must be a positive integer (not bool/float)")
         if self.causation_kind not in (None, "boundary", "event"):
             raise ValueError("unsupported causal reference kind")
         if self.causation_kind is not None and not self.causation_id:
             raise ValueError("typed causation requires a nonempty causation_id")
-        try:
-            decoded = json.loads(self.payload_json)
-        except json.JSONDecodeError as exc:
-            raise ValueError("payload_json must contain valid JSON") from exc
-        canonical, digest = _canonical_payload(decoded)
-        if canonical != self.payload_json:
-            raise ValueError("payload_json must use canonical encoding")
-        if digest != self.payload_hash:
-            raise ValueError("payload_hash does not match payload_json")
+
+        validate_organization_binding(self)
+        _require_canonical_payload(self.payload_json, self.payload_hash)
+
+    @property
+    def organization_scoped(self) -> bool:
+        return self.organization_id is not None
 
     @property
     def contract_key(self) -> str:

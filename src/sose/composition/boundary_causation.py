@@ -62,3 +62,16 @@ class _BoundaryCausationMixin:
                 raise ValueError("boundary causal logical time precedes predecessor")
             if delivery.status is DeliveryStatus.CONSUMED:
                 raise ValueError("causal descendant already consumed before predecessor")
+
+
+def _require_typed_cause(message: BoundaryMessage) -> None:
+    """A new message with a cause must say whether it is a boundary message or event.
+
+    Untyped caused publishing was deprecated in 0.9.0 and removed in 0.10.0 (#644).
+    Untyped messages already durable stay readable and still satisfy re-derivation.
+    """
+    if message.causation_id is not None and message.causation_kind is None:
+        raise ValueError(
+            "boundary message has a causation_id but no causation_kind; "
+            'pass causation_kind="boundary" or "event" (see CausalReference)'
+        )

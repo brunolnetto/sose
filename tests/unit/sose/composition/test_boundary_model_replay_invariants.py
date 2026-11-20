@@ -58,7 +58,7 @@ def test_message_mandatory_fields_must_be_nonempty(field):
 
 
 @pytest.mark.parametrize("mutation,reason", [
-    ({"contract_version": 0}, "contract_version must be positive"),
+    ({"contract_version": 0}, "contract_version must be a positive integer"),
     ({"causation_kind": "other"}, "unsupported causal reference kind"),
     ({"causation_kind": "boundary"}, "typed causation requires"),
     ({"causation_kind": "event"}, "typed causation requires"),
