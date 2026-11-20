@@ -349,3 +349,58 @@ def test_v2_codec_roundtrip_preserves_complete_organization_binding():
     assert restored == message
     assert restored.organization_scoped
     assert restored.definition_fingerprint == definition.fingerprint()
+
+
+# Golden bytes captured from origin/main (722f0bb) before the v2 binding existed.
+_V1_GOLDEN_MESSAGE_ID = "1b49d174-070b-5698-b844-ebe513d3e959"
+_V1_GOLDEN_FIELDS_TAIL = (
+    '"contract_name":"warehouse.inventory_reservation_requested",'
+    '"contract_version":1,"correlation_id":"flow:42",'
+    '"destination_domain":"warehouse_management",'
+    '"message_id":"1b49d174-070b-5698-b844-ebe513d3e959",'
+    '"occurrence_key":"reservation:1",'
+    '"payload_hash":"e71ff9768dda684ac2b95e952bc1f0ad19bab9c6632b91d062279a7c34e9cab7",'
+    '"payload_json":"{\\"quantity\\":2}",'
+    '"produced_at":{"__sose_type__":"datetime","value":"2026-10-30T12:00:00+00:00"},'
+    '"source_domain":"warehouse_fulfillment","source_identity":"order:42"}}'
+)
+_V1_GOLDEN_HEAD = (
+    '{"__sose_type__":"dataclass","class":"sose.composition.model:BoundaryMessage",'
+    '"fields":{'
+)
+
+
+@pytest.mark.parametrize(
+    ("causation_id", "causation_kind", "causal_fields"),
+    [
+        (None, None, '"causation_id":null,'),
+        (
+            "event:fulfillment:42",
+            "event",
+            '"causation_id":"event:fulfillment:42","causation_kind":"event",',
+        ),
+        ("legacy:cause", None, '"causation_id":"legacy:cause",'),
+    ],
+)
+def test_v1_message_id_and_codec_bytes_match_pre_organization_golden(
+    causation_id, causation_kind, causal_fields,
+):
+    from sose.persistence.codec import dumps, loads
+
+    message = BoundaryMessage.create(
+        contract_name=CONTRACT,
+        contract_version=1,
+        source_domain="warehouse_fulfillment",
+        source_identity="order:42",
+        destination_domain="warehouse_management",
+        occurrence_key="reservation:1",
+        correlation_id="flow:42",
+        causation_id=causation_id,
+        causation_kind=causation_kind,
+        produced_at=NOW,
+        payload={"quantity": 2},
+    )
+    golden = _V1_GOLDEN_HEAD + causal_fields + _V1_GOLDEN_FIELDS_TAIL
+    assert message.message_id == _V1_GOLDEN_MESSAGE_ID
+    assert dumps(message) == golden
+    assert loads(golden) == message
