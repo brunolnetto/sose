@@ -2,7 +2,18 @@
 
 ## Unreleased
 
-Nothing yet.
+### Removed (deprecated in 0.11.0)
+
+- `ScenarioRule` (the `sose.scenarios.rules` module), `Engine(rules_for=...)` and
+  `Engine.evaluate_entity`. Model external interventions with `Scenario` and
+  `ScenarioEngine` (#634).
+- The `sose.organizational.od2_legacy_audit` module (#634).
+
+### Changed
+
+- `make_random_source` defaults to `RNGMode.COUNTER` (order-independent draws).
+  Pass `mode=RNGMode.LEGACY` to reproduce streams recorded with the legacy RNG;
+  `RandomSource` itself is unchanged (#631).
 
 ## 0.11.0 — 2026-11-20
 

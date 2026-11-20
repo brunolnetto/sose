@@ -64,9 +64,6 @@ markers = [
 ]
 addopts = "-p tests.support.pytest_auto_postgres"
 filterwarnings = [
-    # The legacy OD-2 audit module's own tests import it on purpose (#634, removed in 0.12);
-    # tests/unit/sose/organizational/test_legacy_audit_deprecation.py asserts the warning.
-    "ignore:the sose.organizational.od2_legacy_audit module is deprecated:DeprecationWarning",
 ]
 [tool.codebase-stats.gates]
 # Quality ratchet (ADR-0010): no new violation and no worse existing one.

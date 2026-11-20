@@ -97,24 +97,12 @@ class CounterRandomSource:
 def make_random_source(
     root_seed: int,
     *,
-    mode: RNGMode | str | None = None,
+    mode: RNGMode | str = RNGMode.COUNTER,
 ) -> RandomSource | CounterRandomSource:
-    """Build the RNG for ``mode``; omitting it is deprecated (#631).
+    """Build the RNG for ``mode``; counter (order-independent) by default since 0.12.0 (#631).
 
-    The implicit default is ``RNGMode.LEGACY`` until 0.12.0, when it becomes
-    ``RNGMode.COUNTER``. Pass the mode explicitly to keep a stable stream.
+    Pass ``mode=RNGMode.LEGACY`` to replay streams recorded with the legacy RNG.
     """
-    if mode is None:
-        from sose._deprecation import warn_deprecated
-
-        warn_deprecated(
-            "make_random_source without an explicit mode", since="0.11.0",
-            removed_in="0.12.0",
-            instead=("pass mode=RNGMode.LEGACY to keep today's streams, or "
-                     "mode=RNGMode.COUNTER for order-independent draws "
-                     "(the default from 0.12.0)"),
-        )
-        mode = RNGMode.LEGACY
     resolved = RNGMode(mode)
     if resolved is RNGMode.LEGACY:
         return RandomSource(root_seed)
