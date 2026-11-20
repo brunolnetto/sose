@@ -26,7 +26,7 @@ from sose.persistence.memory import (
     WriterLease,
 )
 from sose.persistence.memory_fencing import FENCING_METHODS
-from sose.persistence.ownership import FencedEnginePersistence
+from sose.persistence.ownership import FencedEnginePersistence, has_durable_writer_fencing
 from sose.persistence.sqlite import SQLitePersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
@@ -70,6 +70,15 @@ def test_active_global_fencing_requires_the_current_epoch_for_unscoped_writes():
     assert {state.job_id for state in store.job_states()} == {"before", "after"}
 
 
+def _claim_elsewhere(claim):
+    """Claim from another thread: a different context with no open transaction."""
+    outcome: list[object] = []
+    thread = threading.Thread(target=lambda: outcome.append(claim()))
+    thread.start()
+    thread.join()
+    return outcome[0]
+
+
 def test_claim_between_fork_and_commit_fails_the_superseded_writer():
     """Memory claims never wait: the in-flight writer is fenced at commit instead."""
     store = MemoryPersistence()
@@ -77,7 +86,7 @@ def test_claim_between_fork_and_commit_fails_the_superseded_writer():
     with pytest.raises(StaleWriterError, match="stale scoped writer epoch 1 for a"):
         with store.transaction(owner_epoch=lease.epoch, writer_scope="a") as uow:
             uow.save_job_state(_job())
-            store.claim_scoped_writer("a", "w2", expected_epoch=1)
+            _claim_elsewhere(lambda: store.claim_scoped_writer("a", "w2", expected_epoch=1))
     assert store.job_state("job-a") is None
 
 
@@ -87,9 +96,34 @@ def test_explicit_commit_is_fenced_too():
     with pytest.raises(StaleWriterError, match="stale writer epoch 1; current epoch is 2"):
         with store.transaction(owner_epoch=lease.epoch) as uow:
             uow.save_job_state(_job())
-            store.claim_writer("w2", expected_epoch=1)
+            _claim_elsewhere(lambda: store.claim_writer("w2", expected_epoch=1))
             uow.commit()
     assert store.job_state("job-a") is None
+
+
+@pytest.mark.parametrize(
+    "claim",
+    [
+        lambda store: store.claim_scoped_writer_and_register(
+            "a", "w1", expected_epoch=0, correlation_id=None, initial_job=_job(),
+        ),
+        lambda store: store.claim_scoped_writer("a", "w1", expected_epoch=0),
+        lambda store: store.claim_writer_and_register("w1", expected_epoch=0, initial_job=_job()),
+        lambda store: store.claim_writer("w1", expected_epoch=0),
+    ],
+    ids=["scoped-and-register", "scoped", "global-and-register", "global"],
+)
+def test_claims_inside_an_open_transaction_are_refused(claim):
+    """Reproducer: the outer whole-state commit would erase the registered job
+    while the epoch it was registered under stayed granted."""
+    store = MemoryPersistence()
+    with store.transaction():
+        with pytest.raises(RuntimeError, match="inside an open transaction on this store"):
+            claim(store)
+    assert store.writer_epoch() == 0 and store.scoped_writer_epoch("a") == 0
+    assert store.job_state("job-a") is None
+    lease = claim(store)                                  # outside a transaction it works
+    assert lease.epoch == 1
 
 
 def test_global_claim_and_register_is_atomic():
@@ -126,14 +160,32 @@ def test_concurrent_claims_grant_each_epoch_once():
     assert len(granted) == 1 and store.scoped_writer_epoch("a") == 1
 
 
-def test_read_views_refuse_claims_and_writes():
+def test_read_views_offer_no_writer_fencing():
+    """A snapshot view has no fences of its own; it must not report epoch 0."""
     store = MemoryPersistence()
+    store.claim_writer("w1", expected_epoch=0)
+    store.claim_scoped_writer("a", "w1", expected_epoch=0)
     with store.read_snapshot() as view:
-        with pytest.raises(RuntimeError, match="read snapshot is read-only"):
-            view.claim_writer("w1", expected_epoch=0)
-        with pytest.raises(RuntimeError, match="read snapshot is read-only"):
-            view.claim_scoped_writer("a", "w1", expected_epoch=0)
-    assert store.writer_epoch() == 0 and store.scoped_writer_epoch("a") == 0
+        for name in FENCING_METHODS:
+            assert getattr(view, name) is None, name
+    assert store.writer_epoch() == 1 and store.scoped_writer_epoch("a") == 1
+
+
+def test_memory_leases_are_not_durable_authoritative_fencing(tmp_path):
+    memory = MemoryPersistence()
+    assert not has_durable_writer_fencing(memory, "writer_epoch", "claim_writer")
+    assert not has_durable_writer_fencing(memory, "claim_scoped_writer")
+    lease = memory.claim_scoped_writer("a", "w1", expected_epoch=0)
+    assert not has_durable_writer_fencing(FencedEnginePersistence(memory, lease))
+    with SQLiteIncrementalPersistence(tmp_path / "durable.sqlite") as durable:
+        assert has_durable_writer_fencing(durable, "writer_epoch", "claim_scoped_writer")
+        assert not has_durable_writer_fencing(durable, "no_such_method")
+
+    class _Undeclared:                                    # judged by its methods alone
+        def claim_writer(self):
+            pass
+
+    assert has_durable_writer_fencing(_Undeclared(), "claim_writer")
 
 
 def test_adapters_replacing_transaction_do_not_inherit_memory_fencing(tmp_path):

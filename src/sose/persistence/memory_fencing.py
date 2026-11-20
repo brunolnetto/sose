@@ -12,7 +12,18 @@ Same contract as ``sqlite_incremental_fencing`` and ``postgres_fencing``:
 
 The fences live beside the record state, not in it, like the SQL fencing tables
 live beside the record table. They protect one ``MemoryPersistence`` instance
-inside one process; they are not durable and do not span processes.
+inside one process; they are not durable and do not span processes, so memory
+leases are never *authoritative* fencing: ``MemoryPersistence`` declares
+``durable_writer_fencing = False`` and probes that need durable fencing
+(``ownership.has_durable_writer_fencing``) refuse it.
+
+Memory scoped writers provide the lease/epoch contract for single-process use
+and conformance. They do NOT make concurrent writers of different scopes safe
+against each other: a memory transaction publishes a whole-state fork, so the
+last commit wins over any other transaction that was open at the same time. For
+the same reason a claim (and claim-and-register) is refused while a transaction
+on the same store is open in the calling context: the outer commit would
+silently erase what the claim registered.
 
 One difference from SQLite/PostgreSQL: a claim never waits for in-flight
 transactions (there is no database write lock to wait on). Instead, every memory
@@ -187,8 +198,16 @@ def hide_inherited_fencing(cls: type, base: type) -> None:
             setattr(cls, name, None)
 
 
+def hide_fencing_on_instance(store) -> None:
+    """Make the fencing methods unavailable on one object (read-only views)."""
+    for name in FENCING_METHODS:
+        setattr(store, name, None)
+
+
 class MemoryWriterFencingMixin:
     """Writer claims and commit fences; the adapter supplies the transactions."""
+
+    transaction_depth: int
 
     def _writer_fences(self) -> _WriterFences:
         # Lazy, like the transaction tracker: probes may skip __init__.
@@ -198,8 +217,12 @@ class MemoryWriterFencingMixin:
         return fences
 
     def _fences_for_claim(self) -> _WriterFences:
-        if getattr(self, "_read_only", False):
-            raise RuntimeError("read snapshot is read-only")
+        # Read-only views have no claim methods at all (hide_fencing_on_instance).
+        if self.transaction_depth:
+            raise RuntimeError(
+                "cannot claim a writer lease inside an open transaction on this store; "
+                "the transaction's commit would overwrite the claim's registration"
+            )
         return self._writer_fences()
 
     def _commit_fence(self, owner_epoch: int | None, writer_scope: str | None) -> _CommitFence:

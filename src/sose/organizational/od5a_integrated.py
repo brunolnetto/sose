@@ -17,7 +17,7 @@ from typing import Literal
 
 from sose.core.identity import deterministic_id
 from sose.persistence.base import Persistence
-from sose.persistence.ownership import FencedEnginePersistence
+from sose.persistence.ownership import FencedEnginePersistence, has_durable_writer_fencing
 
 from .od5a_recurring import (
     _assert_active_claimed_lease, _assert_completed_released_lease,
@@ -92,12 +92,12 @@ def advance_od5a_integrated_occurrence(
         # writer epoch under the same physical-source guard so no concurrent
         # worker can observe an unfenced publication/ACK/certificate.
         boundary_store = store
-        scoped_epoch = getattr(store, "scoped_writer_epoch", None)
-        scoped_claim = getattr(store, "claim_scoped_writer", None)
-        if callable(scoped_epoch) and callable(scoped_claim):
+        # Only durable fencing is authoritative here; process-local memory
+        # leases (#637) keep the unfenced in-process path.
+        if has_durable_writer_fencing(store, "scoped_writer_epoch", "claim_scoped_writer"):
             scope = "od5a:boundary:" + job_id
-            lease = scoped_claim(
-                scope, owner_id, expected_epoch=scoped_epoch(scope),
+            lease = store.claim_scoped_writer(
+                scope, owner_id, expected_epoch=store.scoped_writer_epoch(scope),
                 correlation_id=job_id,
             )
             boundary_store = FencedEnginePersistence(store, lease)

@@ -43,6 +43,7 @@ from .memory_fencing import (
     ScopedWriterLease,
     StaleWriterError,
     WriterLease,
+    hide_fencing_on_instance,
     hide_inherited_fencing,
 )
 from .memory_reads import MemoryCommittedReadsMixin
@@ -230,9 +231,18 @@ class MemoryPersistence(MemoryWriterFencingMixin, MemoryCommittedReadsMixin):
 
     ``claim_writer``/``claim_scoped_writer`` and ``transaction(owner_epoch=...,
     writer_scope=...)`` follow the SQLite/PostgreSQL contract; see
-    ``memory_fencing``. A subclass that replaces ``transaction`` does not inherit
-    this fencing unless it provides its own.
+    ``memory_fencing``. The leases are process-local, not durable
+    (``durable_writer_fencing = False``), and do not make concurrent writers of
+    different scopes safe against each other: a memory transaction publishes a
+    whole-state fork and the last commit wins.
+
+    A subclass that replaces ``transaction`` does not inherit this fencing unless
+    it provides its own: on JSONL journal, full-snapshot SQLite, DuckDB, DuckLake
+    and ClickHouse the fencing methods are ``None``. Read-only snapshot views have
+    no fencing methods either (they would report epochs of nothing).
     """
+
+    durable_writer_fencing = False
 
     def __init_subclass__(cls, **kwargs) -> None:
         super().__init_subclass__(**kwargs)
@@ -266,6 +276,7 @@ class MemoryPersistence(MemoryWriterFencingMixin, MemoryCommittedReadsMixin):
         view = MemoryPersistence()
         view._state = state
         view._read_only = True
+        hide_fencing_on_instance(view)
         return view
 
     @contextmanager

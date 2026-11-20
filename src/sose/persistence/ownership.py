@@ -16,6 +16,19 @@ class WriterOwnershipPersistence(Protocol):
     def claim_writer(self, owner_id: str, *, expected_epoch: int) -> WriterLeaseLike: ...
 
 
+def has_durable_writer_fencing(persistence: Any, *methods: str) -> bool:
+    """True when ``persistence`` offers ``methods`` as *authoritative* writer fencing.
+
+    Every method must be callable, and the adapter must not declare its leases
+    non-durable: ``MemoryPersistence`` sets ``durable_writer_fencing = False``
+    because its leases are process-local. Adapters that do not declare the marker
+    are judged by their methods alone, as before the marker existed.
+    """
+    if getattr(persistence, "durable_writer_fencing", True) is False:
+        return False
+    return all(callable(getattr(persistence, method, None)) for method in methods)
+
+
 class FencedEnginePersistence:
     """Delegate reads while injecting the acquired epoch into every transaction."""
     def __init__(self, persistence: Any, lease: WriterLeaseLike) -> None:
