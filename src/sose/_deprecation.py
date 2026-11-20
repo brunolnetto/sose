@@ -52,6 +52,9 @@ def persisted_module(module_name: str) -> Callable[[type], type]:
     Persisted records name their class by ``__module__``; renaming a module must not
     change that identifier (ADR-0011 point 5). The old module must keep serving the class.
     Apply it outermost, after ``@dataclass`` has resolved annotations in the real module.
+
+    Side effect: ``inspect.getsource``/``getsourcefile`` resolve through ``__module__``,
+    so they look in the old (shim) module and cannot find the class source.
     """
     def keep(cls: type) -> type:
         cls.__module__ = module_name
