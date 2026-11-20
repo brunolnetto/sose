@@ -7,13 +7,6 @@ from datetime import datetime, timedelta, timezone
 try:
     import simpy
     from simpy.events import Event
-    from simpy.resources.container import Container  # noqa: F401
-    from simpy.resources.resource import (  # noqa: F401
-        PreemptiveResource,
-        PriorityRequest,
-        PriorityResource,
-    )
-    from simpy.resources.store import FilterStore, PriorityStore, Store  # noqa: F401
 except ImportError as exc:
     raise ImportError(
         "SimPyBackend requires the optional 'simpy' dependency. "
@@ -22,18 +15,7 @@ except ImportError as exc:
 
 from sose.core.identity import deterministic_id
 
-from .base import (  # noqa: F401
-    ContainerRequest,
-    ContainerSnapshot,
-    ResourceLease,
-    ResourcePreemption,
-    ResourceRequest,
-    ResourceSnapshot,
-    ScheduledCall,
-    StoreItem,
-    StoreRequest,
-    StoreSnapshot,
-)
+from .base import ScheduledCall
 from .simpy_containers import _ContainerState, _SimPyContainerOperations
 from .simpy_preemptive import (
     _PreemptiveLeaseState,
@@ -41,7 +23,7 @@ from .simpy_preemptive import (
     _SimPyPreemptiveOperations,
 )
 from .simpy_resources import _LeaseState, _ResourceState, _SimPyResourceOperations
-from .simpy_stores import _PriorityEnvelope, _SimPyStoreOperations, _StoreState  # noqa: F401
+from .simpy_stores import _SimPyStoreOperations, _StoreState
 
 
 class _ScheduledCallback(Event):
