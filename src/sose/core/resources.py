@@ -13,6 +13,11 @@ from sose.core.runtime import (
 )
 from sose.persistence.base import Persistence
 
+__all__ = [
+    "DurableResourceManager", "ResourceDefinition", "ResourceDemand", "ResourceReleaseIntent",
+    "ResourceReservation",
+]
+
 
 class DurableResourceManager:
     """Durable resource truth reconstructed into an ephemeral ResourceBackend."""

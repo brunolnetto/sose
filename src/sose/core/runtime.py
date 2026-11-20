@@ -3,26 +3,37 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from sose.core.runtime_containers import (  # noqa: F401
+from sose.core.runtime_containers import (
     ContainerDefinition,
     ContainerOperationIntent,
     ContainerOperationResult,
     ContainerState,
 )
-from sose.core.runtime_preemption import (  # noqa: F401
+from sose.core.runtime_preemption import (
     PreemptiveResourceDefinition,
     PreemptiveResourceDemand,
     PreemptiveResourceReleaseIntent,
     PreemptiveResourceReservation,
     ResourcePreemptionResult,
 )
-from sose.core.runtime_stores import (  # noqa: F401
+from sose.core.runtime_stores import (
     DurableStoreItem,
     StoreDefinition,
     StoreGetRequest,
     StoreGetResult,
     StorePutIntent,
 )
+
+# Re-exported classes here keep this module as their __module__ (codec and
+# deterministic_id class paths), so they must stay importable from it.
+__all__ = [
+    "ContainerDefinition", "ContainerOperationIntent", "ContainerOperationResult",
+    "ContainerState", "DurableStoreItem", "PreemptiveResourceDefinition",
+    "PreemptiveResourceDemand", "PreemptiveResourceReleaseIntent", "PreemptiveResourceReservation",
+    "ResourceDefinition", "ResourceDemand", "ResourcePreemptionResult", "ResourceReleaseIntent",
+    "ResourceReservation", "ScheduledWork", "SimulationPosition", "StoreDefinition",
+    "StoreGetRequest", "StoreGetResult", "StorePutIntent",
+]
 
 
 @dataclass(frozen=True, order=True, slots=True)

@@ -13,7 +13,6 @@ from sose.core.runtime import (
     PreemptiveResourceDemand,
     PreemptiveResourceReleaseIntent,
     PreemptiveResourceReservation,
-    ResourcePreemptionResult,  # noqa: F401
 )
 from sose.persistence.base import Persistence
 
