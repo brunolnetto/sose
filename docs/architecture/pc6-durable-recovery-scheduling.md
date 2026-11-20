@@ -56,10 +56,11 @@ sose composition-recovery \
 `{"composition.deliver_shipment": {"resource_type": "pickup_courier", "pool_id": "couriers",
 "scope": "shared", "capacity": 2}}`.
 
-> **Deprecated (ADR-0011, #634):** `--sqlite` without `--resource-policies` runs the
-> policy-less recovery mode. It is deprecated since 0.9.0 and removed in 0.11.0 (extended from 0.10.0, see ADR-0011). From 0.11,
-> composition recovery requires PostgreSQL, because the physical resource ledger
-> (`IntentResourceCoordinator`) is PostgreSQL-backed.
+> **Removed in 0.11.0 (ADR-0011, #634):** the policy-less recovery mode and the
+> `--sqlite` option, deprecated since 0.9.0. Composition recovery requires PostgreSQL
+> (`--postgres-dsn`) and a resource-policy file (`--resource-policies`), because the
+> physical resource ledger (`IntentResourceCoordinator`) is PostgreSQL-backed.
+> `TradingCustomerRecoveryRunner` raises `TypeError` without `resource_policies`.
 
 The operator must supply the real durable correlation and its authoritative organizational owner. `--owner-id` identifies the worker lease only; it must never be reused to infer Engine ownership. This command handles one correlation per invocation.
 

@@ -315,6 +315,9 @@ def _cmd_composition_recovery(args: argparse.Namespace) -> int:
         raise ValueError("--now is only supported for one-shot execution")
     if args.serve and args.poll_seconds <= 0:
         raise ValueError("--poll-seconds must be positive")
+    start_at = datetime.fromisoformat(args.start_at)
+    if start_at.tzinfo is None:   # fail before connecting to the store
+        raise ValueError("start_at must be timezone-aware")
     policies = _recovery_resource_policies(args)
     store = _recovery_store(args)
     try:
@@ -324,14 +327,12 @@ def _cmd_composition_recovery(args: argparse.Namespace) -> int:
             correlation_id=args.correlation_id,
             organization_owners={args.correlation_id: args.organization_id},
             max_actions=args.max_actions,
-            **({} if policies is None else {
-                "resource_policies": policies,
-                "resource_organizations": {args.correlation_id: args.organization_id},
-            }),
+            resource_policies=policies,
+            resource_organizations={args.correlation_id: args.organization_id},
         )
         scheduler = RecoverySchedule(
             runner=runner,
-            start_at=datetime.fromisoformat(args.start_at),
+            start_at=start_at,
             interval=timedelta(seconds=args.interval_seconds),
             max_slots=args.max_slots,
         )
