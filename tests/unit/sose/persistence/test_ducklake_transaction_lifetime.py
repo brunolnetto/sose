@@ -7,8 +7,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from sose.organizational.od3_decisions import QueuedWork
-from sose.organizational.od3_queue_runtime import seed_od3_queue
+from sose.organizational.queue_decisions import QueuedWork
+from sose.organizational.queue_policy_runtime import seed_od3_queue
 from sose.persistence.ducklake import DuckLakePersistence
 
 

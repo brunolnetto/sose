@@ -13,7 +13,7 @@ from sose.core.randomness import RandomSource
 from sose.core.scheduler import Scheduler
 from sose.core.transition_authority import TransitionAuthority, ATTESTATION_EVENT
 from sose.domain.registry import DomainRegistry, EntityType
-from sose.organizational.od2_actor import OrganizationalActor, OrganizationalActorChart
+from sose.organizational.actor_lifecycle import OrganizationalActor, OrganizationalActorChart
 from sose.persistence.memory import MemoryPersistence
 from sose.persistence.sqlite import SQLitePersistence
 

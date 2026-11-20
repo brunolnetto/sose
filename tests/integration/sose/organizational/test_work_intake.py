@@ -7,7 +7,7 @@ from dataclasses import replace
 import pytest
 
 from sose.core.identity import deterministic_id
-from sose.organizational.od4_intake import (
+from sose.organizational.work_intake import (
     WORK_KIND, IntakeProtocol, admit_work, intervene_work,
 )
 from sose.persistence.memory import MemoryPersistence, MemoryUnitOfWork

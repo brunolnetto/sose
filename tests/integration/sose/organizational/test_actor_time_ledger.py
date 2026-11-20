@@ -12,8 +12,8 @@ import pytest
 
 from sose.core.events import DomainEvent
 from sose.core.identity import deterministic_id
-from sose.organizational import od2_actor_time_ledger as ledger
-from sose.organizational.od2_actor import (
+from sose.organizational import actor_time_ledger as ledger
+from sose.organizational.actor_lifecycle import (
     ACTOR_KIND, ActorAvailabilityCalendar, ActorAvailabilityInterval, seed_actor,
     transition_actor,
 )

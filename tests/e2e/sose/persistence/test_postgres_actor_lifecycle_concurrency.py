@@ -15,7 +15,7 @@ from uuid import uuid4
 import pytest
 
 from sose.core.identity import deterministic_id
-from sose.organizational.od2_actor import ACTOR_KIND, seed_actor, transition_actor
+from sose.organizational.actor_lifecycle import ACTOR_KIND, seed_actor, transition_actor
 from sose.persistence.postgres import PostgresPersistence
 
 

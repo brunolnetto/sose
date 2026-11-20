@@ -76,7 +76,7 @@ previous step), the original Command/StateChart event and cause, and carries
 the running totals *after* the transition: per-state elapsed microseconds
 (nonzero buckets only), paid cost, last effective time, state, assigned work
 and a SHA-256 digest of the cause index (implementation:
-`sose.organizational.od2_actor_time_ledger`).
+`sose.organizational.actor_time_ledger`).
 
 Before a **new** tracked transition and before returning a **same-cause
 replay**, the guard reads the origin, the chain head (sequence = number of

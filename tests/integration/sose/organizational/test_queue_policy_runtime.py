@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from sose.organizational.od3_decisions import OD3Policy, QueuedWork
-from sose.organizational.od3_queue_runtime import (
+from sose.organizational.queue_decisions import OD3Policy, QueuedWork
+from sose.organizational.queue_policy_runtime import (
     QUEUE_KIND, apply_od3_queue_policy, seed_od3_queue,
 )
 from sose.persistence.memory import MemoryPersistence, MemoryUnitOfWork
@@ -277,7 +277,7 @@ def test_reject_queue_admission_conflicts_and_foreign_work(adapter, tmp_path):
 def test_distinct_identical_queues_and_diagnostic_observations_cannot_collide(
     adapter, tmp_path,
 ):
-    from sose.organizational.od3_decisions import (
+    from sose.organizational.queue_decisions import (
         decide_od3, persist_od3_decision,
     )
 
@@ -564,7 +564,7 @@ def test_queue_refuses_preoccupied_deterministic_evidence_identity(
 ):
     from sose.core.events import DomainEvent
     from sose.core.identity import deterministic_id
-    from sose.organizational.od3_decisions import decide_od3
+    from sose.organizational.queue_decisions import decide_od3
 
     store = store_for(adapter, tmp_path)
     initial = (work("long", 15, 100), work("short", 8, 1))
@@ -974,7 +974,7 @@ def test_foreign_event_at_our_deterministic_id_fails_closed(adapter, when, tmp_p
     """
     from sose.core.events import DomainEvent
     from sose.core.identity import deterministic_id
-    from sose.organizational.od3_queue_ledger import anchor_id
+    from sose.organizational.queue_policy_ledger import anchor_id
 
     store = store_for(adapter, tmp_path)
     queue_id = deterministic_id("od3-queue", OWNER, KEY)

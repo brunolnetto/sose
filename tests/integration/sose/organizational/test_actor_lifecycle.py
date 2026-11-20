@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from sose.core.identity import deterministic_id
-from sose.organizational.od2_actor import (
+from sose.organizational.actor_lifecycle import (
     ACTOR_KIND, ACTOR_STATES, ActorAvailabilityCalendar, ActorAvailabilityInterval, seed_actor, transition_actor,
 )
 from sose.persistence.memory import MemoryPersistence
