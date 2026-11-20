@@ -85,8 +85,13 @@ sose composition-recovery --rebind-scoped \
 ```
 
 The operation (also `sose.composition.recovery_rebind.rebind_recovery_job_to_scope`)
-claims the global writer lease, which fences any still-running global worker (its
-next transaction fails with `StaleWriterError`). In one transaction fenced by that
+claims the global writer lease. That lease is namespace-wide, so the claim fences
+**every** global-lease writer in the namespace, not only this job's worker: other
+global-mode recovery jobs, and Engine or OD-5a runners holding the global lease.
+Their in-flight transaction fails with `StaleWriterError`. Recovery workers re-claim
+the lease on every occurrence, so they continue on their next run (the same cost
+any global recovery run already has); a long-lived holder of one global lease must
+re-claim it. In one transaction fenced by that
 lease it checks the job, reserves the correlation for the job's scope and rewrites
 the identity to the scoped form. The `job_id`, `run_count` and completed-trigger
 history stay the same, so the scoped worker continues with the next slot and never
@@ -97,7 +102,10 @@ reports `"status": "already_scoped"` and changes nothing.
 It refuses a missing job, a job of another domain, a job bound to another scoped
 identity, an occurrence still in flight, a correlation already reserved by another
 job, and a job whose resource-intent links (admitted by its own triggers) name
-another correlation or organization. Then run the worker with `--scoped-writer`.
+another correlation or organization. That history check only sees recorded
+resource-intent links (PostgreSQL policy mode); a global job never bound a
+correlation in its identity, so where no links exist (or on SQLite) the operator's
+`--correlation-id` is trusted. Then run the worker with `--scoped-writer`.
 The global mode stays the default in 0.12; it is deprecated in 0.13.0.
 
 ## ADR: time, causality and the recovery boundary
