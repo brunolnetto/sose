@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from contextlib import closing
 import sqlite3
+from contextlib import closing
 
 import pytest
 
