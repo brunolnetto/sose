@@ -28,7 +28,8 @@
 
 - Incidental re-exports with no users and a canonical home elsewhere (#632, #667,
   #669): the `sose.backends.simpy` request/store/resource types (use
-  `sose.backends.base`), `loads`/`MemoryPersistence`/`changes_for_dirty_records`
+  `sose.backends.base`) and simpy's own `Container`/`Store`/`FilterStore`/
+  `PriorityStore` classes (import them from `simpy`), `loads`/`MemoryPersistence`/`changes_for_dirty_records`
   from `sose.persistence.postgres`, `build_storage_plan` from `sose.cli`, and
   framework classes re-exported by `sose.examples.*.simulation` (including
   `RandomSource`). Modules that keep re-exports now declare them in `__all__`.
