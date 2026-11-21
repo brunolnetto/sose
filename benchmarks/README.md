@@ -34,6 +34,12 @@ start Docker or require a PostgreSQL service.
   holders and waiters once, then measure lookups, an immediate grant and release, a
   release that hands the resource to the next waiter, and a backend rebuild. Seeding
   is excluded from timing. It is itself quadratic today, so sizes stop at 300.
+- Resource withdraw and recovery benchmarks (`test_resource_withdraw_and_recovery.py`)
+  write the durable holders, waiters and release intents directly, with the
+  identities the manager derives, and restore per-round state with
+  `pedantic(setup=...)` outside the timing. They measure withdrawing a pending or a
+  granted request, finalizing interrupted releases during a rebuild, and a release
+  right after a rebuild.
 
 Quick mode is used for pull requests and reduces workload sizes and rounds.
 Full mode is used for scheduled and manual runs. PostgreSQL is intentionally
