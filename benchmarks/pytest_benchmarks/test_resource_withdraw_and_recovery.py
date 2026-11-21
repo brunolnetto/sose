@@ -6,8 +6,9 @@ completion, and granting a waiter through a rebuilt backend.
 
 Durable state is written directly, with the record identities
 ``DurableResourceManager`` itself derives, rather than through ``ensure_requested``:
-the manager's own seeding is quadratic today (see ``test_resource_lifecycle.py``),
-and these cases only need the durable truth a backend is rebuilt from.
+the manager's own seeding scans the durable state per request (see
+``test_resource_lifecycle.py``), and these cases only need the durable truth a
+backend is rebuilt from.
 """
 from __future__ import annotations
 

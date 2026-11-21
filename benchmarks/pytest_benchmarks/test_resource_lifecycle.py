@@ -20,10 +20,10 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
 QUICK = os.getenv("SOSE_BENCHMARK_MODE", "full") == "quick"
-# Seeding is itself quadratic today: every ensure_requested scans the durable
-# reservations, and the memory adapter deep-copies each one per read. 1_000 holders
-# would spend minutes per case in setup alone, so the full sizes stop at 300.
-SIZES = [10, 50] if QUICK else [10, 100, 300]
+# Every ensure_requested still scans the durable reservations, so seeding grows
+# quadratically, but since the committed reads stopped deep-copying the immutable
+# resource records (#610) 1_000 holders seed in seconds.
+SIZES = [10, 50] if QUICK else [10, 100, 1_000]
 # Three rounds even in quick mode, so the hand-over assertions cover several hand-overs.
 ROUNDS = 3 if QUICK else 7
 NOW = datetime(2026, 11, 21, 8, tzinfo=timezone.utc)
