@@ -98,7 +98,8 @@ def _workload(resources_count: int, capacity: int, priority, requests: int) -> d
         ) is not None:
             granted_at.setdefault(f"request-{index:04d}", NOW)
 
-    # The driver's own reads deep-copy the durable state; keep them to one per period.
+    # The driver's own reads are O(state) scans, not manager cost; keep them to one per
+    # period.
     max_queue = requests - len(granted_at)
     busy_samples, awakened = [], []
     while holders := inner.resource_reservations():
