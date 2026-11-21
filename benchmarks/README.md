@@ -40,6 +40,14 @@ start Docker or require a PostgreSQL service.
   `pedantic(setup=...)` outside the timing. They measure withdrawing a pending or a
   granted request, finalizing interrupted releases during a rebuild, and a release
   right after a rebuild.
+- Resource contention benchmarks (`test_resource_contention.py`) time a whole
+  workload: N requests arrive at once and are served in hold periods until the queue
+  drains. Profiles: one hot resource, evenly distributed, low/high capacity, mixed
+  priorities. Operational counts go to each benchmark's `extra_info` in the JSON
+  report and are asserted against the profile: throughput, queue wait p50/p95/max,
+  max queue length, utilization, transactions per request and waiters awakened per
+  release. Throughput is taken from the last round. A second case times one request
+  as the number of resource definitions grows.
 
 Quick mode is used for pull requests and reduces workload sizes and rounds.
 Full mode is used for scheduled and manual runs. PostgreSQL is intentionally
