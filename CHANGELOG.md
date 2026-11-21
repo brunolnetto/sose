@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.13.0 — 2026-11-21
+
+Release note: `docs/releases/v0.13.0.md`. Scoped writer leases on every backend, the
+migration of recovery jobs off the namespace-wide lease, and that lease's deprecation
+(removal in 0.14.0).
+
 ### Added
 
 - `MemoryPersistence` implements writer fencing: the namespace-wide writer, job-scoped
@@ -14,7 +20,7 @@
   `sose.composition.recovery_rebind.rebind_recovery_job_to_scope`) moves an existing
   recovery job from the namespace-wide writer lease to its job-scoped lease, keeping
   its job id and history; `--scoped-writer` runs with the scoped lease. The global
-  lease stays the default but is deprecated (see Deprecated) (#637, #666).
+  lease stays the default in 0.13 but is deprecated (see Deprecated) (#637, #666).
 
 ### Changed
 
@@ -32,7 +38,8 @@
   `sose composition-recovery` without `--scoped-writer` prints the notice on stderr.
   Move an existing job once with `--rebind-scoped` (or
   `rebind_recovery_job_to_scope`), then run it with `--scoped-writer`. One scoped runner
-  handles one `correlation_id`.
+  handles one `correlation_id`. Re-bind while no occurrence is in flight: 0.14 cannot
+  resume an occurrence started under the namespace-wide lease (#672).
 
 ### Removed
 
