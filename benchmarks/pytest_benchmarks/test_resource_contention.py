@@ -12,7 +12,8 @@ written to ``benchmark.extra_info`` (JSON report) and checked against the profil
 - ``max_queue_length``: the largest number of pending demands;
 - ``utilization``: busy capacity over total capacity, averaged over the hold periods;
 - ``transactions_per_request``: durable transactions per request lifecycle;
-- ``max_waiters_awakened``: grants caused by one batch of releases.
+- ``max_waiters_awakened``: grants caused by one hold period's batch of releases.
+  Batches are capped by capacity, so this is not a per-release herd-wakeup measure.
 
 Memory only: these are adapter-independent counts plus manager/backend cost. The
 adapter cost of each operation is measured in ``test_resource_lifecycle.py``.
@@ -20,6 +21,7 @@ adapter cost of each operation is measured in ``test_resource_lifecycle.py``.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from itertools import count
 import os
 import time
 
@@ -89,18 +91,17 @@ def _workload(resources_count: int, capacity: int, priority, requests: int) -> d
 
     started = time.perf_counter()
     for index in range(requests):
-        manager.ensure_requested(
+        if manager.ensure_requested(
             backend, resource_name=names[index % resources_count],
             request_id=f"request-{index:04d}", requested_at=NOW,
             priority=priority(index), on_acquired=on_acquired,
-        )
-        if manager.reservation_for(f"request-{index:04d}") is not None:
+        ) is not None:
             granted_at.setdefault(f"request-{index:04d}", NOW)
 
-    max_queue = len(inner.resource_demands())
+    # The driver's own reads deep-copy the durable state; keep them to one per period.
+    max_queue = requests - len(granted_at)
     busy_samples, awakened = [], []
-    while inner.resource_reservations():
-        holders = inner.resource_reservations()
+    while holders := inner.resource_reservations():
         busy_samples.append(len(holders))
         backend.run_until(backend.now + HOLD)
         before = len(granted_at)
@@ -108,7 +109,6 @@ def _workload(resources_count: int, capacity: int, priority, requests: int) -> d
             assert manager.release(backend, holder.reservation_id)
         backend.run_until(backend.now)
         awakened.append(len(granted_at) - before)
-        max_queue = max(max_queue, len(inner.resource_demands()))
     elapsed = time.perf_counter() - started
 
     waits = [int((granted_at[f"request-{i:04d}"] - NOW) / HOLD) for i in range(requests)]
@@ -141,6 +141,8 @@ def test_resource_contention_profile(benchmark, profile, requests):
 
     total = resources_count * capacity
     assert metrics["served"] == requests
+    # Save demand, commit grant, release intent, finalize release.
+    assert metrics["transactions_per_request"] == 4.0
     # Arrivals beyond the total capacity queue; every hold period serves `total`.
     assert metrics["max_queue_length"] == max(0, requests - total)
     assert metrics["wait_max_slots"] == -(-requests // total) - 1
@@ -148,11 +150,13 @@ def test_resource_contention_profile(benchmark, profile, requests):
     assert sorted(waits).count(0) == min(requests, total)
     if profile == "mixed-priorities":
         # No preemption: the first `total` arrivals are granted on arrival, whatever
-        # their priority. The queue behind them is served lowest priority value first.
-        assert {i for i, wait in enumerate(waits) if wait == 0} == set(range(total))
-        assert {i for i, wait in enumerate(waits) if wait == 1} == set(
-            sorted(range(total, requests), key=lambda i: (priority(i), i))[:total]
-        )
+        # their priority. The queue behind them is served lowest priority value first,
+        # ties first-in first-out, `total` per hold period.
+        queue = sorted(range(total, requests), key=lambda i: (priority(i), i))
+        expected = [0] * requests
+        for position, index in enumerate(queue):
+            expected[index] = 1 + position // total
+        assert waits == expected
 
 
 @pytest.mark.parametrize("suffix", [
@@ -178,7 +182,7 @@ def test_request_scales_with_resource_definitions(benchmark, tmp_path, suffix, d
         manager.rebuild_backend(backend)
         backend.run_until(NOW)
         target = f"resource-{definitions - 1}"
-        calls = iter(range(10**6))
+        calls = count()
 
         def request_and_withdraw():
             request_id = f"request-{next(calls)}"
