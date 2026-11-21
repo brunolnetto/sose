@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 
-from sose.core.randomness import RandomSource  # noqa: F401
 
 from .entities import Assessment, DocumentRequest
 from .scenarios import ORIGIN

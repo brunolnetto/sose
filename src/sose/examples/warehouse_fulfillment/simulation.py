@@ -3,7 +3,6 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from sose.core.engine import Engine
-from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import ResourceDefinition
 from sose.persistence.memory import MemoryPersistence
 

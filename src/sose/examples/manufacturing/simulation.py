@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta
 
 from sose.backends.simpy import SimPyBackend
-from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import (
     ContainerDefinition,
     PreemptiveResourceDefinition,

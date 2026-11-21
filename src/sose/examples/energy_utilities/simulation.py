@@ -5,7 +5,6 @@ from datetime import datetime
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.engine import Engine
-from sose.core.randomness import RandomSource  # noqa: F401
 from sose.persistence.memory import MemoryPersistence
 
 from .entities import Meter, Outage, ServicePoint

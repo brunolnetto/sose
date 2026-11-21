@@ -3,7 +3,6 @@ from __future__ import annotations
 
 from sose.backends.simpy import SimPyBackend
 from sose.core.engine import Engine
-from sose.core.randomness import RandomSource  # noqa: F401
 from sose.persistence.memory import MemoryPersistence
 
 from .identity import flow_correlation_id

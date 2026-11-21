@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 from datetime import datetime, timedelta
 
 from sose.core.engine import Engine
-from sose.core.randomness import RandomSource  # noqa: F401
 from sose.core.runtime import (
     ContainerDefinition,
     PreemptiveResourceDefinition,

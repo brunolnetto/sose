@@ -2,7 +2,37 @@
 
 ## Unreleased
 
-Nothing yet.
+### Added
+
+- `MemoryPersistence` implements writer fencing: the namespace-wide writer, job-scoped
+  writers and `transaction(owner_epoch=, writer_scope=)`, with the SQLite/PostgreSQL
+  contract; the scoped-writer conformance suite runs on memory, SQLite and PostgreSQL.
+  `PersistentJobRunner` now works on memory. Memory leases are process-local and are
+  not treated as durable fencing (`durable_writer_fencing = False`), so recovery and
+  OD-5a still refuse a plain memory store (#637, #665).
+- `sose composition-recovery --rebind-scoped` (and
+  `sose.composition.recovery_rebind.rebind_recovery_job_to_scope`) moves an existing
+  recovery job from the namespace-wide writer lease to its job-scoped lease, keeping
+  its job id and history; `--scoped-writer` runs with the scoped lease. The global
+  lease stays the default for now; deprecating it is planned for 0.13.0 (#637, #666).
+
+### Changed
+
+- The example domains draw from the counter RNG (`CounterRandomSource`), keyed by
+  logical identity. manufacturing, mro, order_to_cash and warehouse_fulfillment stay
+  on the legacy RNG because they feed frozen evidence; legacy streams are unchanged.
+  A database of a migrated example written by 0.12 and resumed now draws new
+  decisions from the counter stream (#631, #668).
+
+### Removed
+
+- Incidental re-exports with no users and a canonical home elsewhere (#632, #667,
+  #669): the `sose.backends.simpy` request/store/resource types (use
+  `sose.backends.base`) and simpy's own `Container`/`Store`/`FilterStore`/
+  `PriorityStore` classes (import them from `simpy`), `loads`/`MemoryPersistence`/`changes_for_dirty_records`
+  from `sose.persistence.postgres`, `build_storage_plan` from `sose.cli`, and
+  framework classes re-exported by `sose.examples.*.simulation` (including
+  `RandomSource`). Modules that keep re-exports now declare them in `__all__`.
 
 ## 0.12.0 — 2026-11-20
 
