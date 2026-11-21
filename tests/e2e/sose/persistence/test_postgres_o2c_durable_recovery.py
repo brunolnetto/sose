@@ -85,6 +85,7 @@ def test_restart_recovers_o2c_and_payment_request_from_durable_delivery(
         assert len(correlations) == 1
         owner_bindings = {next(iter(correlations)): "test-org-o2c-durable-recovery"}
         runner = TradingCustomerRecoveryRunner(
+            correlation_id=next(iter(owner_bindings)),
             organization_owners=owner_bindings,
             resource_policies=NEUTRAL_POLICY,
             resource_organizations=owner_bindings,
@@ -183,6 +184,7 @@ def test_payment_egress_requires_ack_and_completed_o2c_effect(monkeypatch):
         owner_bindings = {next(iter(correlations)): "test-org-o2c-durable-recovery"}
         worker = TradingCustomerRecoveryRunner(
             store, organization_owners=owner_bindings, owner_id="o2c", job_id="o2c-proof",
+            correlation_id=next(iter(owner_bindings)),
             resource_policies=NEUTRAL_POLICY, resource_organizations=owner_bindings,
             max_actions=16,
         )

@@ -1,4 +1,8 @@
-"""#637: fenced re-binding of a global-lease recovery job to its scoped lease (SQLite)."""
+"""#637: fenced re-binding of a global-lease recovery job to its scoped lease (SQLite).
+
+The global lease was removed in 0.14.0 (#635); the jobs to re-bind are written as a
+0.13 database left them (``tests.support.global_lease_job``).
+"""
 from __future__ import annotations
 
 from argparse import Namespace
@@ -21,6 +25,7 @@ from sose.jobs.model import SimulationJobState
 from sose.jobs.runner import scheduled_trigger_id
 from sose.persistence.ownership import FencedEnginePersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence, StaleWriterError
+from tests.support.global_lease_job import seed_global_lease_job
 
 JOB = "trading-company-customer-recovery"
 T0 = datetime(2026, 11, 20, 12, tzinfo=timezone.utc)
@@ -42,11 +47,11 @@ def passes(monkeypatch):
     return executed
 
 
-def _schedule(store, *, scoped: bool, owner: str = "worker") -> RecoverySchedule:
+def _schedule(store, *, owner: str = "worker") -> RecoverySchedule:
     runner = TradingCustomerRecoveryRunner(
         persistence=store, owner_id=owner, correlation_id="flow",
         organization_owners={"flow": "org"}, resource_policies=POLICY,
-        resource_organizations={"flow": "org"}, scoped_writer=scoped,
+        resource_organizations={"flow": "org"},
     )
     return RecoverySchedule(
         runner=runner, start_at=T0, interval=timedelta(minutes=5), max_slots=8,
@@ -63,7 +68,7 @@ def _rebind(store, **overrides):
 
 def test_global_job_is_rebound_and_continued_by_a_scoped_runner(tmp_path, passes):
     with SQLiteIncrementalPersistence(tmp_path / "s.sqlite") as store:
-        assert len(_schedule(store, scoped=False).run_due(now=T0 + timedelta(minutes=5))) == 2
+        assert seed_global_lease_job(store, [T0, T0 + timedelta(minutes=5)]) == 2
         before = store.job_state(JOB)
         assert before.config_json == "{}"
 
@@ -78,7 +83,7 @@ def test_global_job_is_rebound_and_continued_by_a_scoped_runner(tmp_path, passes
         assert rebound == replace(before, config_json=scoped_config_json("flow", "org"))
 
         # The same scheduled slots again: nothing re-executes.
-        scoped = _schedule(store, scoped=True, owner="scoped-worker")
+        scoped = _schedule(store, owner="scoped-worker")
         assert scoped.run_due(now=T0 + timedelta(minutes=5)) == ()
         results = scoped.run_due(now=T0 + timedelta(minutes=10))
         assert [result.trigger_id for result in results] == [
@@ -87,15 +92,13 @@ def test_global_job_is_rebound_and_continued_by_a_scoped_runner(tmp_path, passes
         after = store.job_state(JOB)
         assert after.job_id == JOB and after.run_count == 3
         assert [record.run_count for record in after.completed_batch_triggers] == [1, 2, 3]
-        assert passes == [
-            (None, T0), (None, T0 + timedelta(minutes=5)), (JOB, T0 + timedelta(minutes=10)),
-        ]
+        assert passes == [(JOB, T0 + timedelta(minutes=10))]
         assert store.scoped_writer_epoch(JOB) == 1
 
 
 def test_rebind_is_idempotent_and_claims_nothing_the_second_time(tmp_path, passes):
     with SQLiteIncrementalPersistence(tmp_path / "s.sqlite") as store:
-        _schedule(store, scoped=False).run_due(now=T0)
+        seed_global_lease_job(store, [T0])
         first = _rebind(store)
         epoch = store.writer_epoch()
         second = _rebind(store)
@@ -107,7 +110,7 @@ def test_rebind_is_idempotent_and_claims_nothing_the_second_time(tmp_path, passe
 
 def test_running_global_worker_is_fenced_and_cannot_reclaim(tmp_path, passes):
     with SQLiteIncrementalPersistence(tmp_path / "s.sqlite") as store:
-        _schedule(store, scoped=False).run_due(now=T0)
+        seed_global_lease_job(store, [T0])
         running = store.claim_writer("global-worker", expected_epoch=store.writer_epoch())
         with FencedEnginePersistence(store, running).transaction():
             pass
@@ -115,16 +118,17 @@ def test_running_global_worker_is_fenced_and_cannot_reclaim(tmp_path, passes):
         with pytest.raises(StaleWriterError, match="stale writer epoch"):
             with FencedEnginePersistence(store, running).transaction():
                 pass
+        # A restarted 0.13 global worker is refused by the re-bound identity.
         with pytest.raises(ValueError, match="durable organizational binding changed"):
-            _schedule(store, scoped=False).run_due(now=T0 + timedelta(minutes=5))
+            seed_global_lease_job(store, [T0 + timedelta(minutes=5)])
 
 
 def test_scoped_runner_without_rebind_is_still_refused(tmp_path, passes):
     with SQLiteIncrementalPersistence(tmp_path / "s.sqlite") as store:
-        _schedule(store, scoped=False).run_due(now=T0)
+        seed_global_lease_job(store, [T0])
         epoch = store.writer_epoch()
-        with pytest.raises(ValueError, match="durable organizational binding changed"):
-            _schedule(store, scoped=True).run_due(now=T0 + timedelta(minutes=5))
+        with pytest.raises(ValueError, match="re-bind it once with sose composition-recovery"):
+            _schedule(store).run_due(now=T0 + timedelta(minutes=5))
         assert store.job_state(JOB).config_json == "{}"
         assert store.writer_epoch() == epoch
         assert store.scoped_writer_epoch(JOB) == 0
@@ -163,7 +167,7 @@ def test_refuses_a_missing_job(tmp_path):
 
 def test_refuses_organization_mismatch_with_an_already_scoped_job(tmp_path, passes):
     with SQLiteIncrementalPersistence(tmp_path / "s.sqlite") as store:
-        _schedule(store, scoped=False).run_due(now=T0)
+        seed_global_lease_job(store, [T0])
         _rebind(store)
         with pytest.raises(RecoveryRebindError, match="another scoped identity"):
             _rebind(store, organization_id="other-org")
@@ -179,7 +183,7 @@ def test_refuses_organization_mismatch_with_an_already_scoped_job(tmp_path, pass
 ])
 def test_conflicting_correlation_reservation_rolls_back(tmp_path, passes, prepare, message):
     with SQLiteIncrementalPersistence(tmp_path / "s.sqlite") as store:
-        _schedule(store, scoped=False).run_due(now=T0)
+        seed_global_lease_job(store, [T0])
         prepare(store)
         with pytest.raises(ValueError, match=message):
             _rebind(store)

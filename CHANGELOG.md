@@ -43,6 +43,12 @@ migration of recovery jobs off the namespace-wide lease, and that lease's deprec
 
 ### Removed
 
+- Composition recovery under the namespace-wide writer lease, deprecated in 0.13.0
+  (#635). `TradingCustomerRecoveryRunner(scoped_writer=False)` raises `TypeError`; the
+  runner always uses its job-scoped lease and needs one `correlation_id`.
+  `sose composition-recovery` always runs scoped, and `--scoped-writer` is accepted but
+  has no effect. A job created under the global lease is refused until it is re-bound once
+  with `--rebind-scoped` (`rebind_recovery_job_to_scope`), which stays available.
 - Incidental re-exports with no users and a canonical home elsewhere (#632, #667,
   #669): the `sose.backends.simpy` request/store/resource types (use
   `sose.backends.base`) and simpy's own `Container`/`Store`/`FilterStore`/

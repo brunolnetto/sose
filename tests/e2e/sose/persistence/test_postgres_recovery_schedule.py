@@ -42,6 +42,7 @@ def make_scheduler(store):
         runner=TradingCustomerRecoveryRunner(
             persistence=store, owner_id="composition-scheduler", max_actions=3,
             resource_policies=NEUTRAL_POLICY, resource_organizations=FIXTURE_ORGANIZATIONS,
+            correlation_id="recovery-schedule-fixture",
         ),
         start_at=START,
         interval=timedelta(minutes=1),
@@ -143,6 +144,7 @@ def test_scheduler_rejects_invalid_time_and_interval():
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker",
             resource_policies=NEUTRAL_POLICY, resource_organizations=FIXTURE_ORGANIZATIONS,
+            correlation_id="recovery-schedule-fixture",
         )
         with pytest.raises(ValueError, match="interval"):
             RecoverySchedule(runner, START, timedelta(0))

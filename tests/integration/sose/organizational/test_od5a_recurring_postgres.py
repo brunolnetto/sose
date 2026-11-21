@@ -487,8 +487,7 @@ def test_composition_recovery_rejects_foreign_job_with_matching_config():
         assert lease.epoch == 1
 
 
-@pytest.mark.parametrize("scoped", [True, False])
-def test_foreign_job_never_consumes_writer_epoch_before_validation(scoped):
+def test_foreign_job_never_consumes_writer_epoch_before_validation():
     from sose.composition.recovery import TradingCustomerRecoveryRunner
     from sose.jobs.model import SimulationJobState
 
@@ -504,9 +503,8 @@ def test_foreign_job_never_consumes_writer_epoch_before_validation(scoped):
         old_scoped_epoch = store.scoped_writer_epoch("foreign-job")
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="intruder", job_id="foreign-job",
-            correlation_id="tenant:foreign" if scoped else None,
-            organization_owners={"tenant:foreign": "organization:foreign"} if scoped else None,
-            scoped_writer=scoped,
+            correlation_id="tenant:foreign",
+            organization_owners={"tenant:foreign": "organization:foreign"},
             **_recovery_policy_mode("tenant:foreign", "organization:foreign"),
         )
         with pytest.raises(ValueError, match="already belongs to another domain"):
@@ -516,14 +514,11 @@ def test_foreign_job_never_consumes_writer_epoch_before_validation(scoped):
 
 
 
-def _die_after_postgres_atomic_recovery_registration(dsn, namespace, scoped):
+def _die_after_postgres_atomic_recovery_registration(dsn, namespace):
     from sose.composition.recovery import TradingCustomerRecoveryRunner
 
     with PostgresPersistence(dsn, namespace=namespace) as store:
-        method_name = (
-            "claim_scoped_writer_and_register" if scoped
-            else "claim_writer_and_register"
-        )
+        method_name = "claim_scoped_writer_and_register"
         original = getattr(store, method_name)
 
         def committed_claim(*args, **kwargs):
@@ -533,16 +528,14 @@ def _die_after_postgres_atomic_recovery_registration(dsn, namespace, scoped):
         setattr(store, method_name, committed_claim)
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker:dead", job_id="org:crash",
-            correlation_id="org:crash" if scoped else None,
-            organization_owners={"org:crash": "organization:crash"} if scoped else None,
-            scoped_writer=scoped,
+            correlation_id="org:crash",
+            organization_owners={"org:crash": "organization:crash"},
             **_recovery_policy_mode("org:crash", "organization:crash"),
         )
         runner.run_trigger(trigger_id="stable-trigger", now=NOW)
 
 
-@pytest.mark.parametrize("scoped", [False, True])
-def test_postgres_death_after_atomic_writer_claim_keeps_recoverable_domain_identity(scoped):
+def test_postgres_death_after_atomic_writer_claim_keeps_recoverable_domain_identity():
     from unittest.mock import patch
     from sose.composition.recovery import TradingCustomerRecoveryRunner
 
@@ -550,7 +543,7 @@ def test_postgres_death_after_atomic_writer_claim_keeps_recoverable_domain_ident
     ctx = get_context("spawn")
     child = ctx.Process(
         target=_die_after_postgres_atomic_recovery_registration,
-        args=(DSN, namespace, scoped),
+        args=(DSN, namespace),
     )
     child.start()
     child.join(timeout=45)
@@ -564,23 +557,18 @@ def test_postgres_death_after_atomic_writer_claim_keeps_recoverable_domain_ident
         assert state is not None
         assert state.domain_name == "trading_company_composition"
         assert state.initialized and state.next_tick == 0
-        assert (
-            store.scoped_writer_epoch("org:crash") if scoped else store.writer_epoch()
-        ) == 1
+        assert store.scoped_writer_epoch("org:crash") == 1
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker:recovered", job_id="org:crash",
-            correlation_id="org:crash" if scoped else None,
-            organization_owners={"org:crash": "organization:crash"} if scoped else None,
-            scoped_writer=scoped,
+            correlation_id="org:crash",
+            organization_owners={"org:crash": "organization:crash"},
             **_recovery_policy_mode("org:crash", "organization:crash"),
         )
         with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
             result = runner.run_trigger(trigger_id="stable-trigger", now=NOW)
         assert result.job_id == "org:crash"
         assert store.job_state("org:crash").last_completed_trigger_id == "stable-trigger"
-        assert (
-            store.scoped_writer_epoch("org:crash") if scoped else store.writer_epoch()
-        ) == 2
+        assert store.scoped_writer_epoch("org:crash") == 2
 
 
 def test_server_clock_controls_pg_lease_even_when_worker_clock_is_far_ahead():

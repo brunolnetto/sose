@@ -26,6 +26,7 @@ POLICY_MODE = {
         ),
     },
     "resource_organizations": {"corr-1": "test-organization"},
+    "correlation_id": "corr-1",
 }
 
 
@@ -98,7 +99,7 @@ def test_runner_rejects_invalid_configuration(tmp_path, options, reason):
 
 
 def test_runner_refuses_unfenced_authority():
-    with pytest.raises(TypeError, match="authoritative writer fencing"):
+    with pytest.raises(TypeError, match="durable scoped writer fencing"):
         TradingCustomerRecoveryRunner(
             persistence=MemoryPersistence(), owner_id="worker", **POLICY_MODE,
         )

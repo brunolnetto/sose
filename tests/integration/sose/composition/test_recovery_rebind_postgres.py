@@ -1,4 +1,8 @@
-"""#637: ``composition-recovery --rebind-scoped`` moves a global-lease job to its scoped lease."""
+"""#637: ``composition-recovery --rebind-scoped`` moves a global-lease job to its scoped lease.
+
+The global lease was removed in 0.14.0 (#635); ``seed`` writes the job a 0.13 global
+run left behind, which is what ``--rebind-scoped`` migrates.
+"""
 from __future__ import annotations
 
 import json
@@ -15,13 +19,18 @@ from sose.composition.recovery_rebind import (
     rebind_recovery_job_to_scope,
 )
 from sose.composition.recovery_trigger import scoped_config_json
+from sose.core.resource_identity import ResourcePoolContract
 from sose.jobs.runner import scheduled_trigger_id
 from sose.persistence.ownership import FencedEnginePersistence
+from tests.support.global_lease_job import seed_global_lease_job
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SOSE_TEST_POSTGRES_DSN required")
 JOB = "trading-company-customer-recovery"
 START = datetime(2026, 11, 20, 12, tzinfo=timezone.utc)
+POLICIES = {"composition.deliver_shipment": ResourcePoolContract(
+    resource_type="pickup_courier", pool_id="rebind-couriers", scope="shared", capacity=1,
+)}
 
 
 @pytest.fixture
@@ -52,7 +61,16 @@ def cli(tmp_path, capsys):
         out = capsys.readouterr().out.strip()
         return code, (json.loads(out) if out else None)
 
+    def seed(minutes: int = 1) -> None:
+        """A 0.13 global-lease worker ran the slots up to ``START + minutes``."""
+        with _store(namespace) as store:
+            slots = [START + timedelta(minutes=m) for m in range(minutes + 1)]
+            assert seed_global_lease_job(
+                store, slots, owner_id="cron", resource_policies=POLICIES,
+            ) == len(slots)
+
     run.rebind = rebind
+    run.seed = seed
     run.namespace = namespace
     run.capsys = capsys
     return run
@@ -65,13 +83,15 @@ def _store(namespace):
 
 
 def test_cli_rebinds_global_job_and_scoped_worker_continues(cli):
-    assert cli() == 0                                    # global lease: slots 0 and 1
+    cli.seed()                                           # 0.13 global lease: slots 0 and 1
     with _store(cli.namespace) as store:
         before = store.job_state(JOB)
     assert (before.config_json, before.run_count) == ("{}", 2)
 
-    assert cli("--scoped-writer", minutes=2) == 2        # unchanged: refused without rebind
-    assert "durable organizational binding changed" in cli.capsys.readouterr().err
+    assert cli(minutes=2) == 2                           # refused until re-bound
+    assert "re-bind it once with sose composition-recovery --rebind-scoped" in (
+        cli.capsys.readouterr().err
+    )
 
     code, report = cli.rebind()
     assert code == 0 and report["status"] == "rebound"
@@ -81,9 +101,9 @@ def test_cli_rebinds_global_job_and_scoped_worker_continues(cli):
     assert code == 0 and again["status"] == "already_scoped"
     assert again["global_writer_epoch"] is None
 
-    assert cli(minutes=2) == 2                           # a global worker is refused now
-    assert "durable organizational binding changed" in cli.capsys.readouterr().err
-    assert cli("--scoped-writer") == 0                   # same slots: no new occurrence
+    with pytest.raises(ValueError, match="durable organizational binding changed"):
+        cli.seed(minutes=2)                              # a restarted 0.13 worker is refused
+    assert cli() == 0                                    # same slots: no new occurrence
     assert cli("--scoped-writer", minutes=2) == 0
     assert cli("--scoped-writer", minutes=2) == 0
     with _store(cli.namespace) as store:
@@ -105,7 +125,7 @@ def _rebind(store, **overrides):
 
 
 def test_running_global_worker_is_fenced(cli):
-    assert cli() == 0
+    cli.seed()
     with _store(cli.namespace) as worker, _store(cli.namespace) as operator:
         lease = worker.claim_writer("global-worker", expected_epoch=worker.writer_epoch())
         with FencedEnginePersistence(worker, lease).transaction():
@@ -137,7 +157,7 @@ def _admitted(store, trigger_id, *, correlation, organization):
 def test_refuses_history_bound_to_another_correlation_or_organization(
     cli, correlation, organization, message,
 ):
-    assert cli() == 0
+    cli.seed()
     with _store(cli.namespace) as store:
         trigger = store.job_state(JOB).last_completed_trigger_id
         _admitted(store, trigger, correlation="flow", organization="org")
@@ -151,7 +171,7 @@ def test_refuses_history_bound_to_another_correlation_or_organization(
 
 
 def test_history_of_the_same_binding_is_accepted(cli):
-    assert cli() == 0
+    cli.seed()
     with _store(cli.namespace) as store:
         trigger = store.job_state(JOB).last_completed_trigger_id
         _admitted(store, trigger, correlation="flow", organization="org")

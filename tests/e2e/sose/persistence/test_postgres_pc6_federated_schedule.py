@@ -35,6 +35,7 @@ def _schedule(store, organization):
         TradingCustomerRecoveryRunner(
             persistence=store, owner_id=f"worker-{organization}",
             job_id=f"pc6-{organization}", max_actions=1,
+            correlation_id=f"pc6-fixture-{organization}",
             resource_policies=NEUTRAL_POLICY,
             # Explicit fixture binding; no flow exists on these empty ledgers.
             resource_organizations={f"pc6-fixture-{organization}": f"test-org-{organization}"},

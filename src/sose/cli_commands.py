@@ -308,35 +308,25 @@ def _cmd_composition_recovery(args: argparse.Namespace) -> int:
     from datetime import timedelta, timezone
     from time import sleep
 
-    from sose.cli_recovery import cmd_composition_rebind, recovery_run_start, warn_global_lease
-    import re
-    import warnings
-
-    from sose.composition.recovery import GLOBAL_LEASE_MESSAGE, TradingCustomerRecoveryRunner
+    from sose.cli_recovery import cmd_composition_rebind, recovery_run_start
+    from sose.composition.recovery import TradingCustomerRecoveryRunner
     from sose.composition.scheduler import RecoverySchedule
 
     if args.rebind_scoped:
         return cmd_composition_rebind(args)
     start_at = recovery_run_start(args)   # fail before connecting to the store
-    warn_global_lease(args)
     policies = _recovery_resource_policies(args)
     store = _recovery_store(args)
     try:
-        with warnings.catch_warnings():
-            # warn_global_lease already told the operator on stderr (#635).
-            warnings.filterwarnings(
-                "ignore", message=re.escape(GLOBAL_LEASE_MESSAGE), category=DeprecationWarning,
-            )
-            runner = TradingCustomerRecoveryRunner(
-                persistence=store,
-                owner_id=args.owner_id,
-                correlation_id=args.correlation_id,
-                organization_owners={args.correlation_id: args.organization_id},
-                max_actions=args.max_actions,
-                resource_policies=policies,
-                resource_organizations={args.correlation_id: args.organization_id},
-                scoped_writer=args.scoped_writer,
-            )
+        runner = TradingCustomerRecoveryRunner(
+            persistence=store,
+            owner_id=args.owner_id,
+            correlation_id=args.correlation_id,
+            organization_owners={args.correlation_id: args.organization_id},
+            max_actions=args.max_actions,
+            resource_policies=policies,
+            resource_organizations={args.correlation_id: args.organization_id},
+        )
         scheduler = RecoverySchedule(
             runner=runner,
             start_at=start_at,

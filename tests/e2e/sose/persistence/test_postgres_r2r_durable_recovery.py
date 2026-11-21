@@ -104,6 +104,7 @@ def test_restarted_r2r_consumer_resumes_committed_journal_without_duplicate(
         assert len(correlations) == 1
         owner_bindings = {next(iter(correlations)): "test-org-r2r-durable-recovery"}
         worker = TradingCustomerRecoveryRunner(
+            correlation_id=next(iter(owner_bindings)),
             organization_owners=owner_bindings,
             resource_policies=NEUTRAL_POLICY,
             resource_organizations=owner_bindings,

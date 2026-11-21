@@ -20,6 +20,8 @@ def _config_json(config: dict[str, str]) -> str:
     return json.dumps(config, sort_keys=True, separators=(',', ':'))
 
 
+# The identity a namespace-wide-lease job stored up to 0.13 (#635). Such a job
+# no longer runs; it is only recognised so that it can be re-bound.
 GLOBAL_CONFIG_JSON = _config_json({})
 
 
@@ -29,8 +31,6 @@ def scoped_config_json(correlation_id: str, organization_id: str) -> str:
 
 
 def trigger_config_json(runner: TradingCustomerRecoveryRunner) -> str:
-    if not runner.scoped_writer:
-        return GLOBAL_CONFIG_JSON
     # Persist the operational organization even without physical
     # resource policies. A restarted job cannot silently rebind it.
     return scoped_config_json(
@@ -42,6 +42,11 @@ def check_job_identity(state: SimulationJobState | None, config_json: str) -> No
     """Reject a job identity owned by another domain or bound to another organization."""
     if state is not None and state.domain_name != "trading_company_composition":
         raise ValueError("recovery job identity already belongs to another domain")
+    if state is not None and state.config_json == GLOBAL_CONFIG_JSON != config_json:
+        raise ValueError(
+            "recovery job was created under the namespace-wide writer lease, removed "
+            "in SOSE 0.14.0; re-bind it once with sose composition-recovery --rebind-scoped"
+        )
     if state is not None and state.config_json != config_json:
         raise ValueError("recovery job's durable organizational binding changed")
 
@@ -62,22 +67,13 @@ def _claim_and_register(
         logical_time=now,
         next_tick=0,
     )
-    if runner.scoped_writer:
-        atomic_claim = getattr(runner.persistence, "claim_scoped_writer_and_register", None)
-        if not callable(atomic_claim):
-            raise TypeError("scoped recovery requires atomic claim+registration")
-        return atomic_claim(
-            runner.job_id, runner.owner_id,
-            expected_epoch=runner.persistence.scoped_writer_epoch(runner.job_id),
-            correlation_id=runner.correlation_id, initial_job=initial,
-        )
-    atomic_claim = getattr(runner.persistence, "claim_writer_and_register", None)
+    atomic_claim = getattr(runner.persistence, "claim_scoped_writer_and_register", None)
     if not callable(atomic_claim):
-        raise TypeError("recovery requires atomic claim+registration")
+        raise TypeError("scoped recovery requires atomic claim+registration")
     return atomic_claim(
-        runner.owner_id,
-        expected_epoch=runner.persistence.writer_epoch(),
-        initial_job=initial,
+        runner.job_id, runner.owner_id,
+        expected_epoch=runner.persistence.scoped_writer_epoch(runner.job_id),
+        correlation_id=runner.correlation_id, initial_job=initial,
     )
 
 
@@ -85,17 +81,13 @@ def claim_trigger_writer(
     runner: TradingCustomerRecoveryRunner, prior: SimulationJobState | None,
     *, config_json: str, now: datetime,
 ) -> Any:
-    """Claim the (scoped or global) writer lease, registering a first-seen job atomically."""
+    """Claim the job-scoped writer lease, registering a first-seen job atomically."""
     if prior is None:
         return _claim_and_register(runner, config_json=config_json, now=now)
-    if runner.scoped_writer:
-        return runner.persistence.claim_scoped_writer(
-            runner.job_id, runner.owner_id,
-            expected_epoch=runner.persistence.scoped_writer_epoch(runner.job_id),
-            correlation_id=runner.correlation_id,
-        )
-    return runner.persistence.claim_writer(
-        runner.owner_id, expected_epoch=runner.persistence.writer_epoch(),
+    return runner.persistence.claim_scoped_writer(
+        runner.job_id, runner.owner_id,
+        expected_epoch=runner.persistence.scoped_writer_epoch(runner.job_id),
+        correlation_id=runner.correlation_id,
     )
 
 

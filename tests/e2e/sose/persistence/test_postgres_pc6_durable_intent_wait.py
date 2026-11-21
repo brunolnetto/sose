@@ -133,33 +133,34 @@ def _execute(namespace, monkeypatch, *, restart):
     monkeypatch.setattr(TradingCustomerRecoveryRunner, "_pending_effects", staticmethod(pending))
     monkeypatch.setattr(TradingCustomerRecoveryRunner, "_execute_pending", staticmethod(execute))
 
+    # One scoped worker per correlation (#635: a runner owns exactly one), both
+    # contending for the same shared pool.
+    def runner(store, organization, owner):
+        return TradingCustomerRecoveryRunner(
+            correlation_id=organization, job_id=f"recovery-{organization}",
+            persistence=store, owner_id=f"{owner}-{organization}",
+            resource_policies={POLICY_NAME: _pool()},
+            resource_organizations={organization: organization},
+            resource_slot_duration=SLOT, resource_retry_delay=SLOT,
+        )
+
     with PostgresPersistence(DSN, namespace=namespace) as store:
         with store.transaction() as uow:
             for effect in effects.values():
                 uow.save_command(effect)
-        runner = TradingCustomerRecoveryRunner(
-            persistence=store, owner_id="resource-worker",
-            resource_policies={POLICY_NAME: _pool()},
-            resource_organizations={"organization-a":"organization-a", "organization-b":"organization-b"},
-            resource_slot_duration=SLOT, resource_retry_delay=SLOT,
-        )
-        assert runner._run_bounded(store, now=T0, logical_now=T0) == 1
+        workers = {org: runner(store, org, "resource-worker") for org in effects}
+        assert workers["organization-a"]._run_bounded(store, now=T0, logical_now=T0) == 1
+        assert workers["organization-b"]._run_bounded(store, now=T0, logical_now=T0) == 0
         assert store.command(effects["organization-b"].command_id) is not None
         assert _coordinator(store).waiting(effects["organization-b"].command_id)
 
         if not restart:
-            assert runner._run_bounded(
+            assert workers["organization-b"]._run_bounded(
                 store, now=T0+SLOT, logical_now=T0+SLOT,
             ) == 1
     if restart:
         with PostgresPersistence(DSN, namespace=namespace) as reopened:
-            runner = TradingCustomerRecoveryRunner(
-                persistence=reopened, owner_id="recovered-worker",
-                resource_policies={POLICY_NAME: _pool()},
-            resource_organizations={"organization-a":"organization-a", "organization-b":"organization-b"},
-                resource_slot_duration=SLOT, resource_retry_delay=SLOT,
-            )
-            assert runner._run_bounded(
+            assert runner(reopened, "organization-b", "recovered-worker")._run_bounded(
                 reopened, now=T0+SLOT, logical_now=T0+SLOT,
             ) == 1
 

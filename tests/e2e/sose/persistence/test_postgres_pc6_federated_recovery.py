@@ -80,6 +80,7 @@ def _init_domain(dsn, ns, org):
 def _schedule(domain, resources, org):
     return RecoverySchedule(
         TradingCustomerRecoveryRunner(
+            correlation_id=org,
             persistence=domain, owner_id=f"recovery-{org}",
             job_id=f"recovery-{org}", max_actions=1,
             resource_persistence=resources,
@@ -116,6 +117,7 @@ with PostgresPersistence(dsn, namespace=domain_ns) as domain:
     with PostgresPersistence(dsn, namespace=resource_ns) as shared:
         schedule = RecoverySchedule(
             TradingCustomerRecoveryRunner(
+                correlation_id=org,
                 persistence=domain, owner_id="killed-a", job_id=f"recovery-{org}",
                 max_actions=1, resource_persistence=shared,
                 resource_policies={"composition.deliver_shipment": ResourcePoolContract(
@@ -177,6 +179,7 @@ with PostgresPersistence(dsn, namespace=domain_ns) as domain:
     with PostgresPersistence(dsn, namespace=resource_ns) as shared:
         schedule = RecoverySchedule(
             TradingCustomerRecoveryRunner(
+                correlation_id=org,
                 persistence=domain, owner_id="killed-a", job_id=f"recovery-{org}",
                 max_actions=1, resource_persistence=shared,
                 resource_policies={"composition.deliver_shipment": ResourcePoolContract(

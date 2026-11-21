@@ -40,18 +40,21 @@ class _FencedWriter:
     def __init__(self):
         self.calls = []
 
-    def writer_epoch(self):
-        self.calls.append("writer_epoch")
+    def scoped_writer_epoch(self, *args):
+        self.calls.append("scoped_writer_epoch")
         return 0
 
-    def claim_writer(self, *args, **kwargs):
-        self.calls.append("claim_writer")
+    def claim_scoped_writer(self, *args, **kwargs):
+        self.calls.append("claim_scoped_writer")
         raise AssertionError("constructor must not acquire a writer lease")
 
 
 def _runner(**overrides):
     store = _FencedWriter()
-    config = {"persistence": store, "owner_id": OWNER, "resource_policies": NEUTRAL_POLICY}
+    config = {
+        "persistence": store, "owner_id": OWNER, "correlation_id": "flow:a",
+        "resource_policies": NEUTRAL_POLICY,
+    }
     config.update(overrides)
     return TradingCustomerRecoveryRunner(**config), store
 
@@ -65,9 +68,9 @@ def _runner(**overrides):
         ({"lease_duration": timedelta(0)}, "lease_duration must be", ValueError),
         ({"lease_duration": timedelta(seconds=-1)}, "lease_duration must be", ValueError),
         ({"correlation_id": ""}, "correlation_id cannot be empty", ValueError),
-        ({"scoped_writer": True}, "one explicit correlation_id", ValueError),
-        ({"scoped_writer": True, "correlation_id": "flow:a"},
-         "PostgreSQL scoped fencing", TypeError),
+        ({"scoped_writer": False}, "was removed in SOSE 0.14.0", TypeError),
+        ({"correlation_id": None}, "one explicit correlation_id", ValueError),
+        ({"persistence": object()}, "durable scoped writer fencing", TypeError),
         ({}, "policy-less recovery was removed in SOSE 0.11.0", TypeError),
         ({"resource_persistence": object(), "resource_policies": {}},
          "domain and physical resource ledgers must share PostgreSQL", ValueError),
@@ -95,11 +98,9 @@ def test_recovery_configuration_refuses_ambiguous_fencing_and_physical_authority
 ):
     store = _FencedWriter()
     with pytest.raises(type_, match=error):
-        TradingCustomerRecoveryRunner(
-            persistence=store, owner_id=OWNER, **options
-        ) if "owner_id" not in options else TradingCustomerRecoveryRunner(
-            persistence=store, **{"owner_id": OWNER, **options}
-        )
+        TradingCustomerRecoveryRunner(**{
+            "persistence": store, "owner_id": OWNER, "correlation_id": "flow:a", **options,
+        })
     assert store.calls == []
 
 

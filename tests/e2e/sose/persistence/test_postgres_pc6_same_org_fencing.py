@@ -28,15 +28,18 @@ from tests.e2e.sose.persistence.test_postgres_pc6_full_real_domain_recovery impo
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="PostgreSQL required")
 
-# A genuinely independent worker takes an ownership epoch, blocks, and then
-# tries to write with the *same old epoch* after a newer worker has taken over.
+# A genuinely independent worker takes the job's scoped ownership epoch, blocks, and
+# then tries to write with the *same old epoch* after a newer worker has taken over.
 _OLD_WORKER = """
 import os, sys, time
 from pathlib import Path
 from sose.persistence.postgres import PostgresPersistence, StaleWriterError
-dsn, namespace, ready_path, release_path = sys.argv[1:]
+dsn, namespace, correlation, ready_path, release_path = sys.argv[1:]
 with PostgresPersistence(dsn, namespace=namespace) as store:
-    lease = store.claim_writer("obsolete-a", expected_epoch=store.writer_epoch())
+    lease = store.claim_scoped_writer(
+        "real-pc6-a", "obsolete-a",
+        expected_epoch=store.scoped_writer_epoch("real-pc6-a"), correlation_id=correlation,
+    )
     Path(ready_path).write_text(str(lease.epoch))
     deadline = time.monotonic() + 25
     while not Path(release_path).exists():
@@ -44,7 +47,7 @@ with PostgresPersistence(dsn, namespace=namespace) as store:
             raise TimeoutError("test never released obsolete worker")
         time.sleep(.025)
     try:
-        with store.transaction(owner_epoch=lease.epoch) as uow:
+        with store.transaction(owner_epoch=lease.epoch, writer_scope=lease.scope) as uow:
             # Even a read transaction must be rejected before its UoW opens.
             uow.get_job_state("real-pc6-a")
     except StaleWriterError:
@@ -84,7 +87,7 @@ def _scenario(*, adversarial: str | None, tmp_path: Path):
     try:
         if adversarial is not None:
             child = subprocess.Popen(
-                [sys.executable, "-c", _OLD_WORKER, DSN, namespaces["a"],
+                [sys.executable, "-c", _OLD_WORKER, DSN, namespaces["a"], seeds["a"][0],
                  str(ready), str(release)],
                 stderr=subprocess.PIPE, stdout=subprocess.PIPE, text=True,
             )

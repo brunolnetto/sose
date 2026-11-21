@@ -82,6 +82,7 @@ def test_logistics_composition_restarts_without_replaying_in_memory_stages(
         assert len(correlations) == 1
         flow_id = next(iter(correlations))
         runner = TradingCustomerRecoveryRunner(
+            correlation_id=flow_id,
             persistence=store, owner_id="recovered-logistics",
             organization_owners={flow_id: "test-org-logistics-durable-recovery"},
             resource_policies=NEUTRAL_POLICY,
@@ -184,6 +185,7 @@ def test_mid_transition_worker_death_resumes_from_durable_logistics_state(
         assert len(correlations) == 1
         flow_id = next(iter(correlations))
         runner = TradingCustomerRecoveryRunner(
+            correlation_id=flow_id,
             persistence=store, owner_id="logistics-stage-restart",
             organization_owners={flow_id: "test-org-logistics-durable-recovery"},
             resource_policies=NEUTRAL_POLICY,

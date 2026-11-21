@@ -215,6 +215,7 @@ def test_worker_death_and_restart_preserves_normalized_causal_dag(
         runner = TradingCustomerRecoveryRunner(
             persistence=store,
             owner_id="causal-dag-restart",
+            correlation_id=flow_id,
             organization_owners={flow_id: DAG_OWNER},
             job_id="causal-equivalence",
             max_actions=32,

@@ -67,15 +67,18 @@ The operator must supply the real durable correlation and its authoritative orga
 Or use the long-running worker with `--serve --poll-seconds 5`. The
 `--now` override exists for controlled one-shot replay/testing only.
 
-### Moving to the scoped lease (#637)
+### The job-scoped lease, and re-binding a 0.13 global job (#637, #635)
 
-By default the command runs under the namespace-wide (global) writer lease
-(deprecated since 0.13.0, see below) and
-stores the job identity `{}`. `--scoped-writer` runs the job under its own
-job-scoped lease instead, which never fences other jobs, and stores the identity
-`{correlation_id, organization_id}`. A scoped worker refuses a job that a global
-run created ("durable organizational binding changed"). To move such a job, stop
-or let finish its global worker and run once:
+Every run uses the job's own job-scoped writer lease, which never fences other
+jobs, and stores the job identity `{correlation_id, organization_id}`. One worker
+handles exactly one `--correlation-id`. `--scoped-writer` is still accepted, but it
+no longer changes anything.
+
+Up to 0.13, the command could run under the namespace-wide (global) writer lease,
+which stored the identity `{}`. That mode was deprecated in 0.13.0 and removed in
+0.14.0. A job created that way is refused ("created under the namespace-wide
+writer lease ... re-bind it once") until it is re-bound. To re-bind it, stop or let
+finish any 0.13 global worker of the job and run once:
 
 ```sh
 sose composition-recovery --rebind-scoped \
@@ -87,31 +90,36 @@ sose composition-recovery --rebind-scoped \
 
 The operation (also `sose.composition.recovery_rebind.rebind_recovery_job_to_scope`)
 claims the global writer lease. That lease is namespace-wide, so the claim fences
-**every** global-lease writer in the namespace, not only this job's worker: other
-global-mode recovery jobs, and Engine or OD-5a runners holding the global lease.
-Their in-flight transaction fails with `StaleWriterError`. Recovery workers re-claim
-the lease on every occurrence, so they continue on their next run (the same cost
-any global recovery run already has); a long-lived holder of one global lease must
-re-claim it. In one transaction fenced by that
-lease it checks the job, reserves the correlation for the job's scope and rewrites
-the identity to the scoped form. The `job_id`, `run_count` and completed-trigger
-history stay the same, so the scoped worker continues with the next slot and never
-repeats a completed one. The global lease is then left unused: scoped claims and
-scoped transactions never consult it. It prints a JSON report; running it again
-reports `"status": "already_scoped"` and changes nothing.
+**every** global-lease writer in the namespace, not only this job's worker: a
+still-running 0.13 recovery worker, and Engine or OD-5a runners holding the global
+lease. Their in-flight transaction fails with `StaleWriterError`; a long-lived
+holder of one global lease must re-claim it.
 
-It refuses a missing job, a job of another domain, a job bound to another scoped
-identity, an occurrence still in flight, a correlation already reserved by another
-job, and a job whose resource-intent links (admitted by its own triggers) name
-another correlation or organization. That history check only sees recorded
-resource-intent links (PostgreSQL policy mode); a global job never bound a
-correlation in its identity, so where no links exist (or on SQLite) the operator's
-`--correlation-id` is trusted. Then run the worker with `--scoped-writer`.
-The global mode is deprecated since 0.13.0 and is removed in 0.14.0 (#635):
-`TradingCustomerRecoveryRunner` without `scoped_writer=True` emits a
-`DeprecationWarning`, and the command without `--scoped-writer` prints an equivalent
-notice on stderr. From 0.14.0, every recovery job runs under its job-scoped lease, so re-bind
-global jobs before upgrading.
+In one transaction fenced by that lease, the operation:
+- checks the job;
+- reserves the correlation for the job's scope;
+- rewrites the identity to the scoped form.
+
+The `job_id`, `run_count` and completed-trigger history stay the same, so the scoped
+worker continues with the next slot and never repeats a completed one. The global
+lease is then left unused, because scoped claims and scoped transactions never
+consult it. The operation prints a JSON report. Running it again reports
+`"status": "already_scoped"` and changes nothing.
+
+It refuses:
+- a missing job;
+- a job of another domain;
+- a job bound to another scoped identity;
+- an occurrence still in flight;
+- a correlation already reserved by another job;
+- a job whose resource-intent links (admitted by its own triggers) name another
+  correlation or organization.
+
+That history check only sees recorded resource-intent links (PostgreSQL policy
+mode). A global job never bound a correlation in its identity, so where no links
+exist the operator's `--correlation-id` is trusted. The re-binding stays available
+after 0.14.0, so a database written by 0.13 can be upgraded first and re-bound
+afterwards.
 
 ## ADR: time, causality and the recovery boundary
 

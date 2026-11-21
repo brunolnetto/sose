@@ -73,7 +73,7 @@ def test_recovery_defers_a_transient_physical_wait_to_the_next_recurring_tick(
             uow.save_command(cmd)
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker-before-death", max_actions=3,
-            organization_owners={"flow-a": "organization-a"},
+            correlation_id="flow-a", organization_owners={"flow-a": "organization-a"},
             resource_policies=NEUTRAL_POLICIES,
             resource_organizations={"flow-a": "organization-a"},
         )
@@ -86,7 +86,7 @@ def test_recovery_defers_a_transient_physical_wait_to_the_next_recurring_tick(
     with PostgresPersistence(dsn, namespace=namespace) as restored:
         runner = TradingCustomerRecoveryRunner(
             persistence=restored, owner_id="worker-after-restart", max_actions=3,
-            organization_owners={"flow-a": "organization-a"},
+            correlation_id="flow-a", organization_owners={"flow-a": "organization-a"},
             resource_policies=NEUTRAL_POLICIES,
             resource_organizations={"flow-a": "organization-a"},
         )

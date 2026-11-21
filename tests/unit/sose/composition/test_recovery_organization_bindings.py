@@ -19,6 +19,7 @@ def test_recovery_uses_explicit_correlation_to_organization_binding(tmp_path):
         runner = TradingCustomerRecoveryRunner(
             persistence=store,
             owner_id="ephemeral-worker",
+            correlation_id="correlation-a",
             organization_owners={
                 "correlation-a": "organization-a", "correlation-b": "organization-b",
             },
@@ -36,6 +37,7 @@ def test_recovery_never_infers_organization_from_worker_lease(tmp_path):
         runner = TradingCustomerRecoveryRunner(
             persistence=store,
             owner_id="lease-owner-is-not-organization",
+            correlation_id="correlation-b",
             resource_policies=POLICIES,
             # Policy mode requires some binding; the queried correlation stays unbound.
             resource_organizations={"correlation-b": "organization-b"},
@@ -49,6 +51,7 @@ def test_recovery_rejects_conflicting_physical_and_runtime_owners(tmp_path):
         runner = TradingCustomerRecoveryRunner(
             persistence=store,
             owner_id="worker",
+            correlation_id="correlation-a",
             organization_owners={"correlation-a": "organization-a"},
             resource_organizations={"correlation-a": "organization-b"},
             resource_policies=POLICIES,

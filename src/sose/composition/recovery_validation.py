@@ -22,11 +22,17 @@ def _validate_identity(runner: TradingCustomerRecoveryRunner) -> None:
 
 
 def _validate_scoped_writer(runner: TradingCustomerRecoveryRunner) -> None:
-    if runner.scoped_writer:
-        if runner.correlation_id is None:
-            raise ValueError("scoped recovery requires one explicit correlation_id")
-        if not has_durable_writer_fencing(runner.persistence, "claim_scoped_writer"):
-            raise TypeError("scoped recovery requires PostgreSQL scoped fencing")
+    if runner.scoped_writer is not True:
+        # #635: deprecated in 0.13.0, removed in 0.14.0 (ADR-0011).
+        raise TypeError(
+            "TradingCustomerRecoveryRunner runs only under its job-scoped writer lease; "
+            "the namespace-wide lease (scoped_writer=False) was removed in SOSE 0.14.0. "
+            "Re-bind an existing job once with sose composition-recovery --rebind-scoped"
+        )
+    if runner.correlation_id is None:
+        raise ValueError("scoped recovery requires one explicit correlation_id")
+    if not has_durable_writer_fencing(runner.persistence, "claim_scoped_writer"):
+        raise TypeError("scoped recovery requires durable scoped writer fencing")
 
 
 def _validate_resource_persistence(runner: TradingCustomerRecoveryRunner) -> None:
@@ -71,13 +77,6 @@ def _validate_owned_correlation(runner: TradingCustomerRecoveryRunner) -> None:
             raise ValueError("resource mapping lacks the owned correlation_id")
 
 
-def _validate_writer_fencing(runner: TradingCustomerRecoveryRunner) -> None:
-    if not runner.scoped_writer and not has_durable_writer_fencing(
-        runner.persistence, "writer_epoch", "claim_writer",
-    ):
-        raise TypeError("composition runner requires authoritative writer fencing")
-
-
 def validate_recovery_runner(runner: TradingCustomerRecoveryRunner) -> None:
     """Run every construction check in the original order; the first failure raises."""
     _validate_identity(runner)
@@ -86,4 +85,3 @@ def validate_recovery_runner(runner: TradingCustomerRecoveryRunner) -> None:
     _validate_organization_owners(runner)
     _validate_resource_policies(runner)
     _validate_owned_correlation(runner)
-    _validate_writer_fencing(runner)
