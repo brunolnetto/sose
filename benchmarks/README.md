@@ -30,6 +30,10 @@ start Docker or require a PostgreSQL service.
   before timing.
 - Diagnostics cardinality tests continue to vary scheduled work, event history,
   and command-index size independently.
+- Resource lifecycle benchmarks (`test_resource_lifecycle.py`) seed durable
+  holders and waiters once, then measure lookups, an immediate grant and release, a
+  release that hands the resource to the next waiter, and a backend rebuild. Seeding
+  is excluded from timing. It is itself quadratic today, so sizes stop at 300.
 
 Quick mode is used for pull requests and reduces workload sizes and rounds.
 Full mode is used for scheduled and manual runs. PostgreSQL is intentionally
