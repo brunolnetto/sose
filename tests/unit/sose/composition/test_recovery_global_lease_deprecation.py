@@ -75,3 +75,29 @@ def test_cli_with_scoped_writer_is_silent(capsys, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     assert run_cli([*ARGV, "--scoped-writer"]) == 2
     assert "deprecated" not in capsys.readouterr().err
+
+
+def test_cli_global_run_notifies_once_even_with_warnings_as_errors(
+    capsys, tmp_path, monkeypatch,
+):
+    """The stderr notice is the CLI's only signal: the library warning is not repeated."""
+    import json
+
+    import sose.cli_commands as commands
+    from sose.composition.scheduler import RecoverySchedule
+
+    policies = tmp_path / "policies.json"
+    policies.write_text(json.dumps({"composition.post_replenishment_journal": {
+        "resource_type": "journal_clerk", "pool_id": "neutral", "scope": "shared",
+        "capacity": 1,
+    }}), encoding="utf-8")
+    monkeypatch.setattr(commands, "_recovery_store",
+                        lambda args: SQLiteIncrementalPersistence(tmp_path / "s.sqlite"))
+    monkeypatch.setattr(RecoverySchedule, "run_due", lambda self, *, now: [])
+    argv = [a if a != "missing-policies.json" else str(policies) for a in ARGV]
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert run_cli([*argv, "--now", "2026-10-09T12:01:00+00:00"]) == 0
+    err = capsys.readouterr().err
+    assert err.count("deprecated since SOSE 0.13.0") == 1
+    assert "warning: sose composition-recovery without --scoped-writer" in err

@@ -32,8 +32,12 @@ from sose.persistence.ownership import FencedEnginePersistence
 
 
 # #635/#637: the namespace-wide writer lease of composition recovery.
+# Release prep greps the literal (ADR-0011): removed_in="0.14.0"
 GLOBAL_LEASE_SINCE = "0.13.0"
 GLOBAL_LEASE_REMOVED_IN = "0.14.0"
+GLOBAL_LEASE_MESSAGE = (
+    "TradingCustomerRecoveryRunner with the namespace-wide writer lease (scoped_writer=False)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,9 +75,9 @@ class TradingCustomerRecoveryRunner:
         validate_recovery_runner(self)
         if not self.scoped_writer:
             # warn_deprecated -> __post_init__ -> dataclass __init__ -> the caller
+            # (dataclasses.replace() adds a frame: it is attributed to dataclasses.py)
             warn_deprecated(
-                "TradingCustomerRecoveryRunner with the namespace-wide writer lease "
-                "(scoped_writer=False)",
+                GLOBAL_LEASE_MESSAGE,
                 since=GLOBAL_LEASE_SINCE, removed_in=GLOBAL_LEASE_REMOVED_IN,
                 instead=("pass scoped_writer=True with one correlation_id, and move an "
                          "existing job first with sose.composition.recovery_rebind."

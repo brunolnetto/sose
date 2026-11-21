@@ -69,7 +69,8 @@ Or use the long-running worker with `--serve --poll-seconds 5`. The
 
 ### Moving to the scoped lease (#637)
 
-By default the command runs under the namespace-wide (global) writer lease and
+By default the command runs under the namespace-wide (global) writer lease
+(deprecated since 0.13.0, see below) and
 stores the job identity `{}`. `--scoped-writer` runs the job under its own
 job-scoped lease instead, which never fences other jobs, and stores the identity
 `{correlation_id, organization_id}`. A scoped worker refuses a job that a global
@@ -108,8 +109,8 @@ correlation in its identity, so where no links exist (or on SQLite) the operator
 `--correlation-id` is trusted. Then run the worker with `--scoped-writer`.
 The global mode is deprecated since 0.13.0 and is removed in 0.14.0 (#635):
 `TradingCustomerRecoveryRunner` without `scoped_writer=True` emits a
-`DeprecationWarning`, and the command without `--scoped-writer` prints the same notice
-on stderr. After 0.14.0, every recovery job runs under its job-scoped lease, so re-bind
+`DeprecationWarning`, and the command without `--scoped-writer` prints an equivalent
+notice on stderr. From 0.14.0, every recovery job runs under its job-scoped lease, so re-bind
 global jobs before upgrading.
 
 ## ADR: time, causality and the recovery boundary
