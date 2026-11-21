@@ -45,7 +45,7 @@ class QueueReferenceDomain:
 
     @cached_property
     def descriptor(self) -> DomainReferenceDescriptor:
-        design = _legacy_design()
+        design = _reference_design_v1()
         baseline = design.baseline
         metadata = {
             "arrival_rate": ("Configured exogenous arrival intensity.", "items/time"),
@@ -107,28 +107,28 @@ class QueueReferenceDomain:
         )
 
     def build_model(self, point: dict[str, float]) -> ModelSpec:
-        payload = _legacy_design().baseline.canonical_payload()
+        payload = _reference_design_v1().baseline.canonical_payload()
         parameters = dict(payload["parameters"])
         parameters.update({name: float(value) for name, value in point.items()})
         payload["parameters"] = parameters
         return ModelSpec.model_validate(payload)
 
     def interventions(self) -> tuple[ModelIntervention, ...]:
-        return _legacy_design().interventions
+        return _reference_design_v1().interventions
 
     def execute(self, request: DomainExecutionRequest) -> DomainExecutionResult:
-        legacy = _legacy_world(request.world)
+        spec = _synthetic_world_spec(request.world)
         if request.world.agency_configuration.level is AgencyLevel.A0:
             evidence = run_a0_reference_world(
                 protocol=request.protocol,
-                world=legacy,
+                world=spec,
                 root_seed=request.root_seed,
                 replication=request.replication,
             )
         elif request.world.agency_configuration.level is AgencyLevel.A1:
             evidence = run_a1_reference_world(
                 protocol=request.protocol,
-                world=legacy,
+                world=spec,
                 root_seed=request.root_seed,
                 replication=request.replication,
             )
@@ -221,9 +221,9 @@ class QueueReferenceDomain:
 
 
     def ground_truth(self, world: ExperimentWorld) -> tuple[GroundTruthClaim, ...]:
-        legacy = _legacy_world(world)
+        spec = _synthetic_world_spec(world)
         if world.agency_configuration.level is AgencyLevel.A0:
-            reference = analytical_world_reference(legacy)
+            reference = analytical_world_reference(spec)
             return (
                 GroundTruthClaim(
                     claim_id="a0.configured-regime",
@@ -274,7 +274,7 @@ class QueueReferenceDomain:
                 ),
             )
 
-        reference = classify_a1_regime(legacy)
+        reference = classify_a1_regime(spec)
         return (
             GroundTruthClaim(
                 claim_id="a1.configured-regime",
@@ -298,9 +298,9 @@ class QueueReferenceDomain:
         )
 
     def classify_regime(self, world: ExperimentWorld) -> RegimeReference:
-        legacy = _legacy_world(world)
+        spec = _synthetic_world_spec(world)
         if world.agency_configuration.level is AgencyLevel.A0:
-            reference = analytical_world_reference(legacy)
+            reference = analytical_world_reference(spec)
             return RegimeReference(
                 label="stable" if reference.stable else "saturated",
                 stable=reference.stable,
@@ -310,7 +310,7 @@ class QueueReferenceDomain:
                 },
             )
 
-        reference = classify_a1_regime(legacy)
+        reference = classify_a1_regime(spec)
         return RegimeReference(
             label=reference.kind.value,
             stable=reference.kind is not A1RegimeKind.SATURATED,
@@ -327,7 +327,7 @@ def build_queue_reference_plan_v1(
     """Expose the verified A0/A1 protocol through the generic runtime contract."""
 
     reference = reference or QueueReferenceDomain()
-    design = _legacy_design()
+    design = _reference_design_v1()
     return DomainExperimentPlan(
         protocol=design.protocol,
         design_seed=design.design_seed,
@@ -352,7 +352,8 @@ def build_queue_reference_plan_v1(
 
 
 @lru_cache(maxsize=1)
-def _legacy_design():
+def _reference_design_v1():
+    """The frozen A0/A1 reference design (v1) this queue reference reproduces."""
     return build_a0_a1_reference_design_v1()
 
 
@@ -375,7 +376,8 @@ def _agency_spec(configuration: AgencyConfiguration) -> AgencySpec:
     raise ValueError("unsupported queue reference agency configuration")
 
 
-def _legacy_world(world: ExperimentWorld) -> SyntheticWorldSpec:
+def _synthetic_world_spec(world: ExperimentWorld) -> SyntheticWorldSpec:
+    """Bridge ``ExperimentWorld`` to the v1 runner's spec (intentional, reproducible; #635)."""
     payload = world.model_spec.canonical_payload()
     payload["agency"] = _agency_spec(world.agency_configuration).canonical_payload()
     model_spec = ModelSpec.model_validate(payload)
