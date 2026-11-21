@@ -14,7 +14,7 @@
   `sose.composition.recovery_rebind.rebind_recovery_job_to_scope`) moves an existing
   recovery job from the namespace-wide writer lease to its job-scoped lease, keeping
   its job id and history; `--scoped-writer` runs with the scoped lease. The global
-  lease stays the default for now; deprecating it is planned for 0.13.0 (#637, #666).
+  lease stays the default but is deprecated (see Deprecated) (#637, #666).
 
 ### Changed
 
@@ -23,6 +23,16 @@
   on the legacy RNG because they feed frozen evidence; legacy streams are unchanged.
   A database of a migrated example written by 0.12 and resumed now draws new
   decisions from the counter stream (#631, #668).
+
+### Deprecated
+
+- Composition recovery under the namespace-wide writer lease, deprecated in 0.13.0 and
+  removed in 0.14.0 (#635). `TradingCustomerRecoveryRunner` without
+  `scoped_writer=True` emits a `DeprecationWarning`, and
+  `sose composition-recovery` without `--scoped-writer` prints the notice on stderr.
+  Move an existing job once with `--rebind-scoped` (or
+  `rebind_recovery_job_to_scope`), then run it with `--scoped-writer`. One scoped runner
+  handles one `correlation_id`.
 
 ### Removed
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from dataclasses import asdict
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -41,7 +42,9 @@ def add_composition_recovery_parser(
     recovery.add_argument("--poll-seconds", type=float, default=5.0)
     recovery.add_argument(
         "--scoped-writer", action="store_true",
-        help="Run under the job-scoped writer lease (a re-bound or new scoped job).",
+        help="Run under the job-scoped writer lease (a re-bound or new scoped job). "
+             "Running without it (the namespace-wide lease) is deprecated since 0.13.0 "
+             "and removed in 0.14.0.",
     )
     recovery.add_argument(
         "--rebind-scoped", action="store_true",
@@ -64,6 +67,20 @@ def recovery_run_start(args: argparse.Namespace) -> datetime:
     if start_at.tzinfo is None:
         raise ValueError("start_at must be timezone-aware")
     return start_at
+
+
+def warn_global_lease(args: argparse.Namespace) -> None:
+    """Tell CLI operators on stderr: Python hides a DeprecationWarning raised in a library."""
+    if args.scoped_writer:
+        return
+    from sose._deprecation import deprecation_message
+    from sose.composition.recovery import GLOBAL_LEASE_REMOVED_IN, GLOBAL_LEASE_SINCE
+
+    print("warning: " + deprecation_message(
+        "sose composition-recovery without --scoped-writer (the namespace-wide writer lease)",
+        since=GLOBAL_LEASE_SINCE, removed_in=GLOBAL_LEASE_REMOVED_IN,
+        instead="run --rebind-scoped once for an existing job, then run with --scoped-writer",
+    ), file=sys.stderr, flush=True)
 
 
 def cmd_composition_rebind(args: argparse.Namespace) -> int:

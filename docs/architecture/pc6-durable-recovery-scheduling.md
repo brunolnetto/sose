@@ -106,7 +106,11 @@ another correlation or organization. That history check only sees recorded
 resource-intent links (PostgreSQL policy mode); a global job never bound a
 correlation in its identity, so where no links exist (or on SQLite) the operator's
 `--correlation-id` is trusted. Then run the worker with `--scoped-writer`.
-The global mode stays the default in 0.12; it is deprecated in 0.13.0.
+The global mode is deprecated since 0.13.0 and is removed in 0.14.0 (#635):
+`TradingCustomerRecoveryRunner` without `scoped_writer=True` emits a
+`DeprecationWarning`, and the command without `--scoped-writer` prints the same notice
+on stderr. After 0.14.0, every recovery job runs under its job-scoped lease, so re-bind
+global jobs before upgrading.
 
 ## ADR: time, causality and the recovery boundary
 

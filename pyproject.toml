@@ -64,6 +64,10 @@ markers = [
 ]
 addopts = "-p tests.support.pytest_auto_postgres"
 filterwarnings = [
+    # Existing suites still run recovery under the namespace-wide lease until its 0.14
+    # removal (#635); tests/unit/sose/composition/test_recovery_global_lease_deprecation.py
+    # asserts the warning itself.
+    "ignore:TradingCustomerRecoveryRunner with the namespace-wide writer lease:DeprecationWarning",
 ]
 [tool.codebase-stats.gates]
 # Quality ratchet (ADR-0010): no new violation and no worse existing one.

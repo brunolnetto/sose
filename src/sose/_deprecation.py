@@ -34,13 +34,20 @@ def deprecated_reexports(
     return __getattr__
 
 
+def deprecation_message(what: str, *, since: str, removed_in: str, instead: str) -> str:
+    """The uniform ADR-0011 text; the CLI prints it where Python hides the warning."""
+    return (
+        f"{what} is deprecated since SOSE {since} and will be removed in "
+        f"SOSE {removed_in}; {instead}."
+    )
+
+
 def warn_deprecated(
     what: str, *, since: str, removed_in: str, instead: str, stacklevel: int = 3,
 ) -> None:
     """Emit a ``DeprecationWarning`` attributed to the caller's caller by default."""
     warnings.warn(
-        f"{what} is deprecated since SOSE {since} and will be removed in "
-        f"SOSE {removed_in}; {instead}.",
+        deprecation_message(what, since=since, removed_in=removed_in, instead=instead),
         DeprecationWarning,
         stacklevel=stacklevel,
     )

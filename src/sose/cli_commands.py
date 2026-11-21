@@ -308,13 +308,14 @@ def _cmd_composition_recovery(args: argparse.Namespace) -> int:
     from datetime import timedelta, timezone
     from time import sleep
 
-    from sose.cli_recovery import cmd_composition_rebind, recovery_run_start
+    from sose.cli_recovery import cmd_composition_rebind, recovery_run_start, warn_global_lease
     from sose.composition.recovery import TradingCustomerRecoveryRunner
     from sose.composition.scheduler import RecoverySchedule
 
     if args.rebind_scoped:
         return cmd_composition_rebind(args)
     start_at = recovery_run_start(args)   # fail before connecting to the store
+    warn_global_lease(args)
     policies = _recovery_resource_policies(args)
     store = _recovery_store(args)
     try:

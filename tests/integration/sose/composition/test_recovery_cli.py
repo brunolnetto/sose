@@ -33,7 +33,7 @@ def test_composition_recovery_cli_rejects_naive_anchor(tmp_path, capsys):
     not os.environ.get("SOSE_TEST_POSTGRES_DSN"), reason="SOSE_TEST_POSTGRES_DSN required",
 )
 def test_composition_recovery_cli_runs_policy_backed_on_postgres(tmp_path, capsys):
-    """#634: the only path since 0.11.0 -- PostgreSQL store plus a resource-policy file."""
+    """#634: PostgreSQL plus a resource-policy file; #635: under the job-scoped lease."""
     from sose.persistence.postgres import PostgresPersistence
 
     dsn = os.environ["SOSE_TEST_POSTGRES_DSN"]
@@ -54,9 +54,10 @@ def test_composition_recovery_cli_runs_policy_backed_on_postgres(tmp_path, capsy
         "--start-at", START.isoformat(),
         "--interval-seconds", "60", "--max-slots", "2",
         "--now", (START + timedelta(minutes=1)).isoformat(),
+        "--scoped-writer",
     ]
     with warnings.catch_warnings():
-        warnings.simplefilter("error", DeprecationWarning)   # policy-backed path never warns
+        warnings.simplefilter("error", DeprecationWarning)   # the supported path never warns
         assert run_cli(args) == 0
         assert run_cli(args) == 0   # same due slots again: idempotent catch-up
     with PostgresPersistence(dsn, namespace=namespace) as store:
