@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from contextlib import closing
 
 import pytest
 
@@ -80,7 +81,7 @@ def test_legacy_schema_migration_accepts_columns_already_present(
     persistence = SQLiteIncrementalPersistence(path)
     persistence.close()
 
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         row = connection.execute(
             """
             SELECT schema_version, revision, owner_id, owner_epoch
@@ -104,7 +105,7 @@ def test_future_schema_is_rejected_and_constructor_rolls_back(tmp_path):
     with pytest.raises(RuntimeError, match="unsupported .* schema version"):
         SQLiteIncrementalPersistence(path)
 
-    with sqlite3.connect(path) as connection:
+    with closing(sqlite3.connect(path)) as connection:
         row = connection.execute(
             "SELECT schema_version FROM sose_record_meta WHERE singleton = 1"
         ).fetchone()

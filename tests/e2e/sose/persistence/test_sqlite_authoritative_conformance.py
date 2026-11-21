@@ -1,3 +1,4 @@
+from contextlib import closing
 import sqlite3
 import subprocess
 import sys
@@ -79,7 +80,7 @@ class SQLiteIncrementalHarness:
         first = SQLiteIncrementalPersistence(fencing_path)
         second = SQLiteIncrementalPersistence(fencing_path)
         try:
-            with sqlite3.connect(fencing_path) as connection:
+            with closing(sqlite3.connect(fencing_path)) as connection:
                 current = connection.execute(
                     "SELECT owner_epoch FROM sose_record_meta WHERE singleton = 1"
                 ).fetchone()
