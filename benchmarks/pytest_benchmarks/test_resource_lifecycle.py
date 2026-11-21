@@ -24,6 +24,7 @@ QUICK = os.getenv("SOSE_BENCHMARK_MODE", "full") == "quick"
 # reservations, and the memory adapter deep-copies each one per read. 1_000 holders
 # would spend minutes per case in setup alone, so the full sizes stop at 300.
 SIZES = [10, 50] if QUICK else [10, 100, 300]
+# Three rounds even in quick mode, so the hand-over assertions cover several hand-overs.
 ROUNDS = 3 if QUICK else 7
 NOW = datetime(2026, 11, 21, 8, tzinfo=timezone.utc)
 
@@ -72,7 +73,11 @@ def _seed(resources, backend, *, holders: int, waiters: int = 0) -> None:
 @pytest.mark.parametrize("suffix", ADAPTERS)
 @pytest.mark.parametrize("active", SIZES, ids=lambda size: f"{size}-holders")
 def test_resource_lookup_scales_with_active_reservations(benchmark, tmp_path, suffix, active):
-    """Worst-case lookups: the last holder, and an id that is neither held nor pending."""
+    """Lookups of a held id and of an id that is neither held nor pending.
+
+    Every lookup materialises (and, on these adapters, deep-copies) all reservations
+    before scanning, so the position of the held id in scan order does not matter.
+    """
     persistence = _open(tmp_path, suffix)
     try:
         resources, backend = _runtime(persistence, capacity=active)
@@ -137,24 +142,34 @@ def test_resource_immediate_grant_then_release(benchmark, tmp_path, suffix, back
 @pytest.mark.parametrize("suffix", ADAPTERS)
 @pytest.mark.parametrize("pending", SIZES, ids=lambda size: f"{size}-waiters")
 def test_resource_release_grants_the_next_waiter(benchmark, tmp_path, suffix, pending):
-    """Releasing the single holder durably grants the highest-priority waiter."""
+    """Releasing the single holder durably grants the highest-priority waiter.
+
+    Each round first queues one more waiter (behind all others, outside the timing),
+    so every measured hand-over sees exactly ``pending`` waiters.
+    """
     persistence = _open(tmp_path, suffix)
     try:
         resources, backend = _runtime(persistence, capacity=1)
         _seed(resources, backend, holders=1, waiters=pending)
+        refills = count(pending)
         handed_over = []
 
-        def hand_over():
+        def refill():
+            index = next(refills)
+            assert _request(resources, backend, f"waiter-{index:05d}", priority=index) is None
             [holder] = persistence.resource_reservations()
+            return (holder,), {}
+
+        def hand_over(holder):
             assert resources.release(backend, holder.reservation_id)
             backend.run_until(backend.now)
             handed_over.append(holder.request_id)
 
-        benchmark.pedantic(hand_over, rounds=min(ROUNDS, pending), iterations=1)
+        benchmark.pedantic(hand_over, setup=refill, rounds=ROUNDS, iterations=1)
         done = len(handed_over)          # one call when benchmarking is disabled
         [holder] = persistence.resource_reservations()
         assert holder.request_id == f"waiter-{done - 1:05d}"    # lowest priority value first
-        assert len(persistence.resource_demands()) == pending - done
+        assert len(persistence.resource_demands()) == pending
     finally:
         _close(persistence)
 
