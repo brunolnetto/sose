@@ -1,16 +1,16 @@
 """Fenced re-binding of a global-lease PC6 recovery job to its job-scoped lease (#637).
 
-A recovery job created by a runner with ``scoped_writer=False`` stores the
-durable identity ``{}`` and runs under the namespace-wide writer epoch. A
-scoped runner refuses that job ("durable organizational binding changed"),
-because silently adopting it could bind the wrong organization.
+Up to SOSE 0.13 a recovery job could run under the namespace-wide writer epoch
+(``scoped_writer=False``, removed in 0.14.0, #635); it stores the durable identity
+``{}``. A runner refuses that job until it is re-bound, because silently adopting
+it could bind the wrong organization.
 
 ``rebind_recovery_job_to_scope`` is the explicit migration:
 
 1. it claims the namespace-wide (global) writer epoch. The claim waits for the
    in-flight transactions of a running global worker and then fences it out:
    that worker's next transaction fails with ``StaleWriterError``, and a
-   restarted global worker is refused by the job's new durable identity;
+   restarted 0.13 global worker is refused by the job's new durable identity;
 2. inside one transaction fenced by that epoch it re-reads the job, checks
    that it is a trading-company recovery job in global mode with no occurrence
    in flight, checks that its durable history binds no other correlation or
@@ -80,7 +80,9 @@ def _check_state(state: SimulationJobState | None, target: str) -> bool:
         )
     if state.active_trigger_id is not None:
         raise RecoveryRebindError(
-            "recovery occurrence is still in flight; finish it under the global lease first"
+            "recovery occurrence is still in flight; finish it with SOSE 0.13 (a global "
+            "worker run) before re-binding: 0.14 cannot resume an occurrence started "
+            "under the namespace-wide lease"
         )
     return False
 

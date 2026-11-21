@@ -22,7 +22,8 @@ def test_runner_without_resource_policies_is_refused(tmp_path):
     with SQLiteIncrementalPersistence(tmp_path / "s.sqlite") as store:
         with pytest.raises(TypeError, match="policy-less recovery was removed in SOSE 0.11.0"):
             TradingCustomerRecoveryRunner(
-                persistence=store, owner_id="worker", organization_owners={"flow": "org"},
+                persistence=store, owner_id="worker", correlation_id="flow",
+                organization_owners={"flow": "org"},
             )
 
 
@@ -33,8 +34,9 @@ def test_runner_with_policies_still_constructs_without_postgres(tmp_path):
     )}
     with SQLiteIncrementalPersistence(tmp_path / "s.sqlite") as store:
         runner = TradingCustomerRecoveryRunner(
-            persistence=store, owner_id="worker", organization_owners={"flow": "org"},
-            resource_policies=policy, resource_organizations={"flow": "org"},
+            persistence=store, owner_id="worker", correlation_id="flow",
+            organization_owners={"flow": "org"}, resource_policies=policy,
+            resource_organizations={"flow": "org"},
         )
     assert runner.resource_policies == policy
 

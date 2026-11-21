@@ -358,6 +358,7 @@ def test_pg_real_pickup_statechart_is_booked_through_recovery_runner_and_restart
             now=logistics.ORIGIN,
         )
         runner = TradingCustomerRecoveryRunner(
+            correlation_id=correlation,
             persistence=store, owner_id="recovery-worker", max_actions=1,
             resource_policies={POLICY: _pool()},
             resource_organizations={correlation: "company-a"},
@@ -381,6 +382,7 @@ def test_pg_real_pickup_statechart_is_booked_through_recovery_runner_and_restart
 
     with PostgresPersistence(DSN, namespace=ns) as reopened:
         runner = TradingCustomerRecoveryRunner(
+            correlation_id=correlation,
             persistence=reopened, owner_id="retry-worker", max_actions=1,
             resource_policies={POLICY: _pool()},
             resource_organizations={correlation: "company-a"},

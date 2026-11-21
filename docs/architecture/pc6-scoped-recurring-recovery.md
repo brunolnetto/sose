@@ -10,15 +10,16 @@ only on causally attributed business state. A healthy organization must not be
 fenced or logically fast-forwarded when another organization crashes and
 reclaims its writer epoch.
 
-The previous composition runner always called the PostgreSQL *namespace*
+The original composition runner always called the PostgreSQL *namespace*
 `claim_writer`. Every subsequent claim superseded every other job, regardless
-of whether the jobs had shared resources. That lease is still the default for
-older single-writer clients.
+of whether the jobs had shared resources. That mode was deprecated in 0.13.0 and
+removed in 0.14.0 (#635); a job it created is re-bound with `--rebind-scoped`
+(see `pc6-durable-recovery-scheduling.md`).
 
-## Opt-in semantics
+## Semantics
 
-Configure `TradingCustomerRecoveryRunner(..., job_id=..., correlation_id=...,
-scoped_writer=True)` with one durable `job_id` and owned `correlation_id`
+Every runner is scoped. Configure `TradingCustomerRecoveryRunner(..., job_id=...,
+correlation_id=...)` with one durable `job_id` and owned `correlation_id`
 per organization. For resource-mapped effects, explicitly configure the
 immutable `resource_organizations` correlation-to-organization binding.
 

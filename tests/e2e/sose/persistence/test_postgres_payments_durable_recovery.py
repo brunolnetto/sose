@@ -117,6 +117,7 @@ def test_payment_continuation_restarts_from_persisted_stage_and_emits_r2r(
         assert len(correlations) == 1
         owner_bindings = {next(iter(correlations)): "test-org-payments-durable-recovery"}
         runner = TradingCustomerRecoveryRunner(
+            correlation_id=next(iter(owner_bindings)),
             organization_owners=owner_bindings,
             resource_policies=NEUTRAL_POLICY,
             resource_organizations=owner_bindings,

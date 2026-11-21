@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Removed (deprecated in 0.13.0)
+
+- Composition recovery under the namespace-wide writer lease, deprecated in 0.13.0
+  (#635). `TradingCustomerRecoveryRunner(scoped_writer=False)` raises `TypeError`; the
+  runner always uses its job-scoped lease and needs one `correlation_id`.
+  `sose composition-recovery` always runs scoped, and `--scoped-writer` is accepted but
+  has no effect. A job created under the global lease is refused until it is re-bound once
+  with `--rebind-scoped` (`rebind_recovery_job_to_scope`), which stays available. Before
+  upgrading, let any 0.13 occurrence in flight finish on 0.13: 0.14 cannot resume it, and
+  the re-binding refuses an in-flight job.
+
 ## 0.13.0 — 2026-11-21
 
 Release note: `docs/releases/v0.13.0.md`. Scoped writer leases on every backend, the

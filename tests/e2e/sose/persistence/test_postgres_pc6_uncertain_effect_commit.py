@@ -117,6 +117,7 @@ BusinessEffectService.complete = faulted_complete
 with PostgresPersistence(dsn, namespace=domain_ns) as domain:
     with PostgresPersistence(physical_dsn, namespace=physical_ns) as physical:
         runner = TradingCustomerRecoveryRunner(
+            correlation_id=correlation,
             persistence=domain, owner_id="uncertain-pc6-a",
             job_id="real-pc6-a", max_actions=1,
             resource_persistence=physical,

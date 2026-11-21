@@ -87,6 +87,7 @@ def test_worker_death_after_business_effect_before_proof_is_idempotent(
         assert len(correlations) == 1
         flow_id = next(iter(correlations))
         worker = TradingCustomerRecoveryRunner(
+            correlation_id=flow_id,
             persistence=store, owner_id="recover-business-proof",
             organization_owners={flow_id: ORGANIZATION},
             resource_policies=NEUTRAL_POLICY,

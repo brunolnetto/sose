@@ -92,6 +92,7 @@ def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
     assert len(correlations) == 1
     owner_bindings = {next(iter(correlations)): "test-org-recurring-trading-recovery"}
     worker = TradingCustomerRecoveryRunner(
+        correlation_id=next(iter(owner_bindings)),
         organization_owners=owner_bindings,
         resource_policies=NEUTRAL_POLICY, resource_organizations=owner_bindings,
         persistence=recovered, owner_id="new-worker",
@@ -149,8 +150,14 @@ def test_recurring_recovery_trigger_resumes_durable_customer_boundary(
 def test_stale_composition_writer_cannot_commit_after_recovery_trigger():
     namespace = "fenced_recovery_" + uuid4().hex[:12]
     persistence = PostgresPersistence(DSN, namespace=namespace)
-    old = persistence.claim_writer("worker-old", expected_epoch=persistence.writer_epoch())
+    # A stale worker of the SAME job (#635: the job-scoped lease fences only its own job).
+    old = persistence.claim_scoped_writer(
+        "empty-composition", "worker-old",
+        expected_epoch=persistence.scoped_writer_epoch("empty-composition"),
+        correlation_id="empty-composition-fixture",
+    )
     worker = TradingCustomerRecoveryRunner(
+        correlation_id="empty-composition-fixture",
         persistence=persistence, owner_id="worker-new", job_id="empty-composition",
         resource_policies=NEUTRAL_POLICY,
         # Explicit fixture binding; no flow exists on this empty ledger.

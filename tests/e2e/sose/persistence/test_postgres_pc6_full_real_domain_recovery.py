@@ -96,6 +96,7 @@ def _seed_real_workflow(dsn, ns, organization):
 
 def _schedule(domain, shared, *, organization, correlation, max_actions=1):
     runner = TradingCustomerRecoveryRunner(
+        correlation_id=correlation,
         persistence=domain, owner_id=f"pc6-{organization}",
         job_id=f"real-pc6-{organization}", max_actions=max_actions,
         resource_persistence=shared,
@@ -326,6 +327,7 @@ BusinessEffectService.complete = death_before_certificate
 with PostgresPersistence(dsn, namespace=domain_ns) as domain:
     with PostgresPersistence(dsn, namespace=physical_ns) as physical:
         runner = TradingCustomerRecoveryRunner(
+            correlation_id=corr,
             persistence=domain, owner_id="killed-real-a", job_id="real-pc6-a",
             max_actions=1, resource_persistence=physical,
             resource_policies={"composition.deliver_shipment": ResourcePoolContract(
@@ -600,6 +602,7 @@ BoundaryService.consume = consumed
 with PostgresPersistence(dsn, namespace=domain_ns) as domain:
     with PostgresPersistence(dsn, namespace=physical_ns) as physical:
         runner = TradingCustomerRecoveryRunner(
+            correlation_id=correlation,
             persistence=domain, owner_id="fatal-real-boundary-a",
             job_id="real-pc6-a", max_actions=1,
             resource_persistence=physical,
@@ -862,6 +865,7 @@ if cut == "after_publish":
 with PostgresPersistence(dsn, namespace=domain_ns) as domain:
     with PostgresPersistence(dsn, namespace=physical_ns) as physical:
         runner = TradingCustomerRecoveryRunner(
+            correlation_id=correlation,
             persistence=domain, owner_id="fatal-real-downstream-a",
             job_id="real-pc6-a", max_actions=1,
             resource_persistence=physical,

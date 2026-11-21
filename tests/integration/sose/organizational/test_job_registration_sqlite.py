@@ -101,7 +101,7 @@ def _sqlite_recovery_claim_racer(path, reached_claim, release_claim, results):
     from sose.composition.recovery import TradingCustomerRecoveryRunner
 
     with SQLiteIncrementalPersistence(path) as store:
-        real_claim = store.claim_writer_and_register
+        real_claim = store.claim_scoped_writer_and_register
 
         def delayed_claim(*args, **kwargs):
             reached_claim.set()
@@ -109,10 +109,10 @@ def _sqlite_recovery_claim_racer(path, reached_claim, release_claim, results):
                 raise TimeoutError("test did not release pre-claim recovery worker")
             return real_claim(*args, **kwargs)
 
-        store.claim_writer_and_register = delayed_claim
+        store.claim_scoped_writer_and_register = delayed_claim
         runner = TradingCustomerRecoveryRunner(
             persistence=store, job_id="race:job", owner_id="recovery",
-            **RECOVERY_POLICY_MODE,
+            correlation_id="neutral-correlation", **RECOVERY_POLICY_MODE,
         )
         try:
             with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
@@ -163,7 +163,7 @@ def test_sqlite_recovery_claim_and_generic_registration_share_one_cross_process_
         ),
     ]
     with SQLiteIncrementalPersistence(path) as store:
-        initial_epoch = store.writer_epoch()
+        initial_epoch = store.scoped_writer_epoch("race:job")
     try:
         processes[0].start()
         assert reached_claim.wait(timeout=25), "recovery never reached post-preflight claim"
@@ -189,7 +189,7 @@ def test_sqlite_recovery_claim_and_generic_registration_share_one_cross_process_
         with SQLiteIncrementalPersistence(path) as store:
             state = store.job_state("race:job")
             assert state.domain_name == "trading_company_composition"
-            assert store.writer_epoch() == initial_epoch + 1
+            assert store.scoped_writer_epoch("race:job") == initial_epoch + 1
     finally:
         release_claim.set()
         for process in processes:
@@ -200,22 +200,22 @@ def test_sqlite_recovery_claim_and_generic_registration_share_one_cross_process_
         results.join_thread()
 
 
-def _die_after_global_writer_claim(path):
+def _die_after_scoped_writer_claim(path):
     import os
     from datetime import datetime, timezone
     from sose.composition.recovery import TradingCustomerRecoveryRunner
 
     with SQLiteIncrementalPersistence(path) as store:
-        original_claim = store.claim_writer_and_register
+        original_claim = store.claim_scoped_writer_and_register
 
         def committed_claim(*args, **kwargs):
             original_claim(*args, **kwargs)
             os._exit(87)
 
-        store.claim_writer_and_register = committed_claim
+        store.claim_scoped_writer_and_register = committed_claim
         runner = TradingCustomerRecoveryRunner(
             persistence=store, job_id="crash:job", owner_id="worker:dead",
-            **RECOVERY_POLICY_MODE,
+            correlation_id="neutral-correlation", **RECOVERY_POLICY_MODE,
         )
         runner.run_trigger(
             trigger_id="stable-occurrence",
@@ -231,7 +231,7 @@ def test_sqlite_worker_death_after_writer_claim_preserves_domain_identity(tmp_pa
 
     path = str(tmp_path / "writer-claim-death.db")
     ctx = get_context("spawn")
-    child = ctx.Process(target=_die_after_global_writer_claim, args=(path,))
+    child = ctx.Process(target=_die_after_scoped_writer_claim, args=(path,))
     child.start()
     child.join(timeout=30)
     if child.is_alive():
@@ -241,14 +241,14 @@ def test_sqlite_worker_death_after_writer_claim_preserves_domain_identity(tmp_pa
     assert child.exitcode == 87
 
     with SQLiteIncrementalPersistence(path) as store:
-        assert store.writer_epoch() == 1
+        assert store.scoped_writer_epoch("crash:job") == 1
         prior = store.job_state("crash:job")
         assert prior is not None
         assert prior.domain_name == "trading_company_composition"
         assert prior.initialized and prior.next_tick == 0
         runner = TradingCustomerRecoveryRunner(
             persistence=store, job_id="crash:job", owner_id="worker:recovered",
-            **RECOVERY_POLICY_MODE,
+            correlation_id="neutral-correlation", **RECOVERY_POLICY_MODE,
         )
         with patch.object(TradingCustomerRecoveryRunner, "_run_bounded", return_value=0):
             result = runner.run_trigger(
@@ -256,5 +256,5 @@ def test_sqlite_worker_death_after_writer_claim_preserves_domain_identity(tmp_pa
                 now=datetime(2026, 10, 12, tzinfo=timezone.utc),
             )
         assert result.job_id == "crash:job"
-        assert store.writer_epoch() == 2
+        assert store.scoped_writer_epoch("crash:job") == 2
         assert store.job_state("crash:job").last_completed_trigger_id == "stable-occurrence"

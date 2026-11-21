@@ -133,33 +133,34 @@ def _execute(namespace, monkeypatch, *, restart):
     monkeypatch.setattr(TradingCustomerRecoveryRunner, "_pending_effects", staticmethod(pending))
     monkeypatch.setattr(TradingCustomerRecoveryRunner, "_execute_pending", staticmethod(execute))
 
+    # One scoped worker per correlation (#635: a runner owns exactly one), both
+    # contending for the same shared pool.
+    def runner(store, organization, owner):
+        return TradingCustomerRecoveryRunner(
+            correlation_id=organization, job_id=f"recovery-{organization}",
+            persistence=store, owner_id=f"{owner}-{organization}",
+            resource_policies={POLICY_NAME: _pool()},
+            resource_organizations={organization: organization},
+            resource_slot_duration=SLOT, resource_retry_delay=SLOT,
+        )
+
     with PostgresPersistence(DSN, namespace=namespace) as store:
         with store.transaction() as uow:
             for effect in effects.values():
                 uow.save_command(effect)
-        runner = TradingCustomerRecoveryRunner(
-            persistence=store, owner_id="resource-worker",
-            resource_policies={POLICY_NAME: _pool()},
-            resource_organizations={"organization-a":"organization-a", "organization-b":"organization-b"},
-            resource_slot_duration=SLOT, resource_retry_delay=SLOT,
-        )
-        assert runner._run_bounded(store, now=T0, logical_now=T0) == 1
+        workers = {org: runner(store, org, "resource-worker") for org in effects}
+        assert workers["organization-a"]._run_bounded(store, now=T0, logical_now=T0) == 1
+        assert workers["organization-b"]._run_bounded(store, now=T0, logical_now=T0) == 0
         assert store.command(effects["organization-b"].command_id) is not None
         assert _coordinator(store).waiting(effects["organization-b"].command_id)
 
         if not restart:
-            assert runner._run_bounded(
+            assert workers["organization-b"]._run_bounded(
                 store, now=T0+SLOT, logical_now=T0+SLOT,
             ) == 1
     if restart:
         with PostgresPersistence(DSN, namespace=namespace) as reopened:
-            runner = TradingCustomerRecoveryRunner(
-                persistence=reopened, owner_id="recovered-worker",
-                resource_policies={POLICY_NAME: _pool()},
-            resource_organizations={"organization-a":"organization-a", "organization-b":"organization-b"},
-                resource_slot_duration=SLOT, resource_retry_delay=SLOT,
-            )
-            assert runner._run_bounded(
+            assert runner(reopened, "organization-b", "recovered-worker")._run_bounded(
                 reopened, now=T0+SLOT, logical_now=T0+SLOT,
             ) == 1
 
@@ -357,3 +358,83 @@ def test_pg_reconciliation_keeps_another_job_of_same_organization_untouched():
             db, {"this-job-correlation": "same-company"},
         ) == 0
         assert coordinator._ledger.get("other-job").status == "reserved"
+
+
+
+@pytest.mark.parametrize("order", [("first", "second"), ("second", "first")])
+def test_pg_one_scoped_worker_executes_one_effect_and_defers_another_in_the_same_pass(
+    monkeypatch, order,
+):
+    """One scoped worker, two effects of its correlation (#635: a worker owns one
+    correlation, possibly many effects). The first intent's pool is free and executes.
+    The organization's resource clock then places the second at the next slot, which
+    another organization holds, so it is deferred within that same pass and executes
+    once the pool frees. In the ("second", "first") order the contended effect comes
+    first: the free one must still execute in that pass (``deferred_this_tick``)."""
+    assert DSN
+    correlation, free_intent = "organization-a", "composition.complete_external_fulfillment"
+    free_pool = ResourcePoolContract(
+        resource_type="fulfillment_clerk", pool_id="pc6-free", scope="shared", capacity=1,
+    )
+    intents = {"first": free_intent, "second": POLICY_NAME}
+    sources = {
+        key: BoundaryMessage.create(
+            contract_name="warehouse.dispatch_ready", contract_version=1,
+            source_domain="warehouse_fulfillment", source_identity=key,
+            destination_domain="logistics", occurrence_key="dispatch-ready",
+            correlation_id=correlation, causation_id=None,
+            produced_at=T0, payload={"shipment_id": f"shipment-{key}"},
+        )
+        for key in intents
+    }
+    effects = {
+        key: Command(
+            command_id=f"effect-{key}", name=intents[key], entity_type="shipment",
+            entity_id=f"shipment-{key}", due_at=T0, issued_at=T0,
+            causation_id=sources[key].message_id, correlation_id=correlation,
+        )
+        for key in intents
+    }
+    executed = []
+
+    def pending(store):
+        return tuple(
+            (sources[key], effects[key].command_id)
+            for key in order
+            if store.command(effects[key].command_id) is not None
+        )
+
+    def execute(store, source, effect_id, *, organization_id, authoritative_pickup=None):
+        assert organization_id == correlation
+        # Only the delivery intent carries an authoritative pickup booking.
+        assert (authoritative_pickup is not None) == (effect_id == "effect-second")
+        executed.append(effect_id)
+        with store.transaction() as uow:
+            uow.delete_command(effect_id)
+
+    monkeypatch.setattr(TradingCustomerRecoveryRunner, "_pending_effects", staticmethod(pending))
+    monkeypatch.setattr(TradingCustomerRecoveryRunner, "_execute_pending", staticmethod(execute))
+    with PostgresPersistence(DSN, namespace=_namespace("pc6ownpass")) as store:
+        holder = _coordinator(store)
+        assert _admit(holder, "effect-held-by-b-1", "organization-b", T0) is True
+        assert _admit(holder, "effect-held-by-b-2", "organization-b", T0 + SLOT) is True
+        with store.transaction() as uow:
+            for effect in effects.values():
+                uow.save_command(effect)
+        worker = TradingCustomerRecoveryRunner(
+            correlation_id=correlation, persistence=store, owner_id="resource-worker",
+            resource_policies={POLICY_NAME: _pool(), free_intent: free_pool},
+            resource_organizations={correlation: correlation},
+            resource_slot_duration=SLOT, resource_retry_delay=SLOT,
+        )
+        assert worker._run_bounded(store, now=T0, logical_now=T0) == 1
+        assert executed == ["effect-first"]
+        assert _coordinator(store).waiting("effect-second")
+        assert store.command("effect-second") is not None
+        assert worker._run_bounded(store, now=T0 + SLOT, logical_now=T0 + SLOT) == 0
+        assert executed == ["effect-first"]                  # the pool is still held
+        assert worker._run_bounded(
+            store, now=T0 + 2 * SLOT, logical_now=T0 + 2 * SLOT,
+        ) == 1
+        assert executed == ["effect-first", "effect-second"]
+        assert _coordinator(store).waiting("effect-second") is None

@@ -48,10 +48,10 @@ ORGANIZATIONS = {"correlation:one": "test-org-recovery-enrollment"}
 class _ConstructorFencingSurface:
     """Expose only constructor-required methods; no worker lease is claimed."""
 
-    def writer_epoch(self):
+    def scoped_writer_epoch(self, *_args):
         raise AssertionError("fencing is not exercised by this preflight unit")
 
-    def claim_writer(self, *_args, **_kwargs):
+    def claim_scoped_writer(self, *_args, **_kwargs):
         raise AssertionError("fencing is not exercised by this preflight unit")
 
 
@@ -108,6 +108,7 @@ def _scenario(*, publications=(), acks=(), effects=(), max_actions=1):
         persistence=_ConstructorFencingSurface(),
         owner_id=OWNER,
         job_id=JOB,
+        correlation_id="correlation:one",
         max_actions=max_actions,
         resource_policies=NEUTRAL_POLICY,
         resource_organizations=ORGANIZATIONS,

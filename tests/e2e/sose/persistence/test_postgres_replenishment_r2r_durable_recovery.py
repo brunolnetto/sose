@@ -89,6 +89,7 @@ def test_replenishment_r2r_accepted_effect_resumes_after_worker_death(
         assert len(correlations) == 1
         flow_id = next(iter(correlations))
         worker = TradingCustomerRecoveryRunner(
+            correlation_id=flow_id,
             persistence=store, owner_id="replenishment-r2r-restart",
             organization_owners={flow_id: "trading-company-replenishment-reference"},
             resource_policies=NEUTRAL_POLICY,
