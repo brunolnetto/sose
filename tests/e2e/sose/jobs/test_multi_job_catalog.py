@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import sqlite3
 
 import pytest
@@ -82,7 +83,7 @@ def test_multiple_jobs_share_one_sqlite_engine_file_without_state_leakage(tmp_pa
         catalog.close()
 
     database = tmp_path / "shared-engine.sqlite3"
-    with sqlite3.connect(database) as connection:
+    with closing(sqlite3.connect(database)) as connection:
         tables = {
             row[0]
             for row in connection.execute(

@@ -9,6 +9,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 from multiprocessing import get_context
 import os
+from contextlib import closing
 import sqlite3
 
 import pytest
@@ -135,8 +136,8 @@ def _kill_inside_phase_before_commit(path, org, owner, now, action, prefix):
 def _clone_sqlite(source, target):
     # SQLite backup API captures all committed WAL pages consistently; plain
     # file copying can omit WAL records and produce a false crash result.
-    with sqlite3.connect(source) as original:
-        with sqlite3.connect(target) as replica:
+    with closing(sqlite3.connect(source)) as original:
+        with closing(sqlite3.connect(target)) as replica:
             original.backup(replica)
 
 
