@@ -1,3 +1,3 @@
 """SOSE — Synthetic Operational System Engine."""
 
-__version__ = "0.12.0"
+__version__ = "0.13.0"
