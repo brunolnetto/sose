@@ -164,26 +164,24 @@ class MemoryCommittedReadsMixin:
             raise ValueError("owner_id must not be empty")
         return deepcopy(self._state.scenario_states.get(owner_id))
 
+    # Resource records are frozen dataclasses of str/int/datetime only (asserted by
+    # tests/unit/sose/persistence/test_resource_records_immutable.py), so the stored
+    # objects are returned as they are: a deep copy would only cost O(state) per read
+    # (#610: every resource lookup scans these reads).
     def resource_definitions(self) -> tuple[ResourceDefinition, ...]:
-        return tuple(
-            deepcopy(self._state.resource_definitions[name])
-            for name in sorted(self._state.resource_definitions)
-        )
+        definitions = self._state.resource_definitions
+        return tuple(definitions[name] for name in sorted(definitions))
 
     def resource_demands(self) -> tuple[ResourceDemand, ...]:
-        return tuple(sorted(deepcopy(tuple(self._state.resource_demands.values()))))
+        return tuple(sorted(self._state.resource_demands.values()))
 
     def resource_reservations(self) -> tuple[ResourceReservation, ...]:
-        return tuple(
-            deepcopy(self._state.resource_reservations[key])
-            for key in sorted(self._state.resource_reservations)
-        )
+        reservations = self._state.resource_reservations
+        return tuple(reservations[key] for key in sorted(reservations))
 
     def resource_release_intents(self) -> tuple[ResourceReleaseIntent, ...]:
-        return tuple(
-            deepcopy(self._state.resource_release_intents[key])
-            for key in sorted(self._state.resource_release_intents)
-        )
+        intents = self._state.resource_release_intents
+        return tuple(intents[key] for key in sorted(intents))
 
     def store_definitions(self) -> tuple[StoreDefinition, ...]:
         return tuple(

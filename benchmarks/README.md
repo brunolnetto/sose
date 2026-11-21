@@ -33,7 +33,10 @@ start Docker or require a PostgreSQL service.
 - Resource lifecycle benchmarks (`test_resource_lifecycle.py`) seed durable
   holders and waiters once, then measure lookups, an immediate grant and release, a
   release that hands the resource to the next waiter, and a backend rebuild. Seeding
-  is excluded from timing. It is itself quadratic today, so sizes stop at 300.
+  is excluded from timing. Each request still scans the durable reservations, so
+  seeding grows quadratically. Since the committed reads stopped deep-copying the
+  immutable resource records, 1,000 holders seed in about a second on memory; on
+  SQLite incremental a 1,000-size case takes tens of seconds, in full mode only.
 - Resource withdraw and recovery benchmarks (`test_resource_withdraw_and_recovery.py`)
   write the durable holders, waiters and release intents directly, with the
   identities the manager derives, and restore per-round state with

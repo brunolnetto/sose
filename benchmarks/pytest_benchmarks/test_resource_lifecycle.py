@@ -20,10 +20,11 @@ from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 
 
 QUICK = os.getenv("SOSE_BENCHMARK_MODE", "full") == "quick"
-# Seeding is itself quadratic today: every ensure_requested scans the durable
-# reservations, and the memory adapter deep-copies each one per read. 1_000 holders
-# would spend minutes per case in setup alone, so the full sizes stop at 300.
-SIZES = [10, 50] if QUICK else [10, 100, 300]
+# Every ensure_requested still scans the durable reservations, so seeding grows
+# quadratically, but since the committed reads stopped deep-copying the immutable
+# resource records (#610) 1_000 holders seed in about a second on memory (tens of
+# seconds per case on SQLite incremental, for the scheduled full run only).
+SIZES = [10, 50] if QUICK else [10, 100, 1_000]
 # Three rounds even in quick mode, so the hand-over assertions cover several hand-overs.
 ROUNDS = 3 if QUICK else 7
 NOW = datetime(2026, 11, 21, 8, tzinfo=timezone.utc)
@@ -75,8 +76,8 @@ def _seed(resources, backend, *, holders: int, waiters: int = 0) -> None:
 def test_resource_lookup_scales_with_active_reservations(benchmark, tmp_path, suffix, active):
     """Lookups of a held id and of an id that is neither held nor pending.
 
-    Every lookup materialises (and, on these adapters, deep-copies) all reservations
-    before scanning, so the position of the held id in scan order does not matter.
+    Every lookup materialises all reservations before scanning, so the position of
+    the held id in scan order does not matter.
     """
     persistence = _open(tmp_path, suffix)
     try:

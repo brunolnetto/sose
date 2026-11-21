@@ -144,22 +144,13 @@ class DurableResourceManager:
         definitions = {definition.name for definition in self._persistence.resource_definitions()}
         if resource_name not in definitions:
             raise KeyError(f"unknown resource definition: {resource_name}")
-        if any(
-            demand.request_id == request_id
-            for demand in self._persistence.resource_demands()
-        ) or any(
-            reservation.request_id == request_id
-            for reservation in self._persistence.resource_reservations()
-        ):
+        # One read of each family serves both the duplicate check and the sequence.
+        existing = (*self._persistence.resource_demands(),
+                    *self._persistence.resource_reservations())
+        if any(record.request_id == request_id for record in existing):
             raise ValueError(f"resource request already exists: {request_id}")
 
-        sequence = max(
-            [
-                *(demand.sequence for demand in self._persistence.resource_demands()),
-                *(reservation.sequence for reservation in self._persistence.resource_reservations()),
-            ],
-            default=0,
-        ) + 1
+        sequence = max((record.sequence for record in existing), default=0) + 1
         demand = ResourceDemand(
             request_id=request_id,
             resource_name=resource_name,
