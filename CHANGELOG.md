@@ -48,7 +48,9 @@ migration of recovery jobs off the namespace-wide lease, and that lease's deprec
   runner always uses its job-scoped lease and needs one `correlation_id`.
   `sose composition-recovery` always runs scoped, and `--scoped-writer` is accepted but
   has no effect. A job created under the global lease is refused until it is re-bound once
-  with `--rebind-scoped` (`rebind_recovery_job_to_scope`), which stays available.
+  with `--rebind-scoped` (`rebind_recovery_job_to_scope`), which stays available. Before
+  upgrading, let any 0.13 occurrence in flight finish on 0.13: 0.14 cannot resume it, and
+  the re-binding refuses an in-flight job.
 - Incidental re-exports with no users and a canonical home elsewhere (#632, #667,
   #669): the `sose.backends.simpy` request/store/resource types (use
   `sose.backends.base`) and simpy's own `Container`/`Store`/`FilterStore`/

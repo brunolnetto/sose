@@ -35,7 +35,8 @@ def test_runner_with_policies_still_constructs_without_postgres(tmp_path):
     with SQLiteIncrementalPersistence(tmp_path / "s.sqlite") as store:
         runner = TradingCustomerRecoveryRunner(
             persistence=store, owner_id="worker", correlation_id="flow",
-            organization_owners={"flow": "org"}, resource_policies=policy, resource_organizations={"flow": "org"},
+            organization_owners={"flow": "org"}, resource_policies=policy,
+            resource_organizations={"flow": "org"},
         )
     assert runner.resource_policies == policy
 

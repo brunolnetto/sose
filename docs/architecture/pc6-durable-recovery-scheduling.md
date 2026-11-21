@@ -72,13 +72,23 @@ Or use the long-running worker with `--serve --poll-seconds 5`. The
 Every run uses the job's own job-scoped writer lease, which never fences other
 jobs, and stores the job identity `{correlation_id, organization_id}`. One worker
 handles exactly one `--correlation-id`. `--scoped-writer` is still accepted, but it
-no longer changes anything.
+no longer changes anything. The command always uses the job id
+`trading-company-customer-recovery`, so it serves one correlation per namespace. To
+recover several correlations in one namespace, construct one
+`TradingCustomerRecoveryRunner` per correlation, each with its own `job_id`.
 
 Up to 0.13, the command could run under the namespace-wide (global) writer lease,
 which stored the identity `{}`. That mode was deprecated in 0.13.0 and removed in
 0.14.0. A job created that way is refused ("created under the namespace-wide
-writer lease ... re-bind it once") until it is re-bound. To re-bind it, stop or let
-finish any 0.13 global worker of the job and run once:
+writer lease ... re-bind it once") until it is re-bound.
+
+**Before upgrading to 0.14, make sure no 0.13 occurrence is in flight.** The job's
+`active_trigger_id` must be empty, so let the 0.13 global worker finish its current
+run rather than killing it mid-occurrence. If a 0.13 worker died mid-occurrence,
+run it once more on 0.13 to finish that occurrence. 0.14 cannot resume an
+occurrence started under the namespace-wide lease, and the re-binding refuses
+such a job. An idle job can be re-bound on 0.13 or after the upgrade. Stop the
+0.13 global worker and run once:
 
 ```sh
 sose composition-recovery --rebind-scoped \
@@ -118,8 +128,8 @@ It refuses:
 That history check only sees recorded resource-intent links (PostgreSQL policy
 mode). A global job never bound a correlation in its identity, so where no links
 exist the operator's `--correlation-id` is trusted. The re-binding stays available
-after 0.14.0, so a database written by 0.13 can be upgraded first and re-bound
-afterwards.
+after 0.14.0, so a database written by 0.13 whose recovery jobs are idle can be
+upgraded first and re-bound afterwards.
 
 ## ADR: time, causality and the recovery boundary
 

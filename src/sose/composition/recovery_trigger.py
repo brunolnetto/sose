@@ -45,7 +45,8 @@ def check_job_identity(state: SimulationJobState | None, config_json: str) -> No
     if state is not None and state.config_json == GLOBAL_CONFIG_JSON != config_json:
         raise ValueError(
             "recovery job was created under the namespace-wide writer lease, removed "
-            "in SOSE 0.14.0; re-bind it once with sose composition-recovery --rebind-scoped"
+            "in SOSE 0.14.0; re-bind it once with sose composition-recovery --rebind-scoped "
+            "(an occurrence still in flight must first be finished with SOSE 0.13)"
         )
     if state is not None and state.config_json != config_json:
         raise ValueError("recovery job's durable organizational binding changed")

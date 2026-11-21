@@ -88,10 +88,15 @@ def test_cli_rebinds_global_job_and_scoped_worker_continues(cli):
         before = store.job_state(JOB)
     assert (before.config_json, before.run_count) == ("{}", 2)
 
+    with _store(cli.namespace) as store:
+        epochs = (store.writer_epoch(), store.scoped_writer_epoch(JOB))
     assert cli(minutes=2) == 2                           # refused until re-bound
     assert "re-bind it once with sose composition-recovery --rebind-scoped" in (
         cli.capsys.readouterr().err
     )
+    with _store(cli.namespace) as store:                 # refused before any claim
+        assert (store.writer_epoch(), store.scoped_writer_epoch(JOB)) == epochs
+        assert epochs[1] == 0
 
     code, report = cli.rebind()
     assert code == 0 and report["status"] == "rebound"

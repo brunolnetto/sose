@@ -78,7 +78,12 @@ def _validate_owned_correlation(runner: TradingCustomerRecoveryRunner) -> None:
 
 
 def validate_recovery_runner(runner: TradingCustomerRecoveryRunner) -> None:
-    """Run every construction check in the original order; the first failure raises."""
+    """Run every construction check in order; the first failure raises.
+
+    Since 0.14.0 (#635) the scoped-lease checks (mode, correlation, fencing) run
+    second, right after identity: every runner is scoped, so a missing correlation
+    or scoped fencing is reported before the policy checks.
+    """
     _validate_identity(runner)
     _validate_scoped_writer(runner)
     _validate_resource_persistence(runner)
