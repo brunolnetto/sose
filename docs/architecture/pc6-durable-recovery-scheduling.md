@@ -69,7 +69,8 @@ Or use the long-running worker with `--serve --poll-seconds 5`. The
 
 ### Moving to the scoped lease (#637)
 
-By default the command runs under the namespace-wide (global) writer lease and
+By default the command runs under the namespace-wide (global) writer lease
+(deprecated since 0.13.0, see below) and
 stores the job identity `{}`. `--scoped-writer` runs the job under its own
 job-scoped lease instead, which never fences other jobs, and stores the identity
 `{correlation_id, organization_id}`. A scoped worker refuses a job that a global
@@ -106,7 +107,11 @@ another correlation or organization. That history check only sees recorded
 resource-intent links (PostgreSQL policy mode); a global job never bound a
 correlation in its identity, so where no links exist (or on SQLite) the operator's
 `--correlation-id` is trusted. Then run the worker with `--scoped-writer`.
-The global mode stays the default in 0.12; it is deprecated in 0.13.0.
+The global mode is deprecated since 0.13.0 and is removed in 0.14.0 (#635):
+`TradingCustomerRecoveryRunner` without `scoped_writer=True` emits a
+`DeprecationWarning`, and the command without `--scoped-writer` prints an equivalent
+notice on stderr. From 0.14.0, every recovery job runs under its job-scoped lease, so re-bind
+global jobs before upgrading.
 
 ## ADR: time, causality and the recovery boundary
 

@@ -14,6 +14,7 @@ from typing import Mapping
 from sose.core.resource_identity import ResourcePoolContract
 from sose.composition.resource_intents import IntentResourceCoordinator
 
+from sose._deprecation import warn_deprecated
 from sose.composition.boundary import BoundaryService
 from sose.composition.recovery_boundary import execute_pending, pending_effects, registry_for
 from sose.composition.recovery_pass import run_bounded_pass
@@ -28,6 +29,15 @@ from sose.composition.recovery_validation import validate_recovery_runner
 from sose.jobs.registration import job_registration_guard
 from sose.persistence.base import Persistence
 from sose.persistence.ownership import FencedEnginePersistence
+
+
+# #635/#637: the namespace-wide writer lease of composition recovery.
+# Release prep greps the literal (ADR-0011): removed_in="0.14.0"
+GLOBAL_LEASE_SINCE = "0.13.0"
+GLOBAL_LEASE_REMOVED_IN = "0.14.0"
+GLOBAL_LEASE_MESSAGE = (
+    "TradingCustomerRecoveryRunner with the namespace-wide writer lease (scoped_writer=False)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +73,18 @@ class TradingCustomerRecoveryRunner:
 
     def __post_init__(self) -> None:
         validate_recovery_runner(self)
+        if not self.scoped_writer:
+            # warn_deprecated -> __post_init__ -> dataclass __init__ -> the caller
+            # (dataclasses.replace() adds a frame: it is attributed to dataclasses.py)
+            warn_deprecated(
+                GLOBAL_LEASE_MESSAGE,
+                since=GLOBAL_LEASE_SINCE, removed_in=GLOBAL_LEASE_REMOVED_IN,
+                instead=("pass scoped_writer=True with one correlation_id, and move an "
+                         "existing job first with sose.composition.recovery_rebind."
+                         "rebind_recovery_job_to_scope (sose composition-recovery "
+                         "--rebind-scoped)"),
+                stacklevel=4,
+            )
 
     def _egress_organization_owners(self) -> dict[str, str]:
         """Bind every known correlation to its stable operational owner."""
