@@ -361,14 +361,16 @@ def test_pg_reconciliation_keeps_another_job_of_same_organization_untouched():
 
 
 
+@pytest.mark.parametrize("order", [("first", "second"), ("second", "first")])
 def test_pg_one_scoped_worker_executes_one_effect_and_defers_another_in_the_same_pass(
-    monkeypatch,
+    monkeypatch, order,
 ):
     """One scoped worker, two effects of its correlation (#635: a worker owns one
     correlation, possibly many effects). The first intent's pool is free and executes.
     The organization's resource clock then places the second at the next slot, which
     another organization holds, so it is deferred within that same pass and executes
-    once the pool frees."""
+    once the pool frees. In the ("second", "first") order the contended effect comes
+    first: the free one must still execute in that pass (``deferred_this_tick``)."""
     assert DSN
     correlation, free_intent = "organization-a", "composition.complete_external_fulfillment"
     free_pool = ResourcePoolContract(
@@ -398,7 +400,7 @@ def test_pg_one_scoped_worker_executes_one_effect_and_defers_another_in_the_same
     def pending(store):
         return tuple(
             (sources[key], effects[key].command_id)
-            for key in sorted(intents)
+            for key in order
             if store.command(effects[key].command_id) is not None
         )
 
