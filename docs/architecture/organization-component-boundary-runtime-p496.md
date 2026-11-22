@@ -150,8 +150,8 @@ attested owner would not be the owner that writes, and the job is refused.
   makes every existing component job refuse to run, and `observe_organization_jobs`
   refuse the organization. Examples are adding an unrelated component or boundary,
   or bumping `config_epoch`. Because `job_id` must equal the owner, the identity
-  cannot be reused either. There is no re-attestation or migration tool yet; one
-  would be an explicit, ADR-0009-style offline step.
+  cannot be reused either. The explicit migration is
+  `sose.composition.organization_reattest.reattest_component_jobs` (below).
 - **One job per component.** The owner rule makes `job_id` equal the component's
   owner, so a component can have at most one job. ADR-0009 allows an organization
   to own several independently scheduled jobs. The runtime cannot honour that until
@@ -174,4 +174,50 @@ attested owner would not be the owner that writes, and the job is refused.
 - **Not the snapshot.** It does not provide the canonical organization snapshot.
 - **No trigger use.** `ScheduledJob.trigger_namespace` is still not used to derive
   trigger identities.
+
+### Re-attesting jobs after a definition change (#496, N1)
+
+`reattest_component_jobs(new_definition, persistence, expected_previous=(fingerprint,
+config_epoch), ...)` is an explicit compare-and-swap that moves the declared jobs to
+a new admitted definition.
+
+1. **Admission.** It admits the new definition.
+2. **Checks every declared job before writing anything.** A job is refused when:
+   - its checkpoint is plain (never attested);
+   - its component's identity changed: organization, component, owner or domain;
+   - its recorded fingerprint and epoch are not exactly `expected_previous`;
+   - an occurrence is in flight.
+
+   A refusal at this stage writes nothing for any job and moves no epoch.
+3. **Rewrite.** It swaps each job's attestation, one job at a time, under that
+   job's own scoped lease. It refuses a job that changed after planning, checking
+   once before the claim and again inside the fenced transaction. `job_id`, run
+   counts and history are kept.
+
+**The rewrite is per job, not atomic across jobs.** If it fails for one job (the job
+changed after planning, a lease conflict, a database error), the jobs before it stay
+re-attested and the rest keep the old binding. `observe_organization_jobs` then
+refuses the organization under either definition. The recovery is to **run the same
+call again**: re-attested jobs report `already_current` and the rest are moved.
+
+**Result.** It returns one report per job: `reattested`, `already_current` (running it
+again is a no-op) or `absent` (declared but never registered; it registers fresh
+under the new definition).
+
+**Operational notes:**
+- Claiming the lease fences a worker still running the job under the old binding.
+  That worker is then refused and must be rebuilt from the new definition.
+- **Jobs the new definition no longer declares** keep their old attestation. A worker
+  built from the old definition can still run them; stop them explicitly.
+  `observe_organization_jobs` for the new definition does not see them.
+- **What the identity rule allows.** Organization, component, owner and domain must
+  stay the same; changing any of them is a different migration. `process_version`
+  and `statechart_types` may change. Admission checks them against the deployed
+  manifests, but re-attestation does not migrate or validate persisted StateChart
+  or Engine state across such a change.
+- **One previous definition per call.** `expected_previous` is a single
+  (fingerprint, epoch). If jobs are split across two old definitions A and B, move
+  A to B first (B's jobs report `already_current`), then B to the new one. That
+  needs definition B.
+- It is a library operation; there is no CLI command yet.
 
