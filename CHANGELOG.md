@@ -15,9 +15,13 @@
   `PersistentJobRunner.initialize` registers a job under its lease.
 
   Limitations:
-  - **Definition changes lock jobs out.** Any change to the admitted definition,
-    including a new fingerprint or a `config_epoch` bump, makes existing attested
-    jobs refuse to run. No migration tool exists yet.
+  - **Definition changes need re-attestation.** Any change to the admitted
+    definition, including a new fingerprint or a `config_epoch` bump, makes existing
+    attested jobs refuse to run until they are re-attested.
+    `sose.composition.organization_reattest.reattest_component_jobs` does that as an
+    explicit compare-and-swap. It checks every job (same component identity, exact
+    `expected_previous`, no occurrence in flight) before writing anything, then
+    rewrites each attestation under the job's own scoped lease.
   - **One job per component.** A component job must use its component's owner as
     its `job_id`.
   - **No downgrade.** Once a namespace holds an attested checkpoint, an older SOSE
