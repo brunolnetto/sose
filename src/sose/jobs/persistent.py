@@ -71,6 +71,7 @@ class PersistentJobRunner:
             max_ticks_per_trigger=self.job.max_ticks_per_trigger,
             sink_bindings=self.job.sink_bindings,
             organization_attestation=self.job.organization_attestation,
+            transition_authority=self.job.transition_authority,
         )
 
     def initialize(self, config):

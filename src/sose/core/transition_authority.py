@@ -237,6 +237,36 @@ class TransitionAuthority:
             raise ValueError("authenticated StateChart receipt contradicts terminal projection")
         return receipt
 
+    def verify_history(
+        self, *, transitions, receipts_by_source: dict, entity: Entity,
+    ) -> DomainEvent:
+        """Authenticate one entity's whole transition history; return the head receipt.
+
+        ``transitions`` are the entity's ``entity.state_transition`` events in commit
+        order, and ``receipts_by_source`` maps a source event id to its receipt. Each
+        transition needs its own receipt, each receipt must name the previous one
+        (the first names none), and the last must describe the stored ``entity``:
+        version, state and attribute digest. A forged, unsigned, reordered or
+        missing step, or a projection rewritten after the last receipt, fails closed.
+        """
+        if not transitions:
+            raise ValueError("no StateChart transition to authenticate")
+        previous_id = None
+        for event in transitions:
+            receipt = receipts_by_source.get(event.event_id)
+            if receipt is None:
+                raise ValueError("unattested StateChart transition: receipt missing")
+            claims = self._authenticate(receipt=receipt, event=event)
+            if claims.get("predecessor_receipt_id") != previous_id:
+                raise ValueError("authenticated StateChart receipt chain is broken")
+            previous_id = receipt.event_id
+        if (
+            claims["to_version"] != entity.version or claims["to_state"] != entity.state
+            or claims["attributes_sha256"] != _attributes_sha256(entity)
+        ):
+            raise ValueError("authenticated StateChart receipt contradicts the stored entity")
+        return receipt
+
     def _authenticate(self, *, receipt: DomainEvent, event: DomainEvent) -> dict:
         """Check receipt envelope, issuer MAC and signed evidence for ``event``."""
         if _envelope_mismatch(receipt, event):

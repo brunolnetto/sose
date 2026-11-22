@@ -324,6 +324,7 @@ def _runner_job(persistence):
         # The runner preflights the checkpoint (#496) and forwards the attestation.
         state=lambda: None,
         organization_attestation="attestation",
+        transition_authority="authority",
     )
 
 
@@ -427,6 +428,7 @@ def test_persistent_runner_builds_fenced_job_and_wraps_all_entrypoints(monkeypat
     assert instance.kwargs["max_ticks_per_trigger"] == 5
     assert instance.kwargs["sink_bindings"] == ("sink",)
     assert instance.kwargs["organization_attestation"] is None
+    assert instance.kwargs["transition_authority"] == "authority"
     assert instance.kwargs["persistence"].lease.epoch == 5
 
 

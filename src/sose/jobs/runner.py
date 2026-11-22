@@ -8,6 +8,7 @@ from sose.domain.config import ConfigT, DomainDefinition, SeedT
 from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.storage import DomainPersistence
 from sose.domain.warehouse import DomainWarehouse
+from sose.core.transition_authority import TransitionAuthority
 from sose.jobs.model import (
     CompletedJobTrigger, OrganizationJobAttestation, SimulationJobState,
     require_truthful_attestation,
@@ -85,12 +86,17 @@ class SimulationJob(
         sink_bindings: tuple[SinkBinding, ...] = (),
         domain_warehouse: DomainWarehouse | None = None,
         organization_attestation: OrganizationJobAttestation | None = None,
+        transition_authority: TransitionAuthority | None = None,
     ) -> None:
         if not isinstance(job_id, str) or not job_id.strip():
             raise ValueError("job_id cannot be empty")
         self.job_id = job_id
         require_truthful_attestation(organization_attestation, job_id, definition.name)
         self.organization_attestation = organization_attestation
+        if transition_authority is not None and domain_warehouse is not None:
+            raise ValueError("transition proof requires entity and event in one store")
+        # Engines built for each tick issue HMAC transition receipts with it (#545).
+        self.transition_authority = transition_authority
         if ticks_per_trigger < 1:
             raise ValueError("ticks_per_trigger must be >= 1")
         if max_ticks_per_trigger < 1:
@@ -117,25 +123,6 @@ class SimulationJob(
             else None
         )
         self.outbox = SinkOutbox(persistence)
-
-    def state(self) -> SimulationJobState | None:
-        state = self.persistence.job_state(self.job_id)
-        if state is not None:
-            self._require_attestation(state)
-        return state
-
-    def _require_attestation(self, state: SimulationJobState) -> None:
-        """Fail closed when the durable organizational binding differs (#496).
-
-        The binding is written once at registration and every later write keeps it
-        (``replace``), so checking every read of the checkpoint keeps a runner with
-        another binding, or none, from running an attested job, and the reverse.
-        """
-        if state.organization_attestation != self.organization_attestation:
-            raise ValueError(
-                f"job {self.job_id}: durable organizational attestation differs from "
-                "this runner's"
-            )
 
     def close(self) -> None:
         """Close all unique stores, re-raising only after cleanup completes."""
