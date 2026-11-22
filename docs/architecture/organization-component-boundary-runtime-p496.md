@@ -282,10 +282,11 @@ two components, four triggers each. It uses two oracles:
 - **The canonical snapshot.** Every chart of both domains is declared, so it
   attributes all 28 transitions of the run. It covers machines, transition events,
   work, jobs with `attested`, boundary records and the digest.
-- **The complete durable state.** Events per owner, entities with version and
-  attributes, resource demands, reservations and release intents, simulation
-  positions, scheduled work, and the full job checkpoints, including their batch
-  fields.
+- **The durable state of these families.** Events per owner, entities with
+  version and attributes, resource demands, reservations and release intents,
+  simulation positions, scheduled work, and the full job checkpoints, including
+  their batch fields. Commands (beyond the snapshot's pending commands), scenario
+  states, committed ticks and domain deliveries are not compared yet.
 
 - **Concurrent OS workers.** Each component runs in its own spawned process, at the
   same time, under its own job-scoped lease.

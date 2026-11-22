@@ -49,6 +49,10 @@
   (`SimulationJobState.active_batch_start_tick`, optional and omitted from the codec
   when `None`) and used on recovery. Batches claimed before this change fall back to
   the old derivation. Found by the composed PostgreSQL equivalence test (#496).
+  **No downgrade while a batch is open:** the field is set from the batch claim until
+  the batch completes, including a batch left open by a crashed worker. During that
+  time, a SOSE version from before this change cannot read the namespace. The field
+  is cleared when the batch completes.
 
 ### Removed (deprecated in 0.13.0)
 

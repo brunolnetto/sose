@@ -4,7 +4,7 @@ killed during a trigger, is equivalent to a reference run on memory.
 Two oracles, both against the reference run:
 - the canonical organization snapshot (#681), with every chart of both domains
   declared so it attributes every transition of the run;
-- the complete durable state the run writes (events per owner, entities with
+- the durable state of the families the run writes (events per owner, entities with
   version and attributes, resource demands/reservations/release intents,
   simulation positions, full job checkpoints, scheduled work).
 """

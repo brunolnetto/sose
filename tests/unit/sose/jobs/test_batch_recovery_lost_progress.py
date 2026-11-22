@@ -102,3 +102,20 @@ def test_recovery_after_dying_mid_tick_with_next_tick_advanced(monkeypatch, died
     assert state.completed_batch_triggers == reference_state.completed_batch_triggers
     assert persistence.events() == reference_events
     assert state.active_batch_start_tick is None               # cleared on completion
+
+
+@pytest.mark.parametrize("fields, message", [
+    ({"active_batch_start_tick": 2}, "requires an active batch"),
+    ({"active_batch_start_tick": 9, "active_batch_trigger_id": "b", "active_batch_total_ticks": 1},
+     "cannot exceed next_tick"),
+    ({"active_batch_start_tick": -1, "active_batch_trigger_id": "b", "active_batch_total_ticks": 1},
+     ">= 0"),
+])
+def test_the_recorded_start_is_consistent_with_the_checkpoint(fields, message):
+    from sose.jobs.model import SimulationJobState
+
+    with pytest.raises(ValueError, match=message):
+        SimulationJobState(
+            job_id="j", domain_name="d", config_json="{}", config_revision=1,
+            status="ready", initialized=True, logical_time=T0, next_tick=3, **fields,
+        )

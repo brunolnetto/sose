@@ -129,6 +129,10 @@ class SimulationJobState:
         self._validate_identity()
         if self.active_batch_start_tick is not None:
             _require_non_negative(self.active_batch_start_tick, label="active_batch_start_tick")
+            if self.active_batch_trigger_id is None:
+                raise ValueError("active_batch_start_tick requires an active batch")
+            if self.active_batch_start_tick > self.next_tick:
+                raise ValueError("active_batch_start_tick cannot exceed next_tick")
         if not (self.organization_attestation is None or isinstance(
             self.organization_attestation, OrganizationJobAttestation,
         )):
