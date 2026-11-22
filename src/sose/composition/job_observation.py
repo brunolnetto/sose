@@ -1,8 +1,10 @@
 """Read-side observation of declared component job checkpoints (#496 W3b).
 
 This does not claim a job ran merely because its ScheduledJob is admitted.
-A SimulationJobState has no immutable organizational owner attestation; an
-exact job_id + domain match remains *observational*, not execution authority.
+A checkpoint written by an attested component job (``organization_jobs``, P496-B)
+carries an immutable ``OrganizationJobAttestation``; ``attested`` reports whether it
+is exactly the binding this admitted definition expects. A checkpoint without one is
+still only a job_id + domain match: *observational*, not execution authority.
 No shared clock, global transaction or mutable super-StateChart is created.
 """
 from __future__ import annotations
@@ -12,6 +14,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING
 
 from .organization import OrganizationDefinition, validate_organization_admission
+from .organization_jobs import component_job_attestation
 
 if TYPE_CHECKING:
     from sose.persistence.base import Persistence
@@ -24,6 +27,7 @@ class DeclaredJobCheckpoint:
     expected_domain: str
     job_id: str
     checkpoint_present: bool
+    attested: bool
     status: str | None
     phase: str | None
     logical_time: datetime | None
@@ -53,9 +57,9 @@ def observe_organization_jobs(
     """Read ONE job-state tuple after validating the exact admitted topology.
 
     No inference from a declared job to an executed job. Missing persisted
-    checkpoints remain explicit None fields; a mismatched domain or duplicated
-    persisted identity fails closed. The declared owner is *only configuration*
-    because the underlying SimulationJobState has no immutable owner_id.
+    checkpoints remain explicit None fields; a mismatched domain, a duplicated
+    persisted identity, or an attestation to another binding fails closed. Without
+    an attestation the declared owner is *only configuration*.
     """
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
@@ -63,7 +67,10 @@ def observe_organization_jobs(
     components = {component.component_id: component for component in definition.components}
     observed = _observed_declared_checkpoints(definition, persistence, components)
     output = [
-        _declared_job_checkpoint(job, components[job.component_id], observed.get(job.job_id))
+        _declared_job_checkpoint(
+            job, components[job.component_id], observed.get(job.job_id),
+            component_job_attestation(definition, fingerprint, job, components[job.component_id]),
+        )
         for job in sorted(definition.jobs, key=lambda item: item.job_id)
     ]
     return OrganizationJobCheckpointEvidence(
@@ -100,8 +107,11 @@ _CHECKPOINT_FIELDS = (
 )
 
 
-def _declared_job_checkpoint(job, component, checkpoint) -> DeclaredJobCheckpoint:
+def _declared_job_checkpoint(job, component, checkpoint, expected) -> DeclaredJobCheckpoint:
     """Missing checkpoints stay explicit: every observed field is None."""
+    attestation = None if checkpoint is None else checkpoint.organization_attestation
+    if attestation is not None and attestation != expected:
+        raise ValueError("persisted job checkpoint is attested to another organizational binding")
     observed = {
         name: (getattr(checkpoint, name) if checkpoint else None)
         for name in _CHECKPOINT_FIELDS
@@ -112,5 +122,6 @@ def _declared_job_checkpoint(job, component, checkpoint) -> DeclaredJobCheckpoin
         expected_domain=component.domain,
         job_id=job.job_id,
         checkpoint_present=checkpoint is not None,
+        attested=attestation == expected,
         **observed,
     )

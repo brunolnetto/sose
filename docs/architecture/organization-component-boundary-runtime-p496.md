@@ -62,9 +62,9 @@ different component or organization.
 This slice proves component-bound route identity and owner-qualified source
 causation, not every acceptance criterion in #496.
 
-- It does not yet instantiate **SimulationJob** objects from **ScheduledJob**,
+- ~~It does not yet instantiate **SimulationJob** objects from **ScheduledJob**,
   persist organization/component attestation on job checkpoints, or run
-  independent component triggers.
+  independent component triggers.~~ Done in **P496-B**; see below.
 - It does not yet provide the canonical multi-source organization snapshot
   across StateCharts, Commands, queues, boundary protocol, physical
   reservations and job positions.
@@ -95,3 +95,52 @@ component and owner through durable execution evidence, then compose a
 consistent derived read model without a new writable organization aggregate.
 P578/#477 remain the physical execution gates; P497 remains the O2C/MRO
 heterogeneous falsifier. Frozen Manufacturing/O2C/MRO v1 evidence is untouched.
+
+## P496-B — attested, independently triggered component jobs
+
+`sose.composition.organization_jobs.build_attested_component_jobs` admits an
+**OrganizationDefinition** (rerunning **validate_organization_admission**) and builds
+one **SimulationJob** per declared **ScheduledJob**. Each job runs behind its own
+job-scoped writer lease (**PersistentJobRunner**). Components are triggered
+independently: no organization-wide clock, global lock or namespace-wide lease is
+taken, and a takeover of one component's job fences only that job.
+
+**Attestation.** Each job's checkpoint carries an immutable
+**OrganizationJobAttestation**:
+
+- organization ID;
+- admitted definition fingerprint;
+- config epoch;
+- component ID;
+- owner ID;
+- domain.
+
+It works as follows:
+
+- **Written once.** It is committed when the job is first registered, through
+  `PersistentJobRunner.initialize`, inside the job's fenced transaction. Every
+  later write keeps it, because job state changes go through `replace`.
+- **Fail closed.** A runner whose binding differs is refused. This covers an
+  attested job run by a plain runner, a plain job adopted by the organization, and
+  another fingerprint or epoch. The check runs before the lease is claimed, so a
+  refused runner cannot fence out the correctly bound worker.
+- **Observation.** `observe_organization_jobs` reports `attested`. It fails closed
+  on a checkpoint attested to another binding.
+- **Storage.** The field is optional and the codec omits it when `None`, so the
+  checkpoints of unbound jobs keep their tagged bytes.
+
+**Owner rule.** A **SimulationJob** writes as Engine owner `job_id`, so a declared
+job must use its component's process `owner_id` as its `job_id`. Otherwise the
+attested owner would not be the owner that writes, and the job is refused.
+
+**Not claimed by P496-B:**
+
+- **Not authority.** The attestation is an identity binding written by trusted
+  in-process code, not a protected writer-role/key boundary; persistence-level
+  authority remains #545.
+- **Not equivalence.** It does not prove PostgreSQL multi-worker/restart
+  equivalence of the composed run.
+- **Not the snapshot.** It does not provide the canonical organization snapshot.
+- **No trigger use.** `ScheduledJob.trigger_namespace` is still not used to derive
+  trigger identities.
+

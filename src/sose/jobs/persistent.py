@@ -43,6 +43,10 @@ class PersistentJobRunner:
 
     def _claim(self):
         persistence, scope = self.job.persistence, self.job.job_id
+        # Preflight BEFORE claiming: a runner whose organizational attestation
+        # differs from the checkpoint's (#496) is refused without advancing the
+        # job's scoped epoch, so it cannot fence the correctly bound worker out.
+        self.job.state()
         last_error = None
         for _ in range(self.claim_retries):
             # An epoch-read failure propagates at once; only claims retry.
@@ -66,7 +70,17 @@ class PersistentJobRunner:
             ticks_per_trigger=self.job.ticks_per_trigger,
             max_ticks_per_trigger=self.job.max_ticks_per_trigger,
             sink_bindings=self.job.sink_bindings,
+            organization_attestation=self.job.organization_attestation,
         )
+
+    def initialize(self, config):
+        """Register (or resume initializing) the job through a fenced transaction.
+
+        The first registration commits the job's identity, including any
+        organizational attestation, under this worker's job-scoped lease.
+        """
+        lease = self._claim()
+        return self._fenced_job(lease).initialize(config)
 
     def run_tick(self, **kwargs) -> PersistentRunResult:
         lease = self._claim()
