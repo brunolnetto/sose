@@ -175,9 +175,16 @@ attested owner would not be the owner that writes, and the job is refused.
 - ~~**No trigger use.**~~ `ScheduledJob.trigger_namespace` now names each
   component's slot triggers: `AttestedComponentJob.trigger_id_for(slot)` and
   `run_scheduled_trigger(scheduled_for=slot)` use `<trigger_namespace>:scheduled:<UTC
-  slot>`. A slot replay is idempotent. The namespace is unique within the admitted
-  definition. Triggers run directly through the runner with explicit ids are
-  unaffected.
+  slot>`. The namespace is unique within the admitted definition.
+  - **Single scheduling path.** It is the only scheduling path for a component job.
+    The job's own `job_id`-based `run_scheduled_trigger` refuses attested jobs,
+    before it claims the lease. Otherwise one slot would get two identities and run
+    twice.
+  - **Replays.** Replaying a completed slot returns its record. A slot left open by
+    a dead worker needs `recover=True`.
+  - **Namespace changes.** If a re-attested definition changes a job's
+    `trigger_namespace`, its slots get new identities. A slot already run under the
+    old namespace would run again if it is replayed.
 
 ### Re-attesting jobs after a definition change (#496, N1)
 

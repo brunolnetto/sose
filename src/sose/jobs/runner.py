@@ -228,7 +228,13 @@ class SimulationJob(
         recover: bool = False,
     ) -> JobTriggerResult:
         """Run one scheduler occurrence using a deterministic timestamp identity."""
-
+        if self.organization_attestation is not None:
+            # Its slots are named by the ScheduledJob's trigger namespace; a second,
+            # job_id-based identity for the same slot would run it twice (#496).
+            raise ValueError(
+                "schedule an attested component job through "
+                "AttestedComponentJob.run_scheduled_trigger"
+            )
         return self.run_trigger(
             trigger_id=scheduled_trigger_id(self.job_id, scheduled_for),
             ticks=ticks,

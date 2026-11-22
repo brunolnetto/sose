@@ -278,3 +278,47 @@ def test_scheduled_slots_use_the_job_trigger_namespace(opener):
     )
     with pytest.raises(ValueError, match="timezone-aware"):
         fulfill.trigger_id_for(slot.replace(tzinfo=None))
+
+
+def test_a_component_job_has_a_single_scheduling_path(opener):
+    """Review of #683 (N1): a second, job_id-based id for one slot would run it twice."""
+    from datetime import timedelta
+
+    store = opener()
+    job = build(store)[FULFILL]
+    job.runner.initialize({})
+    slot = T0 + timedelta(hours=1)
+    job.run_scheduled_trigger(scheduled_for=slot)
+    epoch = store.scoped_writer_epoch(FULFILL)
+    with pytest.raises(ValueError, match="AttestedComponentJob.run_scheduled_trigger"):
+        job.runner.run_scheduled_trigger(scheduled_for=slot)
+    with pytest.raises(ValueError, match="AttestedComponentJob.run_scheduled_trigger"):
+        job.runner.job.run_scheduled_trigger(scheduled_for=slot)
+    assert store.scoped_writer_epoch(FULFILL) == epoch           # refused before claiming
+    assert store.job_state(FULFILL).run_count == 1
+
+
+def test_a_slot_left_open_by_a_dead_worker_resumes_with_recover(opener, monkeypatch):
+    """Review of #683 (N2): replay of an open slot needs recover=True, and runs once."""
+    from datetime import timedelta
+
+    store = opener()
+    job = build(store)[FULFILL]
+    job.runner.initialize({})
+    slot = T0 + timedelta(hours=1)
+    real_reconcile = SimulationJob._run_reconcile_tick
+
+    def die(self, *args, **kwargs):
+        raise RuntimeError("worker died during the slot's tick")
+
+    monkeypatch.setattr(SimulationJob, "_run_reconcile_tick", die)
+    with pytest.raises(RuntimeError, match="worker died"):
+        job.run_scheduled_trigger(scheduled_for=slot)
+    monkeypatch.setattr(SimulationJob, "_run_reconcile_tick", real_reconcile)
+    with pytest.raises(RuntimeError, match="requires explicit recovery"):
+        job.run_scheduled_trigger(scheduled_for=slot)
+    job.run_scheduled_trigger(scheduled_for=slot, recover=True)
+    job.run_scheduled_trigger(scheduled_for=slot)                 # completed: replay only
+    state = store.job_state(FULFILL)
+    assert state.run_count == 1
+    assert [r.trigger_id for r in state.completed_batch_triggers] == [job.trigger_id_for(slot)]

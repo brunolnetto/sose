@@ -54,10 +54,19 @@ class AttestedComponentJob:
         """
         return scheduled_trigger_id(self.scheduled.trigger_namespace, scheduled_for)
 
-    def run_scheduled_trigger(self, *, scheduled_for: datetime):
-        """Run (or replay, idempotently) the occurrence for one scheduled slot."""
+    def run_scheduled_trigger(
+        self, *, scheduled_for: datetime, ticks: int | None = None, recover: bool = False,
+    ):
+        """Run the occurrence for one scheduled slot.
+
+        Replaying a completed slot returns its record without running it again. A
+        slot left open by a dead worker needs ``recover=True``, as for any batch.
+        This is the only scheduling path for a component job: the job's own
+        ``job_id``-based ``run_scheduled_trigger`` refuses attested jobs.
+        """
         return self.runner.run_trigger(
-            trigger_id=self.trigger_id_for(scheduled_for), triggered_at=scheduled_for,
+            trigger_id=self.trigger_id_for(scheduled_for), ticks=ticks,
+            triggered_at=scheduled_for, recover=recover,
         )
 
 
