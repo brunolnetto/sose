@@ -13,6 +13,9 @@
   `attested`. `SimulationJobState.organization_attestation` is optional and omitted
   from the codec when `None`, so existing checkpoints keep their bytes.
   `PersistentJobRunner.initialize` registers a job under its lease.
+  `AttestedComponentJob.run_scheduled_trigger(scheduled_for=...)` runs one scheduled
+  slot under the trigger identity `<ScheduledJob.trigger_namespace>:scheduled:<UTC
+  slot>`; replaying a slot is idempotent.
 
   Limitations:
   - **Definition changes need re-attestation.** Any change to the admitted

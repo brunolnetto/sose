@@ -172,8 +172,12 @@ attested owner would not be the owner that writes, and the job is refused.
   authority remains #545.
 - ~~**Not equivalence.**~~ PostgreSQL multi-worker and restart equivalence of the
   composed run is now tested (see "Composed run equivalence on PostgreSQL").
-- **No trigger use.** `ScheduledJob.trigger_namespace` is still not used to derive
-  trigger identities.
+- ~~**No trigger use.**~~ `ScheduledJob.trigger_namespace` now names each
+  component's slot triggers: `AttestedComponentJob.trigger_id_for(slot)` and
+  `run_scheduled_trigger(scheduled_for=slot)` use `<trigger_namespace>:scheduled:<UTC
+  slot>`. A slot replay is idempotent. The namespace is unique within the admitted
+  definition. Triggers run directly through the runner with explicit ids are
+  unaffected.
 
 ### Re-attesting jobs after a definition change (#496, N1)
 

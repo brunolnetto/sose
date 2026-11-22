@@ -249,3 +249,32 @@ def test_registration_recheck_refuses_a_plain_job_registered_after_the_preflight
     with pytest.raises(ValueError, match="attestation differs"):
         build(store)[FULFILL].runner.initialize({})
     assert store.job_state(FULFILL).organization_attestation is None
+
+
+def test_scheduled_slots_use_the_job_trigger_namespace(opener):
+    """#496: ``ScheduledJob.trigger_namespace`` names each component's slot triggers."""
+    from datetime import timedelta
+
+    store = opener()
+    jobs = build(store)
+    for job in jobs.values():
+        job.runner.initialize({})
+    fulfill, warehouse = jobs[FULFILL], jobs[WAREHOUSE]
+    slot = T0 + timedelta(hours=1)
+    assert fulfill.trigger_id_for(slot) == "trigger:fulfill:scheduled:2026-11-22T09:00:00Z"
+    assert warehouse.trigger_id_for(slot) == "trigger:warehouse:scheduled:2026-11-22T09:00:00Z"
+
+    fulfill.run_scheduled_trigger(scheduled_for=slot)
+    fulfill.run_scheduled_trigger(scheduled_for=slot)           # replay: idempotent
+    fulfill.run_scheduled_trigger(scheduled_for=slot + timedelta(hours=1))
+    warehouse.run_scheduled_trigger(scheduled_for=slot)
+    state = store.job_state(FULFILL)
+    assert state.run_count == 2
+    assert [record.trigger_id for record in state.completed_batch_triggers] == [
+        fulfill.trigger_id_for(slot), fulfill.trigger_id_for(slot + timedelta(hours=1)),
+    ]
+    assert store.job_state(WAREHOUSE).last_completed_batch_trigger_id == (
+        warehouse.trigger_id_for(slot)
+    )
+    with pytest.raises(ValueError, match="timezone-aware"):
+        fulfill.trigger_id_for(slot.replace(tzinfo=None))

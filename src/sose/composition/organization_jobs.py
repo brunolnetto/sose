@@ -19,11 +19,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sose.jobs.model import OrganizationJobAttestation
 from sose.jobs.persistent import PersistentJobRunner
-from sose.jobs.runner import SimulationJob
+from sose.jobs.runner import SimulationJob, scheduled_trigger_id
 
 from .organization import (
     OrganizationDefinition,
@@ -44,6 +45,20 @@ class AttestedComponentJob:
     component: ProcessComponent
     attestation: OrganizationJobAttestation
     runner: PersistentJobRunner
+
+    def trigger_id_for(self, scheduled_for: datetime) -> str:
+        """The stable trigger identity of one scheduled slot, in this job's namespace.
+
+        ``ScheduledJob.trigger_namespace`` is unique within the admitted definition,
+        so independently scheduled components never share a trigger identity.
+        """
+        return scheduled_trigger_id(self.scheduled.trigger_namespace, scheduled_for)
+
+    def run_scheduled_trigger(self, *, scheduled_for: datetime):
+        """Run (or replay, idempotently) the occurrence for one scheduled slot."""
+        return self.runner.run_trigger(
+            trigger_id=self.trigger_id_for(scheduled_for), triggered_at=scheduled_for,
+        )
 
 
 def component_job_attestation(
