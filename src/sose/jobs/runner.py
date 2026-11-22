@@ -291,7 +291,11 @@ class SimulationJob(
             return self._batch_result(completed_record)
         assert claimed is not None
 
-        start_tick = claimed.next_tick - claimed.active_batch_completed_ticks
+        start_tick = (
+            claimed.active_batch_start_tick if claimed.active_batch_start_tick is not None
+            # Batches claimed before the start was recorded (#496).
+            else claimed.next_tick - claimed.active_batch_completed_ticks
+        )
         completed = claimed.active_batch_completed_ticks
 
         while completed < requested_ticks:

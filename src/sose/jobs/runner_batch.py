@@ -90,6 +90,7 @@ class _BatchTriggerMixin:
                 active_batch_trigger_id=trigger_id,
                 active_batch_total_ticks=requested_ticks,
                 active_batch_completed_ticks=0,
+                active_batch_start_tick=latest.next_tick,
             )
             uow.save_job_state(claimed)
             return claimed, requested_ticks, None
@@ -182,6 +183,7 @@ class _BatchTriggerMixin:
                 active_batch_trigger_id=None,
                 active_batch_total_ticks=0,
                 active_batch_completed_ticks=0,
+                active_batch_start_tick=None,
                 last_completed_batch_trigger_id=trigger_id,
                 last_completed_batch_ticks=requested_ticks,
                 completed_batch_triggers=(

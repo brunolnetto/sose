@@ -275,22 +275,35 @@ writes nothing.
 
 ## Composed run equivalence on PostgreSQL
 
-`tests/integration/sose/composition/test_organization_postgres_equivalence.py` uses
-the canonical snapshot as its oracle. The reference is the composed run on memory:
-two components, four triggers each. Every PostgreSQL run below must produce exactly
-the reference snapshot (same machines, transition events, work, jobs with
-`attested`, boundary records and digest).
+`tests/integration/sose/composition/test_organization_postgres_equivalence.py`
+compares every PostgreSQL run below with a reference: the composed run on memory,
+two components, four triggers each. It uses two oracles:
+
+- **The canonical snapshot.** Every chart of both domains is declared, so it
+  attributes all 28 transitions of the run. It covers machines, transition events,
+  work, jobs with `attested`, boundary records and the digest.
+- **The complete durable state.** Events per owner, entities with version and
+  attributes, resource demands, reservations and release intents, simulation
+  positions, scheduled work, and the full job checkpoints, including their batch
+  fields.
 
 - **Concurrent OS workers.** Each component runs in its own spawned process, at the
   same time, under its own job-scoped lease.
 - **A worker killed during a trigger.** The fulfillment process exits (`os._exit`)
   after the 1st, 12th or 24th committed transaction of its third trigger, while the
   warehouse process keeps running. The test separates two stages:
-  - **Tick open** (1st and 12th commit): committed work exists and the occurrence
-    is open. A replacement without explicit recovery is refused and changes
-    nothing. A replacement with `recover=True` resumes the occurrence.
+  - **Tick open** (1st and 12th commit): the occurrence is open. At the 1st
+    commit only the batch claim has committed; at the 12th the child tick is in
+    its reconcile phase, with `next_tick` already advanced. A replacement without
+    explicit recovery is refused (a dedicated exit code asserts the reason) and
+    commits no job progress, though its lease claim moves the epoch. A
+    replacement with `recover=True` resumes the occurrence.
   - **Batch closing** (24th commit): the tick has completed and must not run again.
     Only the batch is left open, and a plain replacement closes it.
+
+**Bug found.** The complete durable-state oracle found that a batch recovered
+after its worker died during a child tick recorded a wrong start (fixed; see the
+CHANGELOG). The snapshot alone did not see it.
 
 **Not covered:**
 - killing at every commit;

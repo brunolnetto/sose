@@ -133,7 +133,9 @@ _LEGACY_OMITTED_BOUNDARY_FIELDS = frozenset({
 # A None value is omitted so the older records keep their tagged JSON bytes.
 _LEGACY_OMITTED_NONE_FIELDS = {
     "sose.composition.model:BoundaryMessage": _LEGACY_OMITTED_BOUNDARY_FIELDS,
-    "sose.jobs.model:SimulationJobState": frozenset({"organization_attestation"}),
+    "sose.jobs.model:SimulationJobState": frozenset(
+        {"organization_attestation", "active_batch_start_tick"}
+    ),
 }
 
 
