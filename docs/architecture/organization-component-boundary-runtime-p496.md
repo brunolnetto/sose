@@ -65,9 +65,10 @@ causation, not every acceptance criterion in #496.
 - ~~It does not yet instantiate **SimulationJob** objects from **ScheduledJob**,
   persist organization/component attestation on job checkpoints, or run
   independent component triggers.~~ Done in **P496-B**; see below.
-- It does not yet provide the canonical multi-source organization snapshot
+- ~~It does not yet provide the canonical multi-source organization snapshot
   across StateCharts, Commands, queues, boundary protocol, physical
-  reservations and job positions.
+  reservations and job positions.~~ Provided without physical reservations;
+  see "Canonical organization snapshot" below.
 - It does not admit operational policy/calendar/cost references or physical
   pools; static admission intentionally remains fail-closed for those.
 - Static admission still rejects multiple components from the same domain
@@ -171,7 +172,6 @@ attested owner would not be the owner that writes, and the job is refused.
   authority remains #545.
 - **Not equivalence.** It does not prove PostgreSQL multi-worker/restart
   equivalence of the composed run.
-- **Not the snapshot.** It does not provide the canonical organization snapshot.
 - **No trigger use.** `ScheduledJob.trigger_namespace` is still not used to derive
   trigger identities.
 
@@ -220,4 +220,56 @@ under the new definition).
   A to B first (B's jobs report `already_current`), then B to the new one. That
   needs definition B.
 - It is a library operation; there is no CLI command yet.
+
+## Canonical organization snapshot
+
+`sose.composition.organization_snapshot.snapshot_organization(definition, persistence,
+...)` admits the definition. It then projects **one coherent** `read_snapshot()` view
+of the namespace onto the admitted components. PostgreSQL takes it in a
+`REPEATABLE READ, READ ONLY` transaction; the file adapters re-read their store. It
+writes nothing.
+
+**Per component (owner):**
+
+- **Machines.** Entities carry no owner, so a machine is attributed to the owner
+  whose transition events (`entity.state_transition`) moved it. Its state is the
+  `to_state` of that owner's last transition, and it must equal the stored entity
+  state. The snapshot fails closed in three cases:
+  - **any** transition of the machine belongs to another owner, for example another
+    organization in the same namespace, even if it restores the state;
+  - an owner of this organization moves a StateChart type of another component,
+    whether or not that machine is attributed;
+  - the stored state contradicts the last transition. Entities of the components'
+  types that none of the organization's owners transitioned (for example, seeded and
+  never moved) are listed once as `unattributed_machines`, because there is no owner
+  evidence for them.
+- **Events and work.**
+  - The owner's transition event ids, in commit order.
+  - Its scheduled work, with the pending commands that work names (a work item naming
+    a missing command fails closed).
+- **Jobs.** The declared jobs' checkpoints, including `attested` (P496-B).
+
+**For the organization:**
+
+- **Boundary messages.** Its owner-qualified (v2) boundary messages, with delivery
+  statuses and consumption. Each message carries the definition fingerprint it was
+  published under.
+- **Digest.** A SHA-256 digest over the canonical JSON of everything above. Tests
+  check that the same durable workload gives an identical snapshot, and so an
+  identical digest, on memory, SQLite incremental and PostgreSQL, and after a
+  restart.
+
+**Not included:**
+
+- resources and physical pools (admission still refuses physical pools);
+- operational policy/calendar/cost references;
+- any authority claim (#545).
+
+**Refused:**
+- components that share one `owner_id`; admission allows it, but owner-qualified
+  attribution needs distinct owners;
+- jobs whose entities live in a domain warehouse rather than the namespace. Their
+  transitioned machines have no stored state here, so the snapshot fails closed.
+
+**What it is not:** an atomic cut across *separate* namespaces or databases.
 
