@@ -234,11 +234,12 @@ writes nothing.
 - **Machines.** Entities carry no owner, so a machine is attributed to the owner
   whose transition events (`entity.state_transition`) moved it. Its state is the
   `to_state` of that owner's last transition, and it must equal the stored entity
-  state. The snapshot fails closed when **any** transition of the machine belongs
-  to another owner. That covers another organization in the same namespace, even if
-  it restores the state, and an owner of this organization moving a type its
-  component does not declare. It also fails closed when the stored state
-  contradicts the last transition. Entities of the components'
+  state. The snapshot fails closed in three cases:
+  - **any** transition of the machine belongs to another owner, for example another
+    organization in the same namespace, even if it restores the state;
+  - an owner of this organization moves a StateChart type of another component,
+    whether or not that machine is attributed;
+  - the stored state contradicts the last transition. Entities of the components'
   types that none of the organization's owners transitioned (for example, seeded and
   never moved) are listed once as `unattributed_machines`, because there is no owner
   evidence for them.

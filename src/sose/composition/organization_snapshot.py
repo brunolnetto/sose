@@ -10,9 +10,9 @@ Per component (``owner_id``) the snapshot holds:
   owner, so a machine is attributed by the owner of its transition events. Its
   state is the ``to_state`` of the owner's last transition, and it must equal the
   stored entity state. It fails closed when ANY transition of the machine belongs to
-  another owner (another organization in the namespace, or an owner moving a type
-  its component does not declare), or when the stored state contradicts its last
-  transition. Entities of the components' types
+  another owner (for example another organization in the namespace), when an owner
+  of this organization moves a StateChart type of another component (attributed or
+  not), or when the stored state contradicts its last transition. Entities of the components' types
   with no transition by any of the organization's owners are listed once, as
   ``unattributed_machines``: they carry no owner evidence;
 - **transition_event_ids** (commit order), and the owner's **scheduled_work** with
@@ -171,12 +171,15 @@ def _last_transitions(events, types_by_owner):
     last: dict[tuple[str, str], tuple[str, str, str]] = {}
     movers: dict[tuple[str, str], set] = {}
     transitions: dict[str, list[str]] = {owner: [] for owner in types_by_owner}
+    known_types = set().union(*types_by_owner.values())
     for event in events:
         if event.name != "entity.state_transition":
             continue
         key = (event.entity_type, event.entity_id)
         movers.setdefault(key, set()).add(event.owner_id)
-        if event.entity_type not in types_by_owner.get(event.owner_id, ()):
+        declared = types_by_owner.get(event.owner_id)
+        _require_declared(event, declared, known_types)
+        if event.entity_type not in (declared or ()):
             continue
         if not _is_observed_transition(event):
             continue
@@ -186,6 +189,16 @@ def _last_transitions(events, types_by_owner):
         if movers[key] != {owner}:
             raise ValueError(f"machine {key} was transitioned by two owners")
     return last, transitions
+
+
+def _require_declared(event, declared, known_types) -> None:
+    """As in observe_organization_events: an admitted owner moving another
+    component's StateChart type contradicts the admitted definition."""
+    if declared is not None and event.entity_type in known_types - declared:
+        raise ValueError(
+            f"owner {event.owner_id} moved {event.entity_type}, a type its component "
+            "does not declare"
+        )
 
 
 def _component(view, component, machines, transitions, jobs, work_by_owner) -> ComponentSnapshot:

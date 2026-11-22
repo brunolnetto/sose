@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import timedelta
 import os
+from types import SimpleNamespace
 
 import pytest
 
@@ -192,8 +193,11 @@ def _transition(persistence, event_id, owner, machine, from_state, to_state):
         ))
 
 
-@pytest.mark.parametrize("mover", ["owner:foreign-org", WAREHOUSE])
-def test_any_other_mover_of_a_machine_fails_closed(opener, mover):
+@pytest.mark.parametrize("mover, message", [
+    ("owner:foreign-org", "transitioned by two owners"),
+    (WAREHOUSE, "a type its component does not declare"),
+])
+def test_any_other_mover_of_a_machine_fails_closed(opener, mover, message):
     """Review of #681 (B1): a foreign organization, or an owner of this one moving a
     type its component does not declare, cannot slip past by restoring the state."""
     persistence = opener()
@@ -201,7 +205,7 @@ def test_any_other_mover_of_a_machine_fails_closed(opener, mover):
     [machine] = snapshot(persistence).components[0].machines
     _transition(persistence, "foreign-away", mover, machine, machine.state, "elsewhere")
     _transition(persistence, "foreign-back", mover, machine, "elsewhere", machine.state)
-    with pytest.raises(ValueError, match="transitioned by two owners"):
+    with pytest.raises(ValueError, match=message):
         snapshot(persistence)
 
 
@@ -227,3 +231,15 @@ def test_every_read_goes_through_the_coherent_view(monkeypatch):
                  "job_state", "boundary_protocol_snapshot"):
         monkeypatch.setattr(persistence, name, escaped)
     assert snapshot(persistence) == expected
+
+
+def test_an_owner_moving_another_components_type_fails_closed_even_unattributed(opener):
+    """Review of #681 (re-review N1): no org owner moved this seeded site before."""
+    persistence = opener()
+    workload(persistence)
+    entity_type, entity_id, state = snapshot(persistence).unattributed_machines[0]
+
+    site = SimpleNamespace(entity_type=entity_type, entity_id=entity_id)
+    _transition(persistence, "cross-type", FULFILL, site, state, "moved")
+    with pytest.raises(ValueError, match="a type its component does not declare"):
+        snapshot(persistence)
