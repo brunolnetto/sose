@@ -28,6 +28,15 @@
   - **No downgrade.** Once a namespace holds an attested checkpoint, an older SOSE
     cannot read that namespace.
 
+- Canonical organization snapshot (#496):
+  `sose.composition.organization_snapshot.snapshot_organization` projects one
+  coherent `read_snapshot()` view onto the admitted components. It includes each
+  owner's machines (attributed by the owner's transition events and checked against
+  the stored state), transition events, scheduled work and pending commands, the
+  declared jobs (with `attested`), the organization's owner-qualified boundary
+  messages, and a digest. The same durable state gives the same digest on every
+  adapter and after a restart. Resources and physical pools are not included.
+
 ### Removed (deprecated in 0.13.0)
 
 - Composition recovery under the namespace-wide writer lease, deprecated in 0.13.0
