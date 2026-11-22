@@ -170,8 +170,8 @@ attested owner would not be the owner that writes, and the job is refused.
 - **Not authority.** The attestation is an identity binding written by trusted
   in-process code, not a protected writer-role/key boundary; persistence-level
   authority remains #545.
-- **Not equivalence.** It does not prove PostgreSQL multi-worker/restart
-  equivalence of the composed run.
+- ~~**Not equivalence.**~~ PostgreSQL multi-worker and restart equivalence of the
+  composed run is now tested (see "Composed run equivalence on PostgreSQL").
 - **No trigger use.** `ScheduledJob.trigger_namespace` is still not used to derive
   trigger identities.
 
@@ -272,4 +272,28 @@ writes nothing.
   transitioned machines have no stored state here, so the snapshot fails closed.
 
 **What it is not:** an atomic cut across *separate* namespaces or databases.
+
+## Composed run equivalence on PostgreSQL
+
+`tests/integration/sose/composition/test_organization_postgres_equivalence.py` uses
+the canonical snapshot as its oracle. The reference is the composed run on memory:
+two components, four triggers each. Every PostgreSQL run below must produce exactly
+the reference snapshot (same machines, transition events, work, jobs with
+`attested`, boundary records and digest).
+
+- **Concurrent OS workers.** Each component runs in its own spawned process, at the
+  same time, under its own job-scoped lease.
+- **A worker killed during a trigger.** The fulfillment process exits (`os._exit`)
+  after the 1st, 12th or 24th committed transaction of its third trigger, while the
+  warehouse process keeps running. The test separates two stages:
+  - **Tick open** (1st and 12th commit): committed work exists and the occurrence
+    is open. A replacement without explicit recovery is refused and changes
+    nothing. A replacement with `recover=True` resumes the occurrence.
+  - **Batch closing** (24th commit): the tick has completed and must not run again.
+    Only the batch is left open, and a plain replacement closes it.
+
+**Not covered:**
+- killing at every commit;
+- network partitions or a PostgreSQL restart; those are the chaos gates;
+- physical resource pools (#477).
 
