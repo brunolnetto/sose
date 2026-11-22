@@ -21,7 +21,8 @@
     `sose.composition.organization_reattest.reattest_component_jobs` does that as an
     explicit compare-and-swap. It checks every job (same component identity, exact
     `expected_previous`, no occurrence in flight) before writing anything, then
-    rewrites each attestation under the job's own scoped lease.
+    rewrites each attestation under the job's own scoped lease. The rewrite is per
+    job: after a failure partway, running the same call again converges.
   - **One job per component.** A component job must use its component's owner as
     its `job_id`.
   - **No downgrade.** Once a namespace holds an attested checkpoint, an older SOSE

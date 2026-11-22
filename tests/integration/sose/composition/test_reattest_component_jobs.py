@@ -196,3 +196,72 @@ def test_a_job_that_changes_after_planning_is_not_overwritten(opener, monkeypatc
     state = store.job_state(FULFILL)
     assert state.run_count == 1
     assert state.organization_attestation.definition_fingerprint == V0.fingerprint()
+
+
+def test_a_batch_in_flight_between_ticks_is_refused(opener):
+    """Review of #680 (N2): only active_batch_trigger_id is set between batch ticks."""
+    store = opener()
+    started(store, run=False)
+    lease = store.claim_scoped_writer(
+        WAREHOUSE, "worker-1", expected_epoch=store.scoped_writer_epoch(WAREHOUSE),
+    )
+    with FencedEnginePersistence(store, lease).transaction() as uow:
+        uow.save_job_state(replace(
+            uow.get_job_state(WAREHOUSE), active_batch_trigger_id="batch-1",
+            active_batch_total_ticks=3, active_batch_completed_ticks=1,
+        ))
+    assert store.job_state(WAREHOUSE).active_trigger_id is None
+    snapshot = _snapshot(store)
+    with pytest.raises(ReattestationError, match="in flight"):
+        reattest(store)
+    assert _snapshot(store) == snapshot
+
+
+def test_a_failure_partway_leaves_a_mixed_state_that_a_rerun_converges(opener, monkeypatch):
+    """Review of #680 (N1): the rewrite is per job; re-running is the recovery."""
+    from sose.composition.organization_reattest import _rewrite as real_rewrite
+    import sose.composition.organization_reattest as module
+
+    store = opener()
+    started(store, run=False)
+
+    def fail_on_warehouse(persistence, planned, target, worker_id):
+        if planned.job_id == WAREHOUSE:
+            raise RuntimeError("database went away")
+        return real_rewrite(persistence, planned, target, worker_id)
+
+    warehouse_epoch = store.scoped_writer_epoch(WAREHOUSE)
+    monkeypatch.setattr(module, "_rewrite", fail_on_warehouse)
+    with pytest.raises(RuntimeError, match="database went away"):
+        reattest(store)
+    monkeypatch.undo()
+    attested = {job_id: store.job_state(job_id).organization_attestation.config_epoch
+                for job_id in (FULFILL, WAREHOUSE)}
+    assert attested == {FULFILL: 1, WAREHOUSE: 0}               # mixed, as documented
+    assert store.scoped_writer_epoch(WAREHOUSE) == warehouse_epoch
+    for spec in (V0, V1):
+        with pytest.raises(ValueError, match="another organizational binding"):
+            observe(store, spec)
+    assert [r.status for r in reattest(store)] == ["already_current", "reattested"]
+    assert [item.attested for item in observe(store, V1).jobs] == [True, True]
+
+
+def test_a_job_changed_after_planning_keeps_its_epoch(opener, monkeypatch):
+    """The check before the claim refuses without fencing the job's worker."""
+    store = opener()
+    started(store, run=False)
+    planned = {job_id: store.job_state(job_id) for job_id in (FULFILL, WAREHOUSE)}
+    build(store, V0)[FULFILL].runner.run_trigger(trigger_id="f-1", triggered_at=T0)
+    epoch = store.scoped_writer_epoch(FULFILL)
+    real_job_state = store.job_state
+    calls = {"n": 0}
+
+    def planning_sees_the_old_state(job_id):
+        calls["n"] += 1
+        return planned[job_id] if calls["n"] <= 2 else real_job_state(job_id)
+
+    monkeypatch.setattr(store, "job_state", planning_sees_the_old_state)
+    with pytest.raises(ReattestationError, match="attestation was not changed"):
+        reattest(store)
+    monkeypatch.undo()
+    assert store.scoped_writer_epoch(FULFILL) == epoch

@@ -10,10 +10,16 @@ re-attested. ``reattest_component_jobs`` is that explicit, compare-and-swap step
    has a plain (unattested) checkpoint, when its component's identity changed
    (organization, component, owner or domain), when its recorded fingerprint and
    epoch are not exactly ``expected_previous``, or when an occurrence is in flight.
-   A refusal writes nothing and moves no epoch;
-3. it then rewrites each job's attestation under that job's own scoped lease,
-   re-reading the checkpoint inside the fenced transaction. ``job_id``, run counts
-   and history are kept.
+   A refusal at this stage writes nothing and moves no epoch;
+3. it then rewrites each job's attestation, one job at a time, under that job's
+   own scoped lease, re-reading the checkpoint inside the fenced transaction.
+   ``job_id``, run counts and history are kept.
+
+The rewrite is per job, not atomic across jobs. If it fails for one job (the job
+changed after planning, a lease conflict, a database error), the jobs before it
+stay re-attested and the rest keep the old binding; observation then refuses the
+organization under either definition. The recovery is to run the same call again:
+re-attested jobs report ``already_current`` and the rest are moved.
 
 Claiming the lease fences a worker still running the job under the old binding;
 that worker's runner is then refused and must be rebuilt from the new definition.
@@ -133,6 +139,12 @@ def reattest_component_jobs(
 
 def _rewrite(persistence, planned: SimulationJobState, target, worker_id: str) -> int:
     """Swap the attestation under the job's scoped lease; the checkpoint must be unchanged."""
+    # Cheap check before claiming, so a job that already changed keeps its epoch.
+    if persistence.job_state(planned.job_id) != planned:
+        raise ReattestationError(
+            f"job {planned.job_id} changed while being re-attested; its attestation "
+            "was not changed (run the call again)"
+        )
     lease = persistence.claim_scoped_writer(
         planned.job_id, worker_id, expected_epoch=persistence.scoped_writer_epoch(planned.job_id),
     )
@@ -140,8 +152,8 @@ def _rewrite(persistence, planned: SimulationJobState, target, worker_id: str) -
         current = uow.get_job_state(planned.job_id)
         if current != planned:
             raise ReattestationError(
-                f"job {planned.job_id} changed while being re-attested; nothing was written "
-                "for it"
+                f"job {planned.job_id} changed while being re-attested; its attestation "
+                "was not changed (run the call again)"
             )
         uow.save_job_state(replace(current, organization_attestation=target))
     return lease.epoch
