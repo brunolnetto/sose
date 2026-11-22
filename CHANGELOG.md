@@ -39,6 +39,21 @@
   messages, and a digest. The same durable state gives the same digest on every
   adapter and after a restart. Resources and physical pools are not included.
 
+### Fixed
+
+- A batch trigger recovered after its worker died during a child tick recorded a
+  wrong start in its `CompletedJobTrigger` (for example 3→3 instead of 2→3). The
+  child tick's advance had already moved `next_tick`, and recovery derived the
+  start from it. The domain state was correct; only the batch history was wrong.
+  The batch's start tick is now recorded when the batch is claimed
+  (`SimulationJobState.active_batch_start_tick`, optional and omitted from the codec
+  when `None`) and used on recovery. Batches claimed before this change fall back to
+  the old derivation. Found by the composed PostgreSQL equivalence test (#496).
+  **No downgrade while a batch is open:** the field is set from the batch claim until
+  the batch completes, including a batch left open by a crashed worker. During that
+  time, a SOSE version from before this change cannot read the namespace. The field
+  is cleared when the batch completes.
+
 ### Removed (deprecated in 0.13.0)
 
 - Composition recovery under the namespace-wide writer lease, deprecated in 0.13.0

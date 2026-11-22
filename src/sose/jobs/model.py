@@ -120,9 +120,19 @@ class SimulationJobState:
     # Organizational binding of a component job (#496); None for every other job.
     # The codec omits None, so checkpoints of unbound jobs keep their bytes.
     organization_attestation: OrganizationJobAttestation | None = None
+    # next_tick when the active batch was claimed. Recovery derives the batch's
+    # start from it: next_tick alone already counts a child tick that advanced and
+    # then died. None for checkpoints written before it existed; the codec omits it.
+    active_batch_start_tick: int | None = None
 
     def __post_init__(self) -> None:
         self._validate_identity()
+        if self.active_batch_start_tick is not None:
+            _require_non_negative(self.active_batch_start_tick, label="active_batch_start_tick")
+            if self.active_batch_trigger_id is None:
+                raise ValueError("active_batch_start_tick requires an active batch")
+            if self.active_batch_start_tick > self.next_tick:
+                raise ValueError("active_batch_start_tick cannot exceed next_tick")
         if not (self.organization_attestation is None or isinstance(
             self.organization_attestation, OrganizationJobAttestation,
         )):
