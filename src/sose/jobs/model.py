@@ -42,6 +42,47 @@ class CompletedJobTrigger:
 
 
 @dataclass(frozen=True, slots=True)
+class OrganizationJobAttestation:
+    """Immutable organizational binding of one component job (#496, P496-B).
+
+    Written once, when the job is first registered, and never changed: a runner
+    configured with another binding is refused. ``owner_id`` is the Engine owner the
+    job writes as, which for a ``SimulationJob`` is its ``job_id``.
+    """
+
+    organization_id: str
+    definition_fingerprint: str
+    config_epoch: int
+    component_id: str
+    owner_id: str
+    domain_name: str
+
+    def __post_init__(self) -> None:
+        for label in ("organization_id", "definition_fingerprint", "component_id",
+                      "owner_id", "domain_name"):
+            value = getattr(self, label)
+            if not isinstance(value, str) or not value.strip() or value != value.strip():
+                raise ValueError(f"attestation {label} must be a nonempty canonical identity")
+        if (not isinstance(self.config_epoch, int) or isinstance(self.config_epoch, bool)
+                or self.config_epoch < 0):
+            raise ValueError("attestation config_epoch must be a nonnegative integer")
+
+
+def require_truthful_attestation(
+    attestation: OrganizationJobAttestation | None, job_id: str, domain_name: str,
+) -> None:
+    """An attested job must write as the attested owner, in the attested domain (#496)."""
+    if attestation is None:
+        return
+    if not isinstance(attestation, OrganizationJobAttestation):
+        raise TypeError("organization_attestation requires OrganizationJobAttestation")
+    if attestation.owner_id != job_id:
+        raise ValueError("a component job writes as its job_id; the attested owner must equal it")
+    if attestation.domain_name != domain_name:
+        raise ValueError("attested domain contradicts the job's domain definition")
+
+
+@dataclass(frozen=True, slots=True)
 class SimulationJobState:
     """Durable orchestration checkpoint for one recurring simulation job."""
 
@@ -76,9 +117,16 @@ class SimulationJobState:
     # Outbound messages published by this unfinished recurring occurrence.
     # Enrolled atomically with the immutable publication, not afterward.
     active_publication_message_ids: tuple[str, ...] = ()
+    # Organizational binding of a component job (#496); None for every other job.
+    # The codec omits None, so checkpoints of unbound jobs keep their bytes.
+    organization_attestation: OrganizationJobAttestation | None = None
 
     def __post_init__(self) -> None:
         self._validate_identity()
+        if not (self.organization_attestation is None or isinstance(
+            self.organization_attestation, OrganizationJobAttestation,
+        )):
+            raise TypeError("organization_attestation requires OrganizationJobAttestation")
         self._validate_counters()
         _require_unique_identities(
             self.active_effect_ids,

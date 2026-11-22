@@ -129,23 +129,26 @@ _LEGACY_OMITTED_BOUNDARY_FIELDS = frozenset({
 })
 
 
+# Optional fields added to a persisted record after records of it already existed.
+# A None value is omitted so the older records keep their tagged JSON bytes.
+_LEGACY_OMITTED_NONE_FIELDS = {
+    "sose.composition.model:BoundaryMessage": _LEGACY_OMITTED_BOUNDARY_FIELDS,
+    "sose.jobs.model:SimulationJobState": frozenset({"organization_attestation"}),
+}
+
+
 def _encode_dataclass_value(value: object) -> object | None:
     if not (is_dataclass(value) and not isinstance(value, type)):
         return None
+    class_path = _class_path(value)
+    omitted = _LEGACY_OMITTED_NONE_FIELDS.get(class_path, frozenset())
     return {
         _TAG: "dataclass",
-        "class": _class_path(value),
+        "class": class_path,
         "fields": {
             field.name: _encode(getattr(value, field.name))
             for field in fields(value)
-            # Legacy v1 BoundaryMessage records omit optional causal and
-            # organization binding fields. Omitting None preserves their
-            # tagged JSON bytes.
-            if not (
-                _class_path(value) == "sose.composition.model:BoundaryMessage"
-                and field.name in _LEGACY_OMITTED_BOUNDARY_FIELDS
-                and getattr(value, field.name) is None
-            )
+            if not (field.name in omitted and getattr(value, field.name) is None)
         },
     }
 

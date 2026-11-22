@@ -48,6 +48,7 @@ class _JobLifecycleMixin:
                 initialized=False,
                 logical_time=resolved.start_at,
                 next_tick=0,
+                organization_attestation=self.organization_attestation,
             )
             with self.persistence.transaction() as uow:
                 # SQLite callers have no PostgreSQL advisory guard. The
@@ -61,6 +62,7 @@ class _JobLifecycleMixin:
                             f"job {self.job_id} already belongs to "
                             f"{concurrent.domain_name!r}"
                         )
+                    self._require_attestation(concurrent)
                     pending = concurrent
                 else:
                     uow.save_job_state(pending)

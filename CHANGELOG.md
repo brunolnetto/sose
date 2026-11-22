@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Added
+
+- Attested, independently triggered component jobs (#496, P496-B):
+  `sose.composition.organization_jobs.build_attested_component_jobs` runs every
+  `ScheduledJob` of an admitted organization as its own `SimulationJob` behind its own
+  job-scoped lease. Each job's checkpoint carries an immutable
+  `OrganizationJobAttestation`. The binding is fail-closed: a runner with another
+  binding is refused before it claims, and `observe_organization_jobs` reports
+  `attested`. `SimulationJobState.organization_attestation` is optional and omitted
+  from the codec when `None`, so existing checkpoints keep their bytes.
+  `PersistentJobRunner.initialize` registers a job under its lease.
+
+  Limitations:
+  - **Definition changes lock jobs out.** Any change to the admitted definition,
+    including a new fingerprint or a `config_epoch` bump, makes existing attested
+    jobs refuse to run. No migration tool exists yet.
+  - **One job per component.** A component job must use its component's owner as
+    its `job_id`.
+  - **No downgrade.** Once a namespace holds an attested checkpoint, an older SOSE
+    cannot read that namespace.
+
 ### Removed (deprecated in 0.13.0)
 
 - Composition recovery under the namespace-wide writer lease, deprecated in 0.13.0

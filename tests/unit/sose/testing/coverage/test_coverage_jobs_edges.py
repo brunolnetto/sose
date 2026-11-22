@@ -321,6 +321,9 @@ def _runner_job(persistence):
         ticks_per_trigger=2,
         max_ticks_per_trigger=5,
         sink_bindings=("sink",),
+        # The runner preflights the checkpoint (#496) and forwards the attestation.
+        state=lambda: None,
+        organization_attestation="attestation",
     )
 
 
@@ -421,4 +424,5 @@ def test_persistent_runner_builds_fenced_job_and_wraps_all_entrypoints(monkeypat
     assert instance.kwargs["ticks_per_trigger"] == 2
     assert instance.kwargs["max_ticks_per_trigger"] == 5
     assert instance.kwargs["sink_bindings"] == ("sink",)
+    assert instance.kwargs["organization_attestation"] == "attestation"
     assert instance.kwargs["persistence"].lease.epoch == 5

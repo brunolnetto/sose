@@ -8,7 +8,10 @@ from sose.domain.config import ConfigT, DomainDefinition, SeedT
 from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.storage import DomainPersistence
 from sose.domain.warehouse import DomainWarehouse
-from sose.jobs.model import CompletedJobTrigger, SimulationJobState
+from sose.jobs.model import (
+    CompletedJobTrigger, OrganizationJobAttestation, SimulationJobState,
+    require_truthful_attestation,
+)
 from sose.jobs.runner_batch import _BatchTriggerMixin
 from sose.jobs.runner_lifecycle import _JobLifecycleMixin
 from sose.jobs.runner_tick import _TickExecutionMixin
@@ -81,10 +84,13 @@ class SimulationJob(
         max_ticks_per_trigger: int = 100,
         sink_bindings: tuple[SinkBinding, ...] = (),
         domain_warehouse: DomainWarehouse | None = None,
+        organization_attestation: OrganizationJobAttestation | None = None,
     ) -> None:
         if not isinstance(job_id, str) or not job_id.strip():
             raise ValueError("job_id cannot be empty")
         self.job_id = job_id
+        require_truthful_attestation(organization_attestation, job_id, definition.name)
+        self.organization_attestation = organization_attestation
         if ticks_per_trigger < 1:
             raise ValueError("ticks_per_trigger must be >= 1")
         if max_ticks_per_trigger < 1:
@@ -113,7 +119,23 @@ class SimulationJob(
         self.outbox = SinkOutbox(persistence)
 
     def state(self) -> SimulationJobState | None:
-        return self.persistence.job_state(self.job_id)
+        state = self.persistence.job_state(self.job_id)
+        if state is not None:
+            self._require_attestation(state)
+        return state
+
+    def _require_attestation(self, state: SimulationJobState) -> None:
+        """Fail closed when the durable organizational binding differs (#496).
+
+        The binding is written once at registration and every later write keeps it
+        (``replace``), so checking every read of the checkpoint keeps a runner with
+        another binding, or none, from running an attested job, and the reverse.
+        """
+        if state.organization_attestation != self.organization_attestation:
+            raise ValueError(
+                f"job {self.job_id}: durable organizational attestation differs from "
+                "this runner's"
+            )
 
     def close(self) -> None:
         """Close all unique stores, re-raising only after cleanup completes."""
