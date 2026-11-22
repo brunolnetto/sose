@@ -126,10 +126,13 @@ It works as follows:
   - **Before the lease.** Once a checkpoint exists, the check runs before the lease
     is claimed, so a refused runner cannot fence out the correctly bound worker.
   - **At first registration** there is no checkpoint to check against, so both
-    runners pass the preflight. The first writer wins the identity. The other is
-    refused by the recheck inside the registration transaction, but its claim may
-    already have fenced the winner's in-flight registration. Correctness holds;
-    only liveness is affected.
+    runners pass the preflight, and the first writer wins the identity for good.
+    If a misbound runner writes first, its binding is the one recorded, and the
+    correctly bound runner is refused from then on: start the correct binding
+    first, or remove the misbound checkpoint deliberately. The loser is refused by
+    the recheck inside the registration transaction, but its claim may already
+    have fenced the winner's in-flight initialization, which resumes on retry.
+    The recorded binding is never mixed; only liveness is affected.
 - **Observation.** `observe_organization_jobs` reports `attested`. It fails closed
   on a checkpoint attested to another binding.
 - **Storage.** The field is optional and the codec omits it when `None`, so the
