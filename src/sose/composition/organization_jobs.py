@@ -19,11 +19,12 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import TYPE_CHECKING
 
 from sose.jobs.model import OrganizationJobAttestation
 from sose.jobs.persistent import PersistentJobRunner
-from sose.jobs.runner import SimulationJob
+from sose.jobs.runner import SimulationJob, scheduled_trigger_id
 
 from .organization import (
     OrganizationDefinition,
@@ -44,6 +45,29 @@ class AttestedComponentJob:
     component: ProcessComponent
     attestation: OrganizationJobAttestation
     runner: PersistentJobRunner
+
+    def trigger_id_for(self, scheduled_for: datetime) -> str:
+        """The stable trigger identity of one scheduled slot, in this job's namespace.
+
+        ``ScheduledJob.trigger_namespace`` is unique within the admitted definition,
+        so independently scheduled components never share a trigger identity.
+        """
+        return scheduled_trigger_id(self.scheduled.trigger_namespace, scheduled_for)
+
+    def run_scheduled_trigger(
+        self, *, scheduled_for: datetime, ticks: int | None = None, recover: bool = False,
+    ):
+        """Run the occurrence for one scheduled slot.
+
+        Replaying a completed slot returns its record without running it again. A
+        slot left open by a dead worker needs ``recover=True``, as for any batch.
+        This is the only scheduling path for a component job: the job's own
+        ``job_id``-based ``run_scheduled_trigger`` refuses attested jobs.
+        """
+        return self.runner.run_trigger(
+            trigger_id=self.trigger_id_for(scheduled_for), ticks=ticks,
+            triggered_at=scheduled_for, recover=recover,
+        )
 
 
 def component_job_attestation(

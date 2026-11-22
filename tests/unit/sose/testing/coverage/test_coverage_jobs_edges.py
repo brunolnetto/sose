@@ -401,7 +401,9 @@ class _FakeFencedJob:
 def test_persistent_runner_builds_fenced_job_and_wraps_all_entrypoints(monkeypatch):
     persistence = _OwnershipPersistence()
     job = _runner_job(persistence)
+    job.organization_attestation = None      # a plain job: every entry point is open
     monkeypatch.setattr(persistent_module, "SimulationJob", _FakeFencedJob)
+    monkeypatch.setattr(_FakeFencedJob, "instances", [])   # isolated from other tests
 
     runner = PersistentJobRunner(job, owner_id="worker")
 
@@ -424,5 +426,22 @@ def test_persistent_runner_builds_fenced_job_and_wraps_all_entrypoints(monkeypat
     assert instance.kwargs["ticks_per_trigger"] == 2
     assert instance.kwargs["max_ticks_per_trigger"] == 5
     assert instance.kwargs["sink_bindings"] == ("sink",)
-    assert instance.kwargs["organization_attestation"] == "attestation"
+    assert instance.kwargs["organization_attestation"] is None
     assert instance.kwargs["persistence"].lease.epoch == 5
+
+
+def test_persistent_runner_forwards_an_attestation_and_refuses_job_id_scheduling(monkeypatch):
+    """#496: an attested job is scheduled through AttestedComponentJob only; the
+    job_id-based path is refused before claiming, so no epoch is consumed."""
+    persistence = _OwnershipPersistence()
+    job = _runner_job(persistence)
+    monkeypatch.setattr(persistent_module, "SimulationJob", _FakeFencedJob)
+    monkeypatch.setattr(_FakeFencedJob, "instances", [])   # isolated from other tests
+
+    runner = PersistentJobRunner(job, owner_id="worker")
+    with pytest.raises(ValueError, match="AttestedComponentJob.run_scheduled_trigger"):
+        runner.run_scheduled_trigger(scheduled_for=datetime(2026, 1, 1, tzinfo=timezone.utc))
+    trigger = runner.run_trigger(trigger_id="batch")
+
+    assert trigger.epoch == 5                # the refused call claimed nothing
+    assert _FakeFencedJob.instances[0].kwargs["organization_attestation"] == "attestation"

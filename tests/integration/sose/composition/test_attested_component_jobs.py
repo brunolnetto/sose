@@ -249,3 +249,76 @@ def test_registration_recheck_refuses_a_plain_job_registered_after_the_preflight
     with pytest.raises(ValueError, match="attestation differs"):
         build(store)[FULFILL].runner.initialize({})
     assert store.job_state(FULFILL).organization_attestation is None
+
+
+def test_scheduled_slots_use_the_job_trigger_namespace(opener):
+    """#496: ``ScheduledJob.trigger_namespace`` names each component's slot triggers."""
+    from datetime import timedelta
+
+    store = opener()
+    jobs = build(store)
+    for job in jobs.values():
+        job.runner.initialize({})
+    fulfill, warehouse = jobs[FULFILL], jobs[WAREHOUSE]
+    slot = T0 + timedelta(hours=1)
+    assert fulfill.trigger_id_for(slot) == "trigger:fulfill:scheduled:2026-11-22T09:00:00Z"
+    assert warehouse.trigger_id_for(slot) == "trigger:warehouse:scheduled:2026-11-22T09:00:00Z"
+
+    fulfill.run_scheduled_trigger(scheduled_for=slot)
+    fulfill.run_scheduled_trigger(scheduled_for=slot)           # replay: idempotent
+    fulfill.run_scheduled_trigger(scheduled_for=slot + timedelta(hours=1))
+    warehouse.run_scheduled_trigger(scheduled_for=slot)
+    state = store.job_state(FULFILL)
+    assert state.run_count == 2
+    assert [record.trigger_id for record in state.completed_batch_triggers] == [
+        fulfill.trigger_id_for(slot), fulfill.trigger_id_for(slot + timedelta(hours=1)),
+    ]
+    assert store.job_state(WAREHOUSE).last_completed_batch_trigger_id == (
+        warehouse.trigger_id_for(slot)
+    )
+    with pytest.raises(ValueError, match="timezone-aware"):
+        fulfill.trigger_id_for(slot.replace(tzinfo=None))
+
+
+def test_a_component_job_has_a_single_scheduling_path(opener):
+    """Review of #683 (N1): a second, job_id-based id for one slot would run it twice."""
+    from datetime import timedelta
+
+    store = opener()
+    job = build(store)[FULFILL]
+    job.runner.initialize({})
+    slot = T0 + timedelta(hours=1)
+    job.run_scheduled_trigger(scheduled_for=slot)
+    epoch = store.scoped_writer_epoch(FULFILL)
+    with pytest.raises(ValueError, match="AttestedComponentJob.run_scheduled_trigger"):
+        job.runner.run_scheduled_trigger(scheduled_for=slot)
+    with pytest.raises(ValueError, match="AttestedComponentJob.run_scheduled_trigger"):
+        job.runner.job.run_scheduled_trigger(scheduled_for=slot)
+    assert store.scoped_writer_epoch(FULFILL) == epoch           # refused before claiming
+    assert store.job_state(FULFILL).run_count == 1
+
+
+def test_a_slot_left_open_by_a_dead_worker_resumes_with_recover(opener, monkeypatch):
+    """Review of #683 (N2): replay of an open slot needs recover=True, and runs once."""
+    from datetime import timedelta
+
+    store = opener()
+    job = build(store)[FULFILL]
+    job.runner.initialize({})
+    slot = T0 + timedelta(hours=1)
+    real_reconcile = SimulationJob._run_reconcile_tick
+
+    def die(self, *args, **kwargs):
+        raise RuntimeError("worker died during the slot's tick")
+
+    monkeypatch.setattr(SimulationJob, "_run_reconcile_tick", die)
+    with pytest.raises(RuntimeError, match="worker died"):
+        job.run_scheduled_trigger(scheduled_for=slot)
+    monkeypatch.setattr(SimulationJob, "_run_reconcile_tick", real_reconcile)
+    with pytest.raises(RuntimeError, match="requires explicit recovery"):
+        job.run_scheduled_trigger(scheduled_for=slot)
+    job.run_scheduled_trigger(scheduled_for=slot, recover=True)
+    job.run_scheduled_trigger(scheduled_for=slot)                 # completed: replay only
+    state = store.job_state(FULFILL)
+    assert state.run_count == 1
+    assert [r.trigger_id for r in state.completed_batch_triggers] == [job.trigger_id_for(slot)]

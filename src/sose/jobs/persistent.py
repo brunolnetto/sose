@@ -93,6 +93,12 @@ class PersistentJobRunner:
         return PersistentRunResult(self.owner_id, lease.epoch, result)
 
     def run_scheduled_trigger(self, **kwargs) -> PersistentRunResult:
+        if self.job.organization_attestation is not None:
+            # Refused before claiming, so the job's worker is not fenced (#496).
+            raise ValueError(
+                "schedule an attested component job through "
+                "AttestedComponentJob.run_scheduled_trigger"
+            )
         lease = self._claim()
         result = self._fenced_job(lease).run_scheduled_trigger(**kwargs)
         return PersistentRunResult(self.owner_id, lease.epoch, result)
