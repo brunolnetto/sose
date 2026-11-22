@@ -122,8 +122,14 @@ It works as follows:
   later write keeps it, because job state changes go through `replace`.
 - **Fail closed.** A runner whose binding differs is refused. This covers an
   attested job run by a plain runner, a plain job adopted by the organization, and
-  another fingerprint or epoch. The check runs before the lease is claimed, so a
-  refused runner cannot fence out the correctly bound worker.
+  another fingerprint or epoch.
+  - **Before the lease.** Once a checkpoint exists, the check runs before the lease
+    is claimed, so a refused runner cannot fence out the correctly bound worker.
+  - **At first registration** there is no checkpoint to check against, so both
+    runners pass the preflight. The first writer wins the identity. The other is
+    refused by the recheck inside the registration transaction, but its claim may
+    already have fenced the winner's in-flight registration. Correctness holds;
+    only liveness is affected.
 - **Observation.** `observe_organization_jobs` reports `attested`. It fails closed
   on a checkpoint attested to another binding.
 - **Storage.** The field is optional and the codec omits it when `None`, so the
@@ -132,6 +138,28 @@ It works as follows:
 **Owner rule.** A **SimulationJob** writes as Engine owner `job_id`, so a declared
 job must use its component's process `owner_id` as its `job_id`. Otherwise the
 attested owner would not be the owner that writes, and the job is refused.
+
+**Limitations of P496-B:**
+
+- **A definition change locks the existing jobs.** The attestation stores the
+  admitted fingerprint and `config_epoch`. The fingerprint covers the whole
+  definition: components, boundaries, jobs and pools. Any admitted change therefore
+  makes every existing component job refuse to run, and `observe_organization_jobs`
+  refuse the organization. Examples are adding an unrelated component or boundary,
+  or bumping `config_epoch`. Because `job_id` must equal the owner, the identity
+  cannot be reused either. There is no re-attestation or migration tool yet; one
+  would be an explicit, ADR-0009-style offline step.
+- **One job per component.** The owner rule makes `job_id` equal the component's
+  owner, so a component can have at most one job. ADR-0009 allows an organization
+  to own several independently scheduled jobs. The runtime cannot honour that until
+  a `SimulationJob` can write as an owner other than its `job_id`.
+- **Older SOSE cannot read the namespace.** Decoding an attested checkpoint needs
+  `OrganizationJobAttestation`. The SQLite, PostgreSQL and DuckDB adapters reload
+  the whole namespace on refresh, so a SOSE version from before P496-B fails on
+  every read of a namespace that holds one.
+- **Partial lease API.** `PersistentJobRunner` has no `update_config`,
+  `apply_config`, `pause` or `resume`. The `SimulationJob` versions of those
+  operations still check and keep the attestation.
 
 **Not claimed by P496-B:**
 

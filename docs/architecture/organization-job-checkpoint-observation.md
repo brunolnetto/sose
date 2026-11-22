@@ -10,10 +10,14 @@ projects checkpoints only for exactly declared job IDs and matching component
 domains. A declared job without a persisted `SimulationJobState` remains
 `checkpoint_present=False` with absent runtime fields.
 
-A *declared owner* is carried as topology configuration only. The persisted
-`SimulationJobState` does **not** attest immutable owner identity, so this
-projection does not claim durable per-component ownership or organizational
-authorization. It cannot attest that a boundary ACK, downstream Command, effect,
+A *declared owner* is carried as topology configuration only, unless the checkpoint
+was written by an attested component job (P496-B,
+`organization-component-boundary-runtime-p496.md`). Such a checkpoint carries an
+immutable `OrganizationJobAttestation`, and the projection reports `attested`
+when it is exactly the binding this definition expects. It fails closed on a
+binding to another organization, fingerprint, epoch or component. An attestation
+is an identity binding written by trusted in-process code, not organizational
+authorization (#545). It cannot attest that a boundary ACK, downstream Command, effect,
 or physically reserved interval actually occurred. The persisted job status
 and trigger IDs are observations, **not execution certificates**.
 

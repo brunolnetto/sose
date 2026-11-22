@@ -14,6 +14,15 @@
   from the codec when `None`, so existing checkpoints keep their bytes.
   `PersistentJobRunner.initialize` registers a job under its lease.
 
+  Limitations:
+  - **Definition changes lock jobs out.** Any change to the admitted definition,
+    including a new fingerprint or a `config_epoch` bump, makes existing attested
+    jobs refuse to run. No migration tool exists yet.
+  - **One job per component.** A component job must use its component's owner as
+    its `job_id`.
+  - **No downgrade.** Once a namespace holds an attested checkpoint, an older SOSE
+    cannot read that namespace.
+
 ### Removed (deprecated in 0.13.0)
 
 - Composition recovery under the namespace-wide writer lease, deprecated in 0.13.0

@@ -225,3 +225,27 @@ def test_unattested_checkpoints_keep_their_bytes_and_attested_ones_round_trip():
         replace(plain, organization_attestation={"organization_id": "org"})
     with pytest.raises(ValueError, match="config_epoch"):
         OrganizationJobAttestation("org", "fingerprint", -1, "component", "j", "d")
+
+
+def test_registration_recheck_refuses_a_plain_job_registered_after_the_preflight(
+    opener, monkeypatch,
+):
+    """Review of #679 (N2): the race between preflight and claim.
+
+    An attested runner preflights an empty slot; a plain runner then registers the
+    same job_id. Every ``state()`` read of the attested runner is made to miss it, so
+    only the recheck inside the registration transaction stands between the attested
+    runner and silently initializing the plain checkpoint.
+    """
+    store = opener()
+    plain = SimulationJob(job_id=FULFILL, definition=builtin_catalog().get("warehouse_fulfillment"),
+                          persistence=store, backend_factory=_backend)
+    PersistentJobRunner(job=plain, owner_id="worker-plain").initialize({})
+    real_state = SimulationJob.state
+    monkeypatch.setattr(
+        SimulationJob, "state",
+        lambda self: None if self.organization_attestation is not None else real_state(self),
+    )
+    with pytest.raises(ValueError, match="attestation differs"):
+        build(store)[FULFILL].runner.initialize({})
+    assert store.job_state(FULFILL).organization_attestation is None
