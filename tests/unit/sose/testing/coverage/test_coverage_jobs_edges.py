@@ -403,6 +403,7 @@ def test_persistent_runner_builds_fenced_job_and_wraps_all_entrypoints(monkeypat
     job = _runner_job(persistence)
     job.organization_attestation = None      # a plain job: every entry point is open
     monkeypatch.setattr(persistent_module, "SimulationJob", _FakeFencedJob)
+    monkeypatch.setattr(_FakeFencedJob, "instances", [])   # isolated from other tests
 
     runner = PersistentJobRunner(job, owner_id="worker")
 
@@ -435,7 +436,7 @@ def test_persistent_runner_forwards_an_attestation_and_refuses_job_id_scheduling
     persistence = _OwnershipPersistence()
     job = _runner_job(persistence)
     monkeypatch.setattr(persistent_module, "SimulationJob", _FakeFencedJob)
-    _FakeFencedJob.instances.clear()
+    monkeypatch.setattr(_FakeFencedJob, "instances", [])   # isolated from other tests
 
     runner = PersistentJobRunner(job, owner_id="worker")
     with pytest.raises(ValueError, match="AttestedComponentJob.run_scheduled_trigger"):
