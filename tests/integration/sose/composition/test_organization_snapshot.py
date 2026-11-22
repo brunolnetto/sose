@@ -180,3 +180,50 @@ def test_owner_qualified_boundary_messages_are_projected(store):
         other, store, catalog=p496a._catalog(), manifests=p496a._manifests(),
         consumers=p496a._domain_contracts(),
     ).boundary == ()
+
+
+def _transition(persistence, event_id, owner, machine, from_state, to_state):
+    with persistence.transaction() as uow:
+        uow.append_event(DomainEvent(
+            event_id=event_id, name="entity.state_transition",
+            entity_type=machine.entity_type, entity_id=machine.entity_id,
+            occurred_at=T0, owner_id=owner,
+            payload={"trigger": "t", "from_state": from_state, "to_state": to_state},
+        ))
+
+
+@pytest.mark.parametrize("mover", ["owner:foreign-org", WAREHOUSE])
+def test_any_other_mover_of_a_machine_fails_closed(opener, mover):
+    """Review of #681 (B1): a foreign organization, or an owner of this one moving a
+    type its component does not declare, cannot slip past by restoring the state."""
+    persistence = opener()
+    workload(persistence)
+    [machine] = snapshot(persistence).components[0].machines
+    _transition(persistence, "foreign-away", mover, machine, machine.state, "elsewhere")
+    _transition(persistence, "foreign-back", mover, machine, "elsewhere", machine.state)
+    with pytest.raises(ValueError, match="transitioned by two owners"):
+        snapshot(persistence)
+
+
+def test_a_foreign_last_transition_reports_two_owners(opener):
+    persistence = opener()
+    workload(persistence)
+    [machine] = snapshot(persistence).components[0].machines
+    _transition(persistence, "foreign-last", "owner:foreign-org", machine, machine.state, "x")
+    with pytest.raises(ValueError, match="transitioned by two owners"):
+        snapshot(persistence)
+
+
+def test_every_read_goes_through_the_coherent_view(monkeypatch):
+    """Review of #681 (N2): a read that escapes read_snapshot() would hit these."""
+    persistence = MemoryPersistence()
+    workload(persistence)
+    expected = snapshot(persistence)
+
+    def escaped(*_args, **_kwargs):
+        raise AssertionError("read outside the coherent snapshot view")
+
+    for name in ("events", "entities", "scheduled_work", "command", "job_states",
+                 "job_state", "boundary_protocol_snapshot"):
+        monkeypatch.setattr(persistence, name, escaped)
+    assert snapshot(persistence) == expected

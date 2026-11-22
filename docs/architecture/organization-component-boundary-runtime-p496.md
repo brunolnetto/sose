@@ -234,8 +234,11 @@ writes nothing.
 - **Machines.** Entities carry no owner, so a machine is attributed to the owner
   whose transition events (`entity.state_transition`) moved it. Its state is the
   `to_state` of that owner's last transition, and it must equal the stored entity
-  state. Two failures are fail-closed: a machine transitioned by two owners, and a
-  stored state that contradicts the last transition. Entities of the components'
+  state. The snapshot fails closed when **any** transition of the machine belongs
+  to another owner. That covers another organization in the same namespace, even if
+  it restores the state, and an owner of this organization moving a type its
+  component does not declare. It also fails closed when the stored state
+  contradicts the last transition. Entities of the components'
   types that none of the organization's owners transitioned (for example, seeded and
   never moved) are listed once as `unattributed_machines`, because there is no owner
   evidence for them.
@@ -260,6 +263,12 @@ writes nothing.
 - resources and physical pools (admission still refuses physical pools);
 - operational policy/calendar/cost references;
 - any authority claim (#545).
+
+**Refused:**
+- components that share one `owner_id`; admission allows it, but owner-qualified
+  attribution needs distinct owners;
+- jobs whose entities live in a domain warehouse rather than the namespace. Their
+  transitioned machines have no stored state here, so the snapshot fails closed.
 
 **What it is not:** an atomic cut across *separate* namespaces or databases.
 

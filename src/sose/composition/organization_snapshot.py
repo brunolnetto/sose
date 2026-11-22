@@ -9,8 +9,10 @@ Per component (``owner_id``) the snapshot holds:
 - **machines**: the StateChart entities this owner transitioned. Entities carry no
   owner, so a machine is attributed by the owner of its transition events. Its
   state is the ``to_state`` of the owner's last transition, and it must equal the
-  stored entity state. A machine transitioned by two owners, or whose stored state
-  contradicts its last transition, fails closed. Entities of the components' types
+  stored entity state. It fails closed when ANY transition of the machine belongs to
+  another owner (another organization in the namespace, or an owner moving a type
+  its component does not declare), or when the stored state contradicts its last
+  transition. Entities of the components' types
   with no transition by any of the organization's owners are listed once, as
   ``unattributed_machines``: they carry no owner evidence;
 - **transition_event_ids** (commit order), and the owner's **scheduled_work** with
@@ -25,6 +27,9 @@ on every adapter and after a restart.
 
 Not included: resources and physical pools (admission still refuses physical pools),
 operational policy/calendar/cost references, and any claim of authority (#545).
+Refused: components sharing one ``owner_id`` (owner-qualified attribution needs
+distinct owners), and jobs whose entities live in a domain warehouse rather than the
+namespace (their transitioned machines have no stored state here and fail closed).
 """
 from __future__ import annotations
 
@@ -120,8 +125,11 @@ def snapshot_organization(
             definition, view, catalog=catalog, manifests=manifests, consumers=consumers,
         ).jobs
         machines, transitions, unattributed = _machines(view, types_by_owner)
+        work_by_owner: dict[str, list] = {}
+        for item in view.scheduled_work():
+            work_by_owner.setdefault(item.owner_id, []).append(item)
         built = tuple(
-            _component(view, component, machines, transitions, jobs)
+            _component(view, component, machines, transitions, jobs, work_by_owner)
             for component in components
         )
         boundary = _boundary(view, definition.organization_id)
@@ -153,25 +161,36 @@ def _machines(view, types_by_owner):
 
 
 def _last_transitions(events, types_by_owner):
-    """(entity_type, entity_id) -> (owner, event_id, to_state) of its last transition."""
+    """(entity_type, entity_id) -> (owner, event_id, to_state) of its last transition.
+
+    Every state-transition event counts toward who moved a machine, whatever its
+    owner (another organization in the namespace, or an owner of this one moving a
+    type its component does not declare). A machine is attributed only when all of
+    its transitions belong to one admitted owner of a component declaring the type.
+    """
     last: dict[tuple[str, str], tuple[str, str, str]] = {}
+    movers: dict[tuple[str, str], set] = {}
     transitions: dict[str, list[str]] = {owner: [] for owner in types_by_owner}
     for event in events:
+        if event.name != "entity.state_transition":
+            continue
+        key = (event.entity_type, event.entity_id)
+        movers.setdefault(key, set()).add(event.owner_id)
         if event.entity_type not in types_by_owner.get(event.owner_id, ()):
             continue
         if not _is_observed_transition(event):
             continue
-        key = (event.entity_type, event.entity_id)
-        if key in last and last[key][0] != event.owner_id:
-            raise ValueError(f"machine {key} was transitioned by two owners")
         last[key] = (event.owner_id, event.event_id, event.payload["to_state"])
         transitions[event.owner_id].append(event.event_id)
+    for key, (owner, _event_id, _state) in last.items():
+        if movers[key] != {owner}:
+            raise ValueError(f"machine {key} was transitioned by two owners")
     return last, transitions
 
 
-def _component(view, component, machines, transitions, jobs) -> ComponentSnapshot:
+def _component(view, component, machines, transitions, jobs, work_by_owner) -> ComponentSnapshot:
     owner = component.owner_id
-    work = [item for item in view.scheduled_work() if item.owner_id == owner]
+    work = work_by_owner.get(owner, [])
     commands = []
     for item in work:
         # A pending Command is reached through the owner's durable ScheduledWork.
