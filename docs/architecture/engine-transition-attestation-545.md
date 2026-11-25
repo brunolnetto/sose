@@ -61,30 +61,44 @@ treat this receipt as a completed organizational execution certificate.
   is refused together with a domain warehouse, because entity and event must commit in
   one store.
 
-## Finding: domains that save attributes outside transitions are not attestable
+## Attested attribute-only saves (#494)
 
-The receipt signs the attribute digest of the entity after each transition. A domain
-that also saves entity attributes **outside** transitions, keeping the same version
-and state, makes the next attested dispatch on that entity fail closed ("receipt
-contradicts terminal projection"). It also makes a later `verify_history` fail
-("contradicts the stored entity"). This is a property of the domain code, not of a
-particular domain.
+The transition receipt signs the attribute digest of the entity after each
+transition. Domain code also saves entity attributes **outside** transitions, keeping
+the same version and state. Before this increment that made the next attested
+dispatch, and `verify_history`, fail closed, so 7 of the 28 catalog domains
+(construction, field_service, hospitality, insurance, transit, warehouse_fulfillment,
+warehouse_management) could not run attested. All 20 such save sites go through the
+persistence the job hands its domain (`SimulationJob.domain_persistence`).
 
-**Measured.** Every catalog domain was run as an attested `SimulationJob` (seed 3, 30
-triggers), and each machine's history was then verified.
+**Mechanism** (`sose.core.attestation_chain`):
 
-- **7 of 28 failed:** construction, field_service, hospitality, insurance, transit,
-  warehouse_fulfillment and warehouse_management. field_service runs, but a machine
-  fails verification afterwards.
-- **The other 21 did not fail in that run.** That does not prove they are attestable:
-  they merely saved no attribute outside a transition in those 30 triggers.
+- `Entity.attribute_revision` counts attested attribute-only saves within one
+  version. A transition resets it to 0. The codec omits it when it is 0.
+- Under a `transition_authority`, the job wraps its domain persistence in
+  `AttributeAttestingPersistence`. A save that keeps version and state but changes
+  attributes or `updated_at` bumps the revision and appends, in the same
+  transaction, an `engine.entity_attributes_attested` receipt with id
+  `(entity_type, entity_id, version, revision)`. It signs the state, the attribute
+  digest and `updated_at`, and names the previous receipt of the entity (a
+  transition receipt or an attribute receipt). Creations and Engine transitions pass
+  through; a state change without a transition is refused.
+- The head of an entity's chain is found from the stored entity: revision 0 is the
+  transition receipt of its version, revision `r > 0` the attribute receipt
+  `(version, r)`. An existing receipt for the next revision or the next version
+  means the stored entity was rolled back, and the next attested step fails closed.
+  A transition after attribute saves names the last attribute receipt as its
+  predecessor (`predecessor_revision` claim, set only when non-zero, so older
+  receipts keep their claims).
+- `verify_history(events=..., entity=...)` walks transitions, their receipts and
+  attribute receipts in commit order, and the last receipt must describe the stored
+  entity. The organization snapshot feeds each attributed machine's chain events.
 
-**Example write sites.** In the two warehouse domains, tracing a composed run found
-these files: `allocation.py`, `service_tasks.py`, `handling.py`, `records.py`,
-`simulation.py` and `unloading.py`.
+**Measured.** Every catalog domain run as an attested `SimulationJob` (seed 3, 30
+triggers) now verifies: 28 of 28. Without an authority, the stored events, entities
+and checkpoints of all 28 domains (seed 3, 10 triggers) are byte-identical to `main`
+before this change.
 
-**Next increment.** Making such domains attestable means attesting attribute updates
-too: Engine-issued receipts for attribute-only saves, chained with the transition
-receipts. Its design is still to be agreed. Until then, the snapshot's receipt checks
-are exercised with an attested Engine driving the order chart directly, and with
-`tutorial_job` for the job plumbing.
+**Limits.** A save made through the raw persistence, bypassing the wrapper, is not
+attested and is detected only at verification ("contradicts the stored entity").
+`authenticated` is still not bound to the store (see above).
