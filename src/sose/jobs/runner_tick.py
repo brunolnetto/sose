@@ -199,6 +199,10 @@ class _TickExecutionMixin:
         if engine.owner_id != self.job_id:
             raise RuntimeError("domain runtime owner does not match configured job_id")
         self._attach_domain_warehouse(engine)
+        if self.transition_authority is not None:
+            if engine.domain_warehouse is not None:
+                raise ValueError("transition proof requires entity and event in one store")
+            engine.transition_authority = self.transition_authority
         backend = self.backend_factory(logical_time)
         engine.rebuild_backend(backend)
         run_until = getattr(backend, "run_until", None)

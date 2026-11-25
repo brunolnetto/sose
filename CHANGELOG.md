@@ -44,6 +44,19 @@
   messages, and a digest. The same durable state gives the same digest on every
   adapter and after a restart. Resources and physical pools are not included.
 
+- Transition receipt verification in the organization snapshot (#494, #545):
+  `TransitionAuthority.verify_history` authenticates one entity's whole chain of HMAC
+  receipts, ending at the stored entity. `snapshot_organization(...,
+  transition_authority=...)` verifies every attributed machine and marks it
+  `authenticated`; a forged, unsigned, tampered or rewritten step fails closed.
+  `SimulationJob`, `PersistentJobRunner` and `build_attested_component_jobs` accept a
+  `transition_authority`. `authenticated` means a complete chain signed by that key
+  and ending at the stored entity. It is not bound to the store: receipts copied
+  with their entity into another store authenticate there too. A domain that saves
+  entity attributes outside transitions is not attestable yet. A sweep of the catalog
+  found 7 of 28: construction, field_service, hospitality, insurance, transit and both
+  warehouse domains.
+
 ### Fixed
 
 - A batch trigger recovered after its worker died during a child tick recorded a

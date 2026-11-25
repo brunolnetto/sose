@@ -97,6 +97,7 @@ def build_attested_component_jobs(
     backend_factory: Callable,
     worker_id: str,
     ticks_per_trigger: int = 1,
+    transition_authority=None,
 ) -> tuple[AttestedComponentJob, ...]:
     """Admit ``definition``, then build one attested runner per declared job.
 
@@ -104,7 +105,8 @@ def build_attested_component_jobs(
     its component's process ``owner_id`` as its ``job_id``; otherwise the attested
     owner would not be the owner that actually writes, and the job is refused.
     ``worker_id`` names the lease holder (the process running the jobs), not an
-    organizational owner.
+    organizational owner. With ``transition_authority`` every job's Engine issues
+    HMAC transition receipts (#545), which ``snapshot_organization`` can verify.
     """
     if not isinstance(worker_id, str) or not worker_id.strip():
         raise ValueError("worker_id must be nonempty")
@@ -128,6 +130,7 @@ def build_attested_component_jobs(
             backend_factory=backend_factory,
             ticks_per_trigger=ticks_per_trigger,
             organization_attestation=attestation,
+            transition_authority=transition_authority,
         )
         built.append(AttestedComponentJob(
             scheduled=scheduled, component=component, attestation=attestation,

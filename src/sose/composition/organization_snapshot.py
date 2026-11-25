@@ -38,6 +38,7 @@ from hashlib import sha256
 import json
 from typing import TYPE_CHECKING
 
+from sose.core.transition_authority import ATTESTATION_EVENT
 from sose.persistence.base import ReadSnapshot
 
 from .job_observation import DeclaredJobCheckpoint, observe_organization_jobs
@@ -54,6 +55,8 @@ class MachineState:
     entity_id: str
     state: str
     last_event_id: str
+    # True when a TransitionAuthority verified this machine's receipt chain (#545).
+    authenticated: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -98,6 +101,7 @@ class OrganizationSnapshot:
     components: tuple[ComponentSnapshot, ...]
     unattributed_machines: tuple[tuple[str, str, str], ...]
     boundary: tuple[BoundaryRecord, ...]
+    authenticated_key_id: str | None
     digest: str
 
 
@@ -108,8 +112,15 @@ def snapshot_organization(
     catalog,
     manifests,
     consumers,
+    transition_authority=None,
 ) -> OrganizationSnapshot:
-    """Project one coherent read of ``persistence`` onto the admitted components."""
+    """Project one coherent read of ``persistence`` onto the admitted components.
+
+    With ``transition_authority`` (#545), every attributed machine's transitions
+    must form a chain of HMAC receipts issued by that authority and ending at the
+    stored entity; a forged, unsigned or rewritten step fails closed, and every
+    machine is marked ``authenticated``.
+    """
     if not isinstance(persistence, ReadSnapshot):
         raise TypeError("a canonical organization snapshot requires read_snapshot()")
     fingerprint = validate_organization_admission(
@@ -124,7 +135,9 @@ def snapshot_organization(
         jobs = observe_organization_jobs(
             definition, view, catalog=catalog, manifests=manifests, consumers=consumers,
         ).jobs
-        machines, transitions, unattributed = _machines(view, types_by_owner)
+        machines, transitions, unattributed = _machines(
+            view, types_by_owner, transition_authority,
+        )
         work_by_owner: dict[str, list] = {}
         for item in view.scheduled_work():
             work_by_owner.setdefault(item.owner_id, []).append(item)
@@ -137,13 +150,18 @@ def snapshot_organization(
         organization_id=definition.organization_id, definition_fingerprint=fingerprint,
         version=definition.version, config_epoch=definition.config_epoch,
         components=built, unattributed_machines=unattributed, boundary=boundary,
+        authenticated_key_id=(
+            None if transition_authority is None else transition_authority.key_id
+        ),
     )
     return OrganizationSnapshot(**body, digest=_digest(body))
 
 
-def _machines(view, types_by_owner):
+def _machines(view, types_by_owner, authority=None):
     """Owner -> machines and transition ids, from the owner's transition events."""
-    last, transitions = _last_transitions(view.events(), types_by_owner)
+    events = view.events()
+    last, transitions = _last_transitions(events, types_by_owner)
+    authenticated = _authenticated(view, events, last, authority)
     stored = {(entity.entity_type, entity.id): entity.state for entity in view.entities()}
     machines: dict[str, list[MachineState]] = {owner: [] for owner in types_by_owner}
     for key, (owner, event_id, state) in sorted(last.items()):
@@ -151,13 +169,51 @@ def _machines(view, types_by_owner):
             raise ValueError(
                 f"stored state of machine {key} contradicts its owner's last transition"
             )
-        machines[owner].append(MachineState(key[0], key[1], state, event_id))
+        machines[owner].append(
+            MachineState(key[0], key[1], state, event_id, key in authenticated),
+        )
     known_types = set().union(*types_by_owner.values())
     unattributed = tuple(sorted(
         (entity_type, entity_id, state) for (entity_type, entity_id), state in stored.items()
         if entity_type in known_types and (entity_type, entity_id) not in last
     ))
     return machines, transitions, unattributed
+
+
+def _authenticated(view, events, last, authority) -> set:
+    """Keys of the attributed machines whose receipt chains ``authority`` verified."""
+    if authority is None:
+        return set()
+    history = {}
+    for event in events:
+        key = (event.entity_type, event.entity_id)
+        if event.name == "entity.state_transition" and key in last:
+            history.setdefault(key, []).append(event)
+    receipts = _attributed_receipts(events, history)
+    for key in last:
+        entity = view.entity(*key)
+        if entity is None:
+            raise ValueError(f"attributed machine {key} has no stored entity")
+        authority.verify_history(
+            transitions=history[key], receipts_by_source=receipts, entity=entity,
+        )
+    return set(last)
+
+
+def _attributed_receipts(events, history) -> dict:
+    """Receipts of the attributed machines' transitions, keyed by source event id.
+
+    Only these are considered, so a stray receipt-named event elsewhere in the
+    namespace cannot deny the whole snapshot; two for one transition fail closed.
+    """
+    sources = {event.event_id for transitions in history.values() for event in transitions}
+    receipts = {}
+    for event in events:
+        if event.name == ATTESTATION_EVENT and event.causation_id in sources:
+            if event.causation_id in receipts:
+                raise ValueError("a StateChart transition has two receipts")
+            receipts[event.causation_id] = event
+    return receipts
 
 
 def _last_transitions(events, types_by_owner):

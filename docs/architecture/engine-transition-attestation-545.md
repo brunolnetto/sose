@@ -26,3 +26,65 @@ receipt transport/verification in executable organization #496, physical
 reservations and downstream Command->DomainEvent causal equivalence still need
 independent adversarial PostgreSQL tests. Never merge closed #543 wholesale or
 treat this receipt as a completed organizational execution certificate.
+
+## Verifying receipts in the organization snapshot (#494)
+
+- **Verifying a history.** `TransitionAuthority.verify_history(transitions=...,
+  receipts_by_source=..., entity=...)` authenticates one entity's whole transition
+  history:
+  - each transition needs its own receipt;
+  - each receipt must name the previous one, and the first names none;
+  - the last receipt must describe the stored entity (version, state and attribute
+    digest).
+
+  A forged, unsigned, reordered or missing step, or a projection rewritten after the
+  last receipt, fails closed.
+- **Snapshot.** `snapshot_organization(..., transition_authority=...)` runs that check
+  for every attributed machine and marks it `authenticated`. The snapshot records the
+  verifying `authenticated_key_id`. Two receipts for one transition also fail closed.
+  Without an authority the snapshot is unchanged: machines are not authenticated and
+  the key id is `None`. Only receipts of the attributed machines' transitions are
+  considered, so a stray receipt-named event elsewhere cannot deny the snapshot.
+  `verify_history` also requires the chain to start at version zero and the stored
+  `updated_at` to equal the last transition's time, as `validate_prestate` does
+  before a dispatch.
+- **What `authenticated` means.** The machine's history in this store is a complete,
+  consistent chain of receipts signed by this key, and it ends at the stored entity.
+  - **Not bound to a store.** Receipts do not name the store or organization, so a
+    whole chain copied, with its entity, into another store authenticates there too.
+    The same holds for a copied prefix together with the entity at that version.
+  - **Rollback inside one store.** It cannot be done through the public API, which
+    removes no events. The later transitions stay in the log and break the match.
+  - **Same as `validate_prestate`.** It has the same property; this is not new.
+- **Jobs.** `SimulationJob`, `PersistentJobRunner` and `build_attested_component_jobs`
+  accept a `transition_authority`, and each tick's Engine issues receipts with it. It
+  is refused together with a domain warehouse, because entity and event must commit in
+  one store.
+
+## Finding: domains that save attributes outside transitions are not attestable
+
+The receipt signs the attribute digest of the entity after each transition. A domain
+that also saves entity attributes **outside** transitions, keeping the same version
+and state, makes the next attested dispatch on that entity fail closed ("receipt
+contradicts terminal projection"). It also makes a later `verify_history` fail
+("contradicts the stored entity"). This is a property of the domain code, not of a
+particular domain.
+
+**Measured.** Every catalog domain was run as an attested `SimulationJob` (seed 3, 30
+triggers), and each machine's history was then verified.
+
+- **7 of 28 failed:** construction, field_service, hospitality, insurance, transit,
+  warehouse_fulfillment and warehouse_management. field_service runs, but a machine
+  fails verification afterwards.
+- **The other 21 did not fail in that run.** That does not prove they are attestable:
+  they merely saved no attribute outside a transition in those 30 triggers.
+
+**Example write sites.** In the two warehouse domains, tracing a composed run found
+these files: `allocation.py`, `service_tasks.py`, `handling.py`, `records.py`,
+`simulation.py` and `unloading.py`.
+
+**Next increment.** Making such domains attestable means attesting attribute updates
+too: Engine-issued receipts for attribute-only saves, chained with the transition
+receipts. Its design is still to be agreed. Until then, the snapshot's receipt checks
+are exercised with an attested Engine driving the order chart directly, and with
+`tutorial_job` for the job plumbing.

@@ -17,6 +17,26 @@ class _JobLifecycleMixin:
     definition: DomainDefinition
     persistence: Persistence
     domain_persistence: object
+    organization_attestation: object
+
+    def state(self) -> SimulationJobState | None:
+        state = self.persistence.job_state(self.job_id)
+        if state is not None:
+            self._require_attestation(state)
+        return state
+
+    def _require_attestation(self, state: SimulationJobState) -> None:
+        """Fail closed when the durable organizational binding differs (#496).
+
+        The binding is written once at registration and every later write keeps it
+        (``replace``), so checking every read of the checkpoint keeps a runner with
+        another binding, or none, from running an attested job, and the reverse.
+        """
+        if state.organization_attestation != self.organization_attestation:
+            raise ValueError(
+                f"job {self.job_id}: durable organizational attestation differs from "
+                "this runner's"
+            )
 
     def initialize(
         self,

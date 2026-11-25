@@ -16,7 +16,7 @@ def _job(persistence, job_id="job-a"):
         job_id=job_id, definition="definition", persistence=persistence,
         backend_factory=None, ticks_per_trigger=1, max_ticks_per_trigger=1, sink_bindings=(),
         # The runner preflights the checkpoint (#496) and forwards the attestation.
-        state=lambda: None, organization_attestation=None,
+        state=lambda: None, organization_attestation=None, transition_authority=None,
     )
 
 
