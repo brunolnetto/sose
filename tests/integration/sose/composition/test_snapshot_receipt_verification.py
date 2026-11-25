@@ -185,3 +185,93 @@ def test_two_receipts_for_one_transition_fail_closed():
         uow.append_event(replace(first, event_id=deterministic_id("copy", first.event_id)))
     with pytest.raises(ValueError, match="two receipts"):
         snapshot(store)
+
+
+def test_a_stray_receipt_elsewhere_does_not_deny_the_snapshot():
+    """Review of #684 (N2): only receipts of attributed machines' transitions count."""
+    store = MemoryPersistence()
+    _shipped_order(store)
+    with store.transaction(owner_id="owner:unrelated") as uow:
+        for index in range(2):
+            uow.append_event(DomainEvent(
+                event_id=f"junk-{index}", name=ATTESTATION_EVENT, entity_type="other",
+                entity_id="x", occurred_at=NOW, owner_id="owner:unrelated", payload={},
+            ))
+    assert snapshot(store).components[0].machines[0].authenticated
+
+
+def test_rewriting_updated_at_or_rolling_back_fails_closed(opener):
+    """Review of #684 (N3a and the rollback probe)."""
+    store = opener()
+    order_id = _shipped_order(store)
+    with store.transaction(owner_id=org.FULFILL) as uow:
+        entity = uow.get_entity(ORDER, order_id)
+        uow.save_entity(replace(entity, updated_at=NOW + timedelta(days=1)))
+    with pytest.raises(ValueError, match="contradicts the stored entity"):
+        snapshot(store)
+
+    rolled = opener() if not isinstance(store, MemoryPersistence) else MemoryPersistence()
+    _shipped_order(rolled, order_id="order-2")
+    receipts = sorted((e for e in rolled.events() if e.name == ATTESTATION_EVENT),
+                      key=lambda e: e.payload["to_version"])
+    second = receipts[1].payload
+    with rolled.transaction(owner_id=org.FULFILL) as uow:
+        entity = uow.get_entity(ORDER, "order-2")
+        uow.save_entity(replace(entity, version=second["to_version"], state=second["to_state"]))
+    with pytest.raises(ValueError, match="contradicts"):
+        snapshot(rolled)
+
+
+def test_a_chain_must_start_at_version_zero():
+    """Review of #684 (N3b): a history whose first two steps are gone (no public API
+    removes events) and whose third receipt is re-signed without a predecessor, as
+    only a key holder could, still fails closed."""
+    from hashlib import sha256
+    from hmac import new as hmac_new
+
+    from sose.core.transition_authority import _encoded
+
+    store = MemoryPersistence()
+    _shipped_order(store)
+    events = store._state.events
+    receipts = sorted((e for e in events if e.name == ATTESTATION_EVENT),
+                      key=lambda e: e.payload["to_version"])
+    dropped = {r.causation_id for r in receipts[:2]} | {r.event_id for r in receipts[:2]}
+    third = receipts[2]
+    claims = {k: v for k, v in third.payload.items() if k != "signature"}
+    claims["predecessor_receipt_id"] = None
+    resigned = replace(third, payload={
+        **claims, "signature": hmac_new(SECRET, _encoded(claims), sha256).hexdigest(),
+    })
+    store._state.events = [
+        resigned if e is third else e for e in events if e.event_id not in dropped
+    ]
+    with pytest.raises(ValueError, match="does not start at version zero"):
+        snapshot(store)
+
+
+def test_a_missing_entity_of_an_attributed_machine_fails_closed(monkeypatch):
+    store = MemoryPersistence()
+    _shipped_order(store)
+    monkeypatch.setattr(MemoryPersistence, "entity", lambda self, entity_type, entity_id: None)
+    with pytest.raises(ValueError, match="has no stored entity"):
+        snapshot(store)
+
+
+def test_the_tick_engine_refuses_an_authority_with_a_domain_warehouse():
+    """Review of #684 (N4): a custom runtime whose Engine already has a warehouse."""
+    real = builtin_catalog().get("tutorial_job")
+
+    def with_warehouse(*args, **kwargs):
+        context, engine = real.build_runtime(*args, **kwargs)
+        engine.domain_warehouse = object()
+        return context, engine
+
+    job = SimulationJob(
+        job_id="tutorial", definition=replace(real, build_runtime=with_warehouse),
+        persistence=MemoryPersistence(),
+        backend_factory=lambda origin: SimPyBackend(origin=origin), transition_authority=ROOT,
+    )
+    job.initialize({"random_seed": 3})
+    with pytest.raises(ValueError, match="one store"):
+        job.run_trigger(trigger_id="t0", triggered_at=NOW)

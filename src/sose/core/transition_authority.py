@@ -259,12 +259,10 @@ class TransitionAuthority:
             claims = self._authenticate(receipt=receipt, event=event)
             if claims.get("predecessor_receipt_id") != previous_id:
                 raise ValueError("authenticated StateChart receipt chain is broken")
+            if previous_id is None and claims.get("from_version") != 0:
+                raise ValueError("authenticated StateChart chain does not start at version zero")
             previous_id = receipt.event_id
-        if (
-            claims["to_version"] != entity.version or claims["to_state"] != entity.state
-            or claims["attributes_sha256"] != _attributes_sha256(entity)
-        ):
-            raise ValueError("authenticated StateChart receipt contradicts the stored entity")
+        _require_stored_projection(claims, entity, event)
         return receipt
 
     def _authenticate(self, *, receipt: DomainEvent, event: DomainEvent) -> dict:
@@ -285,6 +283,16 @@ class TransitionAuthority:
         ):
             raise ValueError("authenticated StateChart receipt evidence contradicts event")
         return data
+
+
+def _require_stored_projection(claims: dict, entity: Entity, source: DomainEvent) -> None:
+    """The stored entity is exactly the last receipt's projection (as before a dispatch)."""
+    if (
+        claims["to_version"] != entity.version or claims["to_state"] != entity.state
+        or claims["attributes_sha256"] != _attributes_sha256(entity)
+        or entity.updated_at != source.occurred_at
+    ):
+        raise ValueError("authenticated StateChart receipt contradicts the stored entity")
 
 
 def _receipt_id(entity_type: str, entity_id: str, version: int) -> str:

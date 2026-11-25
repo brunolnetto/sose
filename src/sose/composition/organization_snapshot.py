@@ -184,21 +184,36 @@ def _authenticated(view, events, last, authority) -> set:
     """Keys of the attributed machines whose receipt chains ``authority`` verified."""
     if authority is None:
         return set()
-    receipts, history = {}, {}
+    history = {}
     for event in events:
-        if event.name == ATTESTATION_EVENT:
+        key = (event.entity_type, event.entity_id)
+        if event.name == "entity.state_transition" and key in last:
+            history.setdefault(key, []).append(event)
+    receipts = _attributed_receipts(events, history)
+    for key in last:
+        entity = view.entity(*key)
+        if entity is None:
+            raise ValueError(f"attributed machine {key} has no stored entity")
+        authority.verify_history(
+            transitions=history[key], receipts_by_source=receipts, entity=entity,
+        )
+    return set(last)
+
+
+def _attributed_receipts(events, history) -> dict:
+    """Receipts of the attributed machines' transitions, keyed by source event id.
+
+    Only these are considered, so a stray receipt-named event elsewhere in the
+    namespace cannot deny the whole snapshot; two for one transition fail closed.
+    """
+    sources = {event.event_id for transitions in history.values() for event in transitions}
+    receipts = {}
+    for event in events:
+        if event.name == ATTESTATION_EVENT and event.causation_id in sources:
             if event.causation_id in receipts:
                 raise ValueError("a StateChart transition has two receipts")
             receipts[event.causation_id] = event
-        elif event.name == "entity.state_transition":
-            key = (event.entity_type, event.entity_id)
-            if key in last:
-                history.setdefault(key, []).append(event)
-    for key in last:
-        authority.verify_history(
-            transitions=history[key], receipts_by_source=receipts, entity=view.entity(*key),
-        )
-    return set(last)
+    return receipts
 
 
 def _last_transitions(events, types_by_owner):

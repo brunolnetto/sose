@@ -50,8 +50,12 @@
   transition_authority=...)` verifies every attributed machine and marks it
   `authenticated`; a forged, unsigned, tampered or rewritten step fails closed.
   `SimulationJob`, `PersistentJobRunner` and `build_attested_component_jobs` accept a
-  `transition_authority`. The catalog's warehouse domains are not attestable yet,
-  because they save attributes outside transitions.
+  `transition_authority`. `authenticated` means a complete chain signed by that key
+  and ending at the stored entity. It is not bound to the store: receipts copied
+  with their entity into another store authenticate there too. A domain that saves
+  entity attributes outside transitions is not attestable yet. A sweep of the catalog
+  found 7 of 28: construction, field_service, hospitality, insurance, transit and both
+  warehouse domains.
 
 ### Fixed
 
