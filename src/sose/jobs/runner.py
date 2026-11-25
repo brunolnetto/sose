@@ -9,6 +9,7 @@ from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.storage import DomainPersistence
 from sose.domain.warehouse import DomainWarehouse
 from sose.core.transition_authority import TransitionAuthority
+from sose.core.attestation_chain import AttributeAttestingPersistence
 from sose.jobs.model import (
     CompletedJobTrigger, OrganizationJobAttestation, SimulationJobState,
     require_truthful_attestation,
@@ -117,6 +118,11 @@ class SimulationJob(
             if domain_warehouse is not None
             else persistence
         )
+        if transition_authority is not None:
+            # Attribute-only saves by domain code are attested too (#494).
+            self.domain_persistence = AttributeAttestingPersistence(
+                persistence, authority=transition_authority, owner_id=job_id,
+            )
         self.domain_outbox = (
             DomainMutationOutbox(persistence, domain_warehouse)
             if domain_warehouse is not None

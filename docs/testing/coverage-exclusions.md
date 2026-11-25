@@ -44,9 +44,9 @@ them would require invalidating an already-tested stronger contract.
 | `persistence/sqlite_incremental.py:202` | Record changes have a closed internal operation set |
 | `persistence/sqlite_incremental.py:237` | Writer metadata cannot disappear after a successful compare-and-swap update |
 | `core/stores_queries.py:46` | Store-item consume helper is only called after caller-level presence checks |
-| `core/engine.py:131` | Engine construction requires a statechart factory |
-| `core/engine.py:166` | Engine construction requires a statechart factory |
-| `core/engine.py:264` | Engine construction requires a statechart factory |
+| `core/engine.py:133` | Engine construction requires a statechart factory |
+| `core/engine.py:168` | Engine construction requires a statechart factory |
+| `core/engine.py:266` | Engine construction requires a statechart factory |
 | `core/durable.py:87` | Attached durable scheduler requires its due callback |
 | `core/durable.py:218` | Recovery participants are validated for `rebuild_backend()` before reconstruction |
 | `persistence/duckdb.py:144` | Record changes have a closed internal operation set |

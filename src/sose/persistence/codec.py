@@ -139,11 +139,19 @@ _LEGACY_OMITTED_NONE_FIELDS = {
 }
 
 
+def _is_entity(value: object) -> bool:
+    """Entities (and their subclasses) omit a zero attribute_revision (#494)."""
+    from sose.domain.entity import Entity
+
+    return isinstance(value, Entity)
+
+
 def _encode_dataclass_value(value: object) -> object | None:
     if not (is_dataclass(value) and not isinstance(value, type)):
         return None
     class_path = _class_path(value)
     omitted = _LEGACY_OMITTED_NONE_FIELDS.get(class_path, frozenset())
+    zero_revision = getattr(value, "attribute_revision", None) == 0 and _is_entity(value)
     return {
         _TAG: "dataclass",
         "class": class_path,
@@ -151,6 +159,7 @@ def _encode_dataclass_value(value: object) -> object | None:
             field.name: _encode(getattr(value, field.name))
             for field in fields(value)
             if not (field.name in omitted and getattr(value, field.name) is None)
+            and not (zero_revision and field.name == "attribute_revision")
         },
     }
 
