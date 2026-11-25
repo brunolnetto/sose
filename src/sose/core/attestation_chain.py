@@ -162,10 +162,13 @@ class AttributeAttestingPersistence:
     """Persistence whose units of work attest every attribute-only entity save.
 
     ``registry`` is the domain's ``DomainRegistry`` (the job binds it each tick). An
-    entity whose type has a StateChart starts its chain only from the chart's initial
-    state: signing a version-zero entity in any other state would turn an unsigned
-    state write into an authenticated chain. Without a registry such a first save is
-    refused.
+    entity whose type has a StateChart in that registry starts its chain only from the
+    chart's initial state: signing a version-zero entity in any other state would turn
+    an unsigned state write into an authenticated chain. A type absent from the
+    registry (for example one only another component registers) is treated as
+    chart-less. Until a registry is bound (during ``initialize``/seed), a save of an
+    entity still at version 0, revision 0 is stored unsigned, like a creation: nothing
+    is signed, so nothing is laundered, and the first attested step checks the root.
     """
 
     def __init__(self, inner, *, authority, owner_id: str, registry=None) -> None:
@@ -197,10 +200,7 @@ class _AttestingUnitOfWork:
             return self._uow.save_entity(entity)
         if existing.state != entity.state:
             raise ValueError("a state change needs an attested StateChart transition")
-        if (
-            existing.attributes == entity.attributes and existing.updated_at == entity.updated_at
-            and existing.attribute_revision == entity.attribute_revision
-        ):
+        if self._unsigned_save(existing, entity):
             return self._uow.save_entity(entity)
         predecessor = self._authority.validate_prestate(
             uow=self._uow, before=existing, chart=self._root_chart(existing),
@@ -215,12 +215,22 @@ class _AttestingUnitOfWork:
         # The caller keeps using its object: keep its revision in step with the store.
         entity.attribute_revision = after.attribute_revision
 
+    def _unsigned_save(self, existing: Entity, entity: Entity) -> bool:
+        """Nothing to attest, or an unsigned root saved before a registry is bound."""
+        if (
+            existing.attributes == entity.attributes and existing.updated_at == entity.updated_at
+            and existing.attribute_revision == entity.attribute_revision
+        ):
+            return True
+        return (
+            self._registry is None and existing.version == 0
+            and existing.attribute_revision == 0 == entity.attribute_revision
+        )
+
     def _root_chart(self, existing: Entity):
         """The chart that pins the initial state when a chain starts at version 0."""
         if existing.version != 0 or existing.attribute_revision != 0:
             return None
-        if self._registry is None:
-            raise ValueError("an attested first attribute save needs the domain registry")
         if not self._registry.supports(existing.entity_type):
             return None                   # no StateChart: the state is not chart-controlled
         return self._registry.chart_for(deepcopy(existing))
@@ -246,11 +256,12 @@ def verify_entity_history(authority, *, events, entity: Entity) -> DomainEvent:
 
     Every transition needs exactly one receipt; transition and attribute receipts
     each name the previous one (the very first names none and starts at version
-    zero, revision zero). A forged, unsigned, reordered, missing or rolled-back
-    step, or a projection rewritten after the last receipt, fails closed.
+    zero, revision zero), and all are issued for one owner. A forged, unsigned,
+    reordered, missing or rolled-back step, or a projection rewritten after the last
+    receipt, fails closed.
     """
     receipts = _transition_receipts(events)
-    previous_id, terminal = None, None
+    previous_id, terminal, owner = None, None, None
     for event in events:
         step = _chain_step(authority, event, receipts)
         if step is None:
@@ -258,6 +269,9 @@ def verify_entity_history(authority, *, events, entity: Entity) -> DomainEvent:
         kind, claims, receipt, start = step
         if claims.get("predecessor_receipt_id") != previous_id:
             raise ValueError("authenticated StateChart receipt chain is broken")
+        if owner is not None and claims["owner_id"] != owner:
+            raise ValueError("authenticated receipt chain changes owner")
+        owner = claims["owner_id"]
         if previous_id is None and not start:
             raise ValueError("authenticated StateChart chain does not start at version zero")
         previous_id, terminal = receipt.event_id, (kind, claims, event, receipt)
@@ -290,6 +304,8 @@ def _chain_step(authority, event: DomainEvent, receipts: dict):
         return "transition", claims, receipt, start
     if event.name == ATTRIBUTES_EVENT:
         claims = authenticate_attributes(authority, event)
+        if claims["predecessor_receipt_id"] != expected_attribute_predecessor(claims):
+            raise ValueError("authenticated StateChart receipt chain is broken")
         return "attributes", claims, event, claims["version"] == 0 and claims["from_revision"] == 0
     return None
 

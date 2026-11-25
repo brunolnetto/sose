@@ -88,8 +88,16 @@ persistence the job hands its domain (`SimulationJob.domain_persistence`).
   closed on it.
 - A chain that starts at version 0 starts only from the chart's initial state: the
   job binds the domain registry to the wrapper each tick, and the first attribute
-  save of a version-zero entity whose type has a StateChart is refused in any other
-  state. Without a registry that first save is refused.
+  save of a version-zero entity whose type has a StateChart **in the job's registry**
+  is refused in any other state. A type that only another component registers is
+  treated as chart-less here; another owner's Engine then refuses the foreign chain
+  ("foreign owner") and the snapshot lists the entity as unattributed. Before the
+  registry is bound (`initialize`/seed), a save of an entity still at version 0,
+  revision 0 is stored unsigned, like a creation: nothing is signed, and the first
+  attested step checks the root.
+- `verify_history` also requires every receipt of a chain to be issued for one owner,
+  and each attribute receipt to name the receipt its own (version, revision)
+  implies, not only the previous one in the list.
 - The head of an entity's chain is found from the stored entity: revision 0 is the
   transition receipt of its version, revision `r > 0` the attribute receipt
   `(version, r)`. An existing receipt for the next revision or the next version
