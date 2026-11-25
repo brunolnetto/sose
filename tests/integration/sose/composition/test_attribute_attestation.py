@@ -7,16 +7,30 @@ the previous receipt. Without an authority nothing changes.
 """
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import replace
 from datetime import datetime, timezone
+from hashlib import sha256
+from hmac import new as hmac_new
 
 import pytest
 
 from sose.backends.simpy import SimPyBackend
 from sose.composition.organization_jobs import build_attested_component_jobs
 from sose.composition.organization_snapshot import snapshot_organization
-from sose.core.attestation_chain import ATTRIBUTES_EVENT, AttributeAttestingPersistence
-from sose.core.transition_authority import ATTESTATION_EVENT, TransitionAuthority
+from sose.core.attestation_chain import (
+    ATTRIBUTES_EVENT,
+    AttributeAttestingPersistence,
+    attribute_receipt_id,
+    seal_attributes,
+)
+from sose.core.events import DomainEvent
+from sose.core.transition_authority import (
+    ATTESTATION_EVENT,
+    TransitionAuthority,
+    _attributes_sha256,
+    _encoded,
+)
 from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry
 from sose.examples.catalog import builtin_catalog
@@ -195,13 +209,119 @@ def test_a_version_zero_chain_starts_only_from_the_initial_state():
             uow.save_entity(replace(stored, attributes={**stored.attributes, "z": 1}))
 
 
-def test_a_first_attribute_save_without_a_registry_is_refused():
+def test_before_a_registry_is_bound_a_root_save_is_stored_unsigned():
+    """During initialize/seed no registry is bound: nothing is signed, nothing refused."""
     store = MemoryPersistence()
     with store.transaction() as uow:
         uow.save_entity(Entity(id="e", entity_type="t", state="s", created_at=NOW, updated_at=NOW))
     wrapped = AttributeAttestingPersistence(store, authority=ROOT, owner_id="owner")
     entity = store.entity("t", "e")
     entity.attributes = {"n": 1}
+    with wrapped.transaction() as uow:
+        uow.save_entity(entity)
+    stored = store.entity("t", "e")
+    assert (stored.attributes, stored.attribute_revision) == ({"n": 1}, 0)
+    assert not any(e.name == ATTRIBUTES_EVENT for e in store.events())
+
+
+def test_an_unsigned_root_is_still_checked_once_a_registry_is_bound():
+    store = MemoryPersistence()
+    job = _run("warehouse_fulfillment", store, triggers=1)
+    registry = job.domain_persistence.registry
+    entity = next(e for e in store.entities() if e.version == 0
+                  and e.attribute_revision == 0 and registry.supports(e.entity_type))
+    job.domain_persistence.registry = None                 # as during initialize/seed
+    with job.domain_persistence.transaction() as uow:
+        uow.save_entity(replace(entity, attributes={**entity.attributes, "seeded": 1}))
+    with store.transaction() as uow:                       # raw, unsigned state write
+        uow.save_entity(replace(store.entity(*_key(entity)), state="forged"))
+    job.domain_persistence.registry = registry
+    with pytest.raises(ValueError, match="initial chart state"):
+        with job.domain_persistence.transaction() as uow:
+            stored = uow.get_entity(*_key(entity))
+            uow.save_entity(replace(stored, attributes={**stored.attributes, "z": 1}))
+
+
+def _key(entity):
+    return entity.entity_type, entity.id
+
+
+def _chartless_chain(store):
+    """A chart-less entity with one attribute receipt A(0,1) by ``owner-a``."""
+    with store.transaction() as uow:
+        uow.save_entity(Entity(id="e", entity_type="t", state="s", created_at=NOW, updated_at=NOW))
+    wrapped = AttributeAttestingPersistence(store, authority=ROOT, owner_id="owner-a",
+                                            registry=DomainRegistry())
+    entity = store.entity("t", "e")
+    entity.attributes = {"n": 1}
+    with wrapped.transaction() as uow:
+        uow.save_entity(entity)
+    return store.entity("t", "e"), next(e for e in store.events() if e.name == ATTRIBUTES_EVENT)
+
+
+def test_verification_refuses_a_chain_that_changes_owner():
+    store = MemoryPersistence()
+    first, receipt = _chartless_chain(store)
+    after = replace(first, attributes={"n": 2}, attribute_revision=2)
+    # Signed by the right key, but for another owner: the wrapper would refuse to
+    # issue it ("foreign owner"); verification must refuse it too.
+    foreign = seal_attributes(ROOT, before=first, after=after, owner_id="owner-b",
+                              predecessor=receipt)
+    with pytest.raises(ValueError, match="changes owner"):
+        ROOT.verify_history(events=[receipt, foreign], entity=after)
+
+
+def test_verification_refuses_an_attribute_receipt_naming_the_wrong_predecessor():
+    store = MemoryPersistence()
+    first, receipt = _chartless_chain(store)
+    after = replace(first, attributes={"n": 2}, attribute_revision=6)
+    claims = {
+        "kind": "attributes", "issuer_id": ROOT.issuer_id, "key_id": ROOT.key_id,
+        "owner_id": "owner-a", "entity_type": "t", "entity_id": "e", "version": 0,
+        "from_revision": 5, "to_revision": 6, "state": "s",
+        "attributes_sha256": _attributes_sha256(after), "updated_at": NOW.isoformat(),
+        "predecessor_receipt_id": receipt.event_id,      # but (0, 5) implies A(0,5)
+    }
+    signature = hmac_new(ROOT.secret, _encoded(claims), sha256).hexdigest()
+    skipped = DomainEvent(
+        event_id=attribute_receipt_id("t", "e", 0, 6), name=ATTRIBUTES_EVENT,
+        entity_type="t", entity_id="e", occurred_at=NOW, owner_id="owner-a",
+        causation_id=receipt.event_id, payload={**claims, "signature": signature},
+    )
+    with pytest.raises(ValueError, match="chain is broken"):
+        ROOT.verify_history(events=[receipt, skipped], entity=after)
+
+
+def test_the_engine_path_refuses_a_tampered_entity_after_version_zero_attribute_receipts():
+    """An entity at version 0, revision > 0 rewritten raw is refused by the Engine's
+    prestate check (validate_prestate with the chart), not only by verify_history."""
+    store = MemoryPersistence()
+    job = _run("warehouse_fulfillment", store, triggers=1)
+    registry = job.domain_persistence.registry
+    root = next(e for e in store.entities() if e.version == 0
+                and e.attribute_revision == 0 and registry.supports(e.entity_type))
+    with job.domain_persistence.transaction() as uow:      # signs A(0,1) from the root
+        uow.save_entity(replace(root, attributes={**root.attributes, "n": 1}))
+    entity = store.entity(*_key(root))
+    assert (entity.version, entity.attribute_revision) == (0, 1)
+    owner = job.job_id
+    for tampered in (replace(entity, state="forged"),
+                     replace(entity, attributes={**entity.attributes, "forged": True})):
+        with store.transaction() as uow:
+            uow.save_entity(tampered)
+            with pytest.raises(ValueError, match="contradicts the stored entity"):
+                ROOT.validate_prestate(uow=uow, before=uow.get_entity(*_key(entity)),
+                                       chart=registry.chart_for(deepcopy(tampered)),
+                                       owner_id=owner)
+
+
+def test_a_root_save_that_also_moves_the_revision_without_a_registry_is_refused():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_entity(Entity(id="e", entity_type="t", state="s", created_at=NOW, updated_at=NOW))
+    wrapped = AttributeAttestingPersistence(store, authority=ROOT, owner_id="owner")
+    entity = replace(store.entity("t", "e"), attributes={"n": 1}, attribute_revision=1)
     with pytest.raises(ValueError, match="needs the domain registry"):
         with wrapped.transaction() as uow:
             uow.save_entity(entity)
+    assert store.entity("t", "e").attribute_revision == 0
