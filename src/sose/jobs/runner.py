@@ -62,6 +62,18 @@ class JobTriggerResult:
     run_count: int
 
 
+def _domain_persistence(persistence, domain_warehouse, transition_authority, job_id):
+    """The persistence handed to domain code; under an authority it attests
+    attribute-only saves too (#494)."""
+    if transition_authority is not None:
+        return AttributeAttestingPersistence(
+            persistence, authority=transition_authority, owner_id=job_id,
+        )
+    if domain_warehouse is not None:
+        return DomainPersistence(persistence, domain_warehouse)
+    return persistence
+
+
 class SimulationJob(
     _JobLifecycleMixin,
     _BatchTriggerMixin,
@@ -113,16 +125,9 @@ class SimulationJob(
         self.max_ticks_per_trigger = max_ticks_per_trigger
         self.sink_bindings = sink_bindings
         self.domain_warehouse = domain_warehouse
-        self.domain_persistence = (
-            DomainPersistence(persistence, domain_warehouse)
-            if domain_warehouse is not None
-            else persistence
+        self.domain_persistence = _domain_persistence(
+            persistence, domain_warehouse, transition_authority, job_id,
         )
-        if transition_authority is not None:
-            # Attribute-only saves by domain code are attested too (#494).
-            self.domain_persistence = AttributeAttestingPersistence(
-                persistence, authority=transition_authority, owner_id=job_id,
-            )
         self.domain_outbox = (
             DomainMutationOutbox(persistence, domain_warehouse)
             if domain_warehouse is not None

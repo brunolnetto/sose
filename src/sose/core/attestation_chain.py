@@ -159,27 +159,36 @@ def expected_attribute_predecessor(claims: dict) -> str | None:
 
 
 class AttributeAttestingPersistence:
-    """Persistence whose units of work attest every attribute-only entity save."""
+    """Persistence whose units of work attest every attribute-only entity save.
 
-    def __init__(self, inner, *, authority, owner_id: str) -> None:
+    ``registry`` is the domain's ``DomainRegistry`` (the job binds it each tick). An
+    entity whose type has a StateChart starts its chain only from the chart's initial
+    state: signing a version-zero entity in any other state would turn an unsigned
+    state write into an authenticated chain. Without a registry such a first save is
+    refused.
+    """
+
+    def __init__(self, inner, *, authority, owner_id: str, registry=None) -> None:
         self._inner = inner
         self._authority = authority
         self._owner_id = owner_id
+        self.registry = registry
 
     @contextmanager
     def transaction(self, *args, **kwargs):
         with self._inner.transaction(*args, **kwargs) as uow:
-            yield _AttestingUnitOfWork(uow, self._authority, self._owner_id)
+            yield _AttestingUnitOfWork(uow, self._authority, self._owner_id, self.registry)
 
     def __getattr__(self, name):
         return getattr(self._inner, name)
 
 
 class _AttestingUnitOfWork:
-    def __init__(self, uow, authority, owner_id: str) -> None:
+    def __init__(self, uow, authority, owner_id: str, registry) -> None:
         self._uow = uow
         self._authority = authority
         self._owner_id = owner_id
+        self._registry = registry
 
     def save_entity(self, entity: Entity) -> None:
         existing = self._uow.get_entity(entity.entity_type, entity.id)
@@ -194,7 +203,8 @@ class _AttestingUnitOfWork:
         ):
             return self._uow.save_entity(entity)
         predecessor = self._authority.validate_prestate(
-            uow=self._uow, before=existing, chart=None, owner_id=self._owner_id,
+            uow=self._uow, before=existing, chart=self._root_chart(existing),
+            owner_id=self._owner_id,
         )
         after = deepcopy(entity)
         after.attribute_revision = existing.attribute_revision + 1
@@ -204,6 +214,16 @@ class _AttestingUnitOfWork:
         self._uow.append_event(receipt)
         # The caller keeps using its object: keep its revision in step with the store.
         entity.attribute_revision = after.attribute_revision
+
+    def _root_chart(self, existing: Entity):
+        """The chart that pins the initial state when a chain starts at version 0."""
+        if existing.version != 0 or existing.attribute_revision != 0:
+            return None
+        if self._registry is None:
+            raise ValueError("an attested first attribute save needs the domain registry")
+        if not self._registry.supports(existing.entity_type):
+            return None                   # no StateChart: the state is not chart-controlled
+        return self._registry.chart_for(deepcopy(existing))
 
     def __getattr__(self, name):
         return getattr(self._uow, name)

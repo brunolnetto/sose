@@ -57,9 +57,9 @@
   domain persistence attests every save that changes an entity's attributes without
   a transition. `Entity.attribute_revision` (omitted by the codec when 0) counts them
   within a version, and each issues an `engine.entity_attributes_attested` receipt
-  chained with the transition receipts. A rolled-back revision or a state change
-  without a transition fails closed. All 28 catalog domains now run attested and
-  verify; without an authority stored bytes are unchanged.
+  chained with the transition receipts. A rolled-back revision, a state change that
+  keeps the version, or a version-zero chain starting outside the chart's initial
+  state fails closed. All 28 catalog domains now run attested and verify.
   `TransitionAuthority.verify_history` now takes `events=` (the entity's chain events
   in commit order) instead of `transitions=`/`receipts_by_source=`.
 

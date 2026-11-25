@@ -18,6 +18,7 @@ from sose.composition.organization_snapshot import snapshot_organization
 from sose.core.attestation_chain import ATTRIBUTES_EVENT, AttributeAttestingPersistence
 from sose.core.transition_authority import ATTESTATION_EVENT, TransitionAuthority
 from sose.domain.entity import Entity
+from sose.domain.registry import DomainRegistry
 from sose.examples.catalog import builtin_catalog
 from sose.jobs.runner import SimulationJob
 from sose.persistence.codec import dumps
@@ -164,7 +165,9 @@ def test_the_caller_object_keeps_its_revision_in_step():
     store = MemoryPersistence()
     with store.transaction() as uow:
         uow.save_entity(Entity(id="e", entity_type="t", state="s", created_at=NOW, updated_at=NOW))
-    wrapped = AttributeAttestingPersistence(store, authority=ROOT, owner_id="owner")
+    # "t" has no StateChart in this registry, so its state is not chart-controlled.
+    wrapped = AttributeAttestingPersistence(store, authority=ROOT, owner_id="owner",
+                                            registry=DomainRegistry())
     entity = store.entity("t", "e")
     for value in (1, 2):
         entity.attributes = {"n": value}
@@ -175,3 +178,30 @@ def test_the_caller_object_keeps_its_revision_in_step():
         uow.save_entity(store.entity("t", "e"))
     assert sum(e.name == ATTRIBUTES_EVENT for e in store.events()) == 2
     ROOT.verify_history(events=list(store.events()), entity=store.entity("t", "e"))
+
+
+def test_a_version_zero_chain_starts_only_from_the_initial_state():
+    """Review of #685: an unsigned state write at version 0 must not get signed."""
+    store = MemoryPersistence()
+    job = _run("warehouse_fulfillment", store, triggers=1)
+    registry = job.domain_persistence.registry
+    entity = next(e for e in store.entities() if e.version == 0
+                  and e.attribute_revision == 0 and registry.supports(e.entity_type))
+    with store.transaction() as uow:                       # raw, unsigned state write
+        uow.save_entity(replace(entity, state="forged"))
+    with pytest.raises(ValueError, match="initial chart state"):
+        with job.domain_persistence.transaction() as uow:
+            stored = uow.get_entity(entity.entity_type, entity.id)
+            uow.save_entity(replace(stored, attributes={**stored.attributes, "z": 1}))
+
+
+def test_a_first_attribute_save_without_a_registry_is_refused():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_entity(Entity(id="e", entity_type="t", state="s", created_at=NOW, updated_at=NOW))
+    wrapped = AttributeAttestingPersistence(store, authority=ROOT, owner_id="owner")
+    entity = store.entity("t", "e")
+    entity.attributes = {"n": 1}
+    with pytest.raises(ValueError, match="needs the domain registry"):
+        with wrapped.transaction() as uow:
+            uow.save_entity(entity)

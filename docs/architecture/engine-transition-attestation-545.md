@@ -29,9 +29,9 @@ treat this receipt as a completed organizational execution certificate.
 
 ## Verifying receipts in the organization snapshot (#494)
 
-- **Verifying a history.** `TransitionAuthority.verify_history(transitions=...,
-  receipts_by_source=..., entity=...)` authenticates one entity's whole transition
-  history:
+- **Verifying a history.** `TransitionAuthority.verify_history(events=...,
+  entity=...)` authenticates one entity's whole receipt chain, given its transitions,
+  their receipts and its attribute receipts (below) in commit order:
   - each transition needs its own receipt;
   - each receipt must name the previous one, and the first names none;
   - the last receipt must describe the stored entity (version, state and attribute
@@ -82,7 +82,14 @@ persistence the job hands its domain (`SimulationJob.domain_persistence`).
   `(entity_type, entity_id, version, revision)`. It signs the state, the attribute
   digest and `updated_at`, and names the previous receipt of the entity (a
   transition receipt or an attribute receipt). Creations and Engine transitions pass
-  through; a state change without a transition is refused.
+  through. A save that changes the state while keeping the version is refused. A
+  save that also changes the version is not a transition the wrapper can tell from
+  the Engine's, so it passes, and the next attested step or `verify_history` fails
+  closed on it.
+- A chain that starts at version 0 starts only from the chart's initial state: the
+  job binds the domain registry to the wrapper each tick, and the first attribute
+  save of a version-zero entity whose type has a StateChart is refused in any other
+  state. Without a registry that first save is refused.
 - The head of an entity's chain is found from the stored entity: revision 0 is the
   transition receipt of its version, revision `r > 0` the attribute receipt
   `(version, r)`. An existing receipt for the next revision or the next version
@@ -95,9 +102,10 @@ persistence the job hands its domain (`SimulationJob.domain_persistence`).
   entity. The organization snapshot feeds each attributed machine's chain events.
 
 **Measured.** Every catalog domain run as an attested `SimulationJob` (seed 3, 30
-triggers) now verifies: 28 of 28. Without an authority, the stored events, entities
-and checkpoints of all 28 domains (seed 3, 10 triggers) are byte-identical to `main`
-before this change.
+triggers) now verifies: 28 of 28 (`test_every_catalog_domain_is_attestable`, marked
+slow). Without an authority, a one-off comparison (not a test) found the stored
+events, entities and checkpoints of all 28 domains (seed 3, 10 triggers)
+byte-identical to `main` before this change; the test suite checks one domain.
 
 **Limits.** A save made through the raw persistence, bypassing the wrapper, is not
 attested and is detected only at verification ("contradicts the stored entity").
