@@ -262,9 +262,15 @@ def test_the_tick_engine_refuses_an_authority_with_a_domain_warehouse():
     """Review of #684 (N4): a custom runtime whose Engine already has a warehouse."""
     real = builtin_catalog().get("tutorial_job")
 
+    class _WarehouseInUse:
+        """Fails at once if anything reaches it, so a missing guard fails, not hangs."""
+
+        def __getattr__(self, name):
+            raise AssertionError(f"the tick used the domain warehouse ({name})")
+
     def with_warehouse(*args, **kwargs):
         context, engine = real.build_runtime(*args, **kwargs)
-        engine.domain_warehouse = object()
+        engine.domain_warehouse = _WarehouseInUse()
         return context, engine
 
     job = SimulationJob(
