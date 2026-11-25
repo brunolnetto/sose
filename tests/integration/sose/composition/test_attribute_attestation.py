@@ -313,3 +313,15 @@ def test_the_engine_path_refuses_a_tampered_entity_after_version_zero_attribute_
                 ROOT.validate_prestate(uow=uow, before=uow.get_entity(*_key(entity)),
                                        chart=registry.chart_for(deepcopy(tampered)),
                                        owner_id=owner)
+
+
+def test_a_root_save_that_also_moves_the_revision_without_a_registry_is_refused():
+    store = MemoryPersistence()
+    with store.transaction() as uow:
+        uow.save_entity(Entity(id="e", entity_type="t", state="s", created_at=NOW, updated_at=NOW))
+    wrapped = AttributeAttestingPersistence(store, authority=ROOT, owner_id="owner")
+    entity = replace(store.entity("t", "e"), attributes={"n": 1}, attribute_revision=1)
+    with pytest.raises(ValueError, match="needs the domain registry"):
+        with wrapped.transaction() as uow:
+            uow.save_entity(entity)
+    assert store.entity("t", "e").attribute_revision == 0

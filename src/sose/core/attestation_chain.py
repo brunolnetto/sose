@@ -166,7 +166,8 @@ class AttributeAttestingPersistence:
     chart's initial state: signing a version-zero entity in any other state would turn
     an unsigned state write into an authenticated chain. A type absent from the
     registry (for example one only another component registers) is treated as
-    chart-less. Until a registry is bound (during ``initialize``/seed), a save of an
+    chart-less. Until a registry is bound (during ``initialize``/seed, and while the
+    first tick's runtime is being built), a save of an
     entity still at version 0, revision 0 is stored unsigned, like a creation: nothing
     is signed, so nothing is laundered, and the first attested step checks the root.
     """
@@ -231,6 +232,8 @@ class _AttestingUnitOfWork:
         """The chart that pins the initial state when a chain starts at version 0."""
         if existing.version != 0 or existing.attribute_revision != 0:
             return None
+        if self._registry is None:
+            raise ValueError("an attested first attribute save needs the domain registry")
         if not self._registry.supports(existing.entity_type):
             return None                   # no StateChart: the state is not chart-controlled
         return self._registry.chart_for(deepcopy(existing))

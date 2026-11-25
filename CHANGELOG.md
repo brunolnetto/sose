@@ -59,7 +59,8 @@
   within a version, and each issues an `engine.entity_attributes_attested` receipt
   chained with the transition receipts. A rolled-back revision, a state change that
   keeps the version, or a version-zero chain starting outside the chart's initial
-  state fails closed. Before the domain registry is bound (`initialize`/seed), a
+  state fails closed. Before the domain registry is bound (`initialize`/seed, or while the first
+  tick's runtime is built), a
   save of an entity still at version 0, revision 0 is stored unsigned, like a
   creation. `verify_history` also refuses a chain whose receipts change owner, or an
   attribute receipt naming a predecessor other than the one its revision implies.

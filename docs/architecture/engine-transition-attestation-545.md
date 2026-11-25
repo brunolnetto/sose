@@ -92,7 +92,8 @@ persistence the job hands its domain (`SimulationJob.domain_persistence`).
   is refused in any other state. A type that only another component registers is
   treated as chart-less here; another owner's Engine then refuses the foreign chain
   ("foreign owner") and the snapshot lists the entity as unattributed. Before the
-  registry is bound (`initialize`/seed), a save of an entity still at version 0,
+  registry is bound (`initialize`/seed, and while a process builds its first tick's
+  runtime), a save of an entity still at version 0,
   revision 0 is stored unsigned, like a creation: nothing is signed, and the first
   attested step checks the root.
 - `verify_history` also requires every receipt of a chain to be issued for one owner,
