@@ -158,7 +158,8 @@ def _assert_retry_is_a_no_op(store: PostgresPersistence, stale) -> None:
     before = _ship_evidence(store)
     runtime = engine(store)
     assert runtime.dispatch_scheduled(stale) is False
-    with pytest.raises(Exception):                         # shipped has no ship transition
+    # From shipped the chart makes no transition; the attested Engine refuses it.
+    with pytest.raises(ValueError, match="exactly one recorder-produced transition"):
         runtime.dispatch(_command("ship", "command:ship-again"))
     assert _ship_evidence(store)[1:3] == before[1:3]
     _assert_shipped_once(store)
@@ -170,7 +171,7 @@ def test_a_lost_commit_reply_leaves_one_complete_attested_ship(tmp_path):
     _seed_packed_with_pending_ship(namespace)
     with PostgresPersistence(DSN, namespace=namespace) as store:
         stale = pending_ship(store)
-    proxy = None
+    proxy = worker = None
     try:
         proxy, proxied, arm, claimed, dropped = _start_commit_reply_drop_proxy(
             DSN, port=_free_port(), tmp_path=tmp_path,
@@ -196,6 +197,9 @@ def test_a_lost_commit_reply_leaves_one_complete_attested_ship(tmp_path):
         assert worker.returncode != 0, ("an unacknowledged COMMIT was accepted", out, err)
         assert "psycopg" in err.lower() or "operationalerror" in err.lower(), err[-3000:]
     finally:
+        if worker is not None and worker.poll() is None:
+            worker.kill()
+            worker.communicate(timeout=10)
         if proxy is not None and proxy.poll() is None:
             proxy.kill()
             proxy.communicate(timeout=10)

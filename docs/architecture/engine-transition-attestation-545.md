@@ -140,7 +140,9 @@ a fresh direct connection.
 **Mutant check.** An Engine that commits the receipt in its own transaction after
 the transition fails the rollback test (a transition with no receipt survives). It
 passes the lost-reply test: after a successful COMMIT both transactions are durable.
-That test proves "no duplicate on retry", not indivisibility.
+That test proves "no duplicate on retry" and that the Command is consumed in the
+ship's own commit (an Engine consuming it in a separate transaction fails it), not
+that transition and receipt are indivisible.
 
 Not covered: a SIGKILL of the worker between statements (a killed connection rolls
 back like the injected failure, but this is not tested here), PostgreSQL writer-role
