@@ -14,6 +14,9 @@ class Entity:
     created_at: datetime | None = None
     updated_at: datetime | None = None
     version: int = 0
+    # Attested attribute-only saves within one version (#494); 0 otherwise. A
+    # transition resets it. The codec omits 0, so unattested entities keep their bytes.
+    attribute_revision: int = 0
 
     def touch(self, at: datetime) -> None:
         self.created_at = self.created_at or at

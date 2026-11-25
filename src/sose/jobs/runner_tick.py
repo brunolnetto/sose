@@ -203,6 +203,8 @@ class _TickExecutionMixin:
             if engine.domain_warehouse is not None:
                 raise ValueError("transition proof requires entity and event in one store")
             engine.transition_authority = self.transition_authority
+            # Attribute chains starting at version 0 are pinned to the initial state.
+            self.domain_persistence.registry = engine.registry
         backend = self.backend_factory(logical_time)
         engine.rebuild_backend(backend)
         run_until = getattr(backend, "run_until", None)

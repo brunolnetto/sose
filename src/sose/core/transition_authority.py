@@ -26,6 +26,14 @@ from sose.core.identity import deterministic_id
 from sose.domain.entity import Entity
 from sose.persistence.codec import dumps as codec_dumps
 
+from sose.core.attestation_chain import (
+    attribute_head as _attribute_head,
+    attribute_receipt_id,
+    head_receipt_id,
+    require_no_successor,
+    verify_entity_history,
+)
+
 
 ATTESTATION_EVENT = "engine.statechart_transition_attested"
 
@@ -130,6 +138,7 @@ class TransitionAuthority:
             "tick": event.tick, "correlation_id": event.correlation_id,
             "attributes_sha256": _attributes_sha256(after),
             "predecessor_receipt_id": _predecessor_claim(before, event, predecessor),
+            **_predecessor_revision_claim(before),
         }
         signature = hmac_new(self.secret, _encoded(claims), sha256).hexdigest()
         return DomainEvent(
@@ -178,19 +187,15 @@ class TransitionAuthority:
         """
         if type(before.version) is not int or before.version < 0:
             raise ValueError("unauthenticated prestate: invalid entity version")
-        initial = _initial_states(chart)
-        successor = uow.get_event(_receipt_id(
-            before.entity_type, before.id, before.version + 1,
-        ))
+        # chart is None for an attribute-only save (attestation_chain): no StateChart
+        # is involved, so the initial-state checks do not apply.
+        initial = None if chart is None else _initial_states(chart)
+        _require_unsigned_root(uow, before, initial)
+        require_no_successor(uow, before)
+        if before.attribute_revision > 0:
+            return _attribute_head(self, uow, before, owner_id)
         if before.version == 0:
-            if before.state not in initial or successor is not None:
-                raise ValueError(
-                    "unauthenticated prestate: version-zero entity must have "
-                    "its initial chart state and no transition history"
-                )
             return None
-        if successor is not None:
-            raise ValueError("trusted predecessor version replayed")
         head = uow.get_event(_receipt_id(before.entity_type, before.id, before.version))
         if head is None:
             raise ValueError("trusted predecessor history incomplete")
@@ -237,33 +242,13 @@ class TransitionAuthority:
             raise ValueError("authenticated StateChart receipt contradicts terminal projection")
         return receipt
 
-    def verify_history(
-        self, *, transitions, receipts_by_source: dict, entity: Entity,
-    ) -> DomainEvent:
-        """Authenticate one entity's whole transition history; return the head receipt.
+    def verify_history(self, *, events, entity: Entity) -> DomainEvent:
+        """Authenticate one entity's whole receipt chain; return its last receipt.
 
-        ``transitions`` are the entity's ``entity.state_transition`` events in commit
-        order, and ``receipts_by_source`` maps a source event id to its receipt. Each
-        transition needs its own receipt, each receipt must name the previous one
-        (the first names none), and the last must describe the stored ``entity``:
-        version, state and attribute digest. A forged, unsigned, reordered or
-        missing step, or a projection rewritten after the last receipt, fails closed.
+        ``events`` are the entity's events in commit order: its transitions, their
+        receipts and its attribute receipts. See ``attestation_chain``.
         """
-        if not transitions:
-            raise ValueError("no StateChart transition to authenticate")
-        previous_id = None
-        for event in transitions:
-            receipt = receipts_by_source.get(event.event_id)
-            if receipt is None:
-                raise ValueError("unattested StateChart transition: receipt missing")
-            claims = self._authenticate(receipt=receipt, event=event)
-            if claims.get("predecessor_receipt_id") != previous_id:
-                raise ValueError("authenticated StateChart receipt chain is broken")
-            if previous_id is None and claims.get("from_version") != 0:
-                raise ValueError("authenticated StateChart chain does not start at version zero")
-            previous_id = receipt.event_id
-        _require_stored_projection(claims, entity, event)
-        return receipt
+        return verify_entity_history(self, events=events, entity=entity)
 
     def _authenticate(self, *, receipt: DomainEvent, event: DomainEvent) -> dict:
         """Check receipt envelope, issuer MAC and signed evidence for ``event``."""
@@ -316,16 +301,35 @@ def _initial_states(chart) -> set[str]:
     return initial
 
 
+def _predecessor_revision_claim(before: Entity) -> dict:
+    """Set only after attested attribute saves, so older receipts keep their claims."""
+    return {"predecessor_revision": before.attribute_revision} if before.attribute_revision else {}
+
+
+def _require_unsigned_root(uow, before: Entity, initial) -> None:
+    """A never-attested entity is at its chart's initial state with no receipt yet."""
+    if before.version != 0 or before.attribute_revision != 0:
+        return
+    if (initial is not None and before.state not in initial) or uow.get_event(
+        _receipt_id(before.entity_type, before.id, 1),
+    ) is not None:
+        raise ValueError(
+            "unauthenticated prestate: version-zero entity must have "
+            "its initial chart state and no transition history"
+        )
+
+
 def _predecessor_claim(before: Entity, event: DomainEvent,
                        predecessor: DomainEvent | None) -> str | None:
-    """Return the predecessor receipt id to sign, refusing a mismatched link."""
+    """Return the predecessor receipt id to sign, refusing a mismatched link.
+
+    The predecessor is the head of the entity's chain: its transition receipt, or
+    its latest attribute receipt when attribute-only saves followed (#494).
+    """
     if predecessor is None:
         return None
-    expected = _receipt_id(before.entity_type, before.id, before.version)
-    if (
-        predecessor.event_id != expected
-        or predecessor.payload.get("to_version") != before.version
-    ):
+    expected = head_receipt_id(before)
+    if predecessor.event_id != expected:
         raise ValueError("Engine attestation predecessor receipt does not match prestate")
     return expected
 
@@ -371,10 +375,15 @@ def _require_anchored(claims: dict, before: Entity, initial: set[str], owner_id:
     if claims["owner_id"] != owner_id:
         raise ValueError("trusted predecessor has foreign owner")
     version = before.version
-    expected = None if version == 1 else _receipt_id(before.entity_type, before.id, version - 1)
+    revision = claims.get("predecessor_revision", 0)
+    if revision:
+        expected = attribute_receipt_id(before.entity_type, before.id, version - 1, revision)
+    else:
+        expected = None if version == 1 else _receipt_id(
+            before.entity_type, before.id, version - 1)
     if claims.get("predecessor_receipt_id") != expected:
         raise ValueError("trusted predecessor chain has missing version")
-    if version == 1 and claims["from_state"] not in initial:
+    if version == 1 and initial is not None and claims["from_state"] not in initial:
         raise ValueError("trusted predecessor chain does not start at the initial state")
 
 

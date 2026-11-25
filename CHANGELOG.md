@@ -52,10 +52,16 @@
   `SimulationJob`, `PersistentJobRunner` and `build_attested_component_jobs` accept a
   `transition_authority`. `authenticated` means a complete chain signed by that key
   and ending at the stored entity. It is not bound to the store: receipts copied
-  with their entity into another store authenticate there too. A domain that saves
-  entity attributes outside transitions is not attestable yet. A sweep of the catalog
-  found 7 of 28: construction, field_service, hospitality, insurance, transit and both
-  warehouse domains.
+  with their entity into another store authenticate there too.
+- Attested attribute-only saves (#494, #545): under a `transition_authority`, a job's
+  domain persistence attests every save that changes an entity's attributes without
+  a transition. `Entity.attribute_revision` (omitted by the codec when 0) counts them
+  within a version, and each issues an `engine.entity_attributes_attested` receipt
+  chained with the transition receipts. A rolled-back revision, a state change that
+  keeps the version, or a version-zero chain starting outside the chart's initial
+  state fails closed. All 28 catalog domains now run attested and verify.
+  `TransitionAuthority.verify_history` now takes `events=` (the entity's chain events
+  in commit order) instead of `transitions=`/`receipts_by_source=`.
 
 ### Fixed
 

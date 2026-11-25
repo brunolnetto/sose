@@ -148,10 +148,9 @@ def test_a_job_with_an_authority_issues_receipts_through_its_engine():
     receipts = {e.causation_id: e for e in events if e.name == ATTESTATION_EVENT}
     assert transitions and set(receipts) == {e.event_id for e in transitions}
     for event in transitions:
-        entity = store.entity(event.entity_type, event.entity_id)
-        own = [e for e in transitions if (e.entity_type, e.entity_id) == (
-            event.entity_type, event.entity_id)]
-        ROOT.verify_history(transitions=own, receipts_by_source=receipts, entity=entity)
+        key = (event.entity_type, event.entity_id)
+        own = [e for e in events if (e.entity_type, e.entity_id) == key]
+        ROOT.verify_history(events=own, entity=store.entity(*key))
 
 
 def test_an_authority_with_a_domain_warehouse_is_refused():
@@ -166,15 +165,15 @@ def test_an_authority_with_a_domain_warehouse_is_refused():
 def test_verify_history_refuses_an_empty_or_reordered_history():
     store = MemoryPersistence()
     _shipped_order(store)
-    events = store.events()
+    events = [e for e in store.events() if e.entity_id == "order-1"]
     transitions = [e for e in events if e.name == "entity.state_transition"]
-    receipts = {e.causation_id: e for e in events if e.name == ATTESTATION_EVENT}
+    receipts = [e for e in events if e.name == ATTESTATION_EVENT]
     entity = store.entity(ORDER, "order-1")
     with pytest.raises(ValueError, match="no StateChart transition"):
-        ROOT.verify_history(transitions=[], receipts_by_source=receipts, entity=entity)
-    reordered = [transitions[1], transitions[0], *transitions[2:]]
+        ROOT.verify_history(events=[], entity=entity)
+    reordered = [transitions[1], transitions[0], *transitions[2:], *receipts]
     with pytest.raises(ValueError, match="chain is broken"):
-        ROOT.verify_history(transitions=reordered, receipts_by_source=receipts, entity=entity)
+        ROOT.verify_history(events=reordered, entity=entity)
 
 
 def test_two_receipts_for_one_transition_fail_closed():

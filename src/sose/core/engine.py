@@ -102,6 +102,8 @@ class Engine:
                 uow=uow, before=before_transition, chart=chart, owner_id=self.owner_id,
             )
         chart.send(command.name, **dict(command.payload))
+        if entity.version != before_transition.version:
+            entity.attribute_revision = 0      # a transition starts a new version (#494)
         self._save_entity(uow, entity)
         emitted = self.context.drain_events()
         if authority is not None and (
