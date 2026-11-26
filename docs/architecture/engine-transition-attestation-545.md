@@ -305,11 +305,58 @@ Other PostgreSQL tests already cover the remaining #477 kill points:
   `test_postgres_pc6_uncertain_ack_commit`;
 - a death after a reservation committed:
   `test_postgres_pc6_federated_recovery` (`after_booking`);
-- a death before or after the certified-effect commit, and a lost certified-effect
-  reply: `test_postgres_pc6_uncertain_effect_commit`.
+- a transport loss before or after the certified-effect commit, and a lost
+  certified-effect reply: `test_postgres_pc6_uncertain_effect_commit`.
 
 Not covered:
 - a rollback inside the publish transaction;
 - a death inside the physical reservation transaction of the PC6 chain. Its OD-5a
   analogue (`pg_terminate_backend`) is
   `test_postgres_od5a_physical_backend_loss`.
+
+## Physical pools admitted against the resource ledger (#494, #496)
+
+Admission refused every `PhysicalPoolRef(pool_id, owner_id, consumer_ids)`, because it
+is only names. `snapshot_organization(..., physical_ledger=True)` now admits pools
+against the PostgreSQL temporal resource ledger. The rules are in
+`sose.composition.physical_pools`:
+
+- `owner_id` names the pool's ledger scope. The ledger stores no pool owner, only a
+  scope. For an organization-scoped pool, `owner_id` is its `organization_id`,
+  which must also be this organization. For a shared pool, it is the literal
+  `"shared"`. Exactly one registered pool has `pool_id` *within that scope*, so
+  another tenant's pool with the same id does not interfere;
+- every active (`reserved`) reservation in the pool by an owner of this
+  organization belongs to a declared consumer component. Released, preempted or
+  failed reservations are history: they are listed but not judged again;
+- an organization-scoped pool has no active reservation by a foreign owner;
+- components have distinct owners.
+
+Admission trusts the `PhysicalLedgerView` it is given; callers must obtain it from
+`read_physical_ledger`. With `physical_ledger=True`, an organization without pools
+does not read the ledger. A physical-pool snapshot refuses to run inside an outer
+`read_snapshot()`, whose view would predate the ledger read. Reading the ledger
+loads every tenant's pools and bookings in the namespace, one query per pool row.
+This is fine at current sizes and is not optimised.
+
+The ledger is read in the same REPEATABLE READ transaction as the rest of the
+snapshot. `OrganizationSnapshot.physical_pools` lists each pool's contract and this
+organization's reservations by component. In a shared pool, other owners' active
+units are counted (`external_reserved_units`) but not listed. The pools enter the
+digest only when the organization declares some, so existing digests are unchanged.
+
+`tests/e2e/sose/persistence/test_postgres_organization_physical_pools.py` covers:
+- refusal without the ledger;
+- an admitted pool, with a digest that is stable and changes with a new reservation;
+- an unregistered pool, a foreign organization, and a wrong owner or scope;
+- a non-consumer reservation and a foreign owner in an organization pool;
+- a shared pool counting outsiders;
+- an unchanged digest without pools (PostgreSQL and Memory agree);
+- the PostgreSQL-only guard.
+
+**Limits.**
+- Only the snapshot (and the job observation it calls) reads the ledger. The other
+  admission callers, which build, reattest and run jobs, still refuse physical
+  pools. Running an organization that declares pools is the next step.
+- The job-local SimPy queue (`ResourceDemand`/`ResourceReservation`) has no owner and
+  stays out of the snapshot.

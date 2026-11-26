@@ -53,6 +53,7 @@ def observe_organization_jobs(
     catalog,
     manifests,
     consumers,
+    physical_ledger=None,
 ) -> OrganizationJobCheckpointEvidence:
     """Read ONE job-state tuple after validating the exact admitted topology.
 
@@ -63,6 +64,7 @@ def observe_organization_jobs(
     """
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
+        physical_ledger=physical_ledger,
     )
     components = {component.component_id: component for component in definition.components}
     observed = _observed_declared_checkpoints(definition, persistence, components)

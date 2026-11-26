@@ -44,8 +44,13 @@ def validate_organization_admission(
     catalog,
     manifests,
     consumers,
+    physical_ledger=None,
 ) -> str:
     """Certify a static definition against executable PC6 registrations.
+
+    Physical pools are admitted only against ``physical_ledger``, a
+    ``PhysicalLedgerView`` read from the authoritative ledger (#496); without
+    it, a definition that declares pools is refused.
 
     This is admission, not an organizational runner. The supplied domain
     catalog is used to instantiate isolated *unseeded* runtime registries;
@@ -72,7 +77,11 @@ def validate_organization_admission(
             "operational policy/calendar/cost references require audited runtime admission"
         )
 
-    if definition.physical_pools:
+    if definition.physical_pools and physical_ledger is not None:
+        from .physical_pools import require_admitted_pools
+
+        require_admitted_pools(definition, physical_ledger)
+    elif definition.physical_pools:
         # A PhysicalPoolRef supplies only caller-controlled names, not proof
         # that a real pool exists with the declared owner, units, instances
         # or capacity. Do not admit the organizational graph as executable

@@ -73,6 +73,15 @@
   any. Install with `sose[attestation]` (`cryptography`). HMAC `TransitionAuthority`
   receipts are unchanged; both schemes now share `ReceiptAuthority`, and `Engine` and
   `SimulationJob` accept any `ReceiptAuthority`.
+- Physical pools in the organization snapshot (#494, #496):
+  `snapshot_organization(..., physical_ledger=True)` admits each `PhysicalPoolRef`
+  against the PostgreSQL temporal resource ledger. The pool must exist in the scope
+  its `owner_id` names. Active reservations by this organization's owners must
+  belong to declared consumers, and an organization pool must have no active
+  foreign owner.
+  The snapshot then lists the pools and this organization's reservations by
+  component, in the digest only when pools are declared. Other admission callers
+  still refuse physical pools.
 
 ### Fixed
 
