@@ -224,3 +224,29 @@ What the test proves: the per-owner `pg_advisory_xact_lock` taken by
 `transaction(owner_id=...)` serializes a withdraw against a claim of the same owner's
 work. Not covered: the same race across *different* owners (the lock is per owner),
 resource release intents, and boundary-message ACK (#496).
+
+## W2 RED mutant matrix (#494, #578)
+
+`tests/integration/sose/composition/test_w2_red_mutant_matrix.py` pairs each #578
+mutant with the oracle that must catch it. The oracle passes on the real code (GREEN)
+and fails with its own assertion message when the mutant is applied (RED). It runs
+in-process on Memory, so every mutant is exercised on every CI run; the PostgreSQL
+versions of these properties are in the e2e tests named below.
+
+| #578 mutant | Mutant applied | Oracle (PostgreSQL counterpart) |
+|---|---|---|
+| ignored picker capacity=2 | the SimPy resource is created with capacity 1 | two pick tasks run in parallel with two reservations (W1 capacity tests) |
+| premature consumption | work and Command are deleted in their own transaction before the claim | a claim that fails after its transition leaves the Command pending (`test_postgres_attested_uncertain_commit`) |
+| forged owner source | HMAC `TransitionAuthority._valid` accepts any signature | a chain signed by a foreign key (same issuer and key ids) is refused (`test_postgres_trusted_transition_receipts`, wrong root: "signature invalid") |
+| stale owner | the writer-epoch check is a no-op | a superseded writer cannot dispatch and leaves no receipt (`test_postgres_trusted_transition_receipts`, stale issuer after takeover; it fences `start_pick`) |
+| duplicate post-COMMIT effect | a consumed callback is re-inserted and executed | retrying a committed claim adds no transition and no receipt (`test_postgres_attested_uncertain_commit`, lost COMMIT reply) |
+
+The matrix shows these oracles are sensitive to these defects. It does not run the
+PostgreSQL tests under the mutants. Two rows are narrower than their labels:
+
+- "forged owner source" models a foreign signing key being accepted, not a forged
+  owner or issuer field;
+- the Memory oracle's duplicate-effect retry runs without an authority (the PostgreSQL
+  test retries with one), because on the attested path
+  the chart already refuses a second `ship`, which would mask a missing
+  consumed-callback guard.
