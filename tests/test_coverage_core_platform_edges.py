@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 from enum import Enum
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest

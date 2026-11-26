@@ -72,8 +72,6 @@ def test_postgres_domain_warehouse_rejects_non_string_options(tmp_path, name, va
 
 
 def test_postgres_domain_warehouse_resolves_dsn_env(tmp_path, monkeypatch):
-    import sys
-    import types
     import sose.domain.postgres as postgres_module
 
     captured = {}

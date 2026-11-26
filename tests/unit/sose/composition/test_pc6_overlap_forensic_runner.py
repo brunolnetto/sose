@@ -48,7 +48,6 @@ def test_capture_first_failed_worker_before_later_state_overwrites_evidence():
 
 
 def test_first_failure_is_persisted_before_stalled_peer_finishes(tmp_path):
-    from pathlib import Path
     from scripts.reproduce_pc6_pg_overlap import capture_first_worker_failure_once
 
     evidence_path = tmp_path / "run-001.first-failure.json"

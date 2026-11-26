@@ -1,4 +1,3 @@
-REFERENCE_OWNER_ID = "telecom-integration-reference"
 
 from sose.examples.telecom.simulation import (
     run_happy_path,
@@ -8,6 +7,8 @@ from sose.examples.telecom.foundation import (
     subscription_service_id,
     usage_record_id,
 )
+
+REFERENCE_OWNER_ID = "telecom-integration-reference"
 
 
 def test_postpaid_order_activates_service_and_records_usage():

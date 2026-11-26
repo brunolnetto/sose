@@ -93,7 +93,6 @@ def test_invoiced_order_recovers_missing_receivable_after_restart():
         owner_id=REFERENCE_OWNER_ID,
     )
     rebuilt_engine = rebuilt.engine
-    rebuilt_backend = rebuilt.backend
 
     receivable = ship_invoice_and_ensure_receivable(
         persistence,
@@ -121,7 +120,6 @@ def test_overdue_receivable_recovers_missing_collection_case_after_restart():
         owner_id=REFERENCE_OWNER_ID,
     )
     rebuilt_engine = rebuilt.engine
-    rebuilt_backend = rebuilt.backend
 
     first = ensure_collection_case(
         persistence,
@@ -175,7 +173,6 @@ def test_collection_followup_is_restart_equivalent():
         backend_factory=SimPyBackend,
         owner_id=REFERENCE_OWNER_ID,
     )
-    rebuilt_engine = rebuilt.engine
     rebuilt_backend = rebuilt.backend
 
     assert len(restarted.scheduled_work()) == 1

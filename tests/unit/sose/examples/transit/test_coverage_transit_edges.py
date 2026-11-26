@@ -327,7 +327,7 @@ def test_cancel_service_alert_is_idempotent_and_cleared_alert_is_not_cancelled()
     start = ORIGIN + timedelta(minutes=10)
     end = ORIGIN + timedelta(hours=2)
 
-    alert = schedule_service_alert(
+    schedule_service_alert(
         persistence,
         engine,
         alert_key="cancel-idempotent",

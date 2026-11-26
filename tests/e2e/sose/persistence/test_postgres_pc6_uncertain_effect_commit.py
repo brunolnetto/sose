@@ -13,7 +13,6 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from datetime import timedelta
 from pathlib import Path
 from unittest.mock import patch
 
@@ -21,7 +20,6 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 import pytest
 
-from sose.composition.recovery import TradingCustomerRecoveryRunner
 from sose.persistence.postgres import PostgresPersistence
 from tests.e2e.sose.persistence.test_postgres_infrastructure_chaos import (
     REPO_ROOT, _free_port, _start_proxy,

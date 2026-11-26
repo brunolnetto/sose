@@ -9,7 +9,7 @@ from sose.composition.boundary import (
     UnsupportedBoundaryContractError,
 )
 from sose.composition.model import (
-    BoundaryConsumption, BoundaryDelivery, BoundaryLease, BoundaryMessage,
+    BoundaryConsumption, BoundaryLease, BoundaryMessage,
     DeliveryStatus,
 )
 from sose.persistence.memory import MemoryPersistence

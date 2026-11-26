@@ -4,7 +4,7 @@ from sose.examples.p2p.scenarios import (
     receiving_congestion_scenario,
     supplier_delay_scenario,
 )
-from sose.examples.p2p.simulation import ORIGIN, build_runtime, seed_happy_path
+from sose.examples.p2p.simulation import build_runtime, seed_happy_path
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "procure-to-pay-reference-organization"

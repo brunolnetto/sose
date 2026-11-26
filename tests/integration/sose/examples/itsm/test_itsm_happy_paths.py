@@ -1,10 +1,11 @@
-REFERENCE_OWNER_ID = "itsm-integration-reference"
 
 from sose.examples.itsm.simulation import (
     run_escalation_path,
     run_happy_path,
 )
 from sose.examples.itsm.foundation import escalation_id
+
+REFERENCE_OWNER_ID = "itsm-integration-reference"
 
 
 def test_itsm_happy_path_closes_without_stale_runtime_truth():

@@ -1,4 +1,3 @@
-from sose.domain.delivery import DomainDelivery
 from sose.domain.entity import Entity
 from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.warehouse import DomainApplyResult, DomainMutation, MemoryDomainWarehouse

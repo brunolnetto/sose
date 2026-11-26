@@ -10,8 +10,9 @@ from sose.examples.cards_payments import simulation as cards
 from sose.examples.record_to_report import simulation as r2r
 from sose.persistence.memory import MemoryPersistence
 
-REFERENCE_OWNER_ID = "pc6-reference-identity-organization"
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
+
+REFERENCE_OWNER_ID = "pc6-reference-identity-organization"
 
 
 @pytest.mark.parametrize("adapter", ["memory", "sqlite"])

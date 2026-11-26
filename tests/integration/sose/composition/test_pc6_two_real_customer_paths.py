@@ -67,7 +67,6 @@ def test_two_real_pc6_customer_paths_preserve_identities_and_business_truth(adap
 
 
 def test_default_pc6_reference_flow_retains_frozen_identity():
-    from sose.examples.order_to_cash import simulation as o2c
     from sose.core.identity import deterministic_id
 
     result = run_customer_demand_path(organization_id="trading-customer-reference")

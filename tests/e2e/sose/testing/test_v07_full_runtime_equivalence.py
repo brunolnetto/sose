@@ -21,8 +21,9 @@ from sose.examples.mro.entities import WorkOrder
 from sose.examples.mro.statecharts import WorkOrderChart
 from sose.persistence.memory import MemoryPersistence
 
-OWNER_ID = "v07-runtime-organization"
 from sose.scenarios import AttributeEffect, EventTrigger, Scenario
+
+OWNER_ID = "v07-runtime-organization"
 
 ORIGIN = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 

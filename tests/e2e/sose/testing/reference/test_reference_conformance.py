@@ -1,4 +1,3 @@
-from pathlib import Path
 
 from sose.testing.conformance import (
     BASELINE_REFERENCE_CAPABILITIES,

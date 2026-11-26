@@ -3,7 +3,6 @@ from sose.examples.itsm.simulation import (
     ORIGIN,
     build_runtime,
     claim_next_incident,
-    release_incident_owner,
     resolve_incident,
     seed_reference,
     triage_and_queue,

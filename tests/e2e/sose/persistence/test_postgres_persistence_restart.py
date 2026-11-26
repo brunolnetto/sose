@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-OWNER_ID = "test-postgres_persistence_restart"
 
 from datetime import timedelta
 import os
@@ -17,6 +16,8 @@ from sose.examples.tutorial_job.simulation import (
 )
 from sose.persistence.postgres import PostgresPersistence
 from sose.testing.restart import restart_reference_runtime
+
+OWNER_ID = "test-postgres_persistence_restart"
 
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")

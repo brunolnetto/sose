@@ -1,5 +1,5 @@
 """#504: forced PostgreSQL overlap of same-owner fencing and foreign progress."""
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeout
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from threading import Event
 from uuid import uuid4

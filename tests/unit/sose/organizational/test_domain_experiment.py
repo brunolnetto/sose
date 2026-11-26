@@ -4,7 +4,6 @@ from dataclasses import dataclass
 from types import MappingProxyType
 
 import pytest
-from pydantic import ValidationError
 
 from sose.organizational.agency import AgencyLevel
 from sose.organizational.domain_experiment import (

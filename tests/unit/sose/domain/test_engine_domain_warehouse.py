@@ -11,8 +11,9 @@ from sose.domain.registry import DomainRegistry, EntityType
 from sose.domain.warehouse import DomainMutation, MemoryDomainWarehouse
 from sose.persistence.memory import MemoryPersistence
 
-REFERENCE_OWNER_ID = "warehouse-domain-organization"
 from statemachine import State, StateChart
+
+REFERENCE_OWNER_ID = "warehouse-domain-organization"
 
 class DemoChart(StateChart):
     planned = State(initial=True)

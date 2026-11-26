@@ -4,7 +4,7 @@ import pytest
 
 from sose.core.durable import DurableScheduler, RecoveryParticipant, RuntimeRebuilder
 from sose.core.events import Command
-from sose.core.runtime import ScheduledWork, SimulationPosition
+from sose.core.runtime import SimulationPosition
 from sose.persistence.memory import MemoryPersistence
 
 

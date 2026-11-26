@@ -221,7 +221,7 @@ def test_schedule_created_after_rebuild_is_enqueued_on_live_backend():
         target=work_order,
         key=("live-durable-schedule", work_order.id),
     )
-    scheduled = context.schedules.after(hours=2, command=command, priority=7)
+    context.schedules.after(hours=2, command=command, priority=7)
 
     assert len(backend.calls) == 1
     at, priority, key, callback = backend.calls[0]
@@ -515,7 +515,6 @@ def test_real_orphan_within_atomic_schedule_snapshot_is_rejected():
 
 
 def test_pending_reuses_active_sqlite_transaction_without_nested_begin(tmp_path):
-    import pytest
     from sose.core.events import Command
     from sose.persistence.sqlite import SQLitePersistence
     from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence

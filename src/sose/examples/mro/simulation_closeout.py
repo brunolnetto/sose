@@ -88,8 +88,6 @@ def reconcile_cancel(
             )
         )
 
-    tech_request_id = f"technician:{entities.work_order_id}"
-    bay_request_id = f"bay:{entities.work_order_id}"
     demand = persistence.entity("part_demand", entities.part_demand_id)
     if demand.state in {"open", "waiting_inventory"}:
         engine.dispatch(

@@ -54,7 +54,6 @@ def test_document_deadline_survives_restart():
         owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
-    rebuilt_engine = rebuilt.engine
     rebuilt_backend = rebuilt.backend
     rebuilt_backend.run_until(r_due)
 

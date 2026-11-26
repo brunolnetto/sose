@@ -1,4 +1,3 @@
-OWNER_ID = "test-tutorial_job"
 
 from datetime import timedelta
 
@@ -14,6 +13,8 @@ from sose.examples.tutorial_job.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime
+
+OWNER_ID = "test-tutorial_job"
 
 
 def test_tutorial_happy_path_completes_from_durable_schedule():

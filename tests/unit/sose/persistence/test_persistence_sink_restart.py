@@ -1,4 +1,3 @@
-OWNER_ID = "test-persistence_sink_restart"
 
 from datetime import timedelta
 
@@ -14,6 +13,8 @@ from sose.examples.tutorial_job.simulation import (
 from sose.persistence.jsonl_journal import JSONLJournalPersistence
 from sose.persistence.sqlite_incremental import SQLiteIncrementalPersistence
 from sose.testing.restart import restart_reference_runtime
+
+OWNER_ID = "test-persistence_sink_restart"
 
 
 @pytest.mark.parametrize(
