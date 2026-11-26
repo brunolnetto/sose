@@ -197,3 +197,30 @@ accepted key, is not implemented; a verifier accepts exactly one `(issuer_id,
 key_id, public_key)`. A PostgreSQL writer role that stops public writers from
 appending receipt rows is not implemented either. Such rows are rejected at
 verification, which is the integrity property, but they can still deny availability.
+
+## Cancel versus claim of the same attested work (#494, #578)
+
+`tests/e2e/sose/persistence/test_postgres_cancel_vs_dispatch.py` races two OS processes
+on one durable scheduled `ship` on real PostgreSQL. One process claims it with an
+attested `Engine.dispatch_scheduled`, and the other withdraws it with
+`DurableScheduler.cancel`. The interleaving is forced in both orders. The first
+process stops inside its writing transaction, after taking the per-owner advisory
+lock and reading the work. The parent confirms in `pg_stat_activity` that the other
+process is waiting on that lock, and only then lets the first commit.
+
+- **Claim first:** shipped exactly once, with one transition and one receipt. The
+  transition's `causation_id` and the receipt's `command_id` are the `ship` Command,
+  the receipt names the transition, and `verify_history` passes. `cancel` returns
+  `False`.
+- **Cancel first:** still `packed`, with no ship transition and no receipt.
+  `dispatch_scheduled` returns `False`.
+- **Either way:** the work and its Command are gone.
+
+**RED mutant.** A cancel whose transaction skips the owner lock does not wait. Both
+sides commit: the cancel reports `True`, yet the order shipped and holds a receipt.
+That is a ghost withdraw, and the test asserts it to show the oracle sees it.
+
+What the test proves: the per-owner `pg_advisory_xact_lock` taken by
+`transaction(owner_id=...)` serializes a withdraw against a claim of the same owner's
+work. Not covered: the same race across *different* owners (the lock is per owner),
+resource release intents, and boundary-message ACK (#496).
