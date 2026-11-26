@@ -275,3 +275,41 @@ the configured policy, not a defect, and no aging policy exists. This test does 
 cover preemption. Temporal ledger preemption surviving a reopen is covered by
 `test_postgres_temporal_resource_ledger`; the preemptive queue rebuild
 (`core/preemption_rebuild.py`) is not covered here.
+
+## Lost COMMIT reply at each boundary step (#494, #477)
+
+`tests/e2e/sose/persistence/test_postgres_boundary_lost_commit_reply.py` runs
+`BoundaryService.publish`, `claim_next` and `consume` in a worker over the #584 wire
+proxy. The proxy is armed inside one stage's write transaction, after its rows were
+written. It forwards that COMMIT, sees the backend's CommandComplete, and drops the
+reply, so the worker fails with a transport error. The parent then reads the outcome
+on a fresh direct connection and retries as a caller would:
+
+- **publish:** one message and one PENDING delivery. A retried publish returns the
+  same delivery and adds nothing.
+- **claim:** one CLAIMED delivery at epoch 1, which nobody else can claim before the
+  lease expires. After expiry a new claim gets epoch 2, the unconfirmed epoch-1 lease
+  is refused at ACK (`StaleBoundaryClaimError`), and the new lease ACKs.
+- **ACK:** one consumption, the delivery CONSUMED and the Command staged once. A retry
+  returns that consumption, and a counting handler shows zero further calls. The
+  CONSUMED short-circuit answers before any lease check, so the lease used does not
+  matter.
+
+Each case ends with exactly one message, delivery, consumption and Command. The test
+was repeated 3 times (9/9). As a one-off mutant check, not kept as a test, a `consume`
+that is not idempotent on an already-CONSUMED delivery made the ACK case fail.
+
+Other PostgreSQL tests already cover the remaining #477 kill points:
+- an OS kill between steps and a rollback inside the ACK:
+  `test_postgres_pc6_full_real_domain_recovery` and
+  `test_postgres_pc6_uncertain_ack_commit`;
+- a death after a reservation committed:
+  `test_postgres_pc6_federated_recovery` (`after_booking`);
+- a death before or after the certified-effect commit, and a lost certified-effect
+  reply: `test_postgres_pc6_uncertain_effect_commit`.
+
+Not covered:
+- a rollback inside the publish transaction;
+- a death inside the physical reservation transaction of the PC6 chain. Its OD-5a
+  analogue (`pg_terminate_backend`) is
+  `test_postgres_od5a_physical_backend_loss`.
