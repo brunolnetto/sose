@@ -19,11 +19,13 @@ Every builtin domain reference executes exactly one canonical case per run.
   fixes `demand={"sales_orders": 1}` and expresses deviations as flags
   (`partial_fulfillment`, `overdue_collection`). `recurring-domain-jobs.md`
   requires reconcilers to be "explicit about configured happy/sad-path choices".
-- StateCharts declare transition weights through `@probabilistic_transitions`
-  (MRO declares `cancel` 0.02 and `wait_for_material` 0.20, for example), and the
-  engine exposes `StateChartFactory.decide()`. No domain, composition or
-  organizational module calls `decide()`, so the stochastic layer designed in
-  v0.3 (`docs/probabilistic-transition-graph.md`) is not exercised by the domains.
+- Some StateCharts declare transition weights through `@probabilistic_transitions`
+  (MRO declares `cancel` 0.02 and `wait_for_material` 0.20, for example). Others
+  exclude every event from sampling; the ITSM `IncidentChart` is one. The engine
+  exposes `Engine.choose_transition()` and `Engine.dispatch_probabilistic()`, both
+  built on `StateChartFactory.decide()`. No domain, composition or organizational
+  module calls them, so the stochastic layer designed in v0.3
+  (`docs/probabilistic-transition-graph.md`) is not exercised by the domains.
 - The only arrival generator is the synthetic queue reference
   (`organizational/synthetic_runner.py`: Poisson arrivals, M/G/1 analytical
   reference). It is separate from the 28 catalog domains.
@@ -38,12 +40,14 @@ The consequence is that domain runs carry no volume and no variation. Rate metri
 over a population (escalation rate, reopen rate, on-time rate, defect rate, fill
 rate) are 0 or 1 by construction. Downstream consumers of the canonical experiment
 data product (ADR-0005), such as dbt metric catalogs, cannot derive meaningful
-metrics from them. A survey of an external 210-metric business catalog found about
-40 metrics with structural support in SOSE domains, and almost none with
-statistically meaningful values today.
+metrics from them. A survey of an external 210-metric business catalog
+(`docs/architecture/metric-catalog-derivation.md`) found 34 metrics that need only
+workload mode, 62 more that also need modeled attributes on an existing domain, and
+almost none with statistically meaningful values today.
 
 No ADR forbids volume. The engine, scheduler, durable resources and persistence
-already run many owners and cases (PC6, OD-5a). What is missing is a domain-level
+already run many owners and cases (the PC6 multi-flow and multi-organization
+tests). What is missing is a domain-level
 workload primitive and the wiring of transition sampling.
 
 ## Decision
@@ -72,9 +76,12 @@ existing canonical reference mode.
    reproducible from its configuration and root seed. Case identities are
    deterministic (`deterministic_id`), so restart and replay produce the same
    cases.
-4. **Sampled transitions.** In workload mode, a reconciler at a decision point asks
-   `decide()` for the next enabled event. It uses the chart's declared weights, or
-   weights overridden by configuration within declared bounds. Configured flags
+4. **Sampled transitions.** In workload mode, a reconciler at a decision point
+   uses the existing engine API (`Engine.choose_transition()` or
+   `Engine.dispatch_probabilistic()`) to pick the next enabled event. The pick uses
+   the chart's declared weights, or weights overridden by configuration within
+   declared bounds. A chart that excludes its decision events from sampling must
+   declare weights for them before its domain supports workload mode. Configured flags
    remain available, as a degenerate weight of 0 or 1, so a canonical path can
    still be forced.
 5. **Ground truth reclassified for workload runs** (ADR-0003 taxonomy):
@@ -115,7 +122,9 @@ existing canonical reference mode.
 - Workload runs have statistical, not exact, mechanistic ground truth. Comparisons
   need tolerances and sample-size rules.
 - Each domain must expose a case constructor and decision points before it
-  supports workload mode. This is incremental work per domain.
+  supports workload mode, and declare transition weights where its charts exclude
+  them (the ITSM chart excludes all of its events today). This is incremental work
+  per domain.
 - Larger runs make the PostgreSQL adapter's per-transaction cost (O(state)) more
   visible.
 
@@ -168,6 +177,11 @@ behaviour of every existing job, and it would break exact per-case ground truth.
   counts and branch frequencies fall within the declared tolerances of their
   mechanistic expectations across a seed sample.
 - Invariants hold for every case in every workload run.
+
+## Notes
+
+Workload mode is a data-generation capability. It does not change scientific
+admission: OD-5a and other prospective studies keep their own gates.
 
 ## References
 
