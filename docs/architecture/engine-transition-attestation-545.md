@@ -291,14 +291,25 @@ on a fresh direct connection and retries as a caller would:
   lease expires. After expiry a new claim gets epoch 2, the unconfirmed epoch-1 lease
   is refused at ACK (`StaleBoundaryClaimError`), and the new lease ACKs.
 - **ACK:** one consumption, the delivery CONSUMED and the Command staged once. A retry
-  with the same lease returns that consumption without running the handler again.
+  returns that consumption, and a counting handler shows zero further calls. The
+  CONSUMED short-circuit answers before any lease check, so the lease used does not
+  matter.
 
 Each case ends with exactly one message, delivery, consumption and Command. The test
 was repeated 3 times (9/9). As a one-off mutant check, not kept as a test, a `consume`
 that is not idempotent on an already-CONSUMED delivery made the ACK case fail.
 
-Other PostgreSQL tests already cover the remaining #477 kill points: an OS kill
-between steps, rollback inside the ACK, death around reservation and certified-effect
-commit, and a lost certified-effect reply. Not covered: a rollback inside the
-publish transaction, and a death inside the physical reservation transaction of the
-PC6 chain.
+Other PostgreSQL tests already cover the remaining #477 kill points:
+- an OS kill between steps and a rollback inside the ACK:
+  `test_postgres_pc6_full_real_domain_recovery` and
+  `test_postgres_pc6_uncertain_ack_commit`;
+- a death after a reservation committed:
+  `test_postgres_pc6_federated_recovery` (`after_booking`);
+- a death before or after the certified-effect commit, and a lost certified-effect
+  reply: `test_postgres_pc6_uncertain_effect_commit`.
+
+Not covered:
+- a rollback inside the publish transaction;
+- a death inside the physical reservation transaction of the PC6 chain. Its OD-5a
+  analogue (`pg_terminate_backend`) is
+  `test_postgres_od5a_physical_backend_loss`.

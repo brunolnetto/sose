@@ -18,8 +18,8 @@ connection and retries as a real caller would:
   lease expires. After that, a new claim gets epoch 2, the old (epoch 1) lease is
   refused at ACK, and the new one ACKs.
 - **ACK:** one consumption, the delivery CONSUMED and the Command staged once. A
-  retry with the same lease returns that consumption without running the handler
-  again.
+  retry returns that consumption, and a counting handler shows it is not run again
+  (the CONSUMED short-circuit answers before any lease check).
 
 In every case the chain ends with exactly one consumption and one Command.
 """
@@ -65,10 +65,12 @@ def message() -> BoundaryMessage:
     )
 
 
-def registry() -> BoundaryConsumerRegistry:
+def registry(calls: list | None = None) -> BoundaryConsumerRegistry:
     handlers = BoundaryConsumerRegistry()
 
     def stage_effect(_message, uow):
+        if calls is not None:
+            calls.append(_message.message_id)
         uow.save_command(Command(command_id=EFFECT, name="do_business",
                                  entity_type="shipment", entity_id="shipment-1", due_at=NOW))
         return EFFECT
@@ -135,7 +137,8 @@ def _lose_reply_at(stage: str, namespace: str, tmp_path) -> None:
             termination_timeout=10,
         )
         assert dropped.read_text(encoding="utf-8") == "commit_complete_response_dropped"
-        assert claimed.is_file() and not arm.exists()
+        assert claimed.read_text(encoding="utf-8") == f"armed_after_{stage}_rows"
+        assert not arm.exists()
         try:
             out, err = worker.communicate(timeout=30)
         except subprocess.TimeoutExpired:
@@ -143,7 +146,7 @@ def _lose_reply_at(stage: str, namespace: str, tmp_path) -> None:
             out, err = worker.communicate(timeout=10)
             pytest.fail(f"the worker never observed the severed {stage} reply")
         assert worker.returncode != 0, ("an unacknowledged COMMIT was accepted", out, err)
-        assert "psycopg" in err.lower() or "operationalerror" in err.lower(), err[-3000:]
+        assert "OperationalError" in err, err[-3000:]
     finally:
         for process in (worker, proxy):
             if process is not None and process.poll() is None:
@@ -205,6 +208,8 @@ def test_a_lost_commit_reply_at_each_boundary_step_recovers_exactly_once(stage, 
         else:
             assert delivery.status is DeliveryStatus.CONSUMED
             assert len(consumptions) == len(effects) == 1
-            again = service.consume(lease=_lease_from(delivery), registry=registry(), now=NOW)
+            calls: list = []
+            again = service.consume(lease=_lease_from(delivery), registry=registry(calls), now=NOW)
             assert again == consumptions[0], "the retry returns the committed ACK"
+            assert calls == [], "the retry did not run the handler again"
         _assert_done_once(store)
