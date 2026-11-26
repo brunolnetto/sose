@@ -25,7 +25,8 @@ their delivery status and consumption, and a ``digest``: SHA-256 over the
 canonical JSON of everything else. The same durable state yields the same digest
 on every adapter and after a restart.
 
-Not included: resources and physical pools (admission still refuses physical pools),
+Not included: the job-local resource queue (it has no owner); physical pools only with
+``physical_ledger`` (below),
 operational policy/calendar/cost references, and any claim of authority (#545).
 Refused: components sharing one ``owner_id`` (owner-qualified attribution needs
 distinct owners), and jobs whose entities live in a domain warehouse rather than the
@@ -33,7 +34,8 @@ namespace (their transitioned machines have no stored state here and fail closed
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from contextlib import contextmanager
+from dataclasses import asdict, dataclass, field
 from hashlib import sha256
 import json
 from typing import TYPE_CHECKING
@@ -45,6 +47,7 @@ from sose.persistence.base import ReadSnapshot
 from .job_observation import DeclaredJobCheckpoint, observe_organization_jobs
 from .observation import _component_entity_types, _is_observed_transition
 from .organization import OrganizationDefinition, validate_organization_admission
+from .physical_pools import PoolSnapshot, pool_snapshots, read_physical_ledger
 
 if TYPE_CHECKING:
     from sose.persistence.base import Persistence
@@ -104,6 +107,8 @@ class OrganizationSnapshot:
     boundary: tuple[BoundaryRecord, ...]
     authenticated_key_id: str | None
     digest: str
+    # Admitted physical pools (#496); in the digest only when the organization has any.
+    physical_pools: tuple[PoolSnapshot, ...] = field(default=())
 
 
 def snapshot_organization(
@@ -114,6 +119,7 @@ def snapshot_organization(
     manifests,
     consumers,
     transition_authority=None,
+    physical_ledger: bool = False,
 ) -> OrganizationSnapshot:
     """Project one coherent read of ``persistence`` onto the admitted components.
 
@@ -121,20 +127,26 @@ def snapshot_organization(
     must form a chain of HMAC receipts issued by that authority and ending at the
     stored entity; a forged, unsigned or rewritten step fails closed, and every
     machine is marked ``authenticated``.
+
+    With ``physical_ledger`` (PostgreSQL only), the declared physical pools are
+    admitted against the resource ledger, read in the same REPEATABLE READ
+    transaction as the rest of the snapshot, and listed in ``physical_pools``.
     """
     if not isinstance(persistence, ReadSnapshot):
         raise TypeError("a canonical organization snapshot requires read_snapshot()")
-    fingerprint = validate_organization_admission(
-        definition, catalog=catalog, manifests=manifests, consumers=consumers,
-    )
     components = tuple(sorted(definition.components, key=lambda c: c.component_id))
     owner_ids = [component.owner_id for component in components]
     if len(owner_ids) != len(set(owner_ids)):
         raise ValueError("an owner-qualified snapshot requires distinct component owner_id")
-    types_by_owner = _component_entity_types(components, catalog)
-    with persistence.read_snapshot() as view:
+    with _coherent_read(persistence, physical_ledger) as (view, ledger):
+        fingerprint = validate_organization_admission(
+            definition, catalog=catalog, manifests=manifests, consumers=consumers,
+            physical_ledger=ledger,
+        )
+        types_by_owner = _component_entity_types(components, catalog)
         jobs = observe_organization_jobs(
             definition, view, catalog=catalog, manifests=manifests, consumers=consumers,
+            physical_ledger=ledger,
         ).jobs
         machines, transitions, unattributed = _machines(
             view, types_by_owner, transition_authority,
@@ -155,7 +167,26 @@ def snapshot_organization(
             None if transition_authority is None else transition_authority.key_id
         ),
     )
-    return OrganizationSnapshot(**body, digest=_digest(body))
+    pools = () if ledger is None else pool_snapshots(definition, ledger)
+    digested = {**body, "physical_pools": pools} if pools else body
+    return OrganizationSnapshot(**body, digest=_digest(digested), physical_pools=pools)
+
+
+@contextmanager
+def _coherent_read(persistence, physical_ledger: bool):
+    """One read view, plus the physical ledger read in the same transaction."""
+    if not physical_ledger:
+        with persistence.read_snapshot() as view:
+            yield view, None
+        return
+    connection = getattr(persistence, "_connection", None)
+    if connection is None or not callable(getattr(persistence, "temporal_resources", None)):
+        raise TypeError("physical pools in a snapshot require the PostgreSQL resource ledger")
+    with connection.transaction():
+        connection.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        ledger = read_physical_ledger(persistence)
+        with persistence.read_snapshot() as view:
+            yield view, ledger
 
 
 def _machines(view, types_by_owner, authority=None):

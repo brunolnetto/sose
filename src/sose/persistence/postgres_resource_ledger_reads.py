@@ -107,6 +107,13 @@ class LedgerReadsMixin:
     def get(self, reservation_id: str) -> TemporalReservation | None:
         return self._get_booking(reservation_id)
 
+    def pools(self) -> tuple[ResourcePoolContract, ...]:
+        """Every registered pool contract, in pool-key order."""
+        rows = self._db.execute(sql.SQL(
+            "SELECT pool_key FROM {} ORDER BY pool_key",
+        ).format(self._pools)).fetchall()
+        return tuple(self._pool(row[0]) for row in rows)
+
     def reservations(self) -> tuple[TemporalReservation, ...]:
         rows = self._db.execute(sql.SQL("""
             SELECT reservation_id, pool_key, instance_id, owner_id, start_at,
