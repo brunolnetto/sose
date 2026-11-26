@@ -158,3 +158,31 @@ def test_a_missing_cryptography_package_names_the_extra(monkeypatch):
     monkeypatch.setitem(sys.modules, "cryptography.exceptions", None)
     with pytest.raises(ImportError, match=r"sose\[attestation\]"):
         Ed25519TransitionVerifier("i", "k", VERIFIER.public_key)
+
+
+@pytest.mark.parametrize("backend", ["memory", "sqlite"])
+def test_a_verifier_cannot_attest_an_attribute_save(backend, tmp_path):
+    from sose.core.attestation_chain import AttributeAttestingPersistence
+    from sose.domain.entity import Entity
+    from sose.domain.registry import DomainRegistry
+    from sose.persistence.sqlite import SQLitePersistence
+
+    store = MemoryPersistence() if backend == "memory" else SQLitePersistence(tmp_path / "s.db")
+    with store.transaction() as uow:
+        uow.save_entity(Entity(id="e", entity_type="t", state="s", created_at=NOW, updated_at=NOW))
+    wrapped = AttributeAttestingPersistence(store, authority=VERIFIER, owner_id="owner",
+                                            registry=DomainRegistry())
+    entity = replace(store.entity("t", "e"), attributes={"n": 1})
+    with pytest.raises(PermissionError, match="cannot issue receipts"):
+        with wrapped.transaction() as uow:
+            uow.save_entity(entity)
+    stored = store.entity("t", "e")
+    assert (stored.attributes, stored.attribute_revision) == ({}, 0)
+    assert not any(e.name == ATTRIBUTES_EVENT for e in store.events())
+
+
+def test_an_upper_cased_signature_is_not_the_same_receipt(signed_store):
+    receipt = next(e for e in signed_store.events() if e.name == ATTRIBUTES_EVENT)
+    data = {**receipt.payload, "signature": receipt.payload["signature"].upper()}
+    with pytest.raises(ValueError, match="signature missing"):
+        VERIFIER._require_signed(data, "attribute receipt")

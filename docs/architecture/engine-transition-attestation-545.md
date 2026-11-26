@@ -166,7 +166,10 @@ separately managed root". `sose.core.ed25519_authority` provides it:
   save, inside the transaction, so nothing is written.
 - Ed25519 receipts carry `"algorithm": "ed25519"` and a 128-hex-digit signature. An
   HMAC authority refuses them, and an Ed25519 verifier refuses HMAC receipts
-  ("signature missing"). HMAC receipts are byte-for-byte unchanged.
+  ("signature missing"). Only lower-case hex is accepted, so an upper-cased copy of a
+  receipt does not verify. HMAC receipts are unchanged: an independent review compared
+  the 82 receipt payloads of `warehouse_fulfillment` (seed 3, 12 triggers) on `main`
+  and on this change and found them identical (a one-off check, not a test).
 - The signing schemes share `ReceiptAuthority`, which holds the chain logic; each
   scheme implements only how to sign and check a signature. Pure claim checks moved
   to `sose.core.receipt_claims` and are re-exported from `transition_authority`.
@@ -176,7 +179,8 @@ separately managed root". `sose.core.ed25519_authority` provides it:
 **Tests.** `tests/integration/sose/composition/test_ed25519_receipts.py`:
 - a `warehouse_fulfillment` job signed with Ed25519, with transition and attribute
   receipts, verifies from the public key alone;
-- a verifier configured as the job's authority writes no receipt and no entity change;
+- a verifier configured as the job's authority writes no receipt and no entity change,
+  on the transition path (Memory) and the attribute path (Memory, SQLite);
 - receipts signed by another key with the same issuer and key ids fail;
 - HMAC and Ed25519 receipts are not interchangeable;
 - tampering with a claim, or stripping `algorithm`, fails;

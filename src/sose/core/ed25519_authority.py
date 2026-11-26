@@ -40,8 +40,9 @@ def _crypto():
 
 def _well_formed(signature, data: dict) -> bool:
     return (
+        # Lower-case hex only, as issued: an upper-cased copy is not the same receipt.
         isinstance(signature, str) and len(signature) == 128
-        and data.get("algorithm") == ALGORITHM
+        and signature == signature.lower() and data.get("algorithm") == ALGORITHM
     )
 
 

@@ -59,20 +59,20 @@
   within a version, and each issues an `engine.entity_attributes_attested` receipt
   chained with the transition receipts. A rolled-back revision, a state change that
   keeps the version, or a version-zero chain starting outside the chart's initial
-  state fails closed. Before the domain registry is bound (`initialize`/seed, or while the first
-  tick's runtime is built), a
-  save of an entity still at version 0, revision 0 is stored unsigned, like a
-  creation. `verify_history` also refuses a chain whose receipts change owner, or an
-  attribute receipt naming a predecessor other than the one its revision implies.
-  All 28 catalog domains now run attested and verify.
+  state fails closed. Before the domain registry is bound (`initialize`/seed, or
+  while the first tick's runtime is built), a save of an entity still at version 0,
+  revision 0 is stored unsigned, like a creation. `verify_history` also refuses a
+  chain whose receipts change owner, or an attribute receipt naming a predecessor
+  other than the one its revision implies. All 28 catalog domains now run attested
+  and verify. `TransitionAuthority.verify_history` now takes `events=` (the
+  entity's chain events in commit order) instead of
+  `transitions=`/`receipts_by_source=`.
 - Ed25519 transition receipts (#494, #545): `Ed25519TransitionAuthority` signs
   transition and attribute receipts with a private key, and
   `Ed25519TransitionVerifier` checks them from the public key alone and cannot issue
   any. Install with `sose[attestation]` (`cryptography`). HMAC `TransitionAuthority`
   receipts are unchanged; both schemes now share `ReceiptAuthority`, and `Engine` and
   `SimulationJob` accept any `ReceiptAuthority`.
-  `TransitionAuthority.verify_history` now takes `events=` (the entity's chain events
-  in commit order) instead of `transitions=`/`receipts_by_source=`.
 
 ### Fixed
 
