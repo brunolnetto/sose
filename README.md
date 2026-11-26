@@ -28,6 +28,8 @@ healthcare, aviation, insurance, payments, telecom and more.
   must stay at or above 95%, and a quality ratchet must pass.
 - **Known limitation: one case per run.** Every builtin domain runs a single
   configured reference case, with its happy or sad path chosen by configuration.
+  `energy_utilities` is a partial exception: it records a recurring meter reading
+  on every tick.
   This keeps exact ground truth and frozen scientific evidence, but it produces no
   volume or variation for population metrics. A seeded, opt-in **workload mode** is
   proposed in [ADR-0012](docs/architecture/decisions/adr-0012-seeded-domain-workload-generation.md)
@@ -50,20 +52,27 @@ healthcare, aviation, insurance, payments, telecom and more.
 
 **Recurring jobs.** One external trigger advances exactly one logical tick and
 commits a durable checkpoint, so cron, Airflow, Databricks or Kubernetes can drive a
-simulation without a long-running process. A restarted job is equivalent to a
-continuous one ([docs](docs/architecture/recurring-domain-jobs.md)).
+simulation without a long-running process. Restart equivalence with a continuous
+run is tested for the documented crash and fault windows
+([docs](docs/architecture/recurring-domain-jobs.md)).
 
 **Organizations.** Several domain components can be composed into one organization,
-with owner-qualified jobs, cross-domain boundary messages (publish, claim and ACK,
-exactly once) and a canonical organization snapshot. The snapshot can include
+with owner-qualified jobs, cross-domain boundary messages and a canonical
+organization snapshot. Boundary delivery is idempotent, and a consumer's handler and
+its ACK commit in one transaction; exactly-once transport is not assumed
+([ADR-0006](docs/architecture/decisions/adr-0006-cross-domain-boundary-messages.md)). The snapshot can include
 physical pools admitted against a PostgreSQL resource ledger
 ([ADR-0008](docs/architecture/decisions/adr-0008-organization-composition-admission.md),
 [ADR-0009](docs/architecture/decisions/adr-0009-owner-qualified-runtime-only.md)).
 
-**Attested transitions.** Optionally, the Engine signs every StateChart transition and
-attribute change with a receipt chained per entity. HMAC or Ed25519 can be used; with
-Ed25519, verifiers hold only the public key. A forged, replayed or rolled-back step
-fails verification ([docs](docs/architecture/engine-transition-attestation-545.md)).
+**Attested transitions (opt-in).** With a transition authority, the Engine signs each
+StateChart transition. An attested job also signs attribute-only saves, through its
+persistence wrapper. Receipts are chained per entity and use HMAC or Ed25519; with
+Ed25519, verifiers hold only the public key. Within one store, a forged, unsigned,
+reordered or rolled-back step fails verification. A chain is not bound to a store:
+copied together with its entity into another store, it still verifies. This is an
+opt-in signing root, not a general production security boundary
+([docs](docs/architecture/engine-transition-attestation-545.md)).
 
 ## Domain catalog
 
@@ -138,19 +147,27 @@ in [metric-catalog-derivation.md](docs/architecture/metric-catalog-derivation.md
 ## Kernel invariants
 
 1. Scenarios never mutate entity state directly; StateCharts own lifecycle rules.
-2. Probability is evaluated only over currently enabled events, from weights.
-3. Every random draw comes from a scoped, seeded stream. Identities are
+2. Scenarios change context and policies; they never duplicate lifecycle topology.
+3. Probability is evaluated only over currently enabled events. Policies give
+   weights, and normalization is a runtime concern.
+4. Eventless StateChart transitions are never sampled by SOSE.
+5. Every random draw comes from a scoped, seeded stream. Identities are
    deterministic.
-4. Domain logic never reads the wall clock.
-5. Every state change produces an immutable event. State and history are persisted
+6. Domain logic never reads the wall clock.
+7. Every state change produces an immutable event. State and history are persisted
    separately.
-6. A tick is committed only after its effects are durable. Backends are rebuilt from
+8. A tick is committed only after its effects are durable. Backends are rebuilt from
    durable state.
-7. Simulator-private bookkeeping is not part of the downstream data contract.
+9. Simulator-private bookkeeping is not part of the downstream data contract.
 
 ## Documentation
 
 - **Getting started:** [`docs/getting-started/`](docs/getting-started/README.md)
+- **Authoring API:** [probabilistic transitions and the decision
+  API](docs/probabilistic-transition-graph.md) and
+  [factories](docs/factories.md). Domain code schedules through
+  `context.schedules`; the in-memory `context.scheduler` is a compatibility bridge
+  only.
 - **Architecture:** [`docs/architecture/`](docs/architecture/), including the
   [durable runtime](docs/architecture/durable-runtime.md),
   [persistence model](docs/architecture/persistent-model.md),
@@ -165,7 +182,8 @@ in [metric-catalog-derivation.md](docs/architecture/metric-catalog-derivation.md
 ## Development
 
 ```bash
-python -m pytest -q -m "not slow"     # the CI default; add -m slow for long suites
+python -m pytest -q -m "not slow"     # the CI default
+python -m pytest -q -m slow           # the long suites, run separately
 ```
 
 PostgreSQL tests run when `SOSE_TEST_POSTGRES_DSN` is set. Lint is not a CI gate
