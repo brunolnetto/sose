@@ -239,13 +239,14 @@ versions of these properties are in the e2e tests named below.
 | premature consumption | work and Command are deleted in their own transaction before the claim | a claim that fails after its transition leaves the Command pending (`test_postgres_attested_uncertain_commit`) |
 | forged owner source | HMAC `TransitionAuthority._valid` accepts any signature | a chain signed by a foreign key (same issuer and key ids) is refused (`test_postgres_trusted_transition_receipts`, wrong root: "signature invalid") |
 | stale owner | the writer-epoch check is a no-op | a superseded writer cannot dispatch and leaves no receipt (`test_postgres_trusted_transition_receipts`, stale issuer after takeover; it fences `start_pick`) |
-| duplicate post-COMMIT effect | a consumed callback is re-inserted and executed | retrying a committed claim, without an authority, adds no transition and no receipt (`test_postgres_attested_uncertain_commit`, lost COMMIT reply) |
+| duplicate post-COMMIT effect | a consumed callback is re-inserted and executed | retrying a committed claim adds no transition and no receipt (`test_postgres_attested_uncertain_commit`, lost COMMIT reply) |
 
 The matrix shows these oracles are sensitive to these defects. It does not run the
 PostgreSQL tests under the mutants. Two rows are narrower than their labels:
 
 - "forged owner source" models a foreign signing key being accepted, not a forged
   owner or issuer field;
-- the duplicate-effect retry runs without an authority, because on the attested path
+- the Memory oracle's duplicate-effect retry runs without an authority (the PostgreSQL
+  test retries with one), because on the attested path
   the chart already refuses a second `ship`, which would mask a missing
   consumed-callback guard.

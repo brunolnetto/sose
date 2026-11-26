@@ -119,7 +119,7 @@ def oracle_no_premature_consumption():
 
 
 def oracle_forged_owner_source():
-    """A chain signed by another key is refused (PG: test_postgres_ed25519_receipts)."""
+    """A chain signed by another key is refused (PG: test_postgres_trusted_transition_receipts)."""
     store = MemoryPersistence()
     impostor = TransitionAuthority("engine:w2", "w2:v1", b"x" * 32)
     item = _packed_with_pending_ship_by(store, impostor)
@@ -145,7 +145,7 @@ def _packed_with_pending_ship_by(store, authority) -> DurableScheduledItem:
 
 
 def oracle_stale_owner():
-    """A superseded writer cannot ship (PG: test_postgres_trusted_transition_receipts)."""
+    """A superseded writer cannot dispatch (PG: test_postgres_trusted_transition_receipts)."""
     store = MemoryPersistence()
     item = _packed_with_pending_ship(store)
     old = store.claim_writer(OWNER, expected_epoch=store.writer_epoch())
