@@ -43,7 +43,9 @@ class OrganizationBoundaryConsumerRegistry:
         catalog,
         manifests,
         contracts: BoundaryConsumerRegistry,
+        physical_ledger_view=None,
     ) -> None:
+        """``physical_ledger_view``: a ``PhysicalLedgerView`` admitting declared pools."""
         self.definition = definition
         self.catalog = catalog
         self.contracts = contracts
@@ -52,6 +54,7 @@ class OrganizationBoundaryConsumerRegistry:
             catalog=catalog,
             manifests=manifests,
             consumers=contracts,
+            physical_ledger=physical_ledger_view,
         )
         self._components: dict[str, ProcessComponent] = {
             item.component_id: item for item in definition.components

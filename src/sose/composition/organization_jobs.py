@@ -32,6 +32,7 @@ from .organization import (
     ScheduledJob,
     validate_organization_admission,
 )
+from .physical_pools import ledger_for
 
 if TYPE_CHECKING:
     from sose.persistence.base import Persistence
@@ -98,6 +99,7 @@ def build_attested_component_jobs(
     worker_id: str,
     ticks_per_trigger: int = 1,
     transition_authority=None,
+    physical_ledger: bool = False,
 ) -> tuple[AttestedComponentJob, ...]:
     """Admit ``definition``, then build one attested runner per declared job.
 
@@ -112,6 +114,7 @@ def build_attested_component_jobs(
         raise ValueError("worker_id must be nonempty")
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
+        physical_ledger=ledger_for(persistence, physical_ledger),
     )
     components = {component.component_id: component for component in definition.components}
     built = []

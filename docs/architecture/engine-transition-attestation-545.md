@@ -337,7 +337,10 @@ Admission trusts the `PhysicalLedgerView` it is given; callers must obtain it fr
 does not read the ledger. A physical-pool snapshot refuses to run inside an outer
 `read_snapshot()`, whose view would predate the ledger read. Reading the ledger
 loads every tenant's pools and bookings in the namespace, one query per pool row.
-This is fine at current sizes and is not optimised.
+This is fine at current sizes and is not optimised. Two consequences fail closed by design:
+`PhysicalPoolRef` has no resource type, so two shared pools with the same id and
+different types are refused as "ambiguous"; and a `reserved` row whose end has
+passed still counts as active until it is released.
 
 The ledger is read in the same REPEATABLE READ transaction as the rest of the
 snapshot. `OrganizationSnapshot.physical_pools` lists each pool's contract and this
@@ -355,8 +358,12 @@ digest only when the organization declares some, so existing digests are unchang
 - the PostgreSQL-only guard.
 
 **Limits.**
-- Only the snapshot (and the job observation it calls) reads the ledger. The other
-  admission callers, which build, reattest and run jobs, still refuse physical
-  pools. Running an organization that declares pools is the next step.
+- Every admission caller can read the ledger: `build_attested_component_jobs`,
+  `reattest_component_jobs`, `observe_organization_events` and
+  `inspect_selected_boundary_protocol` take `physical_ledger=True` (PostgreSQL), and
+  `OrganizationBoundaryConsumerRegistry` takes a `physical_ledger_view`. Without
+  them, a definition that declares pools is still refused. A running job keeps only
+  its attestation (the definition fingerprint, which covers the pool references);
+  the ledger is checked at build and on every snapshot, not on every tick.
 - The job-local SimPy queue (`ResourceDemand`/`ResourceReservation`) has no owner and
   stays out of the snapshot.

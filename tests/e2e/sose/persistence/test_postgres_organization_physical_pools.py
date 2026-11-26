@@ -191,3 +191,72 @@ def test_a_pool_snapshot_refuses_an_outer_read_snapshot():
     with store, store.read_snapshot():
         with pytest.raises(RuntimeError, match="outer read snapshot"):
             _snapshot(_definition(), store, physical_ledger=True)
+
+
+def _run_jobs(definition, store, **kwargs):
+    from sose.composition.organization_jobs import build_attested_component_jobs
+
+    jobs = build_attested_component_jobs(definition, store, backend_factory=org._backend,
+                                         worker_id="w", **org.admission(), **kwargs)
+    for job in jobs:
+        job.runner.initialize({})
+        for index in range(org.TRIGGERS):
+            job.runner.run_trigger(trigger_id=org.trigger_id(job.scheduled.job_id, index),
+                                   triggered_at=org.T0)
+    return jobs
+
+
+def test_jobs_of_an_organization_with_pools_build_and_run_with_the_ledger():
+    from sose.composition.boundary_observation import inspect_selected_boundary_protocol
+    from sose.composition.observation import observe_organization_events
+    from sose.composition.organization_reattest import reattest_component_jobs
+
+    pool = _pool()
+    store, ledger = _store(pool)
+    definition = _definition()
+    with store:
+        _reserve(ledger, pool, "r-1", FULFILL, "dock-1")
+        with pytest.raises(ValueError, match="require authoritative resource admission"):
+            _run_jobs(definition, store)
+        jobs = _run_jobs(definition, store, physical_ledger=True)
+        assert jobs
+        snapshot = _snapshot(definition, store, physical_ledger=True)
+        assert [c.machines for c in snapshot.components if c.machines]
+        assert [r.reservation_id for r in snapshot.physical_pools[0].reservations] == ["r-1"]
+        observe_organization_events(definition, store, **org.admission(), physical_ledger=True)
+        inspect_selected_boundary_protocol(definition, store, message_ids=(), **org.admission(),
+                                           physical_ledger=True)
+        reports = reattest_component_jobs(
+            definition, store, expected_previous=(snapshot.definition_fingerprint,
+                                                  definition.config_epoch),
+            **org.admission(), worker_id="w", physical_ledger=True,
+        )
+        assert reports
+
+
+def test_a_job_build_refuses_a_pool_the_ledger_contradicts():
+    pool = _pool()
+    store, ledger = _store(pool)
+    with store:
+        _reserve(ledger, pool, "r-1", WAREHOUSE, "dock-1")     # not a declared consumer
+        with pytest.raises(ValueError, match="without being a declared consumer"):
+            _run_jobs(_definition(), store, physical_ledger=True)
+
+
+def test_the_organization_consumer_registry_admits_pools_from_a_ledger_view():
+    from sose.composition.organization_runtime import (
+        OrganizationBoundaryConsumerRegistry as OrganizationRuntime,
+    )
+    from sose.composition.physical_pools import read_physical_ledger
+
+    pool = _pool()
+    store, _ledger = _store(pool)
+    admission = org.admission()
+    arguments = dict(catalog=admission["catalog"], manifests=admission["manifests"],
+                     contracts=admission["consumers"])
+    with store:
+        with pytest.raises(ValueError, match="require authoritative resource admission"):
+            OrganizationRuntime(_definition(), **arguments)
+        runtime = OrganizationRuntime(_definition(), **arguments,
+                                      physical_ledger_view=read_physical_ledger(store))
+        assert runtime.definition_fingerprint

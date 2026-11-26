@@ -13,6 +13,7 @@ from sose.core.identity import deterministic_id
 
 from .model import BoundaryConsumption, BoundaryDelivery, DeliveryStatus
 from .organization import OrganizationDefinition, validate_organization_admission
+from .physical_pools import ledger_for
 
 if TYPE_CHECKING:
     from sose.persistence.base import Persistence
@@ -52,6 +53,7 @@ def inspect_selected_boundary_protocol(
     catalog,
     manifests,
     consumers,
+    physical_ledger: bool = False,
 ) -> SelectedBoundaryProtocolEvidence:
     """Read selected immutable messages, delivery states and ACKs from ONE UoW.
 
@@ -63,6 +65,7 @@ def inspect_selected_boundary_protocol(
     """
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
+        physical_ledger=ledger_for(persistence, physical_ledger),
     )
     _require_canonical_message_ids(message_ids)
     admitted_edges = _admitted_edges(definition)

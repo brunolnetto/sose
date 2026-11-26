@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from .organization import OrganizationDefinition, validate_organization_admission
+from .physical_pools import ledger_for
 
 if TYPE_CHECKING:
     from sose.persistence.base import Persistence
@@ -43,6 +44,7 @@ def observe_organization_events(
     catalog,
     manifests,
     consumers,
+    physical_ledger: bool = False,
 ) -> OrganizationEvidence:
     """Project one owner-qualified durable event snapshot without mutation.
 
@@ -54,6 +56,7 @@ def observe_organization_events(
     """
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
+        physical_ledger=ledger_for(persistence, physical_ledger),
     )
     components = tuple(sorted(definition.components, key=lambda c: c.component_id))
     owner_ids = tuple(component.owner_id for component in components)
