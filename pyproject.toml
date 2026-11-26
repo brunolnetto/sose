@@ -39,7 +39,12 @@ databricks = [
 snowflake = [
   "snowflake-connector-python>=5,<6",
 ]
+# Ed25519 transition receipts: verifiers hold only the public key (#494, #545).
+attestation = [
+  "cryptography>=44,<52",
+]
 dev = [
+  "cryptography>=44,<52",
   "simpy>=4.1.1,<5",
   "duckdb>=2,<3",
   "psycopg[binary]>=3.3.6,<4",
@@ -79,6 +84,7 @@ line-length = 100
 
 [dependency-groups]
 dev = [
+    "cryptography>=44,<52",
     "duckdb>=2,<3",
     "psycopg[binary]>=3.3.6,<4",
     "codebase-stats>=0.1,<0.2",

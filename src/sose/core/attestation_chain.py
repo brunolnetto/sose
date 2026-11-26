@@ -25,9 +25,6 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from copy import deepcopy
-from hashlib import sha256
-from hmac import compare_digest, new as hmac_new
-
 from sose.core.events import DomainEvent
 from sose.core.identity import deterministic_id
 from sose.domain.entity import Entity
@@ -73,7 +70,7 @@ def _timestamp(value) -> str | None:
 def seal_attributes(authority, *, before: Entity, after: Entity, owner_id: str,
                     predecessor: DomainEvent | None) -> DomainEvent:
     """Sign one attribute-only save of ``before`` into ``after``."""
-    from sose.core.transition_authority import _attributes_sha256, _encoded
+    from sose.core.transition_authority import _attributes_sha256
 
     if (
         after.version != before.version or after.state != before.state
@@ -91,31 +88,21 @@ def seal_attributes(authority, *, before: Entity, after: Entity, owner_id: str,
         "attributes_sha256": _attributes_sha256(after),
         "updated_at": _timestamp(after.updated_at), "predecessor_receipt_id": expected,
     }
-    signature = hmac_new(authority.secret, _encoded(claims), sha256).hexdigest()
     return DomainEvent(
         event_id=attribute_receipt_id(after.entity_type, after.id, after.version,
                                       after.attribute_revision),
         name=ATTRIBUTES_EVENT, entity_type=after.entity_type, entity_id=after.id,
         occurred_at=after.updated_at or after.created_at, owner_id=owner_id,
-        causation_id=expected, payload={**claims, "signature": signature},
+        causation_id=expected, payload=authority._signed(claims),
     )
 
 
 def authenticate_attributes(authority, receipt: DomainEvent) -> dict:
     """Check an attribute receipt's envelope, issuer and MAC; return its claims."""
-    from sose.core.transition_authority import _encoded
-
     data = dict(receipt.payload)
-    mac = data.pop("signature", None)
     if receipt.name != ATTRIBUTES_EVENT or data.get("kind") != "attributes":
         raise ValueError("attribute receipt envelope mismatch")
-    if not isinstance(mac, str) or len(mac) != 64:
-        raise ValueError("attribute receipt signature missing")
-    if data.get("issuer_id") != authority.issuer_id or data.get("key_id") != authority.key_id:
-        raise ValueError("attribute receipt issuer mismatch")
-    expected = hmac_new(authority.secret, _encoded(data), sha256).hexdigest()
-    if not compare_digest(mac, expected):
-        raise ValueError("attribute receipt signature invalid")
+    authority._require_signed(data, "attribute receipt")
     _require_attribute_envelope(receipt, data)
     return data
 
