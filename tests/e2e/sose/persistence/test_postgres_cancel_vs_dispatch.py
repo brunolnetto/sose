@@ -84,6 +84,8 @@ def wait(name):
 
 with PostgresPersistence(dsn, namespace=namespace) as store:
     item = pending_ship(store)              # both sides see the same pending work
+    pid = store._connection.execute("SELECT pg_backend_pid()").fetchone()[0]
+    (markers / f"{mode}-pid").write_text(str(pid))
     (markers / f"{mode}-ready").write_text("1")
     wait(f"{mode}-go")
     (markers / f"{mode}-started").write_text("1")
@@ -123,14 +125,15 @@ def _wait_for(path, process, timeout=30.0):
         time.sleep(0.02)
 
 
-def _blocked_on_advisory_lock(timeout=8.0) -> bool:
-    """True once some backend waits on an advisory lock (the second process)."""
+def _blocked_on_advisory_lock(pid: int, timeout=8.0) -> bool:
+    """True once the second process's own backend waits on an advisory lock."""
     deadline = time.monotonic() + timeout
     with psycopg.connect(DSN, autocommit=True) as conn:
         while time.monotonic() < deadline:
             row = conn.execute(
-                "SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' "
-                "AND wait_event = 'advisory' AND query LIKE '%pg_advisory_xact_lock%'",
+                "SELECT count(*) FROM pg_stat_activity WHERE pid = %s "
+                "AND wait_event_type = 'Lock' AND wait_event = 'advisory'",
+                (pid,),
             ).fetchone()
             if row[0]:
                 return True
@@ -159,9 +162,17 @@ def _race(namespace, tmp_path, *, holder, mutant=False):
         _wait_for(markers / f"{holder}-holding", first)
         (markers / f"{other}-go").write_text("1")
         _wait_for(markers / f"{other}-started", second)
-        blocked = _blocked_on_advisory_lock(timeout=2.0 if mutant else 8.0)
+        other_pid = int((markers / f"{other}-pid").read_text())
+        if mutant:
+            # No lock to wait on: let the mutant finish before the holder commits.
+            results = {other: _result(second)}
+            blocked = _blocked_on_advisory_lock(other_pid, timeout=0.5)
+        else:
+            blocked = _blocked_on_advisory_lock(other_pid)
         (markers / "release").write_text("1")
-        results = {holder: _result(first), other: _result(second)}
+        results = {**({} if not mutant else results), holder: _result(first)}
+        if not mutant:
+            results[other] = _result(second)
     finally:
         for process in (first, second):
             if process is not None and process.poll() is None:
@@ -179,7 +190,10 @@ def _outcome(namespace):
         receipts = [e for e in events if e.name == ATTESTATION_EVENT
                     and e.payload["trigger"] == "ship"]
         entity = store.entity(ORDER_TYPE, ORDER)
-        return entity, ships, receipts, pending_ship(store), events
+        with store.transaction() as uow:
+            command_left = any(c.command_id == SHIP for c in uow.commands())
+        pending = pending_ship(store)
+        return entity, ships, receipts, (pending, command_left), events
 
 
 @pytest.mark.parametrize("holder", ["dispatch", "cancel"])
@@ -190,7 +204,7 @@ def test_cancel_and_claim_of_one_work_have_exactly_one_winner(tmp_path, holder):
     blocked, results = _race(namespace, tmp_path, holder=holder)
     assert blocked, "the second process must wait on the owner's advisory lock"
     entity, ships, receipts, pending, events = _outcome(namespace)
-    assert pending is None, "the work and its Command are gone either way"
+    assert pending == (None, False), "the work and its Command are gone either way"
     if holder == "dispatch":
         assert results == {"dispatch": {"result": True}, "cancel": {"result": False}}
         assert (entity.state, entity.version) == ("shipped", 4)
