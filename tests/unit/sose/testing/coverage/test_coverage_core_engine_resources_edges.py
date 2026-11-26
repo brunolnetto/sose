@@ -57,7 +57,7 @@ def test_engine_save_entity_domain_conflict_and_domain_delivery_path():
     engine, _, _, _ = _build_engine()
     engine.domain_warehouse = object()
     entity = SimpleNamespace(entity_type="x", id="1", version=1)
-    mutation = DomainMutation("id", entity)
+    DomainMutation("id", entity)
 
     class _ConflictUow:
         def get_domain_delivery(self, mutation_id):

@@ -1,7 +1,6 @@
 from sose.examples.credit_loans.entities import Payment
 from sose.backends.simpy import SimPyBackend
 from sose.examples.credit_loans.simulation import (
-    COLLECTION_FOLLOWUP,
     ORIGIN,
     build_runtime,
     cure_delinquency,

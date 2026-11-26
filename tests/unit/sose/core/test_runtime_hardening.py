@@ -1,4 +1,3 @@
-OWNER_ID = "test-runtime_hardening"
 
 from datetime import timedelta
 
@@ -14,6 +13,8 @@ from sose.examples.tutorial_job.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 from sose.testing.restart import restart_reference_runtime_repeated
+
+OWNER_ID = "test-runtime_hardening"
 
 
 def _scheduled_batch_snapshot(count: int = 48):

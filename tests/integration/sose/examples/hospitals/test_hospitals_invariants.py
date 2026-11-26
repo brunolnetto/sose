@@ -1,4 +1,3 @@
-import pytest
 
 from sose.backends.simpy import SimPyBackend
 from sose.examples.hospitals.procedures import (

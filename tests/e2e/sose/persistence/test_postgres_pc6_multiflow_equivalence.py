@@ -400,7 +400,6 @@ def _run_org_boundary_stage(store, flow, stage, *, cut=None, replay=False):
     a consumed delivery is not re-claimed. Domain reference events and their
     immutable business certificates are replay-safe independent of workers.
     """
-    from sose.composition.model import BoundaryDelivery
 
     message = _org_messages(flow)[stage]
     service = BoundaryService(store)

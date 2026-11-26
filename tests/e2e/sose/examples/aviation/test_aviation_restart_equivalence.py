@@ -42,7 +42,6 @@ def test_departure_schedule_survives_restart():
         owner_id=REFERENCE_OWNER_ID,
         backend_factory=SimPyBackend,
     )
-    rebuilt_engine = rebuilt.engine
     rebuilt_backend = rebuilt.backend
     assert len(persistence.scheduled_work()) == 1
 

@@ -82,6 +82,12 @@ baseline = ".codebase-stats-baseline.json"
 target-version = "py312"
 line-length = 100
 
+[tool.ruff.lint.per-file-ignores]
+# The OD-5a freeze verifier must refuse a non-isolated interpreter (-I -B) before it
+# imports anything, so its imports deliberately follow that guard. The script is
+# part of frozen evidence; it is not edited for style.
+"scripts/od5a_verify_execution_freeze.py" = ["E402"]
+
 [dependency-groups]
 dev = [
     "cryptography>=44,<52",

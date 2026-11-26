@@ -4,7 +4,6 @@ import pytest
 
 from sose.examples.manufacturing.simulation import (
     ORIGIN,
-    build_runtime,
     flow_correlation_id,
     run_happy_path,
     seed_happy_path,

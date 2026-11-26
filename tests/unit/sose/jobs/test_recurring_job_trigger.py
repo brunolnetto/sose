@@ -113,7 +113,7 @@ def test_active_batch_blocks_direct_tick_and_config_change():
         persistence=persistence,
         backend_factory=_backend,
     )
-    state = job.initialize()
+    job.initialize()
 
     with persistence.transaction() as uow:
         current = uow.get_job_state(job.job_id)

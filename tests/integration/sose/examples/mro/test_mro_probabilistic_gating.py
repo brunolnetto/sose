@@ -6,7 +6,6 @@ from sose.statecharts.topology import policy_from_statechart
 from sose.persistence.memory import MemoryPersistence
 
 REFERENCE_OWNER_ID = "mro-probabilistic-test-organization"
-from sose.probability.graph import NoProbabilisticTransition
 
 
 @pytest.mark.parametrize(

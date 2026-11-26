@@ -6,7 +6,6 @@ from sose.examples.order_to_cash.simulation import (
     ORIGIN,
     build_runtime,
     collect_receivable,
-    collection_case_id,
     ensure_collection_case,
     flow_correlation_id,
     reconcile_collection,
@@ -20,8 +19,9 @@ from sose.examples.order_to_cash.simulation import (
 )
 from sose.persistence.memory import MemoryPersistence
 
-REFERENCE_OWNER_ID = "order-to-cash-reference-organization"
 from sose.testing.restart import restart_reference_runtime
+
+REFERENCE_OWNER_ID = "order-to-cash-reference-organization"
 
 
 def _prepare_invoiced(persistence):
@@ -272,7 +272,6 @@ def test_due_schedule_is_restart_equivalent():
         backend_factory=SimPyBackend,
     owner_id=REFERENCE_OWNER_ID,
     )
-    rebuilt_engine = rebuilt.engine
     rebuilt_backend = rebuilt.backend
 
     assert len(restarted.scheduled_work()) == 1

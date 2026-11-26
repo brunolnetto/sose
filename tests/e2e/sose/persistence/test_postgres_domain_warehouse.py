@@ -29,9 +29,13 @@ def test_postgres_domain_warehouse_serializes_same_entity_writers():
         warehouse = PostgresDomainWarehouse(DSN, namespace=namespace)
         try:
             barrier.wait(timeout=10)
-            results.append(warehouse.apply(DomainMutation(
-                mid, Entity(id="1", entity_type="order", state=state, version=version)
-            )))
+            results.append(
+                warehouse.apply(
+                    DomainMutation(
+                        mid, Entity(id="1", entity_type="order", state=state, version=version)
+                    )
+                )
+            )
         except BaseException as exc:
             errors.append(exc)
         finally:
@@ -39,7 +43,10 @@ def test_postgres_domain_warehouse_serializes_same_entity_writers():
 
     old = Thread(target=worker, args=("v2", 2, "running"))
     new = Thread(target=worker, args=("v3", 3, "closed"))
-    old.start(); new.start(); old.join(timeout=20); new.join(timeout=20)
+    old.start()
+    new.start()
+    old.join(timeout=20)
+    new.join(timeout=20)
     assert not old.is_alive()
     assert not new.is_alive()
     assert errors == []
@@ -55,7 +62,9 @@ def test_postgres_domain_warehouse_concurrent_duplicate_mutation_is_replay():
     barrier = Barrier(2)
     results = []
     errors = []
-    mutation = DomainMutation("same", Entity(id="1", entity_type="order", state="queued", version=1))
+    mutation = DomainMutation(
+        "same", Entity(id="1", entity_type="order", state="queued", version=1)
+    )
 
     def worker():
         warehouse = PostgresDomainWarehouse(DSN, namespace=namespace)
@@ -67,8 +76,12 @@ def test_postgres_domain_warehouse_concurrent_duplicate_mutation_is_replay():
         finally:
             warehouse.close()
 
-    left = Thread(target=worker); right = Thread(target=worker)
-    left.start(); right.start(); left.join(timeout=20); right.join(timeout=20)
+    left = Thread(target=worker)
+    right = Thread(target=worker)
+    left.start()
+    right.start()
+    left.join(timeout=20)
+    right.join(timeout=20)
     assert not left.is_alive()
     assert not right.is_alive()
     assert errors == []

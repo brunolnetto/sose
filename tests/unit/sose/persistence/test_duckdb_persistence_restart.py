@@ -1,4 +1,3 @@
-OWNER_ID = "test-duckdb_persistence_restart"
 
 from datetime import timedelta
 
@@ -11,6 +10,8 @@ from sose.examples.tutorial_job.simulation import (
 )
 from sose.persistence.duckdb import DuckDBPersistence
 from sose.testing.restart import restart_reference_runtime
+
+OWNER_ID = "test-duckdb_persistence_restart"
 
 
 def test_duckdb_survives_close_reopen_and_backend_rebuild(tmp_path):

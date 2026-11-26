@@ -1,5 +1,16 @@
 from __future__ import annotations
 
+import pytest
+
+from sose.organizational.domain_experiment_analysis import (
+    ComparisonEligibility,
+    ExperimentEffect,
+    _build_effect,
+    _runs_by_world,
+    _student_t_critical,
+    _worlds_by_key,
+)
+from sose.organizational.student_t import _regularized_incomplete_beta, _student_t_cdf
 from sose.organizational.agency import AgencyLevel
 from sose.organizational.domain_experiment_analysis import (
     ComparisonKind,
@@ -254,19 +265,6 @@ def test_analysis_rejects_duplicate_regime_reference_before_mapping() -> None:
 # Scientific-inference falsification matrix: a forged summary may have a
 # perfectly valid digest yet still violate its registered eligibility/CRN
 # invariants. These cases explicitly exercise missing analytical branches.
-
-import pytest
-
-from sose.organizational.domain_experiment_analysis import (
-    ComparisonEligibility,
-    ExperimentEffect,
-    _build_effect,
-    _runs_by_world,
-    _worlds_by_key,
-    _student_t_critical,
-)
-from sose.organizational.student_t import _student_t_cdf, _regularized_incomplete_beta
-
 
 @pytest.fixture(scope="module")
 def analysis_evidence():

@@ -1,5 +1,4 @@
 """Prove invoice / receivable / card binding rather than transport ACK alone."""
-from dataclasses import replace
 from datetime import datetime
 
 import pytest

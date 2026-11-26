@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-import os
 
 import pytest
 

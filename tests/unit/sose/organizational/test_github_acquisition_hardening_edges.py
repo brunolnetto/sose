@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from io import BytesIO
 from urllib.error import HTTPError
 
 import pytest
@@ -95,9 +94,10 @@ def test_candidate_run_requires_matching_branch_repository_and_clock():
     valid = {"head_branch": "feature", "head_repository": {"id": 5, "full_name": "a/b"},
              "created_at": "2026-10-11T11:00:00Z"}
     pr = {"head": {"ref": "feature", "repo": {"id": 5, "full_name": "a/b"}}}
-    check = lambda candidate, context: source._workflow_run_matches_pr_candidate(
-        candidate, pull_request=context, opened_at=opened, merged_at=merged,
-    )
+    def check(candidate, context):
+        return source._workflow_run_matches_pr_candidate(
+            candidate, pull_request=context, opened_at=opened, merged_at=merged,
+        )
     assert check(valid, pr)
     assert not check(valid, {})
     assert not check(valid, {"head": {"ref": ""}})

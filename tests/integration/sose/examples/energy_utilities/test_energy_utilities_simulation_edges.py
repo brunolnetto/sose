@@ -13,8 +13,6 @@ from sose.examples.energy_utilities.simulation import (
     _entity,
     build_runtime,
     cancel_demand_response,
-    dr_event_id,
-    dr_participation_id,
     reconcile_demand_response,
     record_meter_reading,
     report_outage,

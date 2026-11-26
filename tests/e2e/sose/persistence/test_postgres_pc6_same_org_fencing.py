@@ -5,24 +5,18 @@ history even when a successor completed the same durable recurrence.
 """
 from __future__ import annotations
 
-import json
 import os
 import signal
 import subprocess
 import sys
-from datetime import timedelta
 from pathlib import Path
 from uuid import uuid4
 
 import pytest
 
-from sose.composition.scheduler import RecoverySchedule
-from sose.composition.recovery import TradingCustomerRecoveryRunner
-from sose.core.resource_identity import ResourcePoolContract
-from sose.examples.order_to_cash import simulation as o2c
 from sose.persistence.postgres import PostgresPersistence
 from tests.e2e.sose.persistence.test_postgres_pc6_full_real_domain_recovery import (
-    _seed_before_logistics_ack, _policy, _proof, _schedule, _terminal, _tick,
+    _seed_before_logistics_ack, _proof, _terminal, _tick,
 )
 
 DSN = os.environ.get("SOSE_TEST_POSTGRES_DSN")

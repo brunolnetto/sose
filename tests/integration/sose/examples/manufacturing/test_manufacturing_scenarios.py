@@ -68,7 +68,7 @@ def test_machine_downtime_scenario_routes_through_durable_breakdown():
 
 def test_finite_manufacturing_scenario_expires_without_retriggering():
     persistence = MemoryPersistence()
-    ids = seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
+    seed_happy_path(persistence, quantity=5.0, owner_id=REFERENCE_OWNER_ID)
     context, engine = build_runtime(
         persistence, scenarios=(yield_degradation_scenario(),),
         owner_id=REFERENCE_OWNER_ID,

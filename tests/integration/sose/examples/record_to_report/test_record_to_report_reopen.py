@@ -1,6 +1,5 @@
 from sose.backends.simpy import SimPyBackend
 from sose.examples.record_to_report.simulation import (
-    ORIGIN,
     REOPEN_CLOSE_DELAY,
     build_runtime,
     reconcile_close,

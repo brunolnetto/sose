@@ -35,10 +35,11 @@ def test_pg_competing_bindings_serialize_and_reject_second_payment_owner(monkeyp
                     attributes={"amount": 250.0, "currency": "USD"},
                 ))
 
-        make = lambda order_id, journal_id: CustomerSettlementBinding.create(
-            order_id=order_id, payment_id="card-same", journal_id=journal_id,
-            amount=250.0, currency="USD", correlation_id=f"flow:{order_id}",
-        )
+        def make(order_id, journal_id):
+            return CustomerSettlementBinding.create(
+                order_id=order_id, payment_id="card-same", journal_id=journal_id,
+                amount=250.0, currency="USD", correlation_id=f"flow:{order_id}",
+            )
         writer_inside_uow = Event()
         writer_release = Event()
         other_started = Event()

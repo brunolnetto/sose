@@ -187,10 +187,12 @@ in [metric-catalog-derivation.md](docs/architecture/metric-catalog-derivation.md
 ```bash
 python -m pytest -q -m "not slow"     # the CI default
 python -m pytest -q -m slow           # the long suites, run separately
+ruff check .                          # lint, as in CI
 ```
 
-PostgreSQL tests run when `SOSE_TEST_POSTGRES_DSN` is set. Lint is not a CI gate
-today: `ruff` reports existing findings on `main`. A pull request merges with
+PostgreSQL tests run when `SOSE_TEST_POSTGRES_DSN` is set. `ruff check .` is a CI
+gate; its configuration and its one documented per-file exception are in
+`pyproject.toml`. A pull request merges with
 green CI, at least 95% coverage, a passing quality ratchet
 ([ADR-0010](docs/architecture/decisions/adr-0010-codebase-quality-ratchet.md)) and
 an independent review of its exact head. Consequential architectural changes need an

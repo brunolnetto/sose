@@ -11,7 +11,6 @@ from sose.domain.entity import Entity
 from sose.domain.registry import DomainRegistry
 from sose.persistence.memory import MemoryPersistence
 
-REFERENCE_OWNER_ID = "scenario-reference-organization"
 from sose.probability import StateConfiguration, TransitionGraphBuilder, probabilistic
 from sose.scenarios import (
     AttributeEffect,
@@ -22,6 +21,8 @@ from sose.scenarios import (
     TickTrigger,
     TransitionWeightEffect,
 )
+
+REFERENCE_OWNER_ID = "scenario-reference-organization"
 
 NOW = datetime(2026, 1, 1, 8, tzinfo=timezone.utc)
 

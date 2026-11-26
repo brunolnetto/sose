@@ -402,7 +402,8 @@ def test_od5a_native_pool_callback_is_required_before_durable_slot_commit(
     def suppress_pool(self, name, *, request_id, on_acquired, priority=100):
         if name == "org:A/execution-pool":
             pool_requests.append(request_id)
-            on_acquired = lambda _lease: None
+            def on_acquired(_lease):
+                return None
         elif name.startswith("org:A/execution:"):
             instance_requests.append(request_id)
         return original_request(

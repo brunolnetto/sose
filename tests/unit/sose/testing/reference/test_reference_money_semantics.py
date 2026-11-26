@@ -33,7 +33,6 @@ from sose.examples.insurance.payments import ensure_payment
 from sose.examples.order_to_cash.simulation import (
     ORIGIN as O2C_ORIGIN,
     build_runtime as build_o2c_runtime,
-    ensure_receivable,
     reconcile_credit,
     reconcile_fulfillment,
     seed_reference as seed_o2c,

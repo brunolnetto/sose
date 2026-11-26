@@ -4,7 +4,6 @@ from pathlib import Path
 
 from sose.examples.process_manifest import (
     PROCESS_MATURITY_REQUIREMENTS,
-    ProcessEvidence,
     ProcessMaturity,
     audit_builtin_processes,
     builtin_process_manifests,
