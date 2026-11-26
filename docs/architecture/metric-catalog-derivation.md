@@ -32,7 +32,11 @@ metric's entity and formula.
 Each metric is placed in the first tier that makes it derivable.
 
 1. **Workload.** An existing SOSE domain already has the entities, states and
-   timestamps. It needs only ADR-0012 workload mode (#697–#702).
+   timestamps. It needs ADR-0012 workload mode (#697–#702), and its chart needs
+   declared transition weights. Some charts exclude every event from sampling
+   today, the ITSM `IncidentChart` for example. A metric marked as a proxy measures
+   a nearby quantity: ITSM models no customer contacts, so first-contact
+   resolution is approximated as "resolved with no escalation and no reopen".
 2. **Workload + attributes.** As tier 1, plus modeled attributes on an existing
    domain: prices, costs, customer identity, survey scores, due dates, plan prices.
    These are per-case attribute distributions in the ADR-0012 `WorkloadSpec`.
@@ -50,30 +54,30 @@ Each metric is placed in the first tier that makes it derivable.
 |---|---|---|---|---|---|---|
 | Customer | 16 |  | 16 |  |  |  |
 | Data | 10 |  |  |  | 10 |  |
-| Ecommerce | 15 | 4 | 7 | 4 |  |  |
+| Ecommerce | 15 | 3 | 8 | 4 |  |  |
 | Engineering | 12 | 3 |  | 9 |  |  |
 | Finance | 27 | 4 | 19 | 4 |  |  |
 | Hr | 12 |  |  | 12 |  |  |
 | Marketing | 18 |  |  | 17 |  | 1 |
-| Operations | 12 | 10 | 1 |  |  | 1 |
+| Operations | 12 | 8 | 3 |  |  | 1 |
 | Product | 20 |  |  | 20 |  |  |
-| Quality | 8 | 3 | 2 | 3 |  |  |
+| Quality | 8 | 2 | 3 | 3 |  |  |
 | Sales | 20 |  |  | 19 |  | 1 |
 | Security | 8 |  |  | 8 |  |  |
 | Strategy | 8 |  | 5 |  |  | 3 |
 | Supply_Chain | 12 | 5 | 5 |  |  | 2 |
 | Support | 12 | 9 | 3 |  |  |  |
-| **Total** | **210** | **38** | **58** | **96** | **10** | **8** |
+| **Total** | **210** | **34** | **62** | **96** | **10** | **8** |
 
 Today, the entities, states and timestamps needed already exist for tiers 1 and 4
-only: 38 + 10 = 48 metrics, about 23%. Tier 2 (58) has the right domain but lacks
-attributes. Even the 48 yield almost no statistically meaningful values until
-workload mode exists. Once phases 0–2 are done, 106 metrics (50%) are derivable from
-existing domains.
+only: 34 + 10 = 44 metrics, about 21%. Tier 2 (62) has the right domain but lacks
+attributes. Even those 44 yield almost no statistically meaningful values until
+workload mode exists. Once phases 0–2 are done, 96 metrics (46%) are derivable from
+existing domains; with phase 4's run metadata, 106 (50%).
 
 ## Path to full derivation
 
-### Phase 0 — Volume (ADR-0012): tier 1, 38 metrics
+### Phase 0 — Volume (ADR-0012): tier 1, 34 metrics
 
 Deliver #697 (WorkloadSpec and arrivals), #698 (sampled transitions) and #699
 (ground truth with tolerance). Then deliver #700 (ITSM, for Support and incident
@@ -99,7 +103,7 @@ Each dataset is registered in the catalog's `dataset` table and bound through
 |---|---|
 | Ticket | `itsm_incident` (`created_at` = opened, `first_response_at` = assigned, `resolved_at` = resolved) |
 | Incident | `itsm_incident` |
-| Operation | `manufacturing_operation`, MRO work order |
+| Operation | `manufacturing_operation`, MRO work order (`job_shop` is a canonical concurrency case, also registered in the catalog) |
 | Production Unit | `production_order` |
 | Purchase Order | `p2p.purchase_order` (`po_created_at`, `received_at` from receipt) |
 | Order | `order_to_cash.sales_order`, `warehouse_fulfillment_order` |
@@ -111,12 +115,17 @@ Each dataset is registered in the catalog's `dataset` table and bound through
 The catalog's existing dbt generator then produces the metrics unchanged. Output
 semantics stay owned by SOSE (ADR-0005), and the catalog only binds to them.
 
-### Phase 2 — Attributes: tier 2, 58 metrics
+### Phase 2 — Attributes: tier 2, 62 metrics
 
-These are per-domain workload attribute distributions: unit prices and costs (O2C,
-P2P, warehouse, manufacturing); customer identity (ITSM, O2C); survey scores (ITSM,
-subscription); supplier due dates (P2P); measured characteristics with spec limits
-(manufacturing). Two domains need extending:
+These are per-domain workload attribute distributions:
+- unit prices and costs (O2C, P2P, warehouse, manufacturing);
+- customer identity (ITSM, O2C);
+- survey scores (ITSM, subscription);
+- due dates or SLAs: supplier due dates (P2P) and per-operation due dates
+  (manufacturing, MRO). Today their `due_at` is only the time the scheduler fires
+  a command;
+- defect counts and measured characteristics with spec limits (manufacturing);
+- discounts and returns (O2C). Two domains need extending:
 
 - `subscription_saas` needs plan prices and sampled cancellations and plan changes.
   This covers MRR, ARR, churn and retention.
@@ -146,7 +155,9 @@ duplicated generic entities.
 
 Pipeline duration and success or failure come from SOSE job runs. Dataset quality
 metrics (completeness, freshness, duplicates, nulls, validity, contracts,
-incidents) come from SOSE's persisted records and sinks.
+incidents) can be computed on SOSE's persisted records and sinks. However, these
+records are validated on write, so the values are close to constant by
+construction. They prove the plumbing works; they say little about data quality.
 
 ### Exogenous: tier 5, 8 metrics
 
@@ -193,16 +204,16 @@ The Tier column uses the numbers defined above.
 
 | Metric | Tier | SOSE source or gap |
 |---|---|---|
-| `data.completeness` | 4 | SOSE persisted records and sinks |
-| `data.data_contract_compliance` | 4 | SOSE persisted records and sinks |
-| `data.data_incident_rate` | 4 | SOSE persisted records and sinks |
-| `data.duplicate_rate` | 4 | SOSE persisted records and sinks |
-| `data.freshness` | 4 | SOSE persisted records and sinks |
-| `data.null_rate` | 4 | SOSE persisted records and sinks |
+| `data.completeness` | 4 | SOSE persisted records and sinks (near-constant by construction: validated records) |
+| `data.data_contract_compliance` | 4 | SOSE persisted records and sinks (near-constant by construction: validated records) |
+| `data.data_incident_rate` | 4 | SOSE persisted records and sinks (near-constant by construction: validated records) |
+| `data.duplicate_rate` | 4 | SOSE persisted records and sinks (near-constant by construction: validated records) |
+| `data.freshness` | 4 | SOSE persisted records and sinks (near-constant by construction: validated records) |
+| `data.null_rate` | 4 | SOSE persisted records and sinks (near-constant by construction: validated records) |
 | `data.pipeline_duration` | 4 | SOSE job runs (SimulationJobState, completed triggers) |
 | `data.pipeline_failure_rate` | 4 | SOSE job runs (SimulationJobState, completed triggers) |
 | `data.pipeline_success_rate` | 4 | SOSE job runs (SimulationJobState, completed triggers) |
-| `data.validity_rate` | 4 | SOSE persisted records and sinks |
+| `data.validity_rate` | 4 | SOSE persisted records and sinks (near-constant by construction: validated records) |
 
 #### Ecommerce
 
@@ -217,7 +228,7 @@ The Tier column uses the numbers defined above.
 | `ecommerce.discount_rate` | 2 | order_to_cash + customer id, items, discounts, refunds, returns |
 | `ecommerce.gross_merchandise_value` | 1 | order_to_cash sales orders |
 | `ecommerce.items_per_order` | 2 | order_to_cash + customer id, items, discounts, refunds, returns |
-| `ecommerce.net_merchandise_value` | 1 | order_to_cash sales orders |
+| `ecommerce.net_merchandise_value` | 2 | order_to_cash + discounts and returns |
 | `ecommerce.orders` | 1 | order_to_cash sales orders |
 | `ecommerce.purchasers` | 2 | order_to_cash + customer id, items, discounts, refunds, returns |
 | `ecommerce.refund_rate` | 2 | order_to_cash + customer id, items, discounts, refunds, returns |
@@ -317,18 +328,18 @@ The Tier column uses the numbers defined above.
 
 | Metric | Tier | SOSE source or gap |
 |---|---|---|
-| `operations.capacity_utilization` | 1 | manufacturing/mro/job_shop operations, resources |
+| `operations.capacity_utilization` | 1 | manufacturing/mro operations and resources (job_shop canonical case) |
 | `operations.cost_per_unit` | 2 | manufacturing + operating cost |
-| `operations.cycle_time` | 1 | manufacturing/mro/job_shop operations, resources |
-| `operations.defect_rate` | 1 | manufacturing/mro/job_shop operations, resources |
-| `operations.downtime_rate` | 1 | manufacturing/mro/job_shop operations, resources |
-| `operations.first_pass_yield` | 1 | manufacturing/mro/job_shop operations, resources |
+| `operations.cycle_time` | 1 | manufacturing/mro operations and resources (job_shop canonical case) |
+| `operations.defect_rate` | 1 | manufacturing/mro operations and resources (job_shop canonical case) |
+| `operations.downtime_rate` | 1 | manufacturing/mro operations and resources (job_shop canonical case) |
+| `operations.first_pass_yield` | 1 | manufacturing/mro operations and resources (job_shop canonical case) |
 | `operations.forecast_accuracy` | 5 | exogenous forecast input |
-| `operations.on_time_rate` | 1 | manufacturing/mro/job_shop operations, resources |
-| `operations.productivity` | 1 | manufacturing/mro/job_shop operations, resources |
-| `operations.rework_rate` | 1 | manufacturing/mro/job_shop operations, resources |
-| `operations.sla_attainment` | 1 | manufacturing/mro/job_shop operations, resources |
-| `operations.throughput` | 1 | manufacturing/mro/job_shop operations, resources |
+| `operations.on_time_rate` | 2 | manufacturing/mro + per-operation due date or SLA |
+| `operations.productivity` | 1 | manufacturing/mro operations and resources (job_shop canonical case) |
+| `operations.rework_rate` | 1 | manufacturing/mro operations and resources (job_shop canonical case) |
+| `operations.sla_attainment` | 2 | manufacturing/mro + per-operation due date or SLA |
+| `operations.throughput` | 1 | manufacturing/mro operations and resources (job_shop canonical case) |
 
 #### Product
 
@@ -363,10 +374,10 @@ The Tier column uses the numbers defined above.
 | `quality.corrective_action_on_time_rate` | 3 | new audit/CAPA domain |
 | `quality.cost_of_poor_quality` | 2 | manufacturing + failure/rework costs |
 | `quality.customer_complaint_rate` | 3 | new complaint intake (or itsm extension) |
-| `quality.defect_density` | 1 | manufacturing inspection/quality_hold/rework |
-| `quality.first_time_quality_rate` | 1 | manufacturing inspection/quality_hold/rework |
+| `quality.defect_density` | 2 | manufacturing + defect counts per unit |
+| `quality.first_time_quality_rate` | 1 | manufacturing inspection/quality_hold/rework, yield |
 | `quality.process_capability_index` | 2 | manufacturing + measured characteristic with spec limits |
-| `quality.scrap_rate` | 1 | manufacturing inspection/quality_hold/rework |
+| `quality.scrap_rate` | 1 | manufacturing inspection/quality_hold/rework, yield |
 
 #### Sales
 
@@ -428,12 +439,12 @@ The Tier column uses the numbers defined above.
 | `supply_chain.forecast_accuracy` | 5 | exogenous forecast input |
 | `supply_chain.forecast_bias` | 5 | exogenous forecast input |
 | `supply_chain.inventory_turnover` | 2 | warehouse + unit cost / COGS |
-| `supply_chain.inventory_units` | 1 | warehouse inventory lots and occurrences |
+| `supply_chain.inventory_units` | 1 | warehouse inventory lots |
 | `supply_chain.inventory_value` | 2 | warehouse + unit cost / COGS |
 | `supply_chain.order_fulfillment_cycle_time` | 1 | warehouse_fulfillment/order_to_cash orders |
 | `supply_chain.procurement_savings` | 2 | p2p + baseline and actual prices |
 | `supply_chain.purchase_order_cycle_time` | 1 | p2p purchase orders and receipts |
-| `supply_chain.stockout_rate` | 1 | warehouse inventory lots and occurrences |
+| `supply_chain.stockout_rate` | 1 | p2p material demand backordered state |
 | `supply_chain.supplier_on_time_rate` | 2 | p2p + supplier due dates |
 
 #### Support
@@ -445,7 +456,7 @@ The Tier column uses the numbers defined above.
 | `support.cost_per_ticket` | 2 | itsm + support cost per agent-hour |
 | `support.csat` | 2 | itsm + modeled survey score |
 | `support.escalation_rate` | 1 | itsm incidents, transitions, agent resources |
-| `support.first_contact_resolution_rate` | 1 | itsm incidents, transitions, agent resources |
+| `support.first_contact_resolution_rate` | 1 | itsm proxy: resolved with no escalation and no reopen (no contacts modeled) |
 | `support.first_response_time` | 1 | itsm incidents, transitions, agent resources |
 | `support.resolution_time` | 1 | itsm incidents, transitions, agent resources |
 | `support.sla_breach_rate` | 1 | itsm incidents, transitions, agent resources |
