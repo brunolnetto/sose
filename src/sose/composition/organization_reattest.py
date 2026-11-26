@@ -35,6 +35,7 @@ from sose.persistence.ownership import FencedEnginePersistence
 
 from .organization import OrganizationDefinition, validate_organization_admission
 from .organization_jobs import component_job_attestation
+from .physical_pools import ledger_for
 
 if TYPE_CHECKING:
     from sose.persistence.base import Persistence
@@ -121,11 +122,13 @@ def reattest_component_jobs(
     manifests,
     consumers,
     worker_id: str,
+    physical_ledger: bool = False,
 ) -> tuple[ReattestReport, ...]:
     """Move every declared, idle component job to ``definition``'s attestation."""
     _require_arguments(expected_previous, worker_id)
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
+        physical_ledger=ledger_for(persistence, physical_ledger, definition),
     )
     current = (fingerprint, definition.config_epoch)
     reports = []

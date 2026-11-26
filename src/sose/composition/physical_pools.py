@@ -80,6 +80,20 @@ def read_physical_ledger(persistence) -> PhysicalLedgerView:
         raise ValueError("physical pool references require a registered resource ledger") from error
 
 
+def ledger_for(persistence, physical_ledger: bool, definition) -> PhysicalLedgerView | None:
+    """The ledger view an admission caller passes on, when asked to read it.
+
+    As in the snapshot, a definition without pools does not read the ledger. The
+    read is its own transaction, before the caller's reads: a build, reattest or
+    observation only needs admission once.
+    """
+    if not physical_ledger or not definition.physical_pools:
+        return None
+    if not callable(getattr(persistence, "temporal_resources", None)):
+        raise TypeError("physical pools require the PostgreSQL resource ledger")
+    return read_physical_ledger(persistence)
+
+
 def require_admitted_pools(definition, ledger: PhysicalLedgerView) -> None:
     """Fail closed unless every declared pool is confirmed by the ledger."""
     owners = {component.component_id: component.owner_id for component in definition.components}

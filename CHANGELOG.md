@@ -80,8 +80,10 @@
   belong to declared consumers, and an organization pool must have no active
   foreign owner.
   The snapshot then lists the pools and this organization's reservations by
-  component, in the digest only when pools are declared. Other admission callers
-  still refuse physical pools.
+  component, in the digest only when pools are declared. Building, reattesting and
+  observing an organization's jobs accept the same `physical_ledger=True`, and
+  `OrganizationBoundaryConsumerRegistry` a `physical_ledger_view`; without them,
+  declared pools are refused as before.
 
 ### Fixed
 
