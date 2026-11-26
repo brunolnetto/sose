@@ -256,7 +256,8 @@ PostgreSQL tests under the mutants. Two rows are narrower than their labels:
 `tests/integration/sose/composition/test_fair_queue_across_restart.py` sets up one
 capacity-1 pool with five waiters of mixed priority, on Memory, SQLite and
 PostgreSQL. In the restarted run, every grant decision is made by a fresh
-`DurableResourceManager` and SimPy backend rebuilt from durable state.
+`DurableResourceManager` and SimPy backend rebuilt from durable state, after
+reopening the SQLite file or PostgreSQL connection (Memory keeps its state object).
 
 - The restarted run grants in the same order as the continuous run: the first
   arrival, then by priority, with ties in arrival order (`a, c, e, b, d`).
@@ -270,7 +271,7 @@ rebuilds the waiters in reverse serves `a, e, c, d, b`, and the test asserts it.
 **Limits.** "No starvation" here means every queued waiter is eventually served once
 arrivals stop. With strict priorities and no aging, a steady stream of
 higher-priority arrivals can still delay a lower-priority waiter indefinitely. That is
-the configured policy, not a defect, and no aging policy exists. Preemption across
-restarts is covered separately by the PostgreSQL temporal ledger tests
-(`test_postgres_temporal_resource_ledger`, `test_postgres_temporal_resource_negative`),
-not by this test.
+the configured policy, not a defect, and no aging policy exists. This test does not
+cover preemption. Temporal ledger preemption surviving a reopen is covered by
+`test_postgres_temporal_resource_ledger`; the preemptive queue rebuild
+(`core/preemption_rebuild.py`) is not covered here.
