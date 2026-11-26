@@ -19,7 +19,7 @@ from .durable import (
     RuntimeRebuilder,
 )
 from .events import Command
-from .transition_authority import TransitionAuthority
+from .transition_authority import ReceiptAuthority
 from .resources import DurableResourceManager
 from .stores import DurableStoreManager
 from .preemption import DurablePreemptiveResourceManager
@@ -41,7 +41,7 @@ class Engine:
         store_filters=None,
         domain_warehouse: DomainWarehouse | None = None,
         owner_id: str,
-        transition_authority: TransitionAuthority | None = None,
+        transition_authority: ReceiptAuthority | None = None,
     ) -> None:
         if not isinstance(owner_id, str) or not owner_id.strip():
             raise ValueError("owner_id must not be empty")

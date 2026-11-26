@@ -8,7 +8,7 @@ from sose.domain.config import ConfigT, DomainDefinition, SeedT
 from sose.domain.outbox import DomainMutationOutbox
 from sose.domain.storage import DomainPersistence
 from sose.domain.warehouse import DomainWarehouse
-from sose.core.transition_authority import TransitionAuthority
+from sose.core.transition_authority import ReceiptAuthority
 from sose.core.attestation_chain import AttributeAttestingPersistence
 from sose.jobs.model import (
     CompletedJobTrigger, OrganizationJobAttestation, SimulationJobState,
@@ -99,7 +99,7 @@ class SimulationJob(
         sink_bindings: tuple[SinkBinding, ...] = (),
         domain_warehouse: DomainWarehouse | None = None,
         organization_attestation: OrganizationJobAttestation | None = None,
-        transition_authority: TransitionAuthority | None = None,
+        transition_authority: ReceiptAuthority | None = None,
     ) -> None:
         if not isinstance(job_id, str) or not job_id.strip():
             raise ValueError("job_id cannot be empty")

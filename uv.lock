@@ -2211,7 +2211,7 @@ wheels = [
 
 [[package]]
 name = "sose"
-version = "0.8.0"
+version = "0.13.0"
 source = { editable = "." }
 dependencies = [
     { name = "pydantic" },
@@ -2220,6 +2220,9 @@ dependencies = [
 ]
 
 [package.optional-dependencies]
+attestation = [
+    { name = "cryptography" },
+]
 clickhouse = [
     { name = "clickhouse-connect" },
 ]
@@ -2229,6 +2232,7 @@ databricks = [
 dev = [
     { name = "codebase-stats" },
     { name = "coverage" },
+    { name = "cryptography" },
     { name = "duckdb" },
     { name = "mypy" },
     { name = "psycopg", extra = ["binary"] },
@@ -2258,6 +2262,7 @@ snowflake = [
 [package.dev-dependencies]
 dev = [
     { name = "codebase-stats" },
+    { name = "cryptography" },
     { name = "duckdb" },
     { name = "psycopg", extra = ["binary"] },
     { name = "pytest-benchmark" },
@@ -2272,6 +2277,8 @@ requires-dist = [
     { name = "clickhouse-connect", marker = "extra == 'clickhouse'", specifier = ">=1.9,<2" },
     { name = "codebase-stats", marker = "extra == 'dev'", specifier = ">=0.1,<0.2" },
     { name = "coverage", marker = "extra == 'dev'", specifier = ">=7.16,<8" },
+    { name = "cryptography", marker = "extra == 'attestation'", specifier = ">=44,<52" },
+    { name = "cryptography", marker = "extra == 'dev'", specifier = ">=44,<52" },
     { name = "databricks-sql-connector", marker = "extra == 'databricks'", specifier = ">=4,<5" },
     { name = "duckdb", marker = "extra == 'dev'", specifier = ">=2,<3" },
     { name = "duckdb", marker = "extra == 'duckdb'", specifier = ">=2,<3" },
@@ -2291,11 +2298,12 @@ requires-dist = [
     { name = "simpy", marker = "extra == 'simpy'", specifier = ">=4.1.1,<5" },
     { name = "snowflake-connector-python", marker = "extra == 'snowflake'", specifier = ">=5,<6" },
 ]
-provides-extras = ["simpy", "duckdb", "ducklake", "postgres", "clickhouse", "databricks", "snowflake", "dev"]
+provides-extras = ["simpy", "duckdb", "ducklake", "postgres", "clickhouse", "databricks", "snowflake", "attestation", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "codebase-stats", specifier = ">=0.1,<0.2" },
+    { name = "cryptography", specifier = ">=44,<52" },
     { name = "duckdb", specifier = ">=2,<3" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.3.6,<4" },
     { name = "pytest-benchmark", specifier = ">=5.3.1,<6" },

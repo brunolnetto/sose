@@ -19,27 +19,32 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from hmac import compare_digest, new as hmac_new
-from json import dumps
 
 from sose.core.events import Command, DomainEvent
 from sose.core.identity import deterministic_id
 from sose.domain.entity import Entity
-from sose.persistence.codec import dumps as codec_dumps
 
+from sose.core.receipt_claims import (
+    ATTESTATION_EVENT,
+    _attributes_sha256,
+    _encoded,
+    _envelope_mismatch,
+    _evidence_mismatch,
+    _initial_states,
+    _predecessor_revision_claim,
+    _receipt_id,
+    _require_anchored,
+    _require_projection,
+    _require_unsigned_root,
+)
 from sose.core.attestation_chain import (
     attribute_head as _attribute_head,
-    attribute_receipt_id,
     head_receipt_id,
     require_no_successor,
     verify_entity_history,
 )
 
 
-ATTESTATION_EVENT = "engine.statechart_transition_attested"
-
-
-def _encoded(data: dict) -> bytes:
-    return dumps(data, sort_keys=True, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
 def _utc_timestamp(value: datetime) -> datetime:
@@ -53,24 +58,27 @@ def _utc_timestamp(value: datetime) -> datetime:
     return value.astimezone(timezone.utc)
 
 
-@dataclass(frozen=True, slots=True, repr=False)
-class TransitionAuthority:
-    """A capability issued OUTSIDE public UoW writer access.
+class ReceiptAuthority:
+    """Receipt chain logic shared by every signing scheme (#545, #494).
 
-    This local reference implementation requires deployment-level key/role
-    separation. Code running in the same trusted Python process as the Engine
-    is not a cryptographically isolated adversary.
+    A subclass holds ``issuer_id`` and ``key_id`` and implements ``_signed``,
+    ``_well_formed`` and ``_valid``. Code running in the same trusted Python process
+    as the Engine is not a cryptographically isolated adversary.
     """
 
+    __slots__ = ()
     issuer_id: str
     key_id: str
-    secret: bytes
 
-    def __post_init__(self) -> None:
-        if not isinstance(self.secret, bytes) or len(self.secret) < 32:
-            raise ValueError("transition authority requires a protected 256-bit secret")
-        if not all(isinstance(x, str) and x.strip() for x in (self.issuer_id, self.key_id)):
-            raise ValueError("issuer and key IDs must be nonblank")
+    def _require_signed(self, data: dict, subject: str) -> None:
+        """Pop ``data["signature"]`` and check it over the remaining claims."""
+        signature = data.pop("signature", None)
+        if not self._well_formed(signature, data):
+            raise ValueError(f"{subject} signature missing")
+        if data.get("issuer_id") != self.issuer_id or data.get("key_id") != self.key_id:
+            raise ValueError(f"{subject} issuer mismatch")
+        if not self._valid(signature, data):
+            raise ValueError(f"{subject} signature invalid")
 
     def seal(self, *, before: Entity, after: Entity, event: DomainEvent,
              command: Command, predecessor: DomainEvent | None = None) -> DomainEvent:
@@ -140,14 +148,13 @@ class TransitionAuthority:
             "predecessor_receipt_id": _predecessor_claim(before, event, predecessor),
             **_predecessor_revision_claim(before),
         }
-        signature = hmac_new(self.secret, _encoded(claims), sha256).hexdigest()
         return DomainEvent(
             event_id=_receipt_id(after.entity_type, after.id, after.version),
             name=ATTESTATION_EVENT, entity_type=event.entity_type,
             entity_id=event.entity_id, occurred_at=event.occurred_at,
             tick=event.tick, owner_id=event.owner_id,
             causation_id=event.event_id, correlation_id=event.correlation_id,
-            payload={**claims, "signature": signature},
+            payload=self._signed(claims),
         )
 
     def validate_prestate(
@@ -255,19 +262,48 @@ class TransitionAuthority:
         if _envelope_mismatch(receipt, event):
             raise ValueError("authenticated StateChart receipt envelope mismatch")
         data = dict(receipt.payload)
-        mac = data.pop("signature", None)
-        if not isinstance(mac, str) or len(mac) != 64:
-            raise ValueError("authenticated StateChart receipt signature missing")
-        if data.get("issuer_id") != self.issuer_id or data.get("key_id") != self.key_id:
-            raise ValueError("authenticated StateChart receipt issuer mismatch")
-        expected = hmac_new(self.secret, _encoded(data), sha256).hexdigest()
-        if not compare_digest(mac, expected):
-            raise ValueError("authenticated StateChart receipt signature invalid")
+        self._require_signed(data, "authenticated StateChart receipt")
         if _evidence_mismatch(data, event) or receipt.event_id != _receipt_id(
             event.entity_type, event.entity_id, data["to_version"],
         ):
             raise ValueError("authenticated StateChart receipt evidence contradicts event")
         return data
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class TransitionAuthority(ReceiptAuthority):
+    """HMAC-SHA256 receipts, issued OUTSIDE public UoW writer access.
+
+    The same secret signs and verifies, so any holder can also issue receipts.
+    ``sose.core.ed25519_authority`` separates the two (#494).
+    """
+
+    issuer_id: str
+    key_id: str
+    secret: bytes
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.secret, bytes) or len(self.secret) < 32:
+            raise ValueError("transition authority requires a protected 256-bit secret")
+        require_ids(self)
+
+    def _signed(self, claims: dict) -> dict:
+        return {**claims, "signature": _hmac(self.secret, claims)}
+
+    def _well_formed(self, signature, data: dict) -> bool:
+        return isinstance(signature, str) and len(signature) == 64 and "algorithm" not in data
+
+    def _valid(self, signature: str, data: dict) -> bool:
+        return compare_digest(signature, _hmac(self.secret, data))
+
+
+def _hmac(secret: bytes, claims: dict) -> str:
+    return hmac_new(secret, _encoded(claims), sha256).hexdigest()
+
+
+def require_ids(authority) -> None:
+    if not all(isinstance(x, str) and x.strip() for x in (authority.issuer_id, authority.key_id)):
+        raise ValueError("issuer and key IDs must be nonblank")
 
 
 def _require_stored_projection(claims: dict, entity: Entity, source: DomainEvent) -> None:
@@ -278,45 +314,6 @@ def _require_stored_projection(claims: dict, entity: Entity, source: DomainEvent
         or entity.updated_at != source.occurred_at
     ):
         raise ValueError("authenticated StateChart receipt contradicts the stored entity")
-
-
-def _receipt_id(entity_type: str, entity_id: str, version: int) -> str:
-    """Owner-independent receipt identity: one receipt per entity version.
-
-    Entities are not owner-scoped, so a version claimed by any owner's receipt
-    is claimed for every owner; this prevents a fork after a projection rewind.
-    """
-    return deterministic_id("engine-attested-transition", entity_type, entity_id, version)
-
-
-def _attributes_sha256(entity: Entity) -> str:
-    """Digest of the typed durable attribute encoding (fails on unsupported values)."""
-    return sha256(codec_dumps(entity.attributes).encode("utf-8")).hexdigest()
-
-
-def _initial_states(chart) -> set[str]:
-    initial = {str(state.id) for state in chart.states if getattr(state, "initial", False)}
-    if len(initial) != 1:
-        raise ValueError("unauthenticated prestate: ambiguous chart initial state")
-    return initial
-
-
-def _predecessor_revision_claim(before: Entity) -> dict:
-    """Set only after attested attribute saves, so older receipts keep their claims."""
-    return {"predecessor_revision": before.attribute_revision} if before.attribute_revision else {}
-
-
-def _require_unsigned_root(uow, before: Entity, initial) -> None:
-    """A never-attested entity is at its chart's initial state with no receipt yet."""
-    if before.version != 0 or before.attribute_revision != 0:
-        return
-    if (initial is not None and before.state not in initial) or uow.get_event(
-        _receipt_id(before.entity_type, before.id, 1),
-    ) is not None:
-        raise ValueError(
-            "unauthenticated prestate: version-zero entity must have "
-            "its initial chart state and no transition history"
-        )
 
 
 def _predecessor_claim(before: Entity, event: DomainEvent,
@@ -332,68 +329,3 @@ def _predecessor_claim(before: Entity, event: DomainEvent,
     if predecessor.event_id != expected:
         raise ValueError("Engine attestation predecessor receipt does not match prestate")
     return expected
-
-
-def _envelope_mismatch(receipt: DomainEvent, event: DomainEvent) -> bool:
-    pairs = (
-        (receipt.name, ATTESTATION_EVENT), (receipt.causation_id, event.event_id),
-        (receipt.owner_id, event.owner_id), (receipt.entity_type, event.entity_type),
-        (receipt.entity_id, event.entity_id), (receipt.occurred_at, event.occurred_at),
-        (receipt.tick, event.tick), (receipt.correlation_id, event.correlation_id),
-    )
-    return (
-        type(event.tick) is not int or type(receipt.tick) is not int
-        or any(left != right for left, right in pairs)
-    )
-
-
-def _evidence_mismatch(data: dict, event: DomainEvent) -> bool:
-    expected = {
-        "event_name": event.name,
-        "event_payload_sha256": sha256(_encoded(dict(event.payload))).hexdigest(),
-        "event_id": event.event_id, "owner_id": event.owner_id,
-        "entity_id": event.entity_id, "entity_type": event.entity_type,
-        "occurred_at": event.occurred_at.isoformat(), "tick": event.tick,
-        "correlation_id": event.correlation_id,
-        "trigger": event.payload.get("trigger"),
-        "from_state": event.payload.get("from_state"),
-        "to_state": event.payload.get("to_state"),
-        "command_id": event.causation_id,
-    }
-    typed = (data.get("tick"), data.get("from_version"), data.get("to_version"))
-    return (
-        event.name != "entity.state_transition"
-        or any(data.get(key) != value for key, value in expected.items())
-        or any(type(value) is not int for value in typed)
-        or data["to_version"] != data["from_version"] + 1
-        or not isinstance(data.get("attributes_sha256"), str)
-    )
-
-
-def _require_anchored(claims: dict, before: Entity, initial: set[str], owner_id: str) -> None:
-    """The head receipt must link to the previous version, or start at the chart root."""
-    if claims["owner_id"] != owner_id:
-        raise ValueError("trusted predecessor has foreign owner")
-    version = before.version
-    revision = claims.get("predecessor_revision", 0)
-    if revision:
-        expected = attribute_receipt_id(before.entity_type, before.id, version - 1, revision)
-    else:
-        expected = None if version == 1 else _receipt_id(
-            before.entity_type, before.id, version - 1)
-    if claims.get("predecessor_receipt_id") != expected:
-        raise ValueError("trusted predecessor chain has missing version")
-    if version == 1 and initial is not None and claims["from_state"] not in initial:
-        raise ValueError("trusted predecessor chain does not start at the initial state")
-
-
-def _require_projection(claims: dict, before: Entity, source: DomainEvent) -> None:
-    """The stored entity must be exactly the signed terminal projection."""
-    if (
-        claims["to_version"] != before.version
-        or claims["to_state"] != before.state
-        or claims["attributes_sha256"] != _attributes_sha256(before)
-    ):
-        raise ValueError("authenticated StateChart receipt contradicts terminal projection")
-    if before.updated_at != source.occurred_at:
-        raise ValueError("trusted predecessor chain contradicts committed projection")

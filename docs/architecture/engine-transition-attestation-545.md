@@ -140,10 +140,56 @@ a fresh direct connection.
 **Mutant check.** An Engine that commits the receipt in its own transaction after
 the transition fails the rollback test (a transition with no receipt survives). It
 passes the lost-reply test: after a successful COMMIT both transactions are durable.
-That test proves "no duplicate on retry" and that the Command is consumed in the
-ship's own commit (an Engine consuming it in a separate transaction fails it), not
-that transition and receipt are indivisible.
+That test proves "no duplicate on retry", and that the Command is not consumed in a
+later transaction than the ship (an Engine doing so fails it; one consuming it in an
+earlier transaction fails the rollback test instead). It does not prove that
+transition and receipt are indivisible.
 
 Not covered: a SIGKILL of the worker between statements (a killed connection rolls
 back like the injected failure, but this is not tested here), PostgreSQL writer-role
 and key isolation, and the attribute-receipt path under the same faults.
+
+## Ed25519 receipts: verifiers hold only the public key (#494)
+
+With `TransitionAuthority` (HMAC-SHA256) the same secret signs and verifies, so any
+party able to check a receipt can also forge one. #545 asks for "a signature that only
+the authorized Engine can produce and downstream validators can verify from a
+separately managed root". `sose.core.ed25519_authority` provides it:
+
+- `Ed25519TransitionAuthority(issuer_id, key_id, private_key)` signs transition and
+  attribute receipts with a raw 32-byte Ed25519 private key. Its `verifier()` returns
+  the public half.
+- `Ed25519TransitionVerifier(issuer_id, key_id, public_key)` authenticates receipts
+  exactly as the issuer does (`verify`, `verify_history`, `snapshot_organization`),
+  from the raw 32-byte public key. It cannot issue receipts: an Engine or job
+  configured with it raises `PermissionError` at the first transition or attribute
+  save, inside the transaction, so nothing is written.
+- Ed25519 receipts carry `"algorithm": "ed25519"` and a 128-hex-digit signature. An
+  HMAC authority refuses them, and an Ed25519 verifier refuses HMAC receipts
+  ("signature missing"). HMAC receipts are byte-for-byte unchanged.
+- The signing schemes share `ReceiptAuthority`, which holds the chain logic; each
+  scheme implements only how to sign and check a signature. Pure claim checks moved
+  to `sose.core.receipt_claims` and are re-exported from `transition_authority`.
+- Needs the optional `cryptography` package (`pip install sose[attestation]`; it is in
+  the `dev` extra). Without it, constructing an Ed25519 class names the extra.
+
+**Tests.** `tests/integration/sose/composition/test_ed25519_receipts.py`:
+- a `warehouse_fulfillment` job signed with Ed25519, with transition and attribute
+  receipts, verifies from the public key alone;
+- a verifier configured as the job's authority writes no receipt and no entity change;
+- receipts signed by another key with the same issuer and key ids fail;
+- HMAC and Ed25519 receipts are not interchangeable;
+- tampering with a claim, or stripping `algorithm`, fails;
+- the organization snapshot authenticates with the verifier.
+
+`tests/e2e/sose/persistence/test_postgres_ed25519_receipts.py`: on real PostgreSQL, a
+fresh OS process given only the public key verifies a signed `ship` chain. It refuses
+a chain a public writer signed with its own Ed25519 key, and cannot sign itself.
+
+**Limits.** This settles who can *verify* without being able to *issue*. Key custody
+and rotation are deployment concerns: the private key still lives in the Engine
+process, and a process holding it is trusted. Rotation, meaning more than one
+accepted key, is not implemented; a verifier accepts exactly one `(issuer_id,
+key_id, public_key)`. A PostgreSQL writer role that stops public writers from
+appending receipt rows is not implemented either. Such rows are rejected at
+verification, which is the integrity property, but they can still deny availability.

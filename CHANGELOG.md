@@ -65,6 +65,12 @@
   creation. `verify_history` also refuses a chain whose receipts change owner, or an
   attribute receipt naming a predecessor other than the one its revision implies.
   All 28 catalog domains now run attested and verify.
+- Ed25519 transition receipts (#494, #545): `Ed25519TransitionAuthority` signs
+  transition and attribute receipts with a private key, and
+  `Ed25519TransitionVerifier` checks them from the public key alone and cannot issue
+  any. Install with `sose[attestation]` (`cryptography`). HMAC `TransitionAuthority`
+  receipts are unchanged; both schemes now share `ReceiptAuthority`, and `Engine` and
+  `SimulationJob` accept any `ReceiptAuthority`.
   `TransitionAuthority.verify_history` now takes `events=` (the entity's chain events
   in commit order) instead of `transitions=`/`receipts_by_source=`.
 
