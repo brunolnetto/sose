@@ -2,388 +2,175 @@
 
 [![CI](https://github.com/brunolnetto/sose/actions/workflows/ci.yml/badge.svg)](https://github.com/brunolnetto/sose/actions/workflows/ci.yml)
 
-SOSE simulates operational systems rather than generating independent rows.
-
-Its core model is:
-
-```text
-current state
-+ legal behavior
-+ stochastic semantics
-+ logical time
-+ external scenarios
-+ causal events
-= next operational state
-```
-
-SOSE is intended for domains with persistent entities, explicit lifecycle rules,
-causal relationships, exceptions and time: MRO, logistics, e-commerce, banking,
-manufacturing, healthcare, telecom, insurance, construction and supply chain.
-
-## v0.8 architecture
+SOSE simulates operational systems; it does not generate independent rows. Each
+domain is a set of persistent entities whose lifecycles are StateCharts. SOSE runs
+them on a deterministic logical clock, with durable scheduling, finite resources and
+external scenarios, and records every state change as a causal event. The output is
+operational data whose rows explain each other: who did what, when, because of what,
+and with which resource.
 
 ```text
-StateChart
-    = legal behavioral topology
-
-Probabilistic Transition Graph
-    = stochastic semantics over that topology
-
-Scenario Engine
-    = external conditions and interventions
-
-Scheduler
-    = temporal semantics
-
-SOSE runtime
-    = deterministic execution of all of the above
+current state + legal behavior + stochastic semantics + logical time
++ external scenarios + causal events  =  next operational state
 ```
 
-v0.8 builds on the durable operational-runtime boundary with a stabilized public
-API, SQLite persistence portability, built-artifact release validation, a
-minimal adoption path, and repeated-restart/contention hardening. SOSE owns
-semantic truth, determinism, causality, scheduling intent, resource ownership,
-queue/store state, preemption outcomes, quantitative container state, recovery
-position and persistence; execution backends remain ephemeral and
-reconstructible.
+It targets domains with lifecycle rules, exceptions, queues and time: maintenance
+(MRO), order-to-cash, procure-to-pay, warehousing, logistics, manufacturing,
+healthcare, aviation, insurance, payments, telecom and more.
 
-## v0.8 capabilities
+## Status
 
-- deterministic logical clock;
-- scoped deterministic randomness;
-- deterministic entity, command and event identities;
-- priority scheduler over logical time;
-- explicit commands and immutable domain events;
-- canonical factories for entities, commands, events and schedules;
-- `python-statemachine` `StateChart` integration behind a runtime factory;
-- extraction of legal transition topology from StateCharts;
-- probabilistic policies attached without forking `python-statemachine`;
-- guard filtering before probability normalization;
-- contextual transition weights;
-- deterministic stochastic sampling;
-- support for multi-state configurations needed by compound/parallel charts;
-- eventless transitions preserved as topology but left to SCXML execution;
-- causal metadata (`causation_id`, `correlation_id`) propagated by construction;
-- standardized state-transition events suitable for process mining;
-- state persisted independently from immutable event history;
-- persistence protocol with in-memory and SQLite adapters;
-- MRO vertical slice;
-- deterministic Scenario Engine;
-- tick, event and scheduled scenario triggers;
-- scenario conditions and activation probabilities;
-- temporary scenario activations;
-- environment attribute overlays;
-- transition-weight modifiers and composite effects;
-- automatic scenario integration with probabilistic transition evaluation;
-- backend-neutral temporal/resource contracts;
-- optional SimPy discrete-event backend;
-- inclusive `run_until()` boundary semantics;
-- deterministic same-time priority ordering;
-- backend-neutral resource requests, leases and snapshots;
-- priority-based resource contention without exposing SimPy objects;
-- durable scheduled work and persisted commands;
-- durable logical recovery position and tick;
-- durable scenario decisions and activations;
-- durable resource definitions, demands and reservations;
-- crash-safe resource release intents;
-- backend reconstruction from semantic state;
-- multi-restart equivalence across scheduling, scenarios and resources;
-- durable FIFO, priority and filter-store semantics;
-- durable quantitative Container state and operation results;
-- crash-consistent preemptive resource semantics;
-- reusable crash-injection tests for persistence/backend boundaries;
-- backend-neutral persistence conformance suite;
-- ordered runtime recovery participants with validation-before-rebuild;
-- explicit `sose.api` public facade with anti-drift tests;
-- built wheel/sdist installation validation in CI;
-- repeated-restart and contention hardening gates.
+- **Version 0.13.0**, Python 3.12+, MIT licensed. Releases and policy are in
+  [`docs/releases/`](docs/releases/README.md). Deprecations follow
+  [ADR-0011](docs/architecture/decisions/adr-0011-deprecation-policy.md).
+- The durable runtime, the persistence adapters, the CLI and organization
+  composition are tested on every pull request, including real PostgreSQL. Coverage
+  must stay at or above 95%, and a quality ratchet must pass.
+- **Known limitation: one case per run.** Every builtin domain runs a single
+  configured reference case, with its happy or sad path chosen by configuration.
+  This keeps exact ground truth and frozen scientific evidence, but it produces no
+  volume or variation for population metrics. A seeded, opt-in **workload mode** is
+  proposed in [ADR-0012](docs/architecture/decisions/adr-0012-seeded-domain-workload-generation.md)
+  (issues #697–#703).
+- Scientific studies (OD-5a and others) have their own admission gates. They are not
+  admitted until their protocol is.
 
+## Core ideas
 
-## Compatibility note
+| Layer | Owns |
+|---|---|
+| **StateChart** (`python-statemachine`) | Legal behavior: states, transitions, guards, compound and parallel states. |
+| **Probabilistic transition graph** | Weights over the currently legal events. Guards are applied before normalization ([docs](docs/probabilistic-transition-graph.md)). |
+| **Scenario engine** | External conditions and interventions that change context and weights, never lifecycle topology ([docs](docs/architecture/scenario-engine.md)). |
+| **Scheduler and logical clock** | Temporal semantics. Domain code never reads the wall clock. |
+| **Durable runtime** | Entities, commands, events, scheduled work, resources, stores, containers, preemption and the recovery position, all persisted. Execution backends such as SimPy are ephemeral and rebuilt from durable state ([docs](docs/architecture/durable-runtime.md)). |
 
-Domain code should schedule through `context.schedules`. The lower-level
-`context.scheduler` in-memory queue remains only as a compatibility bridge for
-older callers and is not part of the durable scheduling contract. New examples
-and integrations should not depend on it.
+> StateCharts decide what is legal. SOSE decides how likely each legal event is,
+> samples it from a scoped, seeded stream, and records the result durably.
 
-## Behavioral boundary
+**Recurring jobs.** One external trigger advances exactly one logical tick and
+commits a durable checkpoint, so cron, Airflow, Databricks or Kubernetes can drive a
+simulation without a long-running process. A restarted job is equivalent to a
+continuous one ([docs](docs/architecture/recurring-domain-jobs.md)).
 
-`python-statemachine` owns:
+**Organizations.** Several domain components can be composed into one organization,
+with owner-qualified jobs, cross-domain boundary messages (publish, claim and ACK,
+exactly once) and a canonical organization snapshot. The snapshot can include
+physical pools admitted against a PostgreSQL resource ledger
+([ADR-0008](docs/architecture/decisions/adr-0008-organization-composition-admission.md),
+[ADR-0009](docs/architecture/decisions/adr-0009-owner-qualified-runtime-only.md)).
 
-```text
-states
-transitions
-guards
-validators
-compound / parallel semantics
-history
-SCXML microsteps
-```
+**Attested transitions.** Optionally, the Engine signs every StateChart transition and
+attribute change with a receipt chained per entity. HMAC or Ed25519 can be used; with
+Ed25519, verifiers hold only the public key. A forged, replayed or rolled-back step
+fails verification ([docs](docs/architecture/engine-transition-attestation-545.md)).
 
-SOSE owns:
+## Domain catalog
 
-```text
-probabilistic transition semantics
-logical time
-deterministic randomness
-causal scheduling
-persistence
-cross-entity effects
-future scenario interventions
-```
+`sose domains` lists the builtin domains, and `sose domains <name>` shows a domain's
+parameters.
 
-A useful rule is:
+- **Industry references:** airports, aviation, cards_payments, construction,
+  credit_loans, energy_utilities, field_service, hospitality, hospitals, insurance,
+  itsm, logistics, manufacturing, mro, order_to_cash, p2p, record_to_report,
+  subscription_saas, telecom, transit, warehouse_fulfillment, warehouse_management.
+- **Canonical concurrency problems:** dining_philosophers, job_shop,
+  producer_consumer, readers_writers, sleeping_barber.
+- **Tutorial:** tutorial_job.
 
-> StateChart decides what is legal. SOSE decides how likely each currently legal
-> event is and samples that decision deterministically.
+## Quickstart
 
-## Public domain-facing API
-
-A domain author primarily works through `SimulationContext`:
-
-```python
-ctx.clock
-ctx.random
-ctx.entities
-ctx.commands
-ctx.events
-ctx.schedules
-ctx.transitions
-ctx.scenarios
-ctx.statecharts
-
-# execution backends remain explicit and ephemeral;
-# Engine.rebuild_backend(...) reconstructs them from durable state.
-```
-
-### Entity creation
-
-```python
-work_order = ctx.entities.create(
-    WorkOrder,
-    key=(asset_id, occurrence),
-    state="planned",
-    attributes={"priority": "HIGH"},
-)
-```
-
-### Stochastic StateChart semantics
-
-```python
-from sose.probability import probabilistic_transitions
-
-
-@probabilistic_transitions({
-    "start": 0.75,
-    "wait_for_material": 0.20,
-    "cancel": 0.05,
-})
-class WorkOrderChart(StateChart):
-    ...
-```
-
-Those values are weights. After StateChart guards are evaluated, SOSE normalizes
-only the enabled branches.
-
-### Contextual weights
-
-```python
-@probabilistic_transitions({
-    "start": lambda ev: 8.0 if ev.entity.attributes["material_ready"] else 0.1,
-    "wait_for_material": lambda ev: 0.1 if ev.entity.attributes["material_ready"] else 8.0,
-    "cancel": 0.1,
-})
-class WorkOrderChart(StateChart):
-    ...
-```
-
-### Direct decision API
-
-Once statecharts are bound through the engine:
-
-```python
-decision = ctx.statecharts.decide(
-    work_order,
-    guard_kwargs={"material_available": True},
-    scope=("normal-operation",),
-)
-
-print(decision.event)
-print(decision.probability)
-```
-
-The decision itself does not mutate the chart. Sending/dispatching the selected event
-remains an explicit operation.
-
-## Guard-before-probability rule
-
-Given:
-
-```text
-start               0.75
-wait_for_material   0.20
-cancel              0.05
-```
-
-if a StateChart guard disables `start`, the effective distribution becomes:
-
-```text
-wait_for_material   0.80
-cancel              0.20
-```
-
-not `0.20 / 0.05` with a missing 75% probability mass.
-
-## Causal flow
-
-```text
-external condition / scenario
-        ↓
-StateChart legal topology + guards
-        ↓
-Probabilistic Transition Graph
-        ↓
-deterministic event selection
-        ↓
-CommandFactory
-        ↓
-StateChart.send(event)
-        ↓
-EventFactory
-        ↓
-DomainEvent
-        ↓
-Persistence
-```
-
-`causation_id` links an event or command to its immediate predecessor.
-`correlation_id` identifies the broader business flow across multiple entities.
-
-## Package layout
-
-```text
-src/sose/
-├── core/
-│   ├── clock.py
-│   ├── context.py
-│   ├── engine.py
-│   ├── events.py
-│   ├── identity.py
-│   ├── randomness.py
-│   └── scheduler.py
-├── probability/
-│   ├── builder.py
-│   ├── graph.py
-│   ├── model.py
-│   ├── policy.py
-│   └── runtime.py
-├── factories/
-│   ├── entity.py
-│   ├── command.py
-│   ├── event.py
-│   ├── schedule.py
-│   └── statechart.py
-├── statecharts/
-│   ├── base.py
-│   └── topology.py
-├── domain/
-│   ├── entity.py
-│   └── registry.py
-├── scenarios/
-│   ├── engine.py
-│   ├── model.py
-│   └── rules.py
-├── backends/
-│   ├── base.py
-│   └── simpy.py
-├── persistence/
-│   ├── base.py
-│   └── memory.py
-├── dsl/
-│   ├── loader.py
-│   └── models.py
-└── examples/mro/
-    ├── entities.py
-    ├── statecharts.py
-    └── simulation.py
-```
-
-
-
-## SimPy backend
-
-Install the optional backend with:
+Install from a clone, with the optional SimPy backend and the development tools:
 
 ```bash
-pip install "sose[simpy]"
+git clone https://github.com/brunolnetto/sose && cd sose
+python -m pip install -e ".[simpy,dev]"
 ```
 
-The public API remains backend-neutral:
+Create, apply and advance a durable job:
 
-```python
-from datetime import datetime, timedelta, timezone
-
-from sose.backends.simpy import SimPyBackend
-
-backend = SimPyBackend(
-    origin=datetime(2026, 1, 1, tzinfo=timezone.utc),
-)
-
-backend.schedule_after(
-    timedelta(hours=2),
-    callback,
-    priority=100,
-)
-
-backend.create_resource("technicians", capacity=3)
+```bash
+sose init --domain mro                       # writes sose.toml from validated defaults
+sose validate --config sose.toml
+sose apply --config sose.toml                # creates or updates the durable job
+sose run --config sose.toml --trigger-id run-001   # advances one logical tick
+sose inspect --config sose.toml              # reads the checkpoint, changes nothing
 ```
 
-Domain code does not receive `simpy.Environment`, `simpy.Event`, generators, or native resource-request objects.
+To build your own domain, start with
+[Build your first durable domain](docs/getting-started/first-domain.md). Then see
+[recurring jobs](docs/getting-started/recurring-job.md),
+[the CLI](docs/getting-started/cli.md) and
+[storage configuration](docs/getting-started/storage-config.md).
 
-The backend remains intentionally ephemeral in v0.8. Scheduled work, scenario runtime state, normal and preemptive resource ownership, Store semantics, Container state and the logical recovery position are persisted by SOSE and are sufficient to reconstruct a fresh backend after restart.
+## Persistence and analytical sinks
+
+| Kind | Adapters |
+|---|---|
+| Authoritative persistence | `memory`, `sqlite`, `sqlite_incremental`, `postgres`, `duckdb`, `ducklake`, `clickhouse`, `jsonl` |
+| Analytical sinks (asynchronous, idempotent) | `jsonl`, `databricks`, `snowflake` |
+
+Optional extras: `simpy`, `postgres`, `duckdb`, `ducklake`, `clickhouse`,
+`databricks`, `snowflake` and `attestation` (Ed25519). `sose persistence` and
+`sose sinks` list each adapter's capabilities.
+
+Operational persistence is the source of truth. A sink outage never rolls back
+committed simulation progress
+([ADR-0005](docs/architecture/decisions/adr-0005-canonical-experiment-data-product.md)).
+
+## What the data contains
+
+- **Entities:** the current state and attributes of each simulated object.
+- **Events:** an immutable `entity.state_transition` per change, with `causation_id`
+  (immediate cause) and `correlation_id` (business flow). This suits process mining.
+- **Resources:** demands, reservations and release intents, plus stores, containers
+  and preemption outcomes.
+- **Jobs:** durable checkpoints and completed triggers.
+- **Organizations:** boundary messages, deliveries and ACKs, and optionally
+  transition receipts.
+
+Ground truth is typed (analytical, mechanistic or invariant) rather than "whatever
+the simulator produced"
+([ADR-0003](docs/architecture/decisions/adr-0003-ground-truth-taxonomy.md)). How a
+business metric catalog can be derived from this data, and what is still missing, is
+in [metric-catalog-derivation.md](docs/architecture/metric-catalog-derivation.md).
 
 ## Kernel invariants
 
-1. Domain scenarios do not mutate entity state directly.
-2. Valid lifecycle transitions and guards are owned by StateCharts.
-3. Probability is evaluated only across currently legal/enabled events.
-4. Probabilistic policies use weights; normalization is a runtime concern.
-5. Stochastic selection uses only scoped deterministic RNG.
-6. Eventless StateChart transitions are never sampled by SOSE.
-7. Scenario interventions will alter context/policies, not duplicate lifecycle topology.
-8. State changes produce immutable domain events.
-9. Domain logic never calls the wall clock directly.
-10. Synthetic identities are deterministic.
-11. State and event history are persisted separately.
-12. A tick is committed only after its effects are durable.
-13. Simulator-private bookkeeping is not part of the downstream source contract.
+1. Scenarios never mutate entity state directly; StateCharts own lifecycle rules.
+2. Probability is evaluated only over currently enabled events, from weights.
+3. Every random draw comes from a scoped, seeded stream. Identities are
+   deterministic.
+4. Domain logic never reads the wall clock.
+5. Every state change produces an immutable event. State and history are persisted
+   separately.
+6. A tick is committed only after its effects are durable. Backends are rebuilt from
+   durable state.
+7. Simulator-private bookkeeping is not part of the downstream data contract.
 
-## Development direction
+## Documentation
 
-v0.8 closes the library-stabilization milestone: public API stability, SQLite
-persistence portability, built-artifact validation, release discipline, a
-minimal authoring path, and repeated-restart hardening are now executable gates.
+- **Getting started:** [`docs/getting-started/`](docs/getting-started/README.md)
+- **Architecture:** [`docs/architecture/`](docs/architecture/), including the
+  [durable runtime](docs/architecture/durable-runtime.md),
+  [persistence model](docs/architecture/persistent-model.md),
+  [SimPy backend](docs/architecture/simpy-backend.md),
+  [domain blueprints](docs/architecture/domain-implementation-blueprints.md) and
+  [version 1 readiness](docs/architecture/version-1-readiness.md)
+- **Decisions (ADRs):** [`docs/architecture/decisions/`](docs/architecture/decisions/)
+- **Documentation policy:** [`docs/governance/documentation-policy.md`](docs/governance/documentation-policy.md)
+- **Releases:** [`docs/releases/`](docs/releases/README.md)
+- **Roadmap:** [`docs/ROADMAP.md`](docs/ROADMAP.md)
 
-The next phase is the **v0.9 adoption and operations milestone**: persistence
-evolution, durable diagnostics, measured performance, real adoption evidence,
-and explicit 1.0 compatibility criteria. PostgreSQL remains evidence-triggered
-rather than a maturity checkbox.
+## Development
 
-Release closure and policy live under `docs/releases/`.
+```bash
+python -m pytest -q -m "not slow"     # the CI default; add -m slow for long suites
+```
 
-See:
-
-- [`docs/getting-started/first-domain.md`](docs/getting-started/first-domain.md)
-- [`docs/getting-started/recurring-job.md`](docs/getting-started/recurring-job.md)
-- [`docs/releases/README.md`](docs/releases/README.md)
-- [`docs/releases/v0.8.0.md`](docs/releases/v0.8.0.md)
-- [`docs/releases/v0.9.0-plan.md`](docs/releases/v0.9.0-plan.md)
-- [`docs/architecture/version-1-readiness.md`](docs/architecture/version-1-readiness.md)
-- [`docs/releases/v0.8.0-plan.md`](docs/releases/v0.8.0-plan.md)
-- [`docs/architecture/domain-implementation-blueprints.md`](docs/architecture/domain-implementation-blueprints.md)
-- [`docs/factories.md`](docs/factories.md)
-- [`docs/probabilistic-transition-graph.md`](docs/probabilistic-transition-graph.md)
-- [`docs/architecture/scenario-engine.md`](docs/architecture/scenario-engine.md)
-- [`docs/architecture/simpy-backend.md`](docs/architecture/simpy-backend.md)
-- [`docs/architecture/durable-runtime.md`](docs/architecture/durable-runtime.md)
-- [`docs/architecture/persistent-model.md`](docs/architecture/persistent-model.md)
+PostgreSQL tests run when `SOSE_TEST_POSTGRES_DSN` is set. Lint is not a CI gate
+today: `ruff` reports existing findings on `main`. A pull request merges with
+green CI, at least 95% coverage, a passing quality ratchet
+([ADR-0010](docs/architecture/decisions/adr-0010-codebase-quality-ratchet.md)) and
+an independent review of its exact head. Consequential architectural changes need an
+ADR (see the documentation policy).
