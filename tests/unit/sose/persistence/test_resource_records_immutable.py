@@ -20,7 +20,8 @@ from sose.core.runtime import (
 )
 from sose.persistence.memory import MemoryPersistence
 
-IMMUTABLE_FIELD_TYPES = {str, int, datetime}
+# ``str | None``: the optional owner of a resource queue record (#496) is immutable too.
+IMMUTABLE_FIELD_TYPES = {str, int, datetime, str | None, typing.Optional[str]}
 RECORDS = (ResourceDefinition, ResourceDemand, ResourceReservation, ResourceReleaseIntent)
 NOW = datetime(2026, 11, 21, 8, tzinfo=timezone.utc)
 

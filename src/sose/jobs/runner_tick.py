@@ -199,6 +199,9 @@ class _TickExecutionMixin:
         if engine.owner_id != self.job_id:
             raise RuntimeError("domain runtime owner does not match configured job_id")
         self._attach_domain_warehouse(engine)
+        if self.organization_attestation is not None:
+            # The organization snapshot attributes this job's resource queue (#496).
+            engine.resources.owner_id = self.job_id
         if self.transition_authority is not None:
             if engine.domain_warehouse is not None:
                 raise ValueError("transition proof requires entity and event in one store")

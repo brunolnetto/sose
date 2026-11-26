@@ -136,6 +136,10 @@ _LEGACY_OMITTED_NONE_FIELDS = {
     "sose.jobs.model:SimulationJobState": frozenset(
         {"organization_attestation", "active_batch_start_tick"}
     ),
+    # The resource queue's owner (#496) is set only for organization-attested jobs.
+    "sose.core.runtime:ResourceDemand": frozenset({"owner_id"}),
+    "sose.core.runtime:ResourceReservation": frozenset({"owner_id"}),
+    "sose.core.runtime:ResourceReleaseIntent": frozenset({"owner_id"}),
 }
 
 

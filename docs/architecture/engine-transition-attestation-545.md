@@ -369,5 +369,31 @@ digest only when the organization declares some, so existing digests are unchang
   attestation (the definition fingerprint, which covers the pool references); the
   ledger is checked at build, at reattestation and on every snapshot, not on every
   tick.
-- The job-local SimPy queue (`ResourceDemand`/`ResourceReservation`) has no owner and
-  stays out of the snapshot.
+- The job-local SimPy queue is attributed separately (next section).
+
+## A component job's own resource queue in the snapshot (#494, #496)
+
+`ResourceDemand`, `ResourceReservation` and `ResourceReleaseIntent` carry an optional
+`owner_id`. `DurableResourceManager(persistence, owner_id=...)` stamps it on new
+demands, and it is carried from demand to reservation to release intent. A
+`SimulationJob` with an `organization_attestation` sets its Engine owner (the job
+id) on its tick's resource manager. A standalone job stamps nothing, and the codec
+omits `None`, so its stored bytes are unchanged.
+
+`ComponentSnapshot.resource_queue` lists the records stamped with the component's
+owner: kind, id, resource, sequence and time. It enters the digest only when it is
+not empty. One run of the `org:equivalence` fixture without attestation, which has a
+resource record, gives the same snapshot digest on `main` and on this change.
+
+`tests/integration/sose/composition/test_owned_resource_queue.py` covers three cases:
+- an attested run's stamped records are exactly the ones the snapshot lists;
+- the owner travels from demand to reservation to release intent;
+- a standalone record has no owner and no `owner_id` bytes.
+
+**Limits.**
+- Records created before a job is attested, or by a job's seed, carry no owner and
+  are not listed.
+- The preemptive resource queue (`PreemptiveResourceDemand`) is not attributed.
+- Composition helpers that build an Engine directly (for example the
+  `trading_company_*` modules) do not go through an attested `SimulationJob`, so
+  their records carry no owner and are not listed.

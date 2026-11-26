@@ -22,8 +22,11 @@ __all__ = [
 class DurableResourceManager:
     """Durable resource truth reconstructed into an ephemeral ResourceBackend."""
 
-    def __init__(self, persistence: Persistence) -> None:
+    def __init__(self, persistence: Persistence, *, owner_id: str | None = None) -> None:
         self._persistence = persistence
+        # Stamped on new demands, and carried to their reservations and release
+        # intents, so an organization snapshot can attribute the queue (#496).
+        self.owner_id = owner_id
         self._backend_leases: dict[str, object] = {}
         self._pending_callbacks: dict[
             str, Callable[[ResourceReservation], None]
@@ -157,6 +160,7 @@ class DurableResourceManager:
             priority=priority,
             requested_at=requested_at,
             sequence=sequence,
+            owner_id=self.owner_id,
         )
         with self._persistence.transaction() as uow:
             uow.save_resource_demand(demand)
@@ -200,6 +204,7 @@ class DurableResourceManager:
             resource_name=demand.resource_name,
             acquired_at=acquired_at,
             sequence=demand.sequence,
+            owner_id=demand.owner_id,
         )
         with self._persistence.transaction() as uow:
             persisted = uow.get_resource_demand(request_id)
@@ -285,6 +290,7 @@ class DurableResourceManager:
             reservation_id=reservation_id,
             resource_name=reservation.resource_name,
             requested_at=getattr(backend, "now", reservation.acquired_at),
+            owner_id=reservation.owner_id,
         )
         with self._persistence.transaction() as uow:
             persisted = uow.get_resource_reservation(reservation_id)
