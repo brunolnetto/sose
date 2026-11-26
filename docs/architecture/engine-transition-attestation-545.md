@@ -119,3 +119,31 @@ byte-identical to `main` before this change; the test suite checks one domain.
 **Limits.** A save made through the raw persistence, bypassing the wrapper, is not
 attested and is detected only at verification ("contradicts the stored entity").
 `authenticated` is still not bound to the store (see above).
+
+## Rollback and uncertain COMMIT on an attested ship (#494)
+
+`tests/e2e/sose/persistence/test_postgres_attested_uncertain_commit.py` runs a
+durable, scheduled `ship` through an attested Engine in a separate OS worker on real
+PostgreSQL. The parent never trusts the worker's exit code; it reads the outcome on
+a fresh direct connection.
+
+- **Injected rollback:** the worker raises inside the ship transaction after the
+  transition, event and receipt rows were written. Nothing is left: the entity is
+  still `packed` at version 3, there is no ship transition and no receipt, and the
+  scheduled Command is still pending. Its retry ships exactly once.
+- **Lost COMMIT reply:** the #584 wire proxy forwards the COMMIT, witnesses the
+  backend's CommandComplete and drops it. The worker fails with a transport error.
+  Everything is there exactly once (entity, transition, receipt, consumed Command)
+  and `verify_history` passes. Retrying the stale callback returns `False`, and a
+  second `ship` is refused, so neither adds a transition or a receipt.
+
+**Mutant check.** An Engine that commits the receipt in its own transaction after
+the transition fails the rollback test (a transition with no receipt survives). It
+passes the lost-reply test: after a successful COMMIT both transactions are durable.
+That test proves "no duplicate on retry" and that the Command is consumed in the
+ship's own commit (an Engine consuming it in a separate transaction fails it), not
+that transition and receipt are indivisible.
+
+Not covered: a SIGKILL of the worker between statements (a killed connection rolls
+back like the injected failure, but this is not tested here), PostgreSQL writer-role
+and key isolation, and the attribute-receipt path under the same faults.
