@@ -321,14 +321,23 @@ is only names. `snapshot_organization(..., physical_ledger=True)` now admits poo
 against the PostgreSQL temporal resource ledger. The rules are in
 `sose.composition.physical_pools`:
 
-- exactly one registered pool has `pool_id`;
-- `owner_id` matches the pool's ledger scope. The ledger stores no pool owner, only
-  a scope. For an organization-scoped pool, `owner_id` is its `organization_id`,
+- `owner_id` names the pool's ledger scope. The ledger stores no pool owner, only a
+  scope. For an organization-scoped pool, `owner_id` is its `organization_id`,
   which must also be this organization. For a shared pool, it is the literal
-  `"shared"`;
-- every reservation in the pool by an owner of this organization belongs to a
-  declared consumer component;
-- an organization-scoped pool has no reservation by a foreign owner.
+  `"shared"`. Exactly one registered pool has `pool_id` *within that scope*, so
+  another tenant's pool with the same id does not interfere;
+- every active (`reserved`) reservation in the pool by an owner of this
+  organization belongs to a declared consumer component. Released, preempted or
+  failed reservations are history: they are listed but not judged again;
+- an organization-scoped pool has no active reservation by a foreign owner;
+- components have distinct owners.
+
+Admission trusts the `PhysicalLedgerView` it is given; callers must obtain it from
+`read_physical_ledger`. With `physical_ledger=True`, an organization without pools
+does not read the ledger. A physical-pool snapshot refuses to run inside an outer
+`read_snapshot()`, whose view would predate the ledger read. Reading the ledger
+loads every tenant's pools and bookings in the namespace, one query per pool row.
+This is fine at current sizes and is not optimised.
 
 The ledger is read in the same REPEATABLE READ transaction as the rest of the
 snapshot. `OrganizationSnapshot.physical_pools` lists each pool's contract and this

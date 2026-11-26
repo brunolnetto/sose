@@ -3,14 +3,20 @@
 A ``PhysicalPoolRef(pool_id, owner_id, consumer_ids)`` is only names. It is admitted
 when the PostgreSQL temporal resource ledger confirms it:
 
-- exactly one registered pool has ``pool_id``;
-- ``owner_id`` matches the pool's ledger scope. For an organization-scoped pool it
-  is the pool's ``organization_id``, which must also be this organization. For a
-  shared pool it is the literal ``"shared"``;
-- every reservation in the pool by an owner of this organization belongs to a
-  declared consumer component;
-- an organization-scoped pool has no reservation by an owner outside the
-  organization.
+- ``owner_id`` names the pool's ledger scope. For an organization-scoped pool it is
+  the pool's ``organization_id``, which must also be this organization. For a
+  shared pool it is the literal ``"shared"``. Exactly one registered pool has
+  ``pool_id`` within that scope; another tenant's pool with the same id does not
+  interfere;
+- every *active* (``reserved``) reservation in the pool by an owner of this
+  organization belongs to a declared consumer component. Released, preempted or
+  failed reservations are history, listed in the snapshot but not re-judged;
+- an organization-scoped pool has no active reservation by an owner outside the
+  organization;
+- components have distinct owners, so a reservation names exactly one component.
+
+``physical_ledger`` must come from ``read_physical_ledger``: admission trusts the
+view it is given, so callers must not build one by hand.
 
 The admitted pools then enter the organization snapshot. Each lists its contract and
 this organization's reservations by component. In a shared pool, other owners'
@@ -65,10 +71,12 @@ class PoolSnapshot:
 
 def read_physical_ledger(persistence) -> PhysicalLedgerView:
     """Read the ledger through ``persistence``'s connection (PostgreSQL only)."""
+    from psycopg.errors import UndefinedTable
+
     ledger = persistence.temporal_resources(bootstrap=False)
     try:
         return PhysicalLedgerView(ledger.pools(), ledger.reservations())
-    except Exception as error:  # the ledger tables do not exist yet
+    except UndefinedTable as error:            # no pool was ever registered here
         raise ValueError("physical pool references require a registered resource ledger") from error
 
 
@@ -76,21 +84,28 @@ def require_admitted_pools(definition, ledger: PhysicalLedgerView) -> None:
     """Fail closed unless every declared pool is confirmed by the ledger."""
     owners = {component.component_id: component.owner_id for component in definition.components}
     organization_owners = set(owners.values())
+    if len(organization_owners) != len(owners):
+        raise ValueError("physical pools require components with distinct owner_id")
     for ref in definition.physical_pools:
         pool = _registered_pool(ref, ledger)
         _require_scope(ref, pool, definition.organization_id)
         consumers = {owners[component_id] for component_id in ref.consumer_ids}
         for reservation in _in_pool(pool, ledger):
-            owner = reservation.owner_id
-            if owner in organization_owners and owner not in consumers:
-                raise ValueError(
-                    f"owner {owner} reserved physical pool {ref.pool_id} "
-                    "without being a declared consumer"
-                )
-            if pool.scope == "organization" and owner not in organization_owners:
-                raise ValueError(
-                    f"organization pool {ref.pool_id} has a reservation by foreign owner {owner}"
-                )
+            if reservation.status == "reserved":
+                _require_active_owner(ref, pool, reservation.owner_id,
+                                      organization_owners, consumers)
+
+
+def _require_active_owner(ref, pool, owner, organization_owners, consumers) -> None:
+    if owner in organization_owners and owner not in consumers:
+        raise ValueError(
+            f"owner {owner} reserved physical pool {ref.pool_id} "
+            "without being a declared consumer"
+        )
+    if pool.scope == "organization" and owner not in organization_owners:
+        raise ValueError(
+            f"organization pool {ref.pool_id} has a reservation by foreign owner {owner}"
+        )
 
 
 def pool_snapshots(definition, ledger: PhysicalLedgerView) -> tuple[PoolSnapshot, ...]:
@@ -117,28 +132,32 @@ def pool_snapshots(definition, ledger: PhysicalLedgerView) -> tuple[PoolSnapshot
 
 
 def _registered_pool(ref, ledger: PhysicalLedgerView) -> ResourcePoolContract:
-    matches = [pool for pool in ledger.pools if pool.pool_id == ref.pool_id]
+    """The pool ``ref`` names, in the scope its ``owner_id`` implies."""
+    matches = [pool for pool in ledger.pools
+               if pool.pool_id == ref.pool_id and _in_scope(pool, ref.owner_id)]
     if not matches:
-        raise ValueError(f"physical pool {ref.pool_id} is not registered in the resource ledger")
+        raise ValueError(
+            f"physical pool {ref.pool_id} is not registered in the resource ledger "
+            f"in scope {ref.owner_id}"
+        )
     if len(matches) > 1:
         raise ValueError(f"physical pool {ref.pool_id} is ambiguous in the resource ledger")
     return matches[0]
 
 
+def _in_scope(pool: ResourcePoolContract, owner_id: str) -> bool:
+    if owner_id == SHARED:
+        return pool.scope == SHARED
+    return pool.scope == "organization" and pool.organization_id == owner_id
+
+
 def _require_scope(ref, pool: ResourcePoolContract, organization_id: str) -> None:
-    if pool.scope == "organization":
-        expected = pool.organization_id
-        if expected != organization_id:
-            raise ValueError(
-                f"physical pool {ref.pool_id} belongs to organization {expected}, "
-                f"not {organization_id}"
-            )
-    else:
-        expected = SHARED
-    if ref.owner_id != expected:
+    """``_registered_pool`` already matched the scope ``owner_id`` names; an
+    organization pool must also belong to *this* organization."""
+    if pool.scope == "organization" and pool.organization_id != organization_id:
         raise ValueError(
-            f"physical pool {ref.pool_id} owner {ref.owner_id} does not match its "
-            f"ledger scope ({expected})"
+            f"physical pool {ref.pool_id} belongs to organization {pool.organization_id}, "
+            f"not {organization_id}"
         )
 
 

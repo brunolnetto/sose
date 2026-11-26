@@ -98,8 +98,9 @@ def test_a_snapshot_without_pools_keeps_its_digest():
     (_pool(pool_id="other"), _definition(), "not registered in the resource ledger"),
     (_pool(organization="org:someone-else"), _definition(owner="org:someone-else"),
      "belongs to organization org:someone-else"),
-    (_pool(), _definition(owner="resource-ledger"), "does not match its ledger scope"),
-    (_pool(scope="shared"), _definition(), "does not match its ledger scope"),
+    # owner_id names the scope: a wrong owner or scope finds no pool there.
+    (_pool(), _definition(owner="resource-ledger"), "not registered .* in scope resource-ledger"),
+    (_pool(scope="shared"), _definition(), "not registered .* in scope org:equivalence"),
 ])
 def test_a_pool_the_ledger_does_not_confirm_is_refused(pool, definition, message):
     store, _ledger = _store(pool)
@@ -141,3 +142,52 @@ def test_the_ledger_needs_postgresql():
     with pytest.raises(TypeError, match="PostgreSQL resource ledger"):
         snapshot_organization(_definition(), MemoryPersistence(), **org.admission(),
                               physical_ledger=True)
+
+
+def test_another_tenants_pool_with_the_same_id_does_not_interfere():
+    ours, theirs = _pool(), _pool(organization="org:other-tenant")
+    store, ledger = _store(ours)
+    with store:
+        ledger.register_pool(theirs)
+        _reserve(ledger, ours, "r-1", FULFILL, "dock-1")
+        (snapshot,) = _snapshot(_definition(), store, physical_ledger=True).physical_pools
+        assert snapshot.organization_id == ORGANIZATION
+        assert [r.reservation_id for r in snapshot.reservations] == ["r-1"]
+
+
+def test_a_released_reservation_is_history_not_a_violation():
+    pool = _pool()
+    store, ledger = _store(pool)
+    with store:
+        _reserve(ledger, pool, "r-old", WAREHOUSE, "dock-1")       # a non-consumer
+        ledger.release("r-old", at=T0 + H)
+        (snapshot,) = _snapshot(_definition(), store, physical_ledger=True).physical_pools
+        assert [(r.component_id, r.status) for r in snapshot.reservations] == [
+            ("warehouse", "released")]
+
+
+def test_admission_refuses_pools_when_components_share_an_owner():
+    from sose.composition.organization_admission import validate_organization_admission
+    from sose.composition.physical_pools import read_physical_ledger
+
+    pool = _pool()
+    store, _ledger = _store(pool)
+    shared = replace(_definition(), components=tuple(
+        replace(component, owner_id=FULFILL) for component in org.definition().components))
+    with store, pytest.raises(ValueError, match="distinct owner_id"):
+        validate_organization_admission(shared, **org.admission(),
+                                        physical_ledger=read_physical_ledger(store))
+
+
+def test_without_pools_the_ledger_is_not_read():
+    store = PostgresPersistence(DSN, namespace="pools_" + uuid4().hex[:12])   # no ledger tables
+    with store:
+        assert _snapshot(org.definition(), store, physical_ledger=True).physical_pools == ()
+
+
+def test_a_pool_snapshot_refuses_an_outer_read_snapshot():
+    pool = _pool()
+    store, _ledger = _store(pool)
+    with store, store.read_snapshot():
+        with pytest.raises(RuntimeError, match="outer read snapshot"):
+            _snapshot(_definition(), store, physical_ledger=True)

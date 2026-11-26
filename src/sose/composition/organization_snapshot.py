@@ -138,7 +138,9 @@ def snapshot_organization(
     owner_ids = [component.owner_id for component in components]
     if len(owner_ids) != len(set(owner_ids)):
         raise ValueError("an owner-qualified snapshot requires distinct component owner_id")
-    with _coherent_read(persistence, physical_ledger) as (view, ledger):
+    # Only a definition that declares pools reads the ledger.
+    reads_ledger = physical_ledger and bool(definition.physical_pools)
+    with _coherent_read(persistence, reads_ledger) as (view, ledger):
         fingerprint = validate_organization_admission(
             definition, catalog=catalog, manifests=manifests, consumers=consumers,
             physical_ledger=ledger,
@@ -179,6 +181,10 @@ def _coherent_read(persistence, physical_ledger: bool):
         with persistence.read_snapshot() as view:
             yield view, None
         return
+    if getattr(persistence, "_active_read_snapshot", None) is not None and (
+        persistence._active_read_snapshot.get() is not None
+    ):
+        raise RuntimeError("a physical-pool snapshot cannot reuse an outer read snapshot")
     connection = getattr(persistence, "_connection", None)
     if connection is None or not callable(getattr(persistence, "temporal_resources", None)):
         raise TypeError("physical pools in a snapshot require the PostgreSQL resource ledger")
