@@ -66,14 +66,7 @@ def _command(name: str, command_id: str) -> Command:
 
 
 def _packed_with_pending_ship(store) -> DurableScheduledItem:
-    with store.transaction(owner_id=OWNER) as uow:
-        uow.save_entity(FulfillmentOrder(id=ORDER, state="requested",
-                                         created_at=NOW, updated_at=NOW))
-    engine = _engine(store)
-    for step in ("allocate", "start_pick", "pack"):
-        engine.dispatch(_command(step, f"command:{step}"))
-    command = _command("ship", SHIP)
-    return DurableScheduledItem(engine.scheduler.schedule(command), command)
+    return _packed_with_pending_ship_by(store, ROOT)
 
 
 def _ship_receipts(store):
@@ -169,7 +162,12 @@ def oracle_stale_owner():
 
 
 def oracle_no_duplicate_post_commit_effect():
-    """Retrying a committed claim adds nothing (PG: lost COMMIT reply, #687)."""
+    """Retrying a committed claim adds nothing (PG: lost COMMIT reply, #687).
+
+    The retry runs without an authority: on the attested path the chart refuses a
+    second ship anyway ("exactly one recorder-produced transition"), which would hide
+    a missing consumed-callback guard. This row proves that guard is needed.
+    """
     store = MemoryPersistence()
     item = _packed_with_pending_ship(store)
     assert _engine(store).dispatch_scheduled(item) is True
