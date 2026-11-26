@@ -226,5 +226,6 @@ print(decision.probability)
 ```
 
 The decision does not mutate the chart. Sending or dispatching the selected event
-remains an explicit operation. `Engine.choose_transition()` and
-`Engine.dispatch_probabilistic()` wrap the same decision for durable dispatch.
+remains an explicit operation. `Engine.choose_transition()` samples the same
+decision through the engine, and `Engine.dispatch_probabilistic()` samples it and
+dispatches the chosen event durably.

@@ -28,8 +28,8 @@ healthcare, aviation, insurance, payments, telecom and more.
   must stay at or above 95%, and a quality ratchet must pass.
 - **Known limitation: one case per run.** Every builtin domain runs a single
   configured reference case, with its happy or sad path chosen by configuration.
-  `energy_utilities` is a partial exception: it records a recurring meter reading
-  on every tick.
+  `energy_utilities` is a partial exception: by default it records a recurring
+  meter reading on every tick.
   This keeps exact ground truth and frozen scientific evidence, but it produces no
   volume or variation for population metrics. A seeded, opt-in **workload mode** is
   proposed in [ADR-0012](docs/architecture/decisions/adr-0012-seeded-domain-workload-generation.md)
@@ -52,15 +52,18 @@ healthcare, aviation, insurance, payments, telecom and more.
 
 **Recurring jobs.** One external trigger advances exactly one logical tick and
 commits a durable checkpoint, so cron, Airflow, Databricks or Kubernetes can drive a
-simulation without a long-running process. Restart equivalence with a continuous
-run is tested for the documented crash and fault windows
-([docs](docs/architecture/recurring-domain-jobs.md)).
+simulation without a long-running process
+([docs](docs/architecture/recurring-domain-jobs.md)). Restart equivalence with a
+continuous run is tested for specific named crash and fault cases
+([PC6 recovery cases](docs/architecture/pc6-real-multidomain-recurring-recovery.md)),
+not established in general.
 
 **Organizations.** Several domain components can be composed into one organization,
 with owner-qualified jobs, cross-domain boundary messages and a canonical
-organization snapshot. Boundary delivery is idempotent, and a consumer's handler and
-its ACK commit in one transaction; exactly-once transport is not assumed
-([ADR-0006](docs/architecture/decisions/adr-0006-cross-domain-boundary-messages.md)). The snapshot can include
+organization snapshot. Boundary delivery is idempotent and exactly-once transport is
+not assumed ([ADR-0006](docs/architecture/decisions/adr-0006-cross-domain-boundary-messages.md));
+a consumer's handler and its ACK commit in one transaction
+([boundary runtime](docs/architecture/organization-component-boundary-runtime-p496.md)). The snapshot can include
 physical pools admitted against a PostgreSQL resource ledger
 ([ADR-0008](docs/architecture/decisions/adr-0008-organization-composition-admission.md),
 [ADR-0009](docs/architecture/decisions/adr-0009-owner-qualified-runtime-only.md)).
