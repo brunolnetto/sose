@@ -208,3 +208,24 @@ to `excluded_events={"start"}`.
 Excluded events remain legal StateChart events and can still be dispatched explicitly
 after durable prerequisites are satisfied. They are simply absent from
 `choose_transition()` / `dispatch_probabilistic()` distributions.
+
+## Direct decision API
+
+Once statecharts are bound through the engine, a decision can be requested without
+executing it:
+
+```python
+decision = ctx.statecharts.decide(
+    work_order,
+    guard_kwargs={"material_available": True},
+    scope=("normal-operation",),
+)
+
+print(decision.event)
+print(decision.probability)
+```
+
+The decision does not mutate the chart. Sending or dispatching the selected event
+remains an explicit operation. `Engine.choose_transition()` samples the same
+decision through the engine, and `Engine.dispatch_probabilistic()` samples it and
+dispatches the chosen event durably.
