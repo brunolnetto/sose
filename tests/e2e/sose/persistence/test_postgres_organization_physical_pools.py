@@ -223,15 +223,19 @@ def test_jobs_of_an_organization_with_pools_build_and_run_with_the_ledger():
         snapshot = _snapshot(definition, store, physical_ledger=True)
         assert [c.machines for c in snapshot.components if c.machines]
         assert [r.reservation_id for r in snapshot.physical_pools[0].reservations] == ["r-1"]
-        observe_organization_events(definition, store, **org.admission(), physical_ledger=True)
-        inspect_selected_boundary_protocol(definition, store, message_ids=(), **org.admission(),
-                                           physical_ledger=True)
+        evidence = observe_organization_events(definition, store, **org.admission(),
+                                               physical_ledger=True)
+        assert evidence.definition_fingerprint == snapshot.definition_fingerprint
+        assert any(component.event_ids for component in evidence.components)
+        inspected = inspect_selected_boundary_protocol(
+            definition, store, message_ids=(), **org.admission(), physical_ledger=True)
+        assert inspected.definition_fingerprint == snapshot.definition_fingerprint
         reports = reattest_component_jobs(
             definition, store, expected_previous=(snapshot.definition_fingerprint,
                                                   definition.config_epoch),
             **org.admission(), worker_id="w", physical_ledger=True,
         )
-        assert reports
+        assert {report.status for report in reports} == {"already_current"}
 
 
 def test_a_job_build_refuses_a_pool_the_ledger_contradicts():
@@ -260,3 +264,12 @@ def test_the_organization_consumer_registry_admits_pools_from_a_ledger_view():
         runtime = OrganizationRuntime(_definition(), **arguments,
                                       physical_ledger_view=read_physical_ledger(store))
         assert runtime.definition_fingerprint
+
+
+def test_job_admission_without_pools_reads_no_ledger_and_needs_postgresql_with_pools():
+    from sose.composition.physical_pools import ledger_for
+
+    memory = MemoryPersistence()
+    assert ledger_for(memory, True, org.definition()) is None      # no pools: no read
+    with pytest.raises(TypeError, match="PostgreSQL resource ledger"):
+        ledger_for(memory, True, _definition())

@@ -56,7 +56,7 @@ def observe_organization_events(
     """
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
-        physical_ledger=ledger_for(persistence, physical_ledger),
+        physical_ledger=ledger_for(persistence, physical_ledger, definition),
     )
     components = tuple(sorted(definition.components, key=lambda c: c.component_id))
     owner_ids = tuple(component.owner_id for component in components)

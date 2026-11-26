@@ -65,7 +65,7 @@ def inspect_selected_boundary_protocol(
     """
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
-        physical_ledger=ledger_for(persistence, physical_ledger),
+        physical_ledger=ledger_for(persistence, physical_ledger, definition),
     )
     _require_canonical_message_ids(message_ids)
     admitted_edges = _admitted_edges(definition)

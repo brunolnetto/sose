@@ -114,7 +114,7 @@ def build_attested_component_jobs(
         raise ValueError("worker_id must be nonempty")
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
-        physical_ledger=ledger_for(persistence, physical_ledger),
+        physical_ledger=ledger_for(persistence, physical_ledger, definition),
     )
     components = {component.component_id: component for component in definition.components}
     built = []

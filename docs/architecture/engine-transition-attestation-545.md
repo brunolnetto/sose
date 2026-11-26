@@ -362,8 +362,12 @@ digest only when the organization declares some, so existing digests are unchang
   `reattest_component_jobs`, `observe_organization_events` and
   `inspect_selected_boundary_protocol` take `physical_ledger=True` (PostgreSQL), and
   `OrganizationBoundaryConsumerRegistry` takes a `physical_ledger_view`. Without
-  them, a definition that declares pools is still refused. A running job keeps only
-  its attestation (the definition fingerprint, which covers the pool references);
-  the ledger is checked at build and on every snapshot, not on every tick.
+  them, a definition that declares pools is still refused. These callers read the
+  ledger in its own transaction before their other reads (they need admission
+  once); only the snapshot reads both in one REPEATABLE READ transaction. A
+  definition without pools reads no ledger. A running job keeps only its
+  attestation (the definition fingerprint, which covers the pool references); the
+  ledger is checked at build, at reattestation and on every snapshot, not on every
+  tick.
 - The job-local SimPy queue (`ResourceDemand`/`ResourceReservation`) has no owner and
   stays out of the snapshot.

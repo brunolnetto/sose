@@ -128,7 +128,7 @@ def reattest_component_jobs(
     _require_arguments(expected_previous, worker_id)
     fingerprint = validate_organization_admission(
         definition, catalog=catalog, manifests=manifests, consumers=consumers,
-        physical_ledger=ledger_for(persistence, physical_ledger),
+        physical_ledger=ledger_for(persistence, physical_ledger, definition),
     )
     current = (fingerprint, definition.config_epoch)
     reports = []
