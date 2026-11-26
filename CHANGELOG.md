@@ -84,6 +84,12 @@
   observing an organization's jobs accept the same `physical_ledger=True`, and
   `OrganizationBoundaryConsumerRegistry` a `physical_ledger_view`; without them,
   declared pools are refused as before.
+- A component job's own resource queue in the organization snapshot (#494, #496):
+  `ResourceDemand`, `ResourceReservation` and `ResourceReleaseIntent` take an
+  optional `owner_id`, which the codec omits when `None`. Organization-attested
+  jobs stamp it; standalone jobs do not, so their bytes are unchanged.
+  `ComponentSnapshot.resource_queue` lists each component's records and enters the
+  digest only when it is not empty.
 
 ### Fixed
 

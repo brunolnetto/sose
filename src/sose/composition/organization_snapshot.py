@@ -35,7 +35,7 @@ namespace (their transitioned machines have no stored state here and fail closed
 from __future__ import annotations
 
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from hashlib import sha256
 import json
 from typing import TYPE_CHECKING
@@ -73,6 +73,17 @@ class PendingCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class QueueRecord:
+    """One record of a component job's own resource queue (#496)."""
+
+    kind: str                  # "demand", "reservation" or "release_intent"
+    record_id: str             # request, reservation or intent id
+    resource_name: str
+    sequence: int | None
+    at: str
+
+
+@dataclass(frozen=True, slots=True)
 class ComponentSnapshot:
     component_id: str
     domain: str
@@ -82,6 +93,8 @@ class ComponentSnapshot:
     pending_commands: tuple[PendingCommand, ...]
     scheduled_work_ids: tuple[str, ...]
     jobs: tuple[DeclaredJobCheckpoint, ...]
+    # Records stamped with this owner; in the digest only when nonempty.
+    resource_queue: tuple[QueueRecord, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,8 +169,12 @@ def snapshot_organization(
         work_by_owner: dict[str, list] = {}
         for item in view.scheduled_work():
             work_by_owner.setdefault(item.owner_id, []).append(item)
+        queues = _resource_queues(view)
         built = tuple(
-            _component(view, component, machines, transitions, jobs, work_by_owner)
+            replace(
+                _component(view, component, machines, transitions, jobs, work_by_owner),
+                resource_queue=queues.get(component.owner_id, ()),
+            )
             for component in components
         )
         boundary = _boundary(view, definition.organization_id)
@@ -330,6 +347,30 @@ def _boundary(view, organization_id: str) -> tuple[BoundaryRecord, ...]:
     ))
 
 
+def _resource_queues(view) -> dict[str, tuple[QueueRecord, ...]]:
+    """Owner -> its stamped demands, reservations and release intents."""
+    records: dict[str, list[QueueRecord]] = {}
+    for demand in view.resource_demands():
+        _add(records, demand.owner_id, QueueRecord(
+            "demand", demand.request_id, demand.resource_name, demand.sequence,
+            demand.requested_at.isoformat()))
+    for reservation in view.resource_reservations():
+        _add(records, reservation.owner_id, QueueRecord(
+            "reservation", reservation.reservation_id, reservation.resource_name,
+            reservation.sequence, reservation.acquired_at.isoformat()))
+    for intent in view.resource_release_intents():
+        _add(records, intent.owner_id, QueueRecord(
+            "release_intent", intent.intent_id, intent.resource_name, None,
+            intent.requested_at.isoformat()))
+    return {owner: tuple(sorted(items, key=lambda r: (r.kind, r.record_id)))
+            for owner, items in records.items()}
+
+
+def _add(records: dict, owner: str | None, record: QueueRecord) -> None:
+    if owner is not None:
+        records.setdefault(owner, []).append(record)
+
+
 def _digest(body: dict) -> str:
     canonical = json.dumps(
         {name: _plain(value) for name, value in body.items()},
@@ -341,6 +382,11 @@ def _digest(body: dict) -> str:
 def _plain(value):
     if isinstance(value, tuple):
         return [_plain(item) for item in value]
+    if isinstance(value, ComponentSnapshot):
+        plain = {name: _plain(getattr(value, name)) for name in value.__dataclass_fields__}
+        if not value.resource_queue:
+            del plain["resource_queue"]    # keeps the digest of snapshots without queues
+        return plain
     if hasattr(value, "__dataclass_fields__"):
         return {name: _plain(item) for name, item in asdict(value).items()}
     return value

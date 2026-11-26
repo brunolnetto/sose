@@ -105,6 +105,9 @@ class ResourceDemand:
     request_id: str
     resource_name: str
     requested_at: datetime
+    # The Engine owner of an organization-attested job (#496); None otherwise, and
+    # then omitted by the codec so standalone records keep their bytes.
+    owner_id: str | None
 
     def __init__(
         self,
@@ -113,6 +116,7 @@ class ResourceDemand:
         priority: int,
         requested_at: datetime,
         sequence: int,
+        owner_id: str | None = None,
     ) -> None:
         if not request_id:
             raise ValueError("request_id cannot be empty")
@@ -123,6 +127,7 @@ class ResourceDemand:
         object.__setattr__(self, "request_id", request_id)
         object.__setattr__(self, "resource_name", resource_name)
         object.__setattr__(self, "requested_at", requested_at)
+        object.__setattr__(self, "owner_id", owner_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +137,7 @@ class ResourceReservation:
     resource_name: str
     acquired_at: datetime
     sequence: int = 0
+    owner_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -140,3 +146,4 @@ class ResourceReleaseIntent:
     reservation_id: str
     resource_name: str
     requested_at: datetime
+    owner_id: str | None = None
